@@ -91,7 +91,7 @@ const cardWidth = (nameW: number, s: Settings) => 4 + nameW + shownCols(s).reduc
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
 const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
   s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
-const ACT0: Act = { kind: 'none', to: '', newTeam: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
+const ACT0: Act = { menu: '', kind: 'none', to: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
@@ -1575,18 +1575,23 @@ async function formView($: any, ui: any) {
   )
 }
 
-const ACTIONS = [
-  { value: 'none', label: '—' },
-  { value: 'move', label: 'Move to team…' },
-  { value: 'remove', label: 'Remove from roster' },
-  { value: 'boss', label: 'Change boss…' },
-  { value: 'bulk', label: 'Rename / model / effort…' },
-  { value: 'brief', label: 'Brief again' },
-  { value: 'add', label: 'Add member to team…' },
+// Each team card's menu. Buttons, not a Select: the terminal's Select takes keys only (arrows, Enter) once
+// focused, and a click does nothing on it; a Button takes a click, so the menu opens like the model lists.
+const TEAM_ACTIONS: [string, string][] = [
+  ['selall', 'Select all'],
+  ['selwork', 'Select workers'],
+  ['add', 'Add member…'],
+  ['movehere', 'Move selected here'],
+  ['remove', 'Remove selected'],
+  ['boss', 'Change boss of selected…'],
+  ['brief', 'Brief team'],
+  ['briefsel', 'Brief selected'],
+  ['bulk', 'Rename / Model / Effort of selected…'],
+  ['rmteam', 'Remove team'],
 ]
 
 async function rosterView($: any, ui: any, cols: number) {
-  const { Box, Text, Input, Button, Select } = ui
+  const { Box, Text, Input, Button } = ui
   const list: Member[] = await readMembers($)
   const b: Bulk = await readBulk($)
   const teams = [...new Set(list.map(m => m.team))]
@@ -1608,30 +1613,166 @@ async function rosterView($: any, ui: any, cols: number) {
   const nameWidth = (mine: Member[]) => Math.max(12, ...treeLines(mine).map(r => (r.prefix + r.name).length)) + 1
   const widest = Math.max(0, ...teams.map(team => cardWidth(nameWidth(list.filter(m => m.team === team)), s)))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
-  // the Actions menu: each action works on the ticked rows, then clears the ticks (a refused one keeps them)
+  // a team menu's action: what it works on is the ticked rows; done, the ticks clear (a refused one keeps them)
   const a = await readAct($)
   const setAct = (patch: Partial<Act>) => update($, act, old => ({ ...ACT0, ...old, ...patch }))
   const ticked = new Set(list.filter(m => m.sel).map(keyOf))
   const bosses = bossChoices(list, ticked)
-  const finish = async (work: Promise<string>) => {
+  const finish = async (team: string, work: Promise<string>) => {
     const msg = await work
     const kept = (await readMembers($)).some(m => m.sel)
-    await setAct(kept ? { msg } : { ...ACT0, msg })
+    await setAct(kept ? { msg, to: team, menu: '' } : { ...ACT0, msg, to: team })
   }
-  const pickAct = async (kind: string) => {
-    if (kind !== 'none' && kind !== 'add' && picked === 0) return void (await setAct({ ...ACT0, msg: 'Tick at least one row.' }))
-    if (kind === 'brief') {
-      for (const team of new Set(list.filter(m => m.sel).map(m => m.team))) await briefTeam($, team, ticked)
+  const pick = async (team: string, kind: string) => {
+    const head = list.find(m => m.team === team && !list.some(x => x.team === team && x.name === m.boss))
+    const needsTicks = ['movehere', 'remove', 'boss', 'briefsel', 'bulk'].includes(kind)
+    if (needsTicks && picked === 0) return void (await setAct({ ...ACT0, to: team, msg: 'Tick at least one row first.' }))
+    if (kind === 'selall') return void (await tick(m => m.sel || m.team === team), await setAct(ACT0))
+    if (kind === 'selwork')
+      return void (await tick(m => m.sel || (m.team === team && m.level === maxLevel(team) && maxLevel(team) > 1)), await setAct(ACT0))
+    if (kind === 'movehere') return void (await finish(team, move($, ticked, team)))
+    if (kind === 'brief') return void (await finish(team, briefTeam($, team).then(() => `Briefed team @${team}.`)))
+    if (kind === 'briefsel') {
+      for (const x of new Set(list.filter(m => m.sel).map(m => m.team))) await briefTeam($, x, ticked)
       await update($, members, old => old.map(m => ({ ...m, sel: false })))
-      return void (await setAct({ ...ACT0, msg: `Briefed ${ticked.size} again.` }))
+      return void (await setAct({ ...ACT0, to: team, msg: `Briefed ${ticked.size} again.` }))
     }
     if (kind === 'add') {
       const tabs = (await liveTabs($))
         .map(x => ({ handle: handleOf(String(x.handle)), title: bare(String(x.title ?? '')) }))
         .filter(x => x.handle !== '' && !list.some(m => m.handle === x.handle))
-      return void (await setAct({ ...ACT0, kind, tabs, to: teams[0] ?? '', handle: tabs[0]?.handle ?? '' }))
+      return void (await setAct({ ...ACT0, kind, to: team, tabs, handle: tabs[0]?.handle ?? '', boss: head?.name ?? 'user' }))
     }
-    await setAct({ ...ACT0, kind, to: kind === 'move' ? (teams.find(x => !list.some(m => m.sel && m.team === x)) ?? '+new') : '' })
+    await setAct({ ...ACT0, kind, to: team })
+  }
+  const bulkBox = (
+    <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+      <Text color="yellow">┤ Rename / model / effort: {picked} selected ├</Text>
+      <Input
+        key="bprefix"
+        label="▸ Prefix      "
+        value={b.prefix}
+        placeholder="optional, put before the name, e.g. qa-"
+        onInput={(v: string) => void setBulk({ prefix: v })}
+        onSubmit={() => {}}
+      />
+      <Input
+        key="bbase"
+        label="▸ Base name   "
+        value={b.base}
+        placeholder="optional, replaces the current name, e.g. worker"
+        onInput={(v: string) => void setBulk({ base: v })}
+        onSubmit={() => {}}
+      />
+      <Text>▸ Numbering</Text>
+      {Choice(ui, 'bnum', ['none', '1', '01'], b.numbering, v => void setBulk({ numbering: v }))}
+      <Text dimColor>
+        Preview: {list.filter(m => m.sel).slice(0, 3).map((m, i) => nameFor(b, m.name, i + 1)).join(', ')}
+        {picked > 3 ? ', ...' : ''}
+      </Text>
+      <Text>▸ Model</Text>
+      {Choice(ui, 'bmodel', ['keep', ...MODELS.slice(1)], b.model, v => void setBulk({ model: v }))}
+      <Text>▸ Effort</Text>
+      {Choice(ui, 'beffort', ['keep', ...EFFORTS.slice(1)], b.effort, v => void setBulk({ effort: v }))}
+      <Text dimColor>Idle sessions with a known id restart with --resume (history kept). Busy or adopted ones: label only.</Text>
+      <Box>
+        <Button key="apply" label="Apply to selected" variant="primary" onPress={() => void applyBulk($)} />
+        <Button key="bulk-close" label="Close" onPress={() => void setAct(ACT0)} />
+      </Box>
+      {b.msg !== '' && <Text color="green">{b.msg}</Text>}
+    </Box>
+  )
+  // the open action of one team card, drawn inside that card
+  const actionBox = (team: string, ti: number) => {
+    if (a.to !== team) return null
+    const cancel = <Button key={`cancel-${ti}`} label="Cancel" onPress={() => void setAct(ACT0)} />
+    const box = (title: string, body: any) => (
+      <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+        <Text color="yellow">┤ {title} ├</Text>
+        {body}
+      </Box>
+    )
+    if (a.kind === 'remove' || a.kind === 'rmteam')
+      return box(
+        a.kind === 'remove' ? `Remove ${picked} selected from the roster?` : `Remove team @${team} from the roster?`,
+        <Box flexDirection="column">
+          <Text dimColor>Only the roster changes: no terminal is closed.</Text>
+          <Box>
+            <Button
+              key={`confirm-${ti}`}
+              label="Confirm"
+              variant="primary"
+              onPress={() =>
+                void (async () => {
+                  if (a.kind === 'rmteam') return finish(team, remove($, team))
+                  const out: string[] = []
+                  for (const m of list.filter(x => x.sel)) out.push(await remove($, m.team, m.name))
+                  await finish(team, Promise.resolve(out.join(' ')))
+                })()
+              }
+            />
+            {cancel}
+          </Box>
+        </Box>,
+      )
+    if (a.kind === 'boss')
+      return box(
+        'New boss for the selected',
+        bosses.length === 0 ? (
+          <Box flexDirection="column">
+            <Text>Tick members of one team; the new boss is another member of that team, not below them.</Text>
+            {cancel}
+          </Box>
+        ) : (
+          <Box flexDirection="column">
+            {Seg(ui, `boss-${ti}`, bosses.map(m => [m.name, m.name] as [string, string]), '', v => void finish(team, changeBoss($, ticked, v)))}
+            {cancel}
+          </Box>
+        ),
+      )
+    if (a.kind === 'add')
+      return box(
+        `Add a running session to @${team}`,
+        a.tabs.length === 0 ? (
+          <Box flexDirection="column">
+            <Text>Every live Orca tab is on the roster already.</Text>
+            {cancel}
+          </Box>
+        ) : (
+          <Box flexDirection="column">
+            <Text bold>Tab</Text>
+            {Seg(ui, `addtab-${ti}`, a.tabs.map(x => [x.handle, x.title] as [string, string]), a.handle, v => void setAct({ handle: v }))}
+            <Text bold>Boss</Text>
+            {Seg(ui, `addboss-${ti}`, [['user', 'user'], ...list.filter(m => m.team === team).map(m => [m.name, m.name] as [string, string])], a.boss, v => void setAct({ boss: v }))}
+            <Input
+              key={`addrole-${ti}`}
+              label="▸ Role "
+              value={a.role}
+              placeholder="what it does"
+              onInput={(v: string) => {
+                typedAt = Date.now()
+                void setAct({ role: v })
+              }}
+              onSubmit={() => {}}
+            />
+            <Box>
+              <Button
+                key={`addgo-${ti}`}
+                label="Add"
+                variant="primary"
+                onPress={() => {
+                  const tab = a.tabs.find(x => x.handle === a.handle) ?? a.tabs[0]!
+                  void finish(team, addMember($, tab.handle, tab.title, team, a.boss || 'user', a.role))
+                }}
+              />
+              {cancel}
+            </Box>
+            <Text dimColor>A new session is launched from New team (or team_launch), not from here.</Text>
+          </Box>
+        ),
+      )
+    if (a.kind === 'bulk') return bulkBox
+    return a.msg !== '' ? <Text color="green">{a.msg}</Text> : null
   }
   return (
     <Box flexDirection="column">
@@ -1701,19 +1842,27 @@ async function rosterView($: any, ui: any, cols: number) {
               )
             })}
             <Box>
-              <Button key={`selteam-${ti}`} label="Select team" onPress={() => void tick(m => m.sel || m.team === team)} />
               <Button
-                key={`selwork-${ti}`}
-                label="Select workers"
-                onPress={() => void tick(m => m.sel || (m.team === team && m.level === maxLevel(team) && maxLevel(team) > 1))}
+                key={`tact-${ti}`}
+                label={a.menu === team ? 'Team actions ▲' : 'Team actions ▼'}
+                variant="primary"
+                onPress={() => void setAct({ ...ACT0, menu: a.menu === team ? '' : team })}
               />
-              <Button
-                key={`brief-${ti}`}
-                label={unbriefed > 0 ? `Brief team (${unbriefed})` : 'Brief again'}
-                onPress={() => void briefTeam($, team)}
-              />
-              <Button key={`rmteam-${ti}`} label="Remove team" onPress={() => void remove($, team)} />
+              <Text dimColor> {picked} selected</Text>
             </Box>
+            {a.menu === team && (
+              <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
+                {TEAM_ACTIONS.map(([v, label]) => (
+                  <Button
+                    key={`tact-${ti}-${v}`}
+                    plain
+                    label={v === 'brief' && unbriefed > 0 ? `Brief team (${unbriefed} not yet)` : label}
+                    onPress={() => void pick(team, v)}
+                  />
+                ))}
+              </Box>
+            )}
+            {actionBox(team, ti)}
             <Text dimColor>╚{'═'.repeat(60)}╝</Text>
           </Box>
         )
@@ -1722,148 +1871,9 @@ async function rosterView($: any, ui: any, cols: number) {
       <Box>
         <Button key="refresh" label="Refresh" onPress={() => void refresh($)} />
         <Button key="none" label="Clear selection" onPress={() => void tick(() => false)} />
-        <Select key="actions" label=" Actions " options={ACTIONS} value={a.kind} onSelect={(v: string) => void pickAct(v)} />
-        <Text dimColor> {picked} selected</Text>
+        <Button key="settings" label="Settings" onPress={() => void update($, view, () => 'settings')} />
+        <Text dimColor> {picked} selected · add, move and remove people from each team's Team actions</Text>
       </Box>
-      {a.kind === 'move' && (
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow">┤ Move {picked} selected to another team ├</Text>
-          <Select
-            key="move-to"
-            label="To team "
-            options={[...teams.map(x => ({ value: x, label: `@${x}` })), { value: '+new', label: 'new team…' }]}
-            {...(a.to ? { value: a.to } : {})}
-            onSelect={(v: string) => void setAct({ to: v })}
-          />
-          {a.to === '+new' && (
-            <Input
-              key="move-new"
-              label="▸ New team "
-              value={a.newTeam}
-              placeholder="the new team's name"
-              onInput={(v: string) => {
-                typedAt = Date.now()
-                void setAct({ newTeam: v })
-              }}
-              onSubmit={() => {}}
-            />
-          )}
-          <Text dimColor>The moved members report to that team's head (in a new team, to the user). Anyone reporting to a moved member must be ticked too.</Text>
-          <Button key="move-go" label="Move" variant="primary" onPress={() => void finish(move($, ticked, a.to === '+new' ? a.newTeam : a.to))} />
-        </Box>
-      )}
-      {a.kind === 'remove' && (
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Select
-            key="remove-confirm"
-            label={`Remove ${picked} from the roster? `}
-            options={[{ value: 'ask', label: 'choose' }, { value: 'confirm', label: 'Confirm' }, { value: 'cancel', label: 'Cancel' }]}
-            value="ask"
-            onSelect={(v: string) =>
-              void (async () => {
-                if (v === 'cancel') return void (await setAct({ ...ACT0, msg: 'Nothing removed.' }))
-                if (v !== 'confirm') return
-                const out: string[] = []
-                for (const m of list.filter(x => x.sel)) out.push(await remove($, m.team, m.name))
-                await finish(Promise.resolve(out.join(' ')))
-              })()
-            }
-          />
-          <Text dimColor>Only the roster changes: no terminal is closed.</Text>
-        </Box>
-      )}
-      {a.kind === 'boss' && (
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
-          {bosses.length === 0 ? (
-            <Text>Tick members of one team; the new boss is another member of that team.</Text>
-          ) : (
-            <Select
-              key="boss-to"
-              label="New boss "
-              options={bosses.map(m => ({ value: m.name, label: m.name }))}
-              onSelect={(v: string) => void finish(changeBoss($, ticked, v))}
-            />
-          )}
-        </Box>
-      )}
-      {a.kind === 'add' && (
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow">┤ Add a running session to a team ├</Text>
-          {a.tabs.length === 0 || teams.length === 0 ? (
-            <Text>{teams.length === 0 ? 'Make a team first.' : 'Every live Orca tab is on the roster already.'}</Text>
-          ) : (
-            <Box flexDirection="column">
-              <Select key="add-tab" label="Tab " options={a.tabs.map(x => ({ value: x.handle, label: x.title }))} {...(a.handle ? { value: a.handle } : {})} onSelect={(v: string) => void setAct({ handle: v })} />
-              <Select key="add-team" label="Team " options={teams.map(x => ({ value: x, label: `@${x}` }))} {...(a.to ? { value: a.to } : {})} onSelect={(v: string) => void setAct({ to: v, boss: '' })} />
-              <Select
-                key="add-boss"
-                label="Boss "
-                options={[{ value: 'user', label: 'user' }, ...list.filter(m => m.team === a.to).map(m => ({ value: m.name, label: m.name }))]}
-                {...(a.boss ? { value: a.boss } : {})}
-                onSelect={(v: string) => void setAct({ boss: v })}
-              />
-              <Input
-                key="add-role"
-                label="▸ Role "
-                value={a.role}
-                placeholder="what it does"
-                onInput={(v: string) => {
-                  typedAt = Date.now()
-                  void setAct({ role: v })
-                }}
-                onSubmit={() => {}}
-              />
-              <Button
-                key="add-go"
-                label="Add"
-                variant="primary"
-                onPress={() => {
-                  const tab = a.tabs.find(x => x.handle === a.handle) ?? a.tabs[0]!
-                  void finish(addMember($, tab.handle, tab.title, a.to || (teams[0] as string), a.boss || 'user', a.role))
-                }}
-              />
-            </Box>
-          )}
-          <Text dimColor>A new session is launched from New team (or team_launch), not from here.</Text>
-        </Box>
-      )}
-      {a.msg !== '' && <Text color="green">{a.msg}</Text>}
-      {picked > 0 && a.kind === 'bulk' && (
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow">┤ Bulk edit: {picked} selected ├</Text>
-          <Input
-            key="bprefix"
-            label="▸ Prefix      "
-            value={b.prefix}
-            placeholder="optional, put before the name, e.g. qa-"
-            onInput={(v: string) => void setBulk({ prefix: v })}
-            onSubmit={() => {}}
-          />
-          <Input
-            key="bbase"
-            label="▸ Base name   "
-            value={b.base}
-            placeholder="optional, replaces the current name, e.g. worker"
-            onInput={(v: string) => void setBulk({ base: v })}
-            onSubmit={() => {}}
-          />
-          <Text>▸ Numbering</Text>
-          {Choice(ui, 'bnum', ['none', '1', '01'], b.numbering, v => void setBulk({ numbering: v }))}
-          <Text dimColor>
-            Preview: {list.filter(m => m.sel).slice(0, 3).map((m, i) => nameFor(b, m.name, i + 1)).join(', ')}
-            {picked > 3 ? ', ...' : ''}
-          </Text>
-          <Text>▸ Model</Text>
-          {Choice(ui, 'bmodel', ['keep', ...MODELS.slice(1)], b.model, v => void setBulk({ model: v }))}
-          <Text>▸ Effort</Text>
-          {Choice(ui, 'beffort', ['keep', ...EFFORTS.slice(1)], b.effort, v => void setBulk({ effort: v }))}
-          <Text dimColor>Idle sessions with a known id restart with --resume (history kept). Busy or adopted ones: label only.</Text>
-          <Box>
-            <Button key="apply" label="Apply to selected" variant="primary" onPress={() => void applyBulk($)} />
-          </Box>
-          {b.msg !== '' && <Text color="green">{b.msg}</Text>}
-        </Box>
-      )}
     </Box>
   )
 }

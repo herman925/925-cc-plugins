@@ -62,7 +62,7 @@ test('once a team exists the roster and bulk tools show and the welcome screen i
   } as any)
   // adopting a team already opens the roster, so the band is drawn open
   const band = await mountBand($)
-  for (const key of ['refresh', 'none', 'selteam-0', 'selwork-0', 'brief-0']) {
+  for (const key of ['refresh', 'none', 'settings', 'tact-0']) {
     expect(await band.find({ key })).toBeDefined()
   }
   expect(await band.find({ key: 'preset-Squad' })).toBeUndefined()
@@ -269,7 +269,9 @@ test('the roster rows and team cards remove too', async ($, on) => {
   const band = await mountBand($)
   await band.press({ key: 'rm-Hualong|W1' })
   expect(saved(files).map((m: any) => m.name)).toEqual(['Old-Head', 'Head'])
-  await band.press({ key: 'rmteam-0' })
+  await band.press({ key: 'tact-0' })
+  await band.press({ key: 'tact-0-rmteam' })
+  await band.press({ key: 'confirm-0' })
   expect(saved(files).map((m: any) => m.name)).toEqual(['Head'])
   expect(closes(calls)).toBe(0)
 })
@@ -411,7 +413,7 @@ test('dock right puts the panel in the dock pane, which says when it cannot sit 
   expect((await pane.find({ key: 'layout-stacked' }) as any).props.variant).toBe('primary')
 })
 
-// item 11: the Actions menu and member_move
+// item 11: the Team actions menus and member_move
 const alphaBeta = async ($: any, on: any, tabs: Tab[] = []) => {
   const files = world(on, tabs, [])
   on('ui.open', async () => ({ value: { isPlaced: true } }) as any)
@@ -440,36 +442,65 @@ test('member_move moves one member under the target head, or a named boss, and s
   expect(files.calls.filter(a => a.includes('close') || a.includes('kill')).length).toBe(0)
 })
 
-test('moving a head whose reports stay behind is refused; ticking them too moves the whole branch', async ($, on) => {
+// open a team card's "Team actions" list (a Button, so a click opens it) and press one entry
+const teamAct = async (band: any, ti: number, v: string) => {
+  await band.press({ key: `tact-${ti}` })
+  expect(await band.find({ key: `tact-${ti}-${v}` })).toBeDefined()
+  await band.press({ key: `tact-${ti}-${v}` })
+  // the list closes once an entry is picked
+  expect(await band.find({ key: `tact-${ti}-${v}` })).toBeUndefined()
+}
+
+test('each team card has one Team actions menu that opens and closes by press, and Settings sits beside Refresh', async ($, on) => {
+  await alphaBeta($, on)
+  const band = await mountBand($)
+  for (const key of ['tact-0', 'tact-1', 'refresh', 'settings']) expect(await band.find({ key })).toBeDefined()
+  for (const key of ['selteam-0', 'rmteam-0', 'actions']) expect(await band.find({ key })).toBeUndefined()
+  await band.press({ key: 'tact-0' })
+  for (const v of ['selall', 'selwork', 'add', 'movehere', 'remove', 'boss', 'brief', 'briefsel', 'bulk', 'rmteam']) expect(await band.find({ key: `tact-0-${v}` })).toBeDefined()
+  expect(await band.find({ key: 'tact-1-add' })).toBeUndefined()
+  await band.press({ key: 'tact-0' })
+  expect(await band.find({ key: 'tact-0-add' })).toBeUndefined()
+  await teamAct(band, 1, 'selwork')
+  expect((await band.find({ key: 'sel-Beta|BW' }) as any).props.label).toBe('[x]')
+  expect((await band.find({ key: 'sel-Beta|BHead' }) as any).props.label).toBe('[ ]')
+  await band.press({ key: 'settings' })
+  expect(await band.find({ key: 'layout-columns' })).toBeDefined()
+})
+
+test('move selected here: a head whose reports stay behind is refused; ticking them too moves the whole branch', async ($, on) => {
   const files = await alphaBeta($, on)
   const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__member_move', team: 'Alpha', name: 'Head', toTeam: 'Beta' } as any)
   expect(JSON.stringify(out)).toContain('Refused: W1 reports to Head')
-  expect(row(files, 'Head').team).toBe('Alpha')
   const band = await mountBand($)
   await band.press({ key: 'sel-Alpha|Head' })
+  await teamAct(band, 1, 'movehere')
+  expect(JSON.stringify(await band.drawn())).toContain('Refused: W1 reports to Head')
+  expect(row(files, 'Head').team).toBe('Alpha')
   await band.press({ key: 'sel-Alpha|W1' })
-  await band.select({ key: 'actions', value: 'move' })
-  await band.select({ key: 'move-to', value: 'Beta' })
-  await band.press({ key: 'move-go' })
+  await teamAct(band, 1, 'movehere')
   expect([row(files, 'Head').team, row(files, 'Head').boss, row(files, 'Head').level]).toEqual(['Beta', 'BHead', 2])
   expect([row(files, 'W1').team, row(files, 'W1').boss, row(files, 'W1').level]).toEqual(['Beta', 'Head', 3])
-  // the ticks are cleared and the menu is back to rest
+  // the ticks are cleared
   expect((await band.find({ key: 'sel-Beta|W1' }) as any).props.label).toBe('[ ]')
-  expect(await band.find({ key: 'move-go' })).toBeUndefined()
 })
 
-test('remove from the menu asks first: Cancel keeps the member, Confirm takes it off the roster', async ($, on) => {
+test('remove selected and remove team ask first: Cancel keeps, Confirm takes them off the roster', async ($, on) => {
   const files = await alphaBeta($, on)
   const band = await mountBand($)
   await band.press({ key: 'sel-Alpha|W1' })
-  await band.select({ key: 'actions', value: 'remove' })
-  expect(await band.find({ key: 'remove-confirm' })).toBeDefined()
-  await band.select({ key: 'remove-confirm', value: 'cancel' })
-  expect(await band.find({ key: 'remove-confirm' })).toBeUndefined()
+  await teamAct(band, 0, 'remove')
+  expect(await band.find({ key: 'confirm-0' })).toBeDefined()
+  await band.press({ key: 'cancel-0' })
+  expect(await band.find({ key: 'confirm-0' })).toBeUndefined()
   expect(row(files, 'W1')).toBeDefined()
-  await band.select({ key: 'actions', value: 'remove' })
-  await band.select({ key: 'remove-confirm', value: 'confirm' })
+  await teamAct(band, 0, 'remove')
+  await band.press({ key: 'confirm-0' })
   expect(row(files, 'W1')).toBeUndefined()
+  await teamAct(band, 1, 'rmteam')
+  expect(row(files, 'BW')).toBeDefined()
+  await band.press({ key: 'confirm-1' })
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Head'])
   expect(files.calls.filter(a => a.includes('close') || a.includes('kill')).length).toBe(0)
 })
 
@@ -477,31 +508,41 @@ test('change boss offers only members of the same team that are not the ticked o
   const files = await alphaBeta($, on)
   const band = await mountBand($)
   await band.press({ key: 'sel-Beta|BW' })
-  await band.select({ key: 'actions', value: 'boss' })
-  const opts = ((await band.find({ key: 'boss-to' })) as any).props.options.map((o: any) => o.value)
-  expect(opts).toEqual(['BHead'])
-  await band.press({ key: 'sel-Beta|BW' })
-  await band.press({ key: 'sel-Beta|BHead' })
+  await teamAct(band, 1, 'boss')
+  expect(await band.find({ key: 'boss-1-BHead' })).toBeDefined()
+  expect(await band.find({ key: 'boss-1-BW' })).toBeUndefined()
   // the head and its report ticked: no one in the team is left to be their boss
-  expect(await band.find({ key: 'boss-to' })).toBeUndefined()
   await band.press({ key: 'sel-Beta|BHead' })
-  await band.press({ key: 'sel-Beta|BW' })
-  await band.select({ key: 'boss-to', value: 'BHead' })
+  expect(await band.find({ key: 'boss-1-BHead' })).toBeUndefined()
+  await band.press({ key: 'sel-Beta|BHead' })
+  await band.press({ key: 'boss-1-BHead' })
   expect([row(files, 'BW').boss, row(files, 'BW').level]).toEqual(['BHead', 2])
 })
 
-test('add member lists live tabs that are not on the roster, and adopts the picked one into a team', async ($, on) => {
+test('add member lists live tabs that are not on the roster, and adopts the picked one into that team', async ($, on) => {
   const files = await alphaBeta($, on, [
     { handle: 'term_a1', title: '✳ Head' },
     { handle: 'term_0e1', title: '✳ New Guy' },
   ])
   const band = await mountBand($)
-  await band.select({ key: 'actions', value: 'add' })
-  const tabs = ((await band.find({ key: 'add-tab' })) as any).props.options
-  expect(tabs).toEqual([{ value: 'term_0e1', label: 'New Guy' }])
-  await band.select({ key: 'add-team', value: 'Alpha' })
-  await band.select({ key: 'add-boss', value: 'Head' })
-  await band.input({ key: 'add-role', text: 'reviewer', kind: 'change' })
-  await band.press({ key: 'add-go' })
-  expect([row(files, 'New Guy').team, row(files, 'New Guy').boss, row(files, 'New Guy').level, row(files, 'New Guy').handle, row(files, 'New Guy').role]).toEqual(['Alpha', 'Head', 2, 'term_0e1', 'reviewer'])
+  await teamAct(band, 0, 'add')
+  expect(await band.find({ key: 'addtab-0-term_0e1' })).toBeDefined()
+  expect(await band.find({ key: 'addtab-0-term_a1' })).toBeUndefined()
+  // the boss defaults to the team's head
+  expect((await band.find({ key: 'addboss-0-Head' }) as any).props.variant).toBe('primary')
+  await band.press({ key: 'addboss-0-W1' })
+  await band.input({ key: 'addrole-0', text: 'reviewer', kind: 'change' })
+  await band.press({ key: 'addgo-0' })
+  expect([row(files, 'New Guy').team, row(files, 'New Guy').boss, row(files, 'New Guy').level, row(files, 'New Guy').handle, row(files, 'New Guy').role]).toEqual(['Alpha', 'W1', 3, 'term_0e1', 'reviewer'])
+})
+
+test('an action that needs ticked rows says so instead of opening', async ($, on) => {
+  await alphaBeta($, on)
+  const band = await mountBand($)
+  await teamAct(band, 0, 'bulk')
+  expect(JSON.stringify(await band.drawn())).toContain('Tick at least one row first.')
+  expect(await band.find({ key: 'apply' })).toBeUndefined()
+  await band.press({ key: 'sel-Alpha|W1' })
+  await teamAct(band, 0, 'bulk')
+  expect(await band.find({ key: 'apply' })).toBeDefined()
 })
