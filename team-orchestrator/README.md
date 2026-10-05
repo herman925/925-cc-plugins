@@ -50,17 +50,25 @@ The rule keeps away from every short name you set: if you call the CEO `Workers`
 
 ### Hualong
 
-| Name | What the rule gives | What Herman sets |
-|---|---|---|
-| Hualong CEO | CEO | CEO |
-| Hualong Workers | Workers | Workers |
-| Hualong Worker 5 | W5 | W5 |
-| Hualong PC Console Boss | PC Boss | Boss |
-| Hualong PC Worker A | PC A | WA |
-| Hualong PC Worker B | PC B | WB |
+The real roster has two teams, `Hualong-HQ` and `Hualong-PC`. The rule cuts a team name at the hyphen, so
+`Hualong-PC` takes the words `Hualong PC` off every name in that team. This is what the rule gives, with no short name set:
 
-The last two columns differ on three rows. The rule cannot know that `PC Console Boss` is "the boss" and that
-`PC Worker A` is "worker A": set those three by hand.
+| Team | Name | What the rule gives |
+|---|---|---|
+| Hualong-HQ | Hualong CEO | CEO |
+| Hualong-HQ | Hualong Workers | Workers |
+| Hualong-HQ | Hualong Worker 5 | W5 |
+| Hualong-PC | Hualong PC Console Boss | Boss |
+| Hualong-PC | Hualong PC Worker A | WA |
+| Hualong-PC | Hualong PC Worker B | WB |
+
+The roster file of 2026-10-05 holds other names in the same two teams: `Hualong-Messenger` gives `Messenger`,
+`Hualong-PC-Lead` gives `Lead`.
+
+The team name matters. If all six were in one team named plain `Hualong`, the rule would keep the `PC` and give
+`PC Boss`, `PC A` and `PC B`. Both cases are tests (`layout.test.ts`).
+
+Where a label is not the one you want, set it by hand.
 
 ### An example the rule does not understand
 

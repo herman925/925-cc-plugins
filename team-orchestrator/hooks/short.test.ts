@@ -3,7 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import { chartLabelInfo, chartLabels, shorten } from './layout'
 import { adopt, HUALONG, mountBand, saved, shown, world } from './test-world'
 
-// The short names the person wants for the Hualong team (the table in the README)
+// The short names the person wants for the Hualong team (the table in the README). The team here is named "Hualong";
+// the real teams are Hualong-HQ and Hualong-PC (see layout.test.ts).
 const WANTED: Record<string, string> = {
   'Hualong CEO': 'CEO',
   'Hualong Workers': 'Workers',
@@ -31,7 +32,7 @@ test('a short name the person gave is used exactly as typed, and is not marked a
   expect(odd.map(i => i.label)).toEqual(['r&d lead', 'x'])
 })
 
-test('with no short names the rule gives what it gave before, and says every label is automatic', () => {
+test('with no short names, one team named Hualong, the rule gives what it gave before, and says every label is automatic', () => {
   const got = labelsOf(hualong())
   expect(got.map(i => i.label)).toEqual(['CEO', 'Workers', 'W5', 'PC Boss', 'PC A', 'PC B'])
   for (const i of got) expect(i.auto).toBe(true)

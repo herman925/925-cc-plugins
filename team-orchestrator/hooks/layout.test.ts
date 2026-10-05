@@ -71,7 +71,7 @@ test('a long name is cut with "…" and still leaves one space before the status
   expect(name.endsWith('… ')).toBe(true)
 })
 
-test('org chart labels: the team prefix goes, each label is unique and at least two characters', () => {
+test('org chart labels, one team named Hualong: the team prefix goes, each label is unique and at least two characters', () => {
   const team = (name: string) => ({ team: 'Hualong', name })
   const list = ['Hualong CEO', 'Hualong Workers', 'Hualong Worker 5', 'Hualong PC Console Boss', 'Hualong PC Worker A', 'Hualong PC Worker B'].map(team)
   const labels = chartLabels(list)
@@ -115,4 +115,32 @@ test('org chart labels for names the plugin makes and names people pick: short, 
     expect(new Set(got).size).toBe(got.length)
     for (const l of got) expect(l.length).toBeGreaterThanOrEqual(2)
   }
+})
+
+// The real roster file has two teams with a hyphen in their names: words() splits at "-", so "Hualong-PC" takes
+// "Hualong PC" off every name in it. The names below are the ones in the Hualong table of the README.
+test('org chart labels, real team names Hualong-HQ and Hualong-PC: CEO, Workers, W5, Boss, WA, WB', () => {
+  const list = [
+    { team: 'Hualong-HQ', name: 'Hualong CEO' },
+    { team: 'Hualong-HQ', name: 'Hualong Workers' },
+    { team: 'Hualong-HQ', name: 'Hualong Worker 5' },
+    { team: 'Hualong-PC', name: 'Hualong PC Console Boss' },
+    { team: 'Hualong-PC', name: 'Hualong PC Worker A' },
+    { team: 'Hualong-PC', name: 'Hualong PC Worker B' },
+  ]
+  const labels = chartLabels(list)
+  expect(list.map(m => labels.get(`${m.team}|${m.name}`))).toEqual(['CEO', 'Workers', 'W5', 'Boss', 'WA', 'WB'])
+})
+
+test('org chart labels, the roster file of 2026-10-05 (teams Hualong-HQ and Hualong-PC): CEO, Workers, Messenger, Lead, WA, WB', () => {
+  const list = [
+    { team: 'Hualong-HQ', name: 'Hualong CEO' },
+    { team: 'Hualong-HQ', name: 'Hualong Workers' },
+    { team: 'Hualong-HQ', name: 'Hualong-Messenger' },
+    { team: 'Hualong-PC', name: 'Hualong-PC-Lead' },
+    { team: 'Hualong-PC', name: 'Hualong PC Worker A' },
+    { team: 'Hualong-PC', name: 'Hualong PC Worker B' },
+  ]
+  const labels = chartLabels(list)
+  expect(list.map(m => labels.get(`${m.team}|${m.name}`))).toEqual(['CEO', 'Workers', 'Messenger', 'Lead', 'WA', 'WB'])
 })
