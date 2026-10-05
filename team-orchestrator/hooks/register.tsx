@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Act, Bulk, Form, Member, Settings, View } from '../types'
+import { CHECK as CHECK_W, cell, chartLabels, columnPlan, EFFORT_SHORT, family, fit, headerLine } from './layout'
 
 const ORCA = 'orca.exe'
 const TOOL = 'mcp__team-orchestrator__team_launch'
@@ -84,10 +85,8 @@ const SETTINGS0: Settings = { layout: 'stacked', chart: true, hide: [] }
 const settings = atom({ plugin: 'team-orchestrator', key: 'settings' } as const, SETTINGS0)
 const readSettings = async ($: any): Promise<Settings> => ({ ...SETTINGS0, ...(await read($, settings)) })
 const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF', 'OPEN'] as const
-const shownCols = (s: Settings) => COLS.filter(c => !s.hide.includes(c))
-// cells across one column of the table, and around it: checkbox 4, card border and padding 4, Remove button 10
-const COL_W: Record<string, number> = { STATUS: 11, CONTEXT: 16, MODEL: 14, EFFORT: 8, BRIEF: 9, OPEN: 9 }
-const cardWidth = (nameW: number, s: Settings) => 4 + nameW + shownCols(s).reduce((a, c) => a + (COL_W[c] ?? 0), 0) + 10 + 4
+// a card's border and padding, around the cells columnPlan lays out
+const FRAME = 4
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
 const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
   s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
@@ -208,10 +207,12 @@ const look = (s: string): [string, string, string] =>
   : s === 'failed' ? ['✗', 'failed', 'red']
   : ['?', s.slice(0, 8), 'magenta']
 
-const bar = (pct: number): [string, string] => {
-  if (pct < 0) return ['[········]   --', 'gray']
-  const f = Math.min(8, Math.round(pct / 12.5))
-  return [`[${'█'.repeat(f)}${'░'.repeat(8 - f)}] ${String(pct).padStart(3)}%`, pct < 50 ? 'green' : pct < 80 ? 'yellow' : 'red']
+// `cells` wide bar and the percent on one line; 0 cells is the percent alone
+const bar = (pct: number, cells = 8): [string, string] => {
+  const frame = (inner: string) => (cells > 0 ? `[${inner}] ` : '')
+  if (pct < 0) return [`${frame('·'.repeat(cells))}  --`, 'gray']
+  const f = Math.min(cells, Math.round((pct * cells) / 100))
+  return [`${frame(`${'█'.repeat(f)}${'░'.repeat(cells - f)}`)}${String(pct).padStart(3)}%`, pct < 50 ? 'green' : pct < 80 ? 'yellow' : 'red']
 }
 
 const handleOf = (json: string): string => json.match(/term_[0-9a-f-]+/)?.[0] ?? ''
@@ -1215,23 +1216,25 @@ const arriveAt = (d: number, f: number) => f >= d * 6 + 4 && f <= d * 6 + 6
 // The grid of cells for one frame. Pure: the same members and frame always give the same drawing.
 function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
   const roots = treeOf(list)
-  const short = (m: Member) => (m.name.startsWith(`${m.team}-`) ? m.name.slice(m.team.length + 1) : m.name)
+  const labels = chartLabels(list)
   const all: TNode[] = []
   const collect = (n: TNode) => (all.push(n), n.kids.forEach(collect))
   roots.forEach(collect)
   if (all.length === 0) return []
   // one pass per tier of bosses, then a rest, so a squad repeats faster than a three-tier org
   const f = t % (Math.max(...all.map(n => n.depth)) * 6 + 6)
-  const tagOf = (mode: string, m: Member) => (mode === 'name' ? short(m) : mode === 'num' ? (short(m).match(/\d+$/)?.[0] ?? short(m).slice(0, 1)) : '')
+  // each member's shortest unique label; where even those do not fit, dots alone (a letter each told no one apart)
+  const tagOf = (mode: string, m: Member) => (mode === 'name' ? (labels.get(`${m.team}|${m.name}`) ?? m.name) : '')
   const widthOf = (mode: string) => {
     const gap = mode === 'dot' ? 1 : 2
-    const cell = Math.max(...all.map(n => 1 + (tagOf(mode, n.m) ? 1 + tagOf(mode, n.m).length : 0))) + (mode === 'dot' ? 2 : 2)
+    // each node as wide as its own label, so one long name does not widen every other
+    const cell = (n: TNode) => 1 + (tagOf(mode, n.m) ? 1 + tagOf(mode, n.m).length : 0) + 2
     const lay = (n: TNode): number =>
-      (n.w = n.kids.length === 0 ? cell : Math.max(cell, n.kids.map(lay).reduce((a, b) => a + b, 0) + gap * (n.kids.length - 1)))
+      (n.w = n.kids.length === 0 ? cell(n) : Math.max(cell(n), n.kids.map(lay).reduce((a, b) => a + b, 0) + gap * (n.kids.length - 1)))
     const total = roots.map(lay).reduce((a, b) => a + b, 0) + gap * (roots.length - 1)
-    return { cell, gap, total }
+    return { gap, total }
   }
-  const mode = ['name', 'num'].find(md => widthOf(md).total <= Math.max(20, cols - 6)) ?? 'dot'
+  const mode = widthOf('name').total <= Math.max(20, cols - 6) ? 'name' : 'dot'
   const { gap } = widthOf(mode)
   const place = (n: TNode, left: number) => {
     if (n.kids.length === 0) return void (n.x = left + (n.w >> 1))
@@ -1587,6 +1590,7 @@ const TEAM_ACTIONS: [string, string][] = [
   ['brief', 'Brief team'],
   ['briefsel', 'Brief selected'],
   ['bulk', 'Rename / Model / Effort of selected…'],
+  ['open', 'Open selected (its Orca tab)'],
   ['rmteam', 'Remove team'],
 ]
 
@@ -1609,10 +1613,10 @@ async function rosterView($: any, ui: any, cols: number) {
     await share($)
   }
   const s = await readSettings($)
-  const show = (c: string) => !s.hide.includes(c)
-  const nameWidth = (mine: Member[]) => Math.max(12, ...treeLines(mine).map(r => (r.prefix + r.name).length)) + 1
-  const widest = Math.max(0, ...teams.map(team => cardWidth(nameWidth(list.filter(m => m.team === team)), s)))
+  // a card's widest wish is its wide plan with whole names; side by side fits as many of those as the width holds
+  const widest = Math.max(1, ...teams.map(team => columnPlan(treeLines(list.filter(m => m.team === team)), 1000, s.hide).total + FRAME))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
+  const cardW = Math.floor(cols / perRow)
   // a team menu's action: what it works on is the ticked rows; done, the ticks clear (a refused one keeps them)
   const a = await readAct($)
   const setAct = (patch: Partial<Act>) => update($, act, old => ({ ...ACT0, ...old, ...patch }))
@@ -1625,12 +1629,17 @@ async function rosterView($: any, ui: any, cols: number) {
   }
   const pick = async (team: string, kind: string) => {
     const head = list.find(m => m.team === team && !list.some(x => x.team === team && x.name === m.boss))
-    const needsTicks = ['movehere', 'remove', 'boss', 'briefsel', 'bulk'].includes(kind)
+    const needsTicks = ['movehere', 'remove', 'boss', 'briefsel', 'bulk', 'open'].includes(kind)
     if (needsTicks && picked === 0) return void (await setAct({ ...ACT0, to: team, msg: 'Tick at least one row first.' }))
     if (kind === 'selall') return void (await tick(m => m.sel || m.team === team), await setAct(ACT0))
     if (kind === 'selwork')
       return void (await tick(m => m.sel || (m.team === team && m.level === maxLevel(team) && maxLevel(team) > 1)), await setAct(ACT0))
     if (kind === 'movehere') return void (await finish(team, move($, ticked, team)))
+    if (kind === 'open') {
+      const m = list.find(x => x.sel && x.handle !== '')
+      if (m) await $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])
+      return void (await setAct({ ...ACT0, to: team, msg: m ? `Opened ${m.name}.` : 'No ticked row has an Orca tab.' }))
+    }
     if (kind === 'brief') return void (await finish(team, briefTeam($, team).then(() => `Briefed team @${team}.`)))
     if (kind === 'briefsel') {
       for (const x of new Set(list.filter(m => m.sel).map(m => m.team))) await briefTeam($, x, ticked)
@@ -1788,13 +1797,16 @@ async function rosterView($: any, ui: any, cols: number) {
         const mine = list.filter(m => m.team === team)
         const rows = treeLines(mine)
         const byName = new Map(mine.map(m => [m.name, m]))
-        const nameW = nameWidth(mine)
         const unbriefed = mine.filter(m => m.handle && !m.briefed).length
         const head = mine.find(m => !mine.some(x => x.name === m.boss))
+        // the cells inside this card, laid out for its real width on every draw
+        const inner = cardW - FRAME
+        const p = columnPlan(rows, inner, s.hide)
+        const top = `╔═ TEAM @${team} ═ ${mine.length} member${mine.length === 1 ? '' : 's'}, head ${head?.name ?? '-'} `
         return (
-          <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column" {...(perRow > 1 ? { width: Math.floor(cols / perRow) } : {})}>
+          <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column" width={cardW}>
             <Text bold color="cyan">
-              ╔═ TEAM @{team} ═ {mine.length} member{mine.length === 1 ? '' : 's'}, head {head?.name ?? '-'} ═╗
+              {fit(top, inner - 1).padEnd(inner - 1, '═')}╗
             </Text>
             <Input
               key={`tname-${ti}`}
@@ -1808,36 +1820,43 @@ async function rosterView($: any, ui: any, cols: number) {
               }}
               onSubmit={() => {}}
             />
-            <Text dimColor>
-              {'    '}
-              {'NAME'.padEnd(nameW)}
-              {shownCols(s).filter(c => c !== 'OPEN').map(c => c.padEnd(COL_W[c] ?? 0)).join('')}
-            </Text>
+            <Text dimColor>{headerLine(p)}</Text>
             {rows.map(r => {
               const m = byName.get(r.name)!
               const [glyph, label, color] = look(m.state)
-              const [ctxText, ctxColor] = bar(m.ctx)
+              const [ctxText, ctxColor] = bar(m.ctx, p.tier === 'wide' ? 8 : p.tier === 'medium' ? 4 : 0)
               const [bt, bc] = m.noted ? ['✓ noted', 'green'] : m.briefed ? ['… sent', 'yellow'] : ['- none', 'gray']
+              const effort = m.effort.toLowerCase()
+              const value: Record<string, [string, string | undefined]> = {
+                STATUS: [p.tier === 'narrow' ? glyph : `${glyph} ${label}`, color],
+                CONTEXT: [ctxText.trim(), ctxColor],
+                MODEL: [(p.tier === 'wide' ? m.model : family(m.model)) || '-', undefined],
+                EFFORT: [(p.tier === 'narrow' ? EFFORT_SHORT[effort] : m.effort) || '-', SHADE[effort]],
+                BRIEF: [bt, bc],
+              }
+              // the note goes after the row while it has room, else on a line of its own: never wrapped
+              const room = inner - p.total
               return (
-                <Box>
-                  <Button key={`sel-${keyOf(m)}`} label={m.sel ? '[x]' : '[ ]'} plain onPress={() => void toggle(keyOf(m))} />
-                  <Text> </Text>
-                  <Text dimColor>{r.prefix}</Text>
-                  <Text color={levelShade(m.level)}>{r.name.padEnd(nameW - r.prefix.length)}</Text>
-                  {show('STATUS') && <Text color={color}>{`${glyph} ${label}`.padEnd(11)}</Text>}
-                  {show('CONTEXT') && <Text color={ctxColor}>{ctxText.padEnd(16)}</Text>}
-                  {show('MODEL') && <Text>{(m.model || '-').padEnd(14)}</Text>}
-                  {show('EFFORT') && <Text color={SHADE[m.effort.toLowerCase()]}>{(m.effort || '-').padEnd(8)}</Text>}
-                  {show('BRIEF') && <Text color={bc}>{bt.padEnd(9)}</Text>}
-                  {show('OPEN') && m.handle !== '' && (
-                    <Button
-                      key={`go-${keyOf(m)}`}
-                      label="Open"
-                      onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
-                    />
-                  )}
-                  <Button key={`rm-${keyOf(m)}`} label="Remove" onPress={() => void remove($, m.team, m.name)} />
-                  {m.note !== '' && <Text dimColor> {m.note}</Text>}
+                <Box flexDirection="column">
+                  <Box>
+                    <Button key={`sel-${keyOf(m)}`} label={m.sel ? '[x]' : '[ ]'} plain onPress={() => void toggle(keyOf(m))} />
+                    <Text> </Text>
+                    <Text dimColor>{fit(r.prefix, p.nameW - 1)}</Text>
+                    <Text color={levelShade(m.level)}>{cell(r.name, p.nameW - Math.min(r.prefix.length, p.nameW - 1))}</Text>
+                    {p.cols.map(c => (
+                      <Text color={value[c.id]?.[1]}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
+                    ))}
+                    {p.buttons && (m.handle !== '' ? (
+                      <Button
+                        key={`go-${keyOf(m)}`}
+                        label="Open"
+                        onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
+                      />
+                    ) : <Text>{' '.repeat(8)}</Text>)}
+                    {p.buttons && <Button key={`rm-${keyOf(m)}`} label="Remove" onPress={() => void remove($, m.team, m.name)} />}
+                    {m.note !== '' && room >= 12 && <Text dimColor> {fit(m.note, room - 1)}</Text>}
+                  </Box>
+                  {m.note !== '' && room < 12 && <Text dimColor>{' '.repeat(CHECK_W)}{fit(m.note, inner - CHECK_W)}</Text>}
                 </Box>
               )
             })}
@@ -1863,7 +1882,7 @@ async function rosterView($: any, ui: any, cols: number) {
               </Box>
             )}
             {actionBox(team, ti)}
-            <Text dimColor>╚{'═'.repeat(60)}╝</Text>
+            <Text dimColor>╚{'═'.repeat(Math.max(0, inner - 2))}╝</Text>
           </Box>
         )
       })}

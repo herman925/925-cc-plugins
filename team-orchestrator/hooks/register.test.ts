@@ -358,7 +358,7 @@ test('defaults keep the old look: chart shown, every column, cards stacked', asy
   expect(s).toContain('LIVE ORG')
   for (const c of ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF']) expect(s).toContain(c)
   expect(await band.find({ key: 'go-Hualong|A' })).toBeDefined()
-  expect(cardWidths(await band.drawn())).toEqual([undefined, undefined])
+  expect(cardWidths(await band.drawn())).toEqual([300, 300])
 })
 
 test('settings hide the chart and columns, and stay after a refresh and a new drawing', async ($, on) => {
@@ -390,7 +390,7 @@ test('side by side: cards share a row only where two fit; a narrow terminal stay
   await band.press({ key: 'tab-settings' })
   await band.press({ key: 'layout-columns' })
   await band.press({ key: 'tab-roster' })
-  expect(cardWidths(await band.drawn())).toEqual([undefined, undefined])
+  expect(cardWidths(await band.drawn())).toEqual([120, 120])
   const wide = await bandAt($, 300)
   const widths = cardWidths(await wide.drawn())
   expect(widths.length).toBe(2)
@@ -545,4 +545,34 @@ test('an action that needs ticked rows says so instead of opening', async ($, on
   await band.press({ key: 'sel-Alpha|W1' })
   await teamAct(band, 0, 'bulk')
   expect(await band.find({ key: 'apply' })).toBeDefined()
+})
+
+// 0.4.1: the roster at 60 columns (the docked pane Herman uses): no row is wider than the card, the chart tells members apart
+test('at 60 columns every row fits inside its card and the org chart shows unique labels', async ($, on) => {
+  world(on, [], [])
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user' },
+    { name: 'Hualong Workers', role: 'head', level: 2, boss: 'Hualong CEO' },
+    { name: 'Hualong Worker 5', role: 'worker', level: 3, boss: 'Hualong Workers' },
+    { name: 'Hualong PC Console Boss', role: 'head', level: 2, boss: 'Hualong CEO' },
+    { name: 'Hualong PC Worker A', role: 'worker', level: 3, boss: 'Hualong PC Console Boss' },
+    { name: 'Hualong PC Worker B', role: 'worker', level: 3, boss: 'Hualong PC Console Boss' },
+  ])
+  const tree: any = await (await bandAt($, 60)).drawn()
+  const text = (n: any): string =>
+    typeof n === 'string' ? n : n?.type === 'Button' ? String(n.props?.label ?? '') : (n?.children ?? []).map(text).join('')
+  const rowsOf: string[] = []
+  const walk = (n: any) => {
+    if (!n || typeof n !== 'object') return
+    const kids = n.children ?? []
+    if (n.type === 'Box' && kids[0]?.type === 'Button' && String(kids[0].props?.key ?? '').startsWith('sel-')) rowsOf.push(text(n))
+    kids.forEach(walk)
+  }
+  walk(tree)
+  expect(rowsOf.length).toBe(6)
+  for (const r of rowsOf) expect(r.length).toBeLessThanOrEqual(56)
+  const s = JSON.stringify(tree)
+  for (const label of ['CEO', 'Workers', 'W5', 'PC Boss', 'PC A', 'PC B']) expect(s).toContain(` ${label}`)
+  // the card's top and bottom lines are as wide as the card's inside
+  expect(s).toContain(`"${'═'.repeat(54)}"`)
 })
