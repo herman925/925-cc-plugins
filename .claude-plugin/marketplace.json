@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "herman-cc-mod",
-      "source": "./herman-cc-mod",
+      "name": "speaker-colours",
+      "source": "./speaker-colours",
       "description": "Herman's Claude Code mod (speaker colours, more to come)"
     },
     {

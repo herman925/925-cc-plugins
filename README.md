@@ -4,7 +4,7 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod.
 
 | Mod | What it does | Version |
 |---|---|---|
-| `herman-cc-mod` | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
+| `speaker-colours` | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
 | `team-orchestrator` | Builds and manages a team of Claude Code sessions as Orca tabs. Welcome screen with quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, a live roster and an animated org chart whose dots follow each session's status. | 0.3.0 |
 
 ## Install
