@@ -1,0 +1,21 @@
+{
+  "name": "herman-mods",
+  "owner": {
+    "name": "Herman Chan"
+  },
+  "metadata": {
+    "description": "Herman's personal Claude Code mods"
+  },
+  "plugins": [
+    {
+      "name": "herman-cc-mod",
+      "source": "./herman-cc-mod",
+      "description": "Herman's Claude Code mod (speaker colours, more to come)"
+    },
+    {
+      "name": "team-orchestrator",
+      "source": "./team-orchestrator",
+      "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs."
+    }
+  ]
+}

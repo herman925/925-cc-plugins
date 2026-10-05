@@ -1,0 +1,6 @@
+{
+  "name": "herman-cc-mod",
+  "version": "0.1.0",
+  "description": "Herman's Claude Code mod: blue speaker bar for user messages, orange for Claude replies (more features to come)",
+  "author": { "name": "Herman Chan" }
+}
