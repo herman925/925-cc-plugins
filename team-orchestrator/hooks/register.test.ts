@@ -267,7 +267,10 @@ test('member_remove takes one member off; the last team removed leaves an empty 
 test('the roster rows and team cards remove too', async ($, on) => {
   const { files, calls } = await twoTeams($, on)
   const band = await mountBand($)
-  await band.press({ key: 'rm-Hualong|W1' })
+  await band.press({ key: 'sel-Hualong|W1' })
+  await band.press({ key: 'tact-1' })
+  await band.press({ key: 'tact-1-remove' })
+  await band.press({ key: 'confirm-1' })
   expect(saved(files).map((m: any) => m.name)).toEqual(['Old-Head', 'Head'])
   await band.press({ key: 'tact-0' })
   await band.press({ key: 'tact-0-rmteam' })
@@ -308,8 +311,8 @@ test('names take one colour per level in the table and the chart, the same in ev
   for (const c of ['#ff79c6', '#bd93f9', '#8be9fd', '#a0a8b8']) expect(['green', 'yellow']).not.toContain(c)
 })
 
-test('the effort value is coloured on a scale from low (cool) to max (hot), and Open is a button like Refresh', async ($, on) => {
-  world(on, [{ handle: 'term_jj1', title: 'A', screen: 'Thinking: low' }, { handle: 'term_jj2', title: 'B', screen: 'Thinking: max' }], [])
+test('the effort value is coloured on a scale from low (cool) to max (hot); rows carry no buttons, Open is in Team actions', async ($, on) => {
+  const files = world(on, [{ handle: 'term_jj1', title: 'A', screen: 'Thinking: low' }, { handle: 'term_jj2', title: 'B', screen: 'Thinking: max' }], [])
   await adopt($, [
     { name: 'A', role: 'head', level: 1, boss: 'user', handle: 'term_jj1' },
     { name: 'B', role: 'worker', level: 2, boss: 'A', handle: 'term_jj2' },
@@ -318,11 +321,12 @@ test('the effort value is coloured on a scale from low (cool) to max (hot), and 
   const tree = await band.drawn()
   expect(colours(tree, 'low')[0]).toBe('#6c8cff')
   expect(colours(tree, 'max')[0]).toBe('#ff4d4d')
-  const open: any = await band.find({ key: 'go-Hualong|A' })
-  const refresh: any = await band.find({ key: 'refresh' })
-  expect(open.props.plain).toBeUndefined()
-  expect(open.props.label).toBe('Open')
-  expect(refresh.props.plain).toBeUndefined()
+  expect(await band.find({ key: 'go-Hualong|A' })).toBeUndefined()
+  expect(await band.find({ key: 'rm-Hualong|A' })).toBeUndefined()
+  await band.press({ key: 'sel-Hualong|A' })
+  await band.press({ key: 'tact-0' })
+  await band.press({ key: 'tact-0-open' })
+  expect(files.calls.some(a => a.includes('switch') && a.includes('term_jj1'))).toBe(true)
 })
 
 // items 6 and 7: settings (layout, org chart, columns) that stay across a refresh and a fresh drawing
@@ -357,7 +361,6 @@ test('defaults keep the old look: chart shown, every column, cards stacked', asy
   const s = JSON.stringify(await band.drawn())
   expect(s).toContain('LIVE ORG')
   for (const c of ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF']) expect(s).toContain(c)
-  expect(await band.find({ key: 'go-Hualong|A' })).toBeDefined()
   expect(cardWidths(await band.drawn())).toEqual([300, 300])
 })
 
@@ -365,10 +368,10 @@ test('settings hide the chart and columns, and stay after a refresh and a new dr
   await twoSmallTeams($, on)
   let band = await bandAt($, 120)
   await band.press({ key: 'tab-settings' })
-  for (const key of ['layout-stacked', 'layout-columns', 'layout-dock', 'chart-1', 'chart-0', 'col-STATUS', 'col-OPEN']) expect(await band.find({ key })).toBeDefined()
+  for (const key of ['layout-stacked', 'layout-columns', 'layout-dock', 'chart-1', 'chart-0', 'col-STATUS', 'col-BRIEF']) expect(await band.find({ key })).toBeDefined()
   await band.press({ key: 'chart-0' })
   await band.press({ key: 'col-MODEL' })
-  await band.press({ key: 'col-OPEN' })
+  await band.press({ key: 'col-BRIEF' })
   await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
   band = await bandAt($, 120)
@@ -376,7 +379,7 @@ test('settings hide the chart and columns, and stay after a refresh and a new dr
   expect(s).not.toContain('LIVE ORG')
   expect(s).not.toContain('MODEL')
   expect(s).toContain('EFFORT')
-  expect(await band.find({ key: 'go-Hualong|A' })).toBeUndefined()
+  expect(s).not.toContain('BRIEF')
   // and back on
   await band.press({ key: 'tab-settings' })
   await band.press({ key: 'col-MODEL' })
@@ -457,7 +460,9 @@ test('each team card has one Team actions menu that opens and closes by press, a
   for (const key of ['tact-0', 'tact-1', 'refresh', 'settings']) expect(await band.find({ key })).toBeDefined()
   for (const key of ['selteam-0', 'rmteam-0', 'actions']) expect(await band.find({ key })).toBeUndefined()
   await band.press({ key: 'tact-0' })
-  for (const v of ['selall', 'selwork', 'add', 'movehere', 'remove', 'boss', 'brief', 'briefsel', 'bulk', 'rmteam']) expect(await band.find({ key: `tact-0-${v}` })).toBeDefined()
+  for (const v of ['selall', 'selwork', 'add', 'movehere', 'remove', 'boss', 'brief', 'briefsel', 'bulk', 'open', 'rmteam']) expect(await band.find({ key: `tact-0-${v}` })).toBeDefined()
+  // the entries come in four groups, each headed by its glyph and name
+  { const d = JSON.stringify(await band.drawn()); for (const h of ['☐ SELECT', '⇄ PEOPLE', '✎ SESSIONS', '✕ REMOVE']) expect(d).toContain(h) }
   expect(await band.find({ key: 'tact-1-add' })).toBeUndefined()
   await band.press({ key: 'tact-0' })
   expect(await band.find({ key: 'tact-0-add' })).toBeUndefined()

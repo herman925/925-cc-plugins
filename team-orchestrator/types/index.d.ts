@@ -71,7 +71,7 @@ export type Settings = {
   layout: 'stacked' | 'columns' | 'dock'
   /** show the live org chart */
   chart: boolean
-  /** table columns hidden (STATUS, CONTEXT, MODEL, EFFORT, BRIEF, OPEN); NAME always shows */
+  /** table columns hidden (STATUS, CONTEXT, MODEL, EFFORT, BRIEF); NAME always shows */
   hide: string[]
 }
 

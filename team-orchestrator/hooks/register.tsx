@@ -84,7 +84,7 @@ const menu = atom({ plugin: 'team-orchestrator', key: 'menu' } as const, '')
 const SETTINGS0: Settings = { layout: 'stacked', chart: true, hide: [] }
 const settings = atom({ plugin: 'team-orchestrator', key: 'settings' } as const, SETTINGS0)
 const readSettings = async ($: any): Promise<Settings> => ({ ...SETTINGS0, ...(await read($, settings)) })
-const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF', 'OPEN'] as const
+const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF'] as const
 // a card's border and padding, around the cells columnPlan lays out
 const FRAME = 4
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
@@ -1580,18 +1580,18 @@ async function formView($: any, ui: any) {
 
 // Each team card's menu. Buttons, not a Select: the terminal's Select takes keys only (arrows, Enter) once
 // focused, and a click does nothing on it; a Button takes a click, so the menu opens like the model lists.
-const TEAM_ACTIONS: [string, string][] = [
-  ['selall', 'Select all'],
-  ['selwork', 'Select workers'],
-  ['add', 'Add member…'],
-  ['movehere', 'Move selected here'],
-  ['remove', 'Remove selected'],
-  ['boss', 'Change boss of selected…'],
-  ['brief', 'Brief team'],
-  ['briefsel', 'Brief selected'],
-  ['bulk', 'Rename / Model / Effort of selected…'],
-  ['open', 'Open selected (its Orca tab)'],
-  ['rmteam', 'Remove team'],
+// Grouped by what the entries do; each group's glyph marks its entries. "selected" = the ticked rows.
+const TEAM_MENU: { glyph: string; title: string; color: string; items: [string, string][] }[] = [
+  { glyph: '☐', title: 'Select', color: 'cyan', items: [['selall', 'All'], ['selwork', 'Workers']] },
+  {
+    glyph: '⇄', title: 'People', color: '#bd93f9',
+    items: [['add', 'Add member…'], ['movehere', 'Move selected here'], ['boss', 'Change boss…']],
+  },
+  {
+    glyph: '✎', title: 'Sessions', color: '#e5c07b',
+    items: [['open', 'Open selected'], ['bulk', 'Rename / model / effort…'], ['brief', 'Brief team'], ['briefsel', 'Brief selected']],
+  },
+  { glyph: '✕', title: 'Remove', color: '#ff4d4d', items: [['remove', 'Selected…'], ['rmteam', 'Whole team…']] },
 ]
 
 async function rosterView($: any, ui: any, cols: number) {
@@ -1834,7 +1834,7 @@ async function rosterView($: any, ui: any, cols: number) {
                 EFFORT: [(p.tier === 'narrow' ? EFFORT_SHORT[effort] : m.effort) || '-', SHADE[effort]],
                 BRIEF: [bt, bc],
               }
-              // the note goes after the row while it has room, else on a line of its own: never wrapped
+              // the note goes after the row when it fits whole, else on a line of its own, cut to the card: never wrapped
               const room = inner - p.total
               return (
                 <Box flexDirection="column">
@@ -1846,17 +1846,9 @@ async function rosterView($: any, ui: any, cols: number) {
                     {p.cols.map(c => (
                       <Text color={value[c.id]?.[1]}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
                     ))}
-                    {p.buttons && (m.handle !== '' ? (
-                      <Button
-                        key={`go-${keyOf(m)}`}
-                        label="Open"
-                        onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
-                      />
-                    ) : <Text>{' '.repeat(8)}</Text>)}
-                    {p.buttons && <Button key={`rm-${keyOf(m)}`} label="Remove" onPress={() => void remove($, m.team, m.name)} />}
-                    {m.note !== '' && room >= 12 && <Text dimColor> {fit(m.note, room - 1)}</Text>}
+                    {m.note !== '' && room > m.note.length && <Text dimColor> {m.note}</Text>}
                   </Box>
-                  {m.note !== '' && room < 12 && <Text dimColor>{' '.repeat(CHECK_W)}{fit(m.note, inner - CHECK_W)}</Text>}
+                  {m.note !== '' && room <= m.note.length && <Text dimColor>{' '.repeat(CHECK_W)}{fit(m.note, inner - CHECK_W)}</Text>}
                 </Box>
               )
             })}
@@ -1870,14 +1862,22 @@ async function rosterView($: any, ui: any, cols: number) {
               <Text dimColor> {picked} selected</Text>
             </Box>
             {a.menu === team && (
-              <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-                {TEAM_ACTIONS.map(([v, label]) => (
-                  <Button
-                    key={`tact-${ti}-${v}`}
-                    plain
-                    label={v === 'brief' && unbriefed > 0 ? `Brief team (${unbriefed} not yet)` : label}
-                    onPress={() => void pick(team, v)}
-                  />
+              <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row" flexWrap="wrap" columnGap={3}>
+                {TEAM_MENU.map(g => (
+                  <Box flexDirection="column">
+                    <Text bold color={g.color}>{`${g.glyph} ${g.title.toUpperCase()}`}</Text>
+                    {g.items.map(([v, label]) => (
+                      <Box>
+                        <Text color={g.color}>{'  '}{g.glyph} </Text>
+                        <Button
+                          key={`tact-${ti}-${v}`}
+                          plain
+                          label={v === 'brief' && unbriefed > 0 ? `Brief team (${unbriefed} not yet)` : label}
+                          onPress={() => void pick(team, v)}
+                        />
+                      </Box>
+                    ))}
+                  </Box>
                 ))}
               </Box>
             )}
