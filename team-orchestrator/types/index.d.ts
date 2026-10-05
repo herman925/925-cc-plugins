@@ -34,6 +34,12 @@ export type Member = {
   effort: string
   sel: boolean
   note: string
+  /** the short name the person gave for the org chart; empty or missing: the chart works one out */
+  short?: string
+  /** this member may use the Agent tool (subagents); off unless set here or by #allow-subagent for one turn */
+  allowAgent?: boolean
+  /** a member with reports may use Write, Edit and NotebookEdit; off unless set here or by #allow-write for one turn */
+  allowWrite?: boolean
   /** the one-time team briefing was sent */
   briefed: boolean
   /** the session answered "Noted" on screen */
@@ -52,10 +58,13 @@ export type Bulk = {
 export type Act = {
   /** the team whose Team actions list is open, '' none */
   menu: string
-  /** none | remove | rmteam | boss | bulk | add */
+  /** none | remove | rmteam | boss | bulk | add | short */
   kind: string
   /** the team card the open action (and its message) belongs to */
   to: string
+  /** short: the row being named (team|name), and the text typed so far */
+  key: string
+  draft: string
   /** add: the boss; boss: the new boss */
   boss: string
   /** add: the picked tab's handle, and its role */

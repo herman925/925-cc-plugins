@@ -2,7 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Act, Bulk, Form, Member, Settings, View } from '../types'
-import { CHECK as CHECK_W, cell, chartLabels, columnPlan, EFFORT_SHORT, family, fit, headerLine } from './layout'
+import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
+import type { Grants } from './guard'
+import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
 const TOOL = 'mcp__team-orchestrator__team_launch'
@@ -90,7 +92,7 @@ const FRAME = 4
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
 const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
   s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
-const ACT0: Act = { menu: '', kind: 'none', to: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
+const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
@@ -104,7 +106,7 @@ const bulk = atom({ plugin: 'team-orchestrator', key: 'bulk' } as const, {
   msg: '',
 } as Bulk)
 
-type Spec = { name: string; role: string; level: number; boss: string; team?: string; model?: string; effort?: string }
+type Spec = { name: string; role: string; level: number; boss: string; team?: string; model?: string; effort?: string; short?: string }
 
 const clean = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40)
 
@@ -239,7 +241,7 @@ const readMembers = async ($: any): Promise<Member[]> => {
 // when it changed, so the file stays quiet. Another project has its own file and never sees these teams.
 const teamFile = async ($: any) => `${String(await $.session.root()).replace(/[\/]+$/, '')}/.claude/team-orchestrator.json`
 
-const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'briefed', 'noted'] as const
+const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted'] as const
 
 // The file sits inside the repo, so the first write of each load lists it in the repo's info/exclude: git then
 // never offers it to a commit. git answers for a worktree (.git is a file there) and a subfolder; outside a repo it fails.
@@ -445,6 +447,54 @@ async function statsOf($: any, all: Transcript[], ids: string[]): Promise<Map<st
   return new Map(files.map((f, i) => [f.id, got[i]?.stats]))
 }
 
+// ── Who this session is ──
+// The roster member this session is: the one whose session id matches, else the one whose name is the title this
+// session's transcript carries. A session that is neither is not on the roster and is never judged. The answer for a
+// session that is not found is kept for half a minute, so an unrelated session in the same project does not make
+// every tool call read its transcript.
+const found = new Map<string, { at: number; key: string }>()
+async function whoAmI($: any, list: Member[]): Promise<Member | undefined> {
+  const id = String(await $.session.id().catch(() => ''))
+  if (id === '') return undefined
+  const byId = list.find(m => m.sessionId === id)
+  if (byId) return byId
+  const kept = found.get(id)
+  if (kept && Date.now() - kept.at < 30000) return list.find(m => keyOf(m) === kept.key)
+  let me: Member | undefined
+  const own = (await transcripts($)).filter(t => t.id === id)
+  if (own.length > 0) {
+    const title = (await peek($, own))[0]?.title
+    if (title) me = list.find(m => namesOf(m).includes(title))
+  }
+  found.set(id, { at: Date.now(), key: me ? keyOf(me) : '' })
+  return me
+}
+
+// The person's own Claude config folders: where a memory folder lives (<dir>/projects/<project>/memory/).
+async function claudeDirs($: any): Promise<string[]> {
+  const none = () => undefined
+  const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
+  const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
+  return [custom, home ? `${home}/.claude` : ''].filter((x): x is string => !!x)
+}
+
+// What the person allowed for the turn that is running: set by the person's own prompt, cleared when the turn ends.
+let turn: Grants = NO_GRANTS
+
+// One call of the Agent, Write, Edit or NotebookEdit tool by a roster member: refused, or let through (with a line
+// in the toast when a grant made the difference). A session that is not on the roster is let through untouched.
+async function guard($: any, e: any, tool: string): Promise<string | undefined> {
+  await pull($)
+  const list = await readMembers($)
+  if (list.length === 0) return undefined
+  const me = await whoAmI($, list)
+  if (!me) return undefined
+  const v = judge({ me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) })
+  if (!v) return undefined
+  await $.ui.toast(v.line)
+  return v.kind === 'deny' ? v.reason : undefined
+}
+
 // ── Orca tabs ──────────────────────────────────────────────────────────────────────────────────────────────
 // A tab's title is the session name behind a status glyph: "✳ Hualong Workers", "◑ Hualong CEO".
 const bare = (title: string) => title.replace(/^[^\p{L}\p{N}\s]+\s+/u, '').trim()
@@ -615,6 +665,18 @@ async function move($: any, keys: Set<string>, toTeam: string, boss?: string): P
   return `Moved ${moving.map(m => m.name).join(', ')} to team "${to}" under ${head?.name ?? 'user'}. No terminal was touched.`
 }
 
+// The short name of one member (team|name): used as typed in the org chart; empty clears it. Ticks clear.
+async function setShort($: any, key: string, value: string): Promise<string> {
+  await pull($)
+  const all = await readMembers($)
+  const who = all.find(m => keyOf(m) === key)
+  if (!who) return 'That member is not on the roster any more.'
+  const short = value.trim().slice(0, 40)
+  await update($, members, () => all.map(m => ({ ...m, sel: false, ...(keyOf(m) === key ? { short } : {}) })))
+  await share($)
+  return short === '' ? `Cleared the short name of ${who.name}: the chart works one out.` : `${who.name} is "${short}" in the org chart.`
+}
+
 // New boss for ticked members of one team. Not one of them, nor anyone below them (that would be a loop).
 const bossChoices = (list: Member[], keys: Set<string>): Member[] => {
   const ticked = list.filter(m => keys.has(keyOf(m)))
@@ -695,6 +757,7 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
       state: handle ? 'starting' : 'failed', ctx: -1,
       model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
       sel: false, note: handle ? '' : r.out.slice(0, 80), briefed: false, noted: false,
+      ...(s.short?.trim() ? { short: s.short.trim() } : {}),
     })
     await put($, teamsMade, made)
   }
@@ -805,6 +868,7 @@ export const register: Register = on => {
                 team: { type: 'string' },
                 model: { type: 'string' },
                 effort: { type: 'string' },
+                short: { type: 'string', description: 'optional short name for the org chart, used as typed; empty: the chart works one out' },
               },
               required: ['name', 'role', 'level', 'boss'],
             },
@@ -833,6 +897,7 @@ export const register: Register = on => {
                 handle: { type: 'string' },
                 address: { type: 'string' },
                 sessionId: { type: 'string' },
+                short: { type: 'string', description: 'optional short name for the org chart, used as typed; empty: the chart works one out' },
               },
               required: ['name', 'role', 'level', 'boss'],
             },
@@ -884,10 +949,12 @@ export const register: Register = on => {
 
   on('tool.call', { tool: ADOPT }, async ($, e) => {
     const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
+    // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
+    const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
     const team = clean(input.team || '') || 'team'
     const adopted: Member[] = input.members.map(m => ({
       team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss, handle: m.handle ?? '',
-      sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
+      sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
     }))
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
@@ -914,6 +981,19 @@ export const register: Register = on => {
     return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
   })
 
+  // a roster member may not use subagents, and a member with reports may not write files itself, unless allowed
+  for (const tool of [AGENT_TOOL, ...WRITE_TOOLS])
+    on('tool.call', { tool } as any, async ($, e, next) => {
+      const deny = await guard($, e, tool)
+      return deny !== undefined ? ({ deny } as any) : next(e)
+    })
+
+  // the turn ends: what the person allowed for it goes with it
+  on('turn.complete', async ($, e, next) => {
+    if ((e as any).agentId === undefined) turn = NO_GRANTS
+    return next(e)
+  })
+
   on('tool.call', { tool: TOOL }, async ($, e) => {
     const input = e as unknown as { team: string; members: Spec[] }
     await update($, view, () => 'roster')
@@ -938,6 +1018,11 @@ export const register: Register = on => {
 
   // "@<team> message": hand the message to the team's head and keep this session out of it.
   on('prompt.submit', async ($, e, next) => {
+    // #allow-subagent and #allow-write count only in what the person typed at the prompt (origin "composer"): a
+    // message from another session, a tool result or a plugin's prompt carrying the words allows nothing. A later
+    // prompt of the person's replaces the grants, so one without the words takes them back.
+    const g = grantsFrom(e.origin, e.text)
+    if (g) turn = g
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
     if (o !== undefined && o.kind !== 'composer' && !o.asUser) return next(e)
@@ -1069,6 +1154,13 @@ async function panel($: any, ui: any, v: View, cols: number) {
 async function settingsView($: any, ui: any) {
   const { Box, Text, Button } = ui
   const s = await readSettings($)
+  const list: Member[] = await readMembers($)
+  // a standing permission of one member, kept in the roster file like the rest of its structure
+  const flip = async (key: string, field: 'allowAgent' | 'allowWrite') => {
+    await pull($)
+    await update($, members, old => old.map(m => (keyOf(m) === key ? { ...m, [field]: !m[field] } : m)))
+    await share($)
+  }
   const set = (patch: Partial<Settings>) => update($, settings, old => ({ ...SETTINGS0, ...old, ...patch }))
   const layout = async (to: string) => {
     await set({ layout: to as Settings['layout'] })
@@ -1101,6 +1193,22 @@ async function settingsView($: any, ui: any) {
         </Box>
       </Box>
       <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
+      {list.length > 0 && (
+        <Box flexDirection="column">
+          <Text bold>Permissions</Text>
+          <Text dimColor>
+            A roster member may not use subagents (Agent); a member with reports may not Write or Edit (its own memory folder is open). Both are off until you switch them on here, or for one turn by typing #allow-subagent or #allow-write in your own message.
+          </Text>
+          {list.map(m => (
+            <Box>
+              <Text color={levelShade(m.level)}>{fit(m.name, 24).padEnd(25)}</Text>
+              <Button key={`perm-agent-${keyOf(m)}`} label={`${m.allowAgent ? '[x]' : '[ ]'} Allow subagents`} plain onPress={() => void flip(keyOf(m), 'allowAgent')} />
+              <Text> </Text>
+              <Button key={`perm-write-${keyOf(m)}`} label={`${m.allowWrite ? '[x]' : '[ ]'} Allow writes`} plain onPress={() => void flip(keyOf(m), 'allowWrite')} />
+            </Box>
+          ))}
+        </Box>
+      )}
     </Box>
   )
 }
@@ -1216,15 +1324,22 @@ const arriveAt = (d: number, f: number) => f >= d * 6 + 4 && f <= d * 6 + 6
 // The grid of cells for one frame. Pure: the same members and frame always give the same drawing.
 function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
   const roots = treeOf(list)
-  const labels = chartLabels(list)
+  const info = chartLabelInfo(list)
   const all: TNode[] = []
   const collect = (n: TNode) => (all.push(n), n.kids.forEach(collect))
   roots.forEach(collect)
   if (all.length === 0) return []
   // one pass per tier of bosses, then a rest, so a squad repeats faster than a three-tier org
   const f = t % (Math.max(...all.map(n => n.depth)) * 6 + 6)
-  // each member's shortest unique label; where even those do not fit, dots alone (a letter each told no one apart)
-  const tagOf = (mode: string, m: Member) => (mode === 'name' ? (labels.get(`${m.team}|${m.name}`) ?? m.name) : '')
+  // A short name the person gave is shown as typed and cut with "…" only when the chart would not fit otherwise
+  // (the automatic labels are short already). A short name used twice shows twice, each with "!". Where even the
+  // cut ones do not fit, dots alone (a letter each told no one apart).
+  let cap = Infinity
+  const tagOf = (mode: string, m: Member) => {
+    if (mode !== 'name') return ''
+    const i = info.get(`${m.team}|${m.name}`)
+    return i ? (i.auto ? i.label : shorten(i.label, cap)) + (i.dup ? '!' : '') : m.name
+  }
   const widthOf = (mode: string) => {
     const gap = mode === 'dot' ? 1 : 2
     // each node as wide as its own label, so one long name does not widen every other
@@ -1234,7 +1349,14 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const total = roots.map(lay).reduce((a, b) => a + b, 0) + gap * (roots.length - 1)
     return { gap, total }
   }
-  const mode = widthOf('name').total <= Math.max(20, cols - 6) ? 'name' : 'dot'
+  let mode = 'dot'
+  for (const c of [Infinity, 14, 10, 6]) {
+    cap = c
+    if (widthOf('name').total <= Math.max(20, cols - 6)) {
+      mode = 'name'
+      break
+    }
+  }
   const { gap } = widthOf(mode)
   const place = (n: TNode, left: number) => {
     if (n.kids.length === 0) return void (n.x = left + (n.w >> 1))
@@ -1260,10 +1382,19 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const [g, gc] = statusGlyph(n.m.state, t, parentSends)
     const tag = tagOf(mode, n.m)
     const text = tag ? `${g} ${tag}` : g
+    const inf = info.get(`${n.m.team}|${n.m.name}`)
     const start = n.x - (text.length >> 1)
     const sending = n.kids.length > 0 && f >= n.depth * 6 && f <= n.depth * 6 + 1
     ;[...text].forEach((ch, i) =>
-      setCell(row, start + i, i === 0 ? { c: ch, k: gc, b: parentSends || sending || n.m.state === 'working' } : { c: ch, k: levelShade(n.m.level), b: n.depth === 0, d: dead(n.m) }),
+      setCell(
+        row,
+        start + i,
+        i === 0
+          ? { c: ch, k: gc, b: parentSends || sending || n.m.state === 'working' }
+          : inf?.dup && tag !== '' && i === text.length - 1
+            ? { c: ch, k: 'red', b: true }
+            : { c: ch, k: levelShade(n.m.level), b: n.depth === 0, d: dead(n.m) || inf?.auto === true },
+      ),
     )
     if (n.kids.length === 0) return
     const cr = row + 1
@@ -1329,6 +1460,7 @@ function orgChart(ui: any, list: Member[], t: number, cols: number) {
         <Text color="gray">○ offline  </Text>
         <Text color="red">✗ failed</Text>
       </Text>
+      <Text dimColor>dim = auto short name; set one in Team actions → Set short name</Text>
     </Box>
   )
 }
@@ -1589,7 +1721,7 @@ const TEAM_MENU: { glyph: string; title: string; color: string; items: [string, 
   },
   {
     glyph: '✎', title: 'Sessions', color: '#e5c07b',
-    items: [['open', 'Open selected'], ['bulk', 'Rename / model / effort…'], ['brief', 'Brief team'], ['briefsel', 'Brief selected']],
+    items: [['open', 'Open selected'], ['bulk', 'Rename / model / effort…'], ['short', 'Set short name…'], ['brief', 'Brief team'], ['briefsel', 'Brief selected']],
   },
   { glyph: '✕', title: 'Remove', color: '#ff4d4d', items: [['remove', 'Selected…'], ['rmteam', 'Whole team…']] },
 ]
@@ -1613,6 +1745,9 @@ async function rosterView($: any, ui: any, cols: number) {
     await share($)
   }
   const s = await readSettings($)
+  const labelInfo = chartLabelInfo(list)
+  // a derived note: never stored, so it goes the moment the second short name changes
+  const noteOf = (m: Member) => [m.note, labelInfo.get(keyOf(m))?.dup ? 'short name used twice' : ''].filter(x => x !== '').join(', ')
   // a card's widest wish is its wide plan with whole names; side by side fits as many of those as the width holds
   const widest = Math.max(1, ...teams.map(team => columnPlan(treeLines(list.filter(m => m.team === team)), 1000, s.hide).total + FRAME))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
@@ -1629,8 +1764,14 @@ async function rosterView($: any, ui: any, cols: number) {
   }
   const pick = async (team: string, kind: string) => {
     const head = list.find(m => m.team === team && !list.some(x => x.team === team && x.name === m.boss))
-    const needsTicks = ['movehere', 'remove', 'boss', 'briefsel', 'bulk', 'open'].includes(kind)
+    const needsTicks = ['movehere', 'remove', 'boss', 'briefsel', 'bulk', 'open', 'short'].includes(kind)
     if (needsTicks && picked === 0) return void (await setAct({ ...ACT0, to: team, msg: 'Tick at least one row first.' }))
+    if (kind === 'short') {
+      // one row at a time: the short name belongs to one member
+      const one = list.filter(m => m.sel)
+      if (one.length !== 1 || one[0]!.team !== team) return void (await setAct({ ...ACT0, to: team, msg: 'Tick exactly one row of this team first.' }))
+      return void (await setAct({ ...ACT0, kind, to: team, key: keyOf(one[0]!), draft: one[0]!.short ?? '' }))
+    }
     if (kind === 'selall') return void (await tick(m => m.sel || m.team === team), await setAct(ACT0))
     if (kind === 'selwork')
       return void (await tick(m => m.sel || (m.team === team && m.level === maxLevel(team) && maxLevel(team) > 1)), await setAct(ACT0))
@@ -1780,6 +1921,33 @@ async function rosterView($: any, ui: any, cols: number) {
           </Box>
         ),
       )
+    if (a.kind === 'short') {
+      const who = list.find(m => keyOf(m) === a.key)
+      if (!who) return box('Short name', <Box flexDirection="column"><Text>That row is gone.</Text>{cancel}</Box>)
+      const now = chartLabelInfo(list).get(a.key)
+      const save = (v?: unknown) => void finish(team, setShort($, a.key, typeof v === 'string' ? v : a.draft))
+      return box(
+        `Short name for ${who.name}`,
+        <Box flexDirection="column">
+          <Text dimColor>Shown now: {now?.label ?? '-'}{now?.auto ? ' (automatic)' : ''}. An empty name clears yours; the automatic one is used.</Text>
+          <Input
+            key={`short-${ti}`}
+            label="▸ Short name "
+            value={a.draft}
+            placeholder="shown in the org chart exactly as typed"
+            onInput={(v: string) => {
+              typedAt = Date.now()
+              void setAct({ draft: v })
+            }}
+            onSubmit={save}
+          />
+          <Box>
+            <Button key={`short-save-${ti}`} label="Save" variant="primary" onPress={() => save()} />
+            {cancel}
+          </Box>
+        </Box>,
+      )
+    }
     if (a.kind === 'bulk') return bulkBox
     return a.msg !== '' ? <Text color="green">{a.msg}</Text> : null
   }
@@ -1836,6 +2004,7 @@ async function rosterView($: any, ui: any, cols: number) {
               }
               // the note goes after the row when it fits whole, else on a line of its own, cut to the card: never wrapped
               const room = inner - p.total
+              const rowNote = noteOf(m)
               return (
                 <Box flexDirection="column">
                   <Box>
@@ -1846,9 +2015,9 @@ async function rosterView($: any, ui: any, cols: number) {
                     {p.cols.map(c => (
                       <Text color={value[c.id]?.[1]}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
                     ))}
-                    {m.note !== '' && room > m.note.length && <Text dimColor> {m.note}</Text>}
+                    {rowNote !== '' && room > rowNote.length && <Text dimColor> {rowNote}</Text>}
                   </Box>
-                  {m.note !== '' && room <= m.note.length && <Text dimColor>{' '.repeat(CHECK_W)}{fit(m.note, inner - CHECK_W)}</Text>}
+                  {rowNote !== '' && room <= rowNote.length && <Text dimColor>{' '.repeat(CHECK_W)}{fit(rowNote, inner - CHECK_W)}</Text>}
                 </Box>
               )
             })}

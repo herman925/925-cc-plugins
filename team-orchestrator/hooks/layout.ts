@@ -56,19 +56,38 @@ export const family = (model: string) => {
 export const EFFORT_SHORT: Record<string, string> = { low: 'L', medium: 'M', high: 'H', xhigh: 'XH', max: 'MAX' }
 
 // ── org chart labels ──
-// The shortest label that tells each member apart, for any names, worked out each draw:
+// A member's label is, first of all, the short name the person gave it (`short`), used as typed. Only a member with no
+// short name gets one from the rule below, and the rule keeps away from every short name already taken.
+// The rule makes the shortest label that tells each member apart, for any names, worked out each draw:
 //  1. drop the words the name shares with its team ("Hualong PC Worker A" in team Hualong -> "PC Worker A"),
 //     and the words every member of the team starts with;
 //  2. try, in order: a leading acronym and the last word ("PC A", "PC Boss"); the initial and a number or letter
 //     tail ("Worker 5" -> "W5", "Lead 1 2" -> "L1.2"); the last word ("CEO", "Workers"); the first word
 //     ("Research Worker" -> "Research"); all the words left;
 //  3. members still alike get the team in front ("Dev Head", "UI Head"), then the whole name.
-// Every member starts at its first try; those that clash move one try on, until no two labels are the same.
-// Two characters at least.
+// Every automatic member starts at its first try; those that clash (with another automatic label or with a short name)
+// move one try on, until no two labels are the same. Two characters at least. The rule knows nothing about what a
+// name means: "HK University of Hong Kong president" only becomes "HK president" when a person says so.
+// Two members that were given the same short name both keep it, and both are flagged (`dup`): the chart adds "!"
+// and the roster row says so. Nothing is renamed behind the person's back.
 const words = (s: string) => s.split(/[\s_-]+/).filter(w => w !== '')
 const isTail = (w: string) => /^\d+$/.test(w) || w.length <= 2
 
-export function chartLabels(list: { team: string; name: string }[]): Map<string, string> {
+export type LabelInfo = {
+  /** what the chart shows (before any "…" cut to fit) */
+  label: string
+  /** worked out by the rule, not given by the person: drawn dim */
+  auto: boolean
+  /** the person gave this short name to more than one member */
+  dup: boolean
+}
+type Labelled = { team: string; name: string; short?: string }
+
+/** `s` cut to `max` characters with "…" as the last one, when it is longer */
+export const shorten = (s: string, max: number) => (s.length <= max ? s : max <= 1 ? '…' : `${s.slice(0, max - 1)}…`)
+
+export function chartLabelInfo(list: Labelled[]): Map<string, LabelInfo> {
+  const given = list.map(m => (m.short ?? '').trim())
   const rests = new Map<string, string[]>()
   for (const team of new Set(list.map(m => m.team))) {
     const mine = list.filter(m => m.team === team)
@@ -81,7 +100,7 @@ export function chartLabels(list: { team: string; name: string }[]): Map<string,
     if (mine.length > 1) while (own.every(w => w.length > n + 1 && w[n] === own[0]![n])) n++
     mine.forEach((m, i) => rests.set(`${m.team}|${m.name}`, own[i]!.slice(n)))
   }
-  const ladder = (m: { team: string; name: string }): string[] => {
+  const ladder = (m: Labelled): string[] => {
     const w = rests.get(`${m.team}|${m.name}`) ?? words(m.name)
     const first = w[0] ?? m.name
     const last = w[w.length - 1] ?? m.name
@@ -95,13 +114,23 @@ export function chartLabels(list: { team: string; name: string }[]): Map<string,
   }
   const steps = list.map(ladder)
   const at = list.map(() => 0)
-  const label = (i: number) => steps[i]![Math.min(at[i]!, steps[i]!.length - 1)]!
+  const label = (i: number) => (given[i] !== '' ? (given[i] as string) : steps[i]![Math.min(at[i]!, steps[i]!.length - 1)]!)
   for (let round = 0; round < 20; round++) {
     const count = new Map<string, number>()
-    list.forEach((_, i) => count.set(label(i), (count.get(label(i)) ?? 0) + 1))
-    const clash = list.map((_, i) => (count.get(label(i)) ?? 0) > 1)
+    list.forEach((_, i) => count.set(label(i).toLowerCase(), (count.get(label(i).toLowerCase()) ?? 0) + 1))
+    // only the automatic labels move; a short name the person gave stays where it is
+    const clash = list.map((_, i) => given[i] === '' && (count.get(label(i).toLowerCase()) ?? 0) > 1)
     if (!clash.some(Boolean)) break
     clash.forEach((c, i) => c && (at[i] = at[i]! + 1))
   }
-  return new Map(list.map((m, i) => [`${m.team}|${m.name}`, label(i)]))
+  const same = new Map<string, number>()
+  given.forEach(g => g !== '' && same.set(g.toLowerCase(), (same.get(g.toLowerCase()) ?? 0) + 1))
+  return new Map(
+    list.map((m, i) => [`${m.team}|${m.name}`, { label: label(i), auto: given[i] === '', dup: given[i] !== '' && (same.get(given[i]!.toLowerCase()) ?? 0) > 1 }]),
+  )
+}
+
+/** Just the labels, for a caller that does not need to know which are automatic. */
+export function chartLabels(list: Labelled[]): Map<string, string> {
+  return new Map([...chartLabelInfo(list)].map(([k, v]) => [k, v.label]))
 }
