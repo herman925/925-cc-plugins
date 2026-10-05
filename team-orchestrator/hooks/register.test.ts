@@ -115,7 +115,7 @@ type Tr = { id: string; title?: string; model?: string; used?: number; effort?: 
 const ID1 = '11111111-1111-4111-8111-111111111111'
 const ID2 = '22222222-2222-4222-8222-222222222222'
 const world = (on: any, tabs: Tab[], trs: Tr[]) => {
-  const files = new Map<string, string>()
+  const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
   const p = (s: string) => s.replace(/\\/g, '/')
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) =>
@@ -136,6 +136,7 @@ const world = (on: any, tabs: Tab[], trs: Tr[]) => {
   })
   on('process.run', async (_$: any, e: any) => {
     const a: string[] = e.argv
+    files.calls.push(a)
     const out = (stdout: string) => ({ value: { ...no, exitCode: 0, stdout } }) as any
     if (a[0] === 'powershell.exe')
       return out(String(e.init.env.TO_FILES).split('|').map(f => '\0' + tail(trs.find(t => p(f).endsWith(`${t.id}.jsonl`))!)).join(''))
@@ -230,4 +231,45 @@ test('neither the status line nor a transcript: the row says the status line is 
   world(on, [{ handle: 'term_ii1', title: 'Hualong Workers', screen: '' }], [{ id: ID1, title: 'Hualong Workers' }])
   await adopt($, [{ ...W, handle: 'term_ii1', sessionId: ID1 }])
   expect(await shown($)).toContain('status line not readable')
+})
+
+// item 3: removal edits the roster only
+const twoTeams = async ($: any, on: any) => {
+  const files = world(on, [], [])
+  const calls = files.calls
+  await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Old', members: [{ name: 'Old-Head', role: 'head', level: 1, boss: 'user', handle: 'term_o1' }] } as any)
+  await adopt($, [{ name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_h1' }, { name: 'W1', role: 'worker', level: 2, boss: 'Head', handle: 'term_w1' }])
+  return { files, calls }
+}
+const closes = (calls: string[][]) => calls.filter(a => a.includes('close') || a.includes('kill')).length
+
+test('team_remove takes one team off the roster file and the roster, and closes nothing', async ($, on) => {
+  const { files, calls } = await twoTeams($, on)
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_remove', team: 'Old' } as any)
+  expect(JSON.stringify(out)).toContain('No terminal was closed')
+  expect(saved(files).map((m: any) => m.team)).toEqual(['Hualong', 'Hualong'])
+  expect(await shown($)).not.toContain('@Old')
+  expect(closes(calls)).toBe(0)
+})
+
+test('member_remove takes one member off; the last team removed leaves an empty roster file', async ($, on) => {
+  const { files, calls } = await twoTeams($, on)
+  await $.tool.call({ tool: 'mcp__team-orchestrator__member_remove', team: 'Hualong', name: 'W1' } as any)
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Old-Head', 'Head'])
+  const miss: any = await $.tool.call({ tool: 'mcp__team-orchestrator__member_remove', team: 'Hualong', name: 'Nobody' } as any)
+  expect(JSON.stringify(miss)).toContain('No member')
+  await $.tool.call({ tool: 'mcp__team-orchestrator__team_remove', team: 'Old' } as any)
+  await $.tool.call({ tool: 'mcp__team-orchestrator__team_remove', team: 'Hualong' } as any)
+  expect(saved(files)).toEqual([])
+  expect(closes(calls)).toBe(0)
+})
+
+test('the roster rows and team cards remove too', async ($, on) => {
+  const { files, calls } = await twoTeams($, on)
+  const band = await mountBand($)
+  await band.press({ key: 'rm-Hualong|W1' })
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Old-Head', 'Head'])
+  await band.press({ key: 'rmteam-0' })
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Head'])
+  expect(closes(calls)).toBe(0)
 })

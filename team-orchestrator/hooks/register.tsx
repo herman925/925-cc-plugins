@@ -6,6 +6,8 @@ import type { Bulk, Form, Member, View } from '../types'
 const ORCA = 'orca.exe'
 const TOOL = 'mcp__team-orchestrator__team_launch'
 const ADOPT = 'mcp__team-orchestrator__team_adopt'
+const REMOVE_TEAM = 'mcp__team-orchestrator__team_remove'
+const REMOVE_MEMBER = 'mcp__team-orchestrator__member_remove'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -256,7 +258,8 @@ async function pull($: any) {
   } catch {
     return
   }
-  if (!Array.isArray(saved) || saved.length === 0) return
+  // an empty list is a real state (the last team was removed), not a missing file
+  if (!Array.isArray(saved)) return
   const fresh = { state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '' }
   await update($, members, old =>
     saved.map(m => {
@@ -528,6 +531,18 @@ async function refresh($: any) {
   await share($)
 }
 
+// Take a team, or one member of it, off the roster. Only the roster changes: no terminal is closed.
+async function remove($: any, team: string, name?: string): Promise<string> {
+  await pull($)
+  const all = await readMembers($)
+  const t = all.some(m => m.team === team) ? team : clean(team)
+  const gone = all.filter(m => m.team === t && (name === undefined || m.name === name))
+  if (gone.length === 0) return name === undefined ? `No team "${team}" on the roster.` : `No member "${name}" in team "${team}".`
+  await update($, members, () => all.filter(m => !gone.includes(m)))
+  await share($)
+  return `Removed ${name === undefined ? `team "${t}" (${gone.length} member${gone.length === 1 ? '' : 's'})` : `"${name}" from team "${t}"`} from the roster. No terminal was closed.`
+}
+
 // Replace one team's members, leaving the other teams of the project alone.
 async function put($: any, team: string | string[], mine: Member[]) {
   const all = await readMembers($)
@@ -715,6 +730,16 @@ export const register: Register = on => {
         required: ['members'],
       },
     })
+    await $.tool.register({
+      name: 'team_remove',
+      description: 'Take a whole team off the roster (memory and the roster file). Closes no terminal and stops no session.',
+      inputSchema: { type: 'object', properties: { team: { type: 'string' } }, required: ['team'] },
+    })
+    await $.tool.register({
+      name: 'member_remove',
+      description: 'Take one member of a team off the roster (memory and the roster file). Closes no terminal and stops no session.',
+      inputSchema: { type: 'object', properties: { team: { type: 'string' }, name: { type: 'string' } }, required: ['team', 'name'] },
+    })
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
     await pull($)
@@ -749,6 +774,16 @@ export const register: Register = on => {
     await refresh($)
     const notes = (await readMembers($)).filter(m => m.team === team && m.note !== '').map(m => `${m.name}: ${m.note}`)
     return { result: `Roster now shows ${adopted.length} adopted sessions.${notes.length ? ` Notes: ${notes.join('; ')}.` : ''}` } as any
+  })
+
+  on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => {
+    const input = e as unknown as { team: string }
+    return { result: await remove($, input.team) } as any
+  })
+
+  on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => {
+    const input = e as unknown as { team: string; name: string }
+    return { result: await remove($, input.team, input.name) } as any
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
@@ -1425,6 +1460,7 @@ async function rosterView($: any, ui: any, cols: number) {
                       onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
                     />
                   )}
+                  <Button key={`rm-${keyOf(m)}`} label="remove" plain onPress={() => void remove($, m.team, m.name)} />
                   {m.note !== '' && <Text dimColor> {m.note}</Text>}
                 </Box>
               )
@@ -1441,6 +1477,7 @@ async function rosterView($: any, ui: any, cols: number) {
                 label={unbriefed > 0 ? `Brief team (${unbriefed})` : 'Brief again'}
                 onPress={() => void briefTeam($, team)}
               />
+              <Button key={`rmteam-${ti}`} label="Remove team" onPress={() => void remove($, team)} />
             </Box>
             <Text dimColor>╚{'═'.repeat(60)}╝</Text>
           </Box>
