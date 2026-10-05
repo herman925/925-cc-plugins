@@ -48,7 +48,15 @@ export type Bulk = {
   effort: string
   msg: string
 }
-export type View = 'closed' | 'roster' | 'new'
+export type View = 'closed' | 'roster' | 'new' | 'settings'
+export type Settings = {
+  /** stacked: team cards one under another | columns: side by side where the width allows | dock: the panel in a side pane */
+  layout: 'stacked' | 'columns' | 'dock'
+  /** show the live org chart */
+  chart: boolean
+  /** table columns hidden (STATUS, CONTEXT, MODEL, EFFORT, BRIEF, OPEN); NAME always shows */
+  hide: string[]
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -61,6 +69,7 @@ declare module 'claude-code' {
       teamName: string
       frame: number
       menu: string
+      settings: Settings
     }
   }
 }

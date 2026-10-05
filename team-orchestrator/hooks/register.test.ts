@@ -322,3 +322,91 @@ test('the effort value is coloured on a scale from low (cool) to max (hot), and 
   expect(open.props.label).toBe('Open')
   expect(refresh.props.plain).toBeUndefined()
 })
+
+// items 6 and 7: settings (layout, org chart, columns) that stay across a refresh and a fresh drawing
+const twoSmallTeams = async ($: any, on: any) => {
+  world(on, [{ handle: 'term_kk1', title: 'A' }], [])
+  // the kit seats no pane: answer as a surface that placed it
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as any)
+  on('ui.close', async () => ({ value: undefined }) as any)
+  await adopt($, [{ name: 'A', role: 'head', level: 1, boss: 'user', handle: 'term_kk1' }])
+  await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Other', members: [{ name: 'B', role: 'head', level: 1, boss: 'user' }] } as any)
+}
+const bandAt = ($: any, bodyColumns: number) =>
+  $.ui.mount({ plugin: 'team-orchestrator', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns } as any })
+// the team cards: Boxes drawn with a round cyan border holding a "╔═ TEAM @" line
+const cardWidths = (tree: any): (number | undefined)[] => {
+  const out: (number | undefined)[] = []
+  const walk = (n: any) => {
+    if (!n || typeof n !== 'object') return
+    if (n.type === 'Box' && JSON.stringify(n.children ?? []).includes('╔═ TEAM @')) {
+      const inner = (n.children ?? []).some((c: any) => c?.type === 'Box' && JSON.stringify(c).includes('╔═ TEAM @'))
+      if (!inner) out.push(n.props?.width)
+    }
+    ;(n.children ?? []).forEach(walk)
+  }
+  walk(tree)
+  return out
+}
+
+test('defaults keep the old look: chart shown, every column, cards stacked', async ($, on) => {
+  await twoSmallTeams($, on)
+  const band = await bandAt($, 300)
+  const s = JSON.stringify(await band.drawn())
+  expect(s).toContain('LIVE ORG')
+  for (const c of ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF']) expect(s).toContain(c)
+  expect(await band.find({ key: 'go-Hualong|A' })).toBeDefined()
+  expect(cardWidths(await band.drawn())).toEqual([undefined, undefined])
+})
+
+test('settings hide the chart and columns, and stay after a refresh and a new drawing', async ($, on) => {
+  await twoSmallTeams($, on)
+  let band = await bandAt($, 120)
+  await band.press({ key: 'tab-settings' })
+  for (const key of ['layout-stacked', 'layout-columns', 'layout-dock', 'chart-1', 'chart-0', 'col-STATUS', 'col-OPEN']) expect(await band.find({ key })).toBeDefined()
+  await band.press({ key: 'chart-0' })
+  await band.press({ key: 'col-MODEL' })
+  await band.press({ key: 'col-OPEN' })
+  await band.press({ key: 'tab-roster' })
+  await band.press({ key: 'refresh' })
+  band = await bandAt($, 120)
+  const s = JSON.stringify(await band.drawn())
+  expect(s).not.toContain('LIVE ORG')
+  expect(s).not.toContain('MODEL')
+  expect(s).toContain('EFFORT')
+  expect(await band.find({ key: 'go-Hualong|A' })).toBeUndefined()
+  // and back on
+  await band.press({ key: 'tab-settings' })
+  await band.press({ key: 'col-MODEL' })
+  await band.press({ key: 'tab-roster' })
+  expect(JSON.stringify(await band.drawn())).toContain('MODEL')
+})
+
+test('side by side: cards share a row only where two fit; a narrow terminal stays stacked', async ($, on) => {
+  await twoSmallTeams($, on)
+  const band = await bandAt($, 120)
+  await band.press({ key: 'tab-settings' })
+  await band.press({ key: 'layout-columns' })
+  await band.press({ key: 'tab-roster' })
+  expect(cardWidths(await band.drawn())).toEqual([undefined, undefined])
+  const wide = await bandAt($, 300)
+  const widths = cardWidths(await wide.drawn())
+  expect(widths.length).toBe(2)
+  for (const w of widths) expect(w).toBe(150)
+})
+
+test('dock right puts the panel in the dock pane, which says when it cannot sit beside the transcript', async ($, on) => {
+  await twoSmallTeams($, on)
+  const band = await bandAt($, 120)
+  await band.press({ key: 'tab-settings' })
+  await band.press({ key: 'layout-dock' })
+  expect((await band.find({ key: 'layout-dock' }) as any).props.variant).toBe('primary')
+  const pane = await $.ui.mount({
+    plugin: 'team-orchestrator', surface: 'terminal', component: 'Pane', requestId: 'team-dock',
+    props: { title: 'Team Orchestrator', isFocused: false, bodyColumns: 90, placement: 'inline' } as any,
+  })
+  expect(await pane.find({ key: 'tab-settings' })).toBeDefined()
+  expect(JSON.stringify(await pane.drawn())).toContain('only in the fullscreen layout')
+  await pane.press({ key: 'layout-stacked' })
+  expect((await pane.find({ key: 'layout-stacked' }) as any).props.variant).toBe('primary')
+})

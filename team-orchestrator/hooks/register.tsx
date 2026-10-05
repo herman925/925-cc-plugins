@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Bulk, Form, Member, View } from '../types'
+import type { Bulk, Form, Member, Settings, View } from '../types'
 
 const ORCA = 'orca.exe'
 const TOOL = 'mcp__team-orchestrator__team_launch'
@@ -78,6 +78,20 @@ const note = atom({ plugin: 'team-orchestrator', key: 'note' } as const, '')
 const frame = atom({ plugin: 'team-orchestrator', key: 'frame' } as const, 0)
 // which model/effort dropdown is open in the form ('' none, 'm2' = level 2's model, 'e1' = level 1's effort)
 const menu = atom({ plugin: 'team-orchestrator', key: 'menu' } as const, '')
+// The roster's look. Plugin state: it outlives a reload and a refresh, not a new session. Defaults are the old look.
+const SETTINGS0: Settings = { layout: 'stacked', chart: true, hide: [] }
+const settings = atom({ plugin: 'team-orchestrator', key: 'settings' } as const, SETTINGS0)
+const readSettings = async ($: any): Promise<Settings> => ({ ...SETTINGS0, ...(await read($, settings)) })
+const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF', 'OPEN'] as const
+const shownCols = (s: Settings) => COLS.filter(c => !s.hide.includes(c))
+// cells across one column of the table, and around it: checkbox 4, card border and padding 4, Remove button 10
+const COL_W: Record<string, number> = { STATUS: 11, CONTEXT: 16, MODEL: 14, EFFORT: 8, BRIEF: 9, OPEN: 9 }
+const cardWidth = (nameW: number, s: Settings) => 4 + nameW + shownCols(s).reduce((a, c) => a + (COL_W[c] ?? 0), 0) + 10 + 4
+// Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
+const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
+  s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
+// the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
+const DOCK = 'team-dock'
 const bulk = atom({ plugin: 'team-orchestrator', key: 'bulk' } as const, {
   prefix: '',
   base: '',
@@ -747,6 +761,8 @@ export const register: Register = on => {
     })
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
+    // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
+    if ((await readSettings($)).layout === 'dock') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
@@ -890,24 +906,96 @@ export const register: Register = on => {
           )}
           {teams.length > 0 && <Text dimColor> │ {teams.map(t => '@' + t).join(' ')}</Text>}
         </Box>
-        {open && (
-          <Box flexDirection="column">
-            <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
-              <Box>
-                <Text bold color="cyan">
-                  ◆ TEAM ORCHESTRATOR{'  '}
-                </Text>
-                <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
-                <Button key="tab-new" label="New team" onPress={() => void go('new')} />
-              </Box>
-              <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
-            </Box>
-            {v === 'new' ? await formView($, ui) : await rosterView($, ui, Number((e.props as any).bodyColumns) || 100)}
-          </Box>
-        )}
+        {open && !(await docked($)) && (await panel($, ui, v, Number((e.props as any).bodyColumns) || 100))}
       </Box>
     )
   })
+
+  // the dock layout: the same panel in a pane, which the fullscreen layout seats beside the transcript
+  on('ui.render', { component: 'Pane', requestId: DOCK }, async ($, e) => {
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const v = await read($, view)
+    return (
+      <Box flexDirection="column">
+        {e.props.placement === 'inline' && <Text dimColor>Docks beside the transcript only in the fullscreen layout, from 110 columns; here it sits above the prompt.</Text>}
+        {await panel($, ui, v === 'closed' ? 'roster' : v, e.props.bodyColumns || 100)}
+      </Box>
+    )
+  })
+
+  // the person closed the pane: the panel goes back above the prompt
+  on('ui.close', { id: DOCK }, async ($, e, next) => {
+    if (e.origin.kind === 'person') await update($, settings, s => ({ ...SETTINGS0, ...s, layout: 'stacked' }))
+    return next(e)
+  })
+}
+
+// True while the dock pane is seated; otherwise (layout not dock, or the pane waits on a narrow terminal) the band draws.
+async function docked($: any) {
+  if ((await readSettings($)).layout !== 'dock') return false
+  const panes: any[] = await $.ui.panes().catch(() => [])
+  return panes.some(p => p.id === DOCK && p.isPlaced)
+}
+
+async function panel($: any, ui: any, v: View, cols: number) {
+  const { Box, Text, Button } = ui
+  const go = (to: View) => update($, view, () => to)
+  return (
+    <Box flexDirection="column">
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
+        <Box>
+          <Text bold color="cyan">
+            ◆ TEAM ORCHESTRATOR{'  '}
+          </Text>
+          <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
+          <Button key="tab-new" label="New team" onPress={() => void go('new')} />
+          <Button key="tab-settings" label="Settings" onPress={() => void go('settings')} />
+        </Box>
+        <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
+      </Box>
+      {v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+    </Box>
+  )
+}
+
+async function settingsView($: any, ui: any) {
+  const { Box, Text, Button } = ui
+  const s = await readSettings($)
+  const set = (patch: Partial<Settings>) => update($, settings, old => ({ ...SETTINGS0, ...old, ...patch }))
+  const layout = async (to: string) => {
+    await set({ layout: to as Settings['layout'] })
+    if (to === 'dock') await $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
+    else await $.ui.close({ id: DOCK })
+  }
+  return (
+    <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
+      <Text color="cyan">┤ SETTINGS ├</Text>
+      <Box>
+        <Text bold>{'Layout'.padEnd(13)}</Text>
+        {Seg(ui, 'layout', [['stacked', 'Stacked'], ['columns', 'Side by side'], ['dock', 'Dock right']], s.layout, v => void layout(v))}
+      </Box>
+      <Text dimColor>{' '.repeat(13)}Side by side: team cards in columns where two fit. Dock right: a pane beside the transcript in the fullscreen layout (from 110 columns); on the main screen the pane sits above the prompt.</Text>
+      <Box>
+        <Text bold>{'Org chart'.padEnd(13)}</Text>
+        {Seg(ui, 'chart', [['1', 'Show'], ['0', 'Hide']], s.chart ? '1' : '0', v => void set({ chart: v === '1' }))}
+      </Box>
+      <Box>
+        <Text bold>{'Columns'.padEnd(13)}</Text>
+        <Box flexWrap="wrap" columnGap={1}>
+          {COLS.map(c => (
+            <Button
+              key={`col-${c}`}
+              label={`${s.hide.includes(c) ? '[ ]' : '[x]'} ${c}`}
+              plain
+              onPress={() => void set({ hide: s.hide.includes(c) ? s.hide.filter(x => x !== c) : [...s.hide, c] })}
+            />
+          ))}
+        </Box>
+      </Box>
+      <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
+    </Box>
+  )
 }
 
 // Always-visible, clickable choices: a Select pops a list that cannot be clicked or collapsed here.
@@ -1400,24 +1488,30 @@ async function rosterView($: any, ui: any, cols: number) {
     await update($, members, () => list.map(m => (m.team === from ? { ...m, team: to } : m)))
     await share($)
   }
+  const s = await readSettings($)
+  const show = (c: string) => !s.hide.includes(c)
+  const nameWidth = (mine: Member[]) => Math.max(12, ...treeLines(mine).map(r => (r.prefix + r.name).length)) + 1
+  const widest = Math.max(0, ...teams.map(team => cardWidth(nameWidth(list.filter(m => m.team === team)), s)))
+  const perRow = cardsPerRow(s, cols, widest, teams.length)
   return (
     <Box flexDirection="column">
       {list.length === 0 && emptyState($, ui, t)}
-      {list.length > 0 && (
+      {list.length > 0 && s.chart && (
         <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
           <Text bold color="cyan">◆ LIVE ORG{'  '}<Text dimColor>dots follow each session's status; the line shows the boss passing work down</Text></Text>
           {orgChart(ui, list, t, cols)}
         </Box>
       )}
+      <Box {...(perRow > 1 ? { flexDirection: 'row', flexWrap: 'wrap' } : { flexDirection: 'column' })}>
       {teams.map((team, ti) => {
         const mine = list.filter(m => m.team === team)
         const rows = treeLines(mine)
         const byName = new Map(mine.map(m => [m.name, m]))
-        const nameW = Math.max(12, ...rows.map(r => (r.prefix + r.name).length)) + 1
+        const nameW = nameWidth(mine)
         const unbriefed = mine.filter(m => m.handle && !m.briefed).length
         const head = mine.find(m => !mine.some(x => x.name === m.boss))
         return (
-          <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
+          <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column" {...(perRow > 1 ? { width: Math.floor(cols / perRow) } : {})}>
             <Text bold color="cyan">
               ╔═ TEAM @{team} ═ {mine.length} member{mine.length === 1 ? '' : 's'}, head {head?.name ?? '-'} ═╗
             </Text>
@@ -1436,11 +1530,7 @@ async function rosterView($: any, ui: any, cols: number) {
             <Text dimColor>
               {'    '}
               {'NAME'.padEnd(nameW)}
-              {'STATUS'.padEnd(11)}
-              {'CONTEXT'.padEnd(16)}
-              {'MODEL'.padEnd(14)}
-              {'EFFORT'.padEnd(8)}
-              {'BRIEF'}
+              {shownCols(s).filter(c => c !== 'OPEN').map(c => c.padEnd(COL_W[c] ?? 0)).join('')}
             </Text>
             {rows.map(r => {
               const m = byName.get(r.name)!
@@ -1453,12 +1543,12 @@ async function rosterView($: any, ui: any, cols: number) {
                   <Text> </Text>
                   <Text dimColor>{r.prefix}</Text>
                   <Text color={levelShade(m.level)}>{r.name.padEnd(nameW - r.prefix.length)}</Text>
-                  <Text color={color}>{`${glyph} ${label}`.padEnd(11)}</Text>
-                  <Text color={ctxColor}>{ctxText.padEnd(16)}</Text>
-                  <Text>{(m.model || '-').padEnd(14)}</Text>
-                  <Text color={SHADE[m.effort.toLowerCase()]}>{(m.effort || '-').padEnd(8)}</Text>
-                  <Text color={bc}>{bt.padEnd(9)}</Text>
-                  {m.handle !== '' && (
+                  {show('STATUS') && <Text color={color}>{`${glyph} ${label}`.padEnd(11)}</Text>}
+                  {show('CONTEXT') && <Text color={ctxColor}>{ctxText.padEnd(16)}</Text>}
+                  {show('MODEL') && <Text>{(m.model || '-').padEnd(14)}</Text>}
+                  {show('EFFORT') && <Text color={SHADE[m.effort.toLowerCase()]}>{(m.effort || '-').padEnd(8)}</Text>}
+                  {show('BRIEF') && <Text color={bc}>{bt.padEnd(9)}</Text>}
+                  {show('OPEN') && m.handle !== '' && (
                     <Button
                       key={`go-${keyOf(m)}`}
                       label="Open"
@@ -1488,6 +1578,7 @@ async function rosterView($: any, ui: any, cols: number) {
           </Box>
         )
       })}
+      </Box>
       <Box>
         <Button key="refresh" label="Refresh" onPress={() => void refresh($)} />
         <Button key="none" label="Clear selection" onPress={() => void tick(() => false)} />
