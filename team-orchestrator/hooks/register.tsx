@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Bulk, Form, Member, Settings, View } from '../types'
+import type { Act, Bulk, Form, Member, Settings, View } from '../types'
 
 const ORCA = 'orca.exe'
 const TOOL = 'mcp__team-orchestrator__team_launch'
 const ADOPT = 'mcp__team-orchestrator__team_adopt'
 const REMOVE_TEAM = 'mcp__team-orchestrator__team_remove'
 const REMOVE_MEMBER = 'mcp__team-orchestrator__member_remove'
+const MOVE = 'mcp__team-orchestrator__member_move'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -90,6 +91,9 @@ const cardWidth = (nameW: number, s: Settings) => 4 + nameW + shownCols(s).reduc
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
 const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
   s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
+const ACT0: Act = { kind: 'none', to: '', newTeam: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
+const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
+const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
 const DOCK = 'team-dock'
 const bulk = atom({ plugin: 'team-orchestrator', key: 'bulk' } as const, {
@@ -313,7 +317,7 @@ const briefText = (m: Member, list: Member[], team: string): string => {
   )
 }
 
-async function briefTeam($: any, team: string) {
+async function briefTeam($: any, team: string, only?: Set<string>) {
   const all: Member[] = await readMembers($)
   const mine = all.filter(m => m.team === team)
   // the briefing lists the team and every boss above it, so a head learns who its CEO is
@@ -326,7 +330,7 @@ async function briefTeam($: any, team: string) {
   const sent = new Set<string>()
   await Promise.all(
     mine
-      .filter(m => m.handle)
+      .filter(m => m.handle && (!only || only.has(keyOf(m))))
       .map(async m => {
         const r = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, list, team), '--enter')
         if (r.ok) sent.add(m.name)
@@ -562,6 +566,93 @@ async function remove($: any, team: string, name?: string): Promise<string> {
   return `Removed ${name === undefined ? `team "${t}" (${gone.length} member${gone.length === 1 ? '' : 's'})` : `"${name}" from team "${t}"`} from the roster. No terminal was closed.`
 }
 
+const keyOf = (m: Member) => `${m.team}|${m.name}`
+
+// Levels follow the reporting line: a member whose boss is in its team sits one below that boss. Members whose
+// boss is elsewhere (the user, a CEO in another team) keep their level.
+const relevel = (list: Member[], team: string): Member[] => {
+  const out = list.map(m => ({ ...m }))
+  const mine = out.filter(m => m.team === team)
+  const byName = new Map(mine.map(m => [m.name, m]))
+  const seen = new Set<string>()
+  const walk = (m: Member) => {
+    if (seen.has(m.name)) return
+    seen.add(m.name)
+    for (const k of mine.filter(x => x.boss === m.name)) (k.level = m.level + 1), walk(k)
+  }
+  mine.filter(m => !byName.has(m.boss)).forEach(walk)
+  return out
+}
+
+// Move members (by team|name) to another team, under `boss` or that team's head ('user' in a new team). A moved
+// member's reports that stay behind would lose their boss, so the move is refused; tick them too and they move along.
+async function move($: any, keys: Set<string>, toTeam: string, boss?: string): Promise<string> {
+  await pull($)
+  const all = await readMembers($)
+  const to = clean(toTeam)
+  if (to === '') return 'Name the team to move to.'
+  const moving = all.filter(m => keys.has(keyOf(m)) && m.team !== to)
+  if (moving.length === 0) return 'Nothing to move: tick members of another team.'
+  const left = all.filter(r => !keys.has(keyOf(r)) && moving.some(m => m.team === r.team && m.name === r.boss))
+  if (left.length > 0)
+    return `Refused: ${left.map(r => `${r.name} reports to ${r.boss}`).join(', ')}. Tick them too to move them along, or change their boss first.`
+  const target = all.filter(m => m.team === to)
+  const clash = moving.filter(m => target.some(x => x.name === m.name))
+  if (clash.length > 0) return `Refused: team "${to}" already has ${clash.map(m => m.name).join(', ')}.`
+  const head = boss ? target.find(m => m.name === boss) : target.find(m => !target.some(x => x.name === m.boss))
+  if (boss && !head) return `No member "${boss}" in team "${to}".`
+  const names = new Set(moving.map(m => `${m.team}|${m.name}`))
+  const next = all.map(m =>
+    !keys.has(keyOf(m)) || m.team === to
+      ? m
+      : names.has(`${m.team}|${m.boss}`)
+        ? { ...m, team: to, sel: false }
+        : { ...m, team: to, boss: head?.name ?? 'user', level: (head?.level ?? 0) + 1, sel: false },
+  )
+  await update($, members, () => relevel(next, to).map(m => ({ ...m, sel: false })))
+  await share($)
+  return `Moved ${moving.map(m => m.name).join(', ')} to team "${to}" under ${head?.name ?? 'user'}. No terminal was touched.`
+}
+
+// New boss for ticked members of one team. Not one of them, nor anyone below them (that would be a loop).
+const bossChoices = (list: Member[], keys: Set<string>): Member[] => {
+  const ticked = list.filter(m => keys.has(keyOf(m)))
+  const team = ticked[0]?.team
+  if (!team || ticked.some(m => m.team !== team)) return []
+  const below = new Set(ticked.map(m => m.name))
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const m of list) if (m.team === team && below.has(m.boss) && !below.has(m.name)) (below.add(m.name), (grew = true))
+  }
+  return list.filter(m => m.team === team && !below.has(m.name))
+}
+
+async function changeBoss($: any, keys: Set<string>, boss: string): Promise<string> {
+  const all = await readMembers($)
+  const b = bossChoices(all, keys).find(m => m.name === boss)
+  if (!b) return `"${boss}" cannot be the boss of the ticked members (tick members of one team; not one of them or below them).`
+  const next = all.map(m => (keys.has(keyOf(m)) ? { ...m, boss: b.name, level: b.level + 1 } : m))
+  await update($, members, () => relevel(next, b.team).map(m => ({ ...m, sel: false })))
+  await share($)
+  return `${all.filter(m => keys.has(keyOf(m))).map(m => m.name).join(', ')} now report to ${b.name}.`
+}
+
+// Adopt one running tab into a team: its title (glyph stripped) is the name; refresh then finds its session id.
+async function addMember($: any, handle: string, title: string, team: string, boss: string, role: string): Promise<string> {
+  const all = await readMembers($)
+  const name = bare(title)
+  if (name === '' || all.some(m => m.team === team && m.name === name)) return `Team "${team}" already has "${name}".`
+  const b = all.find(m => m.team === team && m.name === boss)
+  const added: Member = {
+    team, name, address: name, role: role || 'member', level: b ? b.level + 1 : 1, boss: b ? b.name : 'user', handle, sessionId: '',
+    state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
+  }
+  await update($, members, () => [...all.map(m => ({ ...m, sel: false })), added])
+  await share($)
+  await refresh($)
+  return `Added ${name} to team "${team}" under ${added.boss}.`
+}
+
 // Replace one team's members, leaving the other teams of the project alone.
 async function put($: any, team: string | string[], mine: Member[]) {
   const all = await readMembers($)
@@ -759,6 +850,16 @@ export const register: Register = on => {
       description: 'Take one member of a team off the roster (memory and the roster file). Closes no terminal and stops no session.',
       inputSchema: { type: 'object', properties: { team: { type: 'string' }, name: { type: 'string' } }, required: ['team', 'name'] },
     })
+    await $.tool.register({
+      name: 'member_move',
+      description:
+        'Move one member to another team (a new team name makes one), under boss or else that team\'s head; level becomes the boss level + 1. Refused while others report to the member. Closes no terminal.',
+      inputSchema: {
+        type: 'object',
+        properties: { team: { type: 'string' }, name: { type: 'string' }, toTeam: { type: 'string' }, boss: { type: 'string' } },
+        required: ['team', 'name', 'toTeam'],
+      },
+    })
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
     // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
@@ -805,6 +906,11 @@ export const register: Register = on => {
   on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => {
     const input = e as unknown as { team: string; name: string }
     return { result: await remove($, input.team, input.name) } as any
+  })
+
+  on('tool.call', { tool: MOVE }, async ($, e) => {
+    const input = e as unknown as { team: string; name: string; toTeam: string; boss?: string }
+    return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
@@ -1469,14 +1575,23 @@ async function formView($: any, ui: any) {
   )
 }
 
+const ACTIONS = [
+  { value: 'none', label: '—' },
+  { value: 'move', label: 'Move to team…' },
+  { value: 'remove', label: 'Remove from roster' },
+  { value: 'boss', label: 'Change boss…' },
+  { value: 'bulk', label: 'Rename / model / effort…' },
+  { value: 'brief', label: 'Brief again' },
+  { value: 'add', label: 'Add member to team…' },
+]
+
 async function rosterView($: any, ui: any, cols: number) {
-  const { Box, Text, Input, Button } = ui
+  const { Box, Text, Input, Button, Select } = ui
   const list: Member[] = await readMembers($)
   const b: Bulk = await readBulk($)
   const teams = [...new Set(list.map(m => m.team))]
   const picked = list.filter(m => m.sel).length
   const maxLevel = (team: string) => Math.max(1, ...list.filter(m => m.team === team).map(m => m.level))
-  const keyOf = (m: Member) => `${m.team}|${m.name}`
   const tick = (pred: (m: Member) => boolean) => update($, members, () => list.map(m => ({ ...m, sel: pred(m) })))
   const toggle = (k: string) => update($, members, () => list.map(m => (keyOf(m) === k ? { ...m, sel: !m.sel } : m)))
   const t: number = await read($, frame)
@@ -1493,6 +1608,31 @@ async function rosterView($: any, ui: any, cols: number) {
   const nameWidth = (mine: Member[]) => Math.max(12, ...treeLines(mine).map(r => (r.prefix + r.name).length)) + 1
   const widest = Math.max(0, ...teams.map(team => cardWidth(nameWidth(list.filter(m => m.team === team)), s)))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
+  // the Actions menu: each action works on the ticked rows, then clears the ticks (a refused one keeps them)
+  const a = await readAct($)
+  const setAct = (patch: Partial<Act>) => update($, act, old => ({ ...ACT0, ...old, ...patch }))
+  const ticked = new Set(list.filter(m => m.sel).map(keyOf))
+  const bosses = bossChoices(list, ticked)
+  const finish = async (work: Promise<string>) => {
+    const msg = await work
+    const kept = (await readMembers($)).some(m => m.sel)
+    await setAct(kept ? { msg } : { ...ACT0, msg })
+  }
+  const pickAct = async (kind: string) => {
+    if (kind !== 'none' && kind !== 'add' && picked === 0) return void (await setAct({ ...ACT0, msg: 'Tick at least one row.' }))
+    if (kind === 'brief') {
+      for (const team of new Set(list.filter(m => m.sel).map(m => m.team))) await briefTeam($, team, ticked)
+      await update($, members, old => old.map(m => ({ ...m, sel: false })))
+      return void (await setAct({ ...ACT0, msg: `Briefed ${ticked.size} again.` }))
+    }
+    if (kind === 'add') {
+      const tabs = (await liveTabs($))
+        .map(x => ({ handle: handleOf(String(x.handle)), title: bare(String(x.title ?? '')) }))
+        .filter(x => x.handle !== '' && !list.some(m => m.handle === x.handle))
+      return void (await setAct({ ...ACT0, kind, tabs, to: teams[0] ?? '', handle: tabs[0]?.handle ?? '' }))
+    }
+    await setAct({ ...ACT0, kind, to: kind === 'move' ? (teams.find(x => !list.some(m => m.sel && m.team === x)) ?? '+new') : '' })
+  }
   return (
     <Box flexDirection="column">
       {list.length === 0 && emptyState($, ui, t)}
@@ -1582,9 +1722,113 @@ async function rosterView($: any, ui: any, cols: number) {
       <Box>
         <Button key="refresh" label="Refresh" onPress={() => void refresh($)} />
         <Button key="none" label="Clear selection" onPress={() => void tick(() => false)} />
+        <Select key="actions" label=" Actions " options={ACTIONS} value={a.kind} onSelect={(v: string) => void pickAct(v)} />
         <Text dimColor> {picked} selected</Text>
       </Box>
-      {picked > 0 && (
+      {a.kind === 'move' && (
+        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Text color="yellow">┤ Move {picked} selected to another team ├</Text>
+          <Select
+            key="move-to"
+            label="To team "
+            options={[...teams.map(x => ({ value: x, label: `@${x}` })), { value: '+new', label: 'new team…' }]}
+            {...(a.to ? { value: a.to } : {})}
+            onSelect={(v: string) => void setAct({ to: v })}
+          />
+          {a.to === '+new' && (
+            <Input
+              key="move-new"
+              label="▸ New team "
+              value={a.newTeam}
+              placeholder="the new team's name"
+              onInput={(v: string) => {
+                typedAt = Date.now()
+                void setAct({ newTeam: v })
+              }}
+              onSubmit={() => {}}
+            />
+          )}
+          <Text dimColor>The moved members report to that team's head (in a new team, to the user). Anyone reporting to a moved member must be ticked too.</Text>
+          <Button key="move-go" label="Move" variant="primary" onPress={() => void finish(move($, ticked, a.to === '+new' ? a.newTeam : a.to))} />
+        </Box>
+      )}
+      {a.kind === 'remove' && (
+        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Select
+            key="remove-confirm"
+            label={`Remove ${picked} from the roster? `}
+            options={[{ value: 'ask', label: 'choose' }, { value: 'confirm', label: 'Confirm' }, { value: 'cancel', label: 'Cancel' }]}
+            value="ask"
+            onSelect={(v: string) =>
+              void (async () => {
+                if (v === 'cancel') return void (await setAct({ ...ACT0, msg: 'Nothing removed.' }))
+                if (v !== 'confirm') return
+                const out: string[] = []
+                for (const m of list.filter(x => x.sel)) out.push(await remove($, m.team, m.name))
+                await finish(Promise.resolve(out.join(' ')))
+              })()
+            }
+          />
+          <Text dimColor>Only the roster changes: no terminal is closed.</Text>
+        </Box>
+      )}
+      {a.kind === 'boss' && (
+        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+          {bosses.length === 0 ? (
+            <Text>Tick members of one team; the new boss is another member of that team.</Text>
+          ) : (
+            <Select
+              key="boss-to"
+              label="New boss "
+              options={bosses.map(m => ({ value: m.name, label: m.name }))}
+              onSelect={(v: string) => void finish(changeBoss($, ticked, v))}
+            />
+          )}
+        </Box>
+      )}
+      {a.kind === 'add' && (
+        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Text color="yellow">┤ Add a running session to a team ├</Text>
+          {a.tabs.length === 0 || teams.length === 0 ? (
+            <Text>{teams.length === 0 ? 'Make a team first.' : 'Every live Orca tab is on the roster already.'}</Text>
+          ) : (
+            <Box flexDirection="column">
+              <Select key="add-tab" label="Tab " options={a.tabs.map(x => ({ value: x.handle, label: x.title }))} {...(a.handle ? { value: a.handle } : {})} onSelect={(v: string) => void setAct({ handle: v })} />
+              <Select key="add-team" label="Team " options={teams.map(x => ({ value: x, label: `@${x}` }))} {...(a.to ? { value: a.to } : {})} onSelect={(v: string) => void setAct({ to: v, boss: '' })} />
+              <Select
+                key="add-boss"
+                label="Boss "
+                options={[{ value: 'user', label: 'user' }, ...list.filter(m => m.team === a.to).map(m => ({ value: m.name, label: m.name }))]}
+                {...(a.boss ? { value: a.boss } : {})}
+                onSelect={(v: string) => void setAct({ boss: v })}
+              />
+              <Input
+                key="add-role"
+                label="▸ Role "
+                value={a.role}
+                placeholder="what it does"
+                onInput={(v: string) => {
+                  typedAt = Date.now()
+                  void setAct({ role: v })
+                }}
+                onSubmit={() => {}}
+              />
+              <Button
+                key="add-go"
+                label="Add"
+                variant="primary"
+                onPress={() => {
+                  const tab = a.tabs.find(x => x.handle === a.handle) ?? a.tabs[0]!
+                  void finish(addMember($, tab.handle, tab.title, a.to || (teams[0] as string), a.boss || 'user', a.role))
+                }}
+              />
+            </Box>
+          )}
+          <Text dimColor>A new session is launched from New team (or team_launch), not from here.</Text>
+        </Box>
+      )}
+      {a.msg !== '' && <Text color="green">{a.msg}</Text>}
+      {picked > 0 && a.kind === 'bulk' && (
         <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
           <Text color="yellow">┤ Bulk edit: {picked} selected ├</Text>
           <Input

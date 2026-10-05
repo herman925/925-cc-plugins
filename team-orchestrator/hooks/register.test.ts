@@ -410,3 +410,98 @@ test('dock right puts the panel in the dock pane, which says when it cannot sit 
   await pane.press({ key: 'layout-stacked' })
   expect((await pane.find({ key: 'layout-stacked' }) as any).props.variant).toBe('primary')
 })
+
+// item 11: the Actions menu and member_move
+const alphaBeta = async ($: any, on: any, tabs: Tab[] = []) => {
+  const files = world(on, tabs, [])
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as any)
+  on('ui.close', async () => ({ value: undefined }) as any)
+  const team = (name: string, members: any[]) => $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: name, members } as any)
+  await team('Alpha', [
+    { name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_a1' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Head', handle: 'term_a2' },
+  ])
+  await team('Beta', [
+    { name: 'BHead', role: 'head', level: 1, boss: 'user', handle: 'term_b1' },
+    { name: 'BW', role: 'worker', level: 2, boss: 'BHead', handle: 'term_b2' },
+  ])
+  return files
+}
+const row = (files: Map<string, string>, name: string) => saved(files).find((m: any) => m.name === name)
+
+test('member_move moves one member under the target head, or a named boss, and sets the level from the boss', async ($, on) => {
+  const files = await alphaBeta($, on)
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__member_move', team: 'Beta', name: 'BW', toTeam: 'Alpha' } as any)
+  expect(JSON.stringify(out)).toContain('Moved BW to team')
+  expect([row(files, 'BW').team, row(files, 'BW').boss, row(files, 'BW').level]).toEqual(['Alpha', 'Head', 2])
+  await $.tool.call({ tool: 'mcp__team-orchestrator__member_move', team: 'Alpha', name: 'BW', toTeam: 'Beta', boss: 'BHead' } as any)
+  await $.tool.call({ tool: 'mcp__team-orchestrator__member_move', team: 'Beta', name: 'BW', toTeam: 'Alpha', boss: 'W1' } as any)
+  expect([row(files, 'BW').team, row(files, 'BW').boss, row(files, 'BW').level]).toEqual(['Alpha', 'W1', 3])
+  expect(files.calls.filter(a => a.includes('close') || a.includes('kill')).length).toBe(0)
+})
+
+test('moving a head whose reports stay behind is refused; ticking them too moves the whole branch', async ($, on) => {
+  const files = await alphaBeta($, on)
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__member_move', team: 'Alpha', name: 'Head', toTeam: 'Beta' } as any)
+  expect(JSON.stringify(out)).toContain('Refused: W1 reports to Head')
+  expect(row(files, 'Head').team).toBe('Alpha')
+  const band = await mountBand($)
+  await band.press({ key: 'sel-Alpha|Head' })
+  await band.press({ key: 'sel-Alpha|W1' })
+  await band.select({ key: 'actions', value: 'move' })
+  await band.select({ key: 'move-to', value: 'Beta' })
+  await band.press({ key: 'move-go' })
+  expect([row(files, 'Head').team, row(files, 'Head').boss, row(files, 'Head').level]).toEqual(['Beta', 'BHead', 2])
+  expect([row(files, 'W1').team, row(files, 'W1').boss, row(files, 'W1').level]).toEqual(['Beta', 'Head', 3])
+  // the ticks are cleared and the menu is back to rest
+  expect((await band.find({ key: 'sel-Beta|W1' }) as any).props.label).toBe('[ ]')
+  expect(await band.find({ key: 'move-go' })).toBeUndefined()
+})
+
+test('remove from the menu asks first: Cancel keeps the member, Confirm takes it off the roster', async ($, on) => {
+  const files = await alphaBeta($, on)
+  const band = await mountBand($)
+  await band.press({ key: 'sel-Alpha|W1' })
+  await band.select({ key: 'actions', value: 'remove' })
+  expect(await band.find({ key: 'remove-confirm' })).toBeDefined()
+  await band.select({ key: 'remove-confirm', value: 'cancel' })
+  expect(await band.find({ key: 'remove-confirm' })).toBeUndefined()
+  expect(row(files, 'W1')).toBeDefined()
+  await band.select({ key: 'actions', value: 'remove' })
+  await band.select({ key: 'remove-confirm', value: 'confirm' })
+  expect(row(files, 'W1')).toBeUndefined()
+  expect(files.calls.filter(a => a.includes('close') || a.includes('kill')).length).toBe(0)
+})
+
+test('change boss offers only members of the same team that are not the ticked ones or below them', async ($, on) => {
+  const files = await alphaBeta($, on)
+  const band = await mountBand($)
+  await band.press({ key: 'sel-Beta|BW' })
+  await band.select({ key: 'actions', value: 'boss' })
+  const opts = ((await band.find({ key: 'boss-to' })) as any).props.options.map((o: any) => o.value)
+  expect(opts).toEqual(['BHead'])
+  await band.press({ key: 'sel-Beta|BW' })
+  await band.press({ key: 'sel-Beta|BHead' })
+  // the head and its report ticked: no one in the team is left to be their boss
+  expect(await band.find({ key: 'boss-to' })).toBeUndefined()
+  await band.press({ key: 'sel-Beta|BHead' })
+  await band.press({ key: 'sel-Beta|BW' })
+  await band.select({ key: 'boss-to', value: 'BHead' })
+  expect([row(files, 'BW').boss, row(files, 'BW').level]).toEqual(['BHead', 2])
+})
+
+test('add member lists live tabs that are not on the roster, and adopts the picked one into a team', async ($, on) => {
+  const files = await alphaBeta($, on, [
+    { handle: 'term_a1', title: '✳ Head' },
+    { handle: 'term_0e1', title: '✳ New Guy' },
+  ])
+  const band = await mountBand($)
+  await band.select({ key: 'actions', value: 'add' })
+  const tabs = ((await band.find({ key: 'add-tab' })) as any).props.options
+  expect(tabs).toEqual([{ value: 'term_0e1', label: 'New Guy' }])
+  await band.select({ key: 'add-team', value: 'Alpha' })
+  await band.select({ key: 'add-boss', value: 'Head' })
+  await band.input({ key: 'add-role', text: 'reviewer', kind: 'change' })
+  await band.press({ key: 'add-go' })
+  expect([row(files, 'New Guy').team, row(files, 'New Guy').boss, row(files, 'New Guy').level, row(files, 'New Guy').handle, row(files, 'New Guy').role]).toEqual(['Alpha', 'Head', 2, 'term_0e1', 'reviewer'])
+})

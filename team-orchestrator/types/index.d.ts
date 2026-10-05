@@ -48,7 +48,24 @@ export type Bulk = {
   effort: string
   msg: string
 }
-export type View = 'closed' | 'roster' | 'new' | 'settings'
+/** the Actions menu of the roster: what it is doing for the ticked rows */
+export type Act = {
+  /** none | move | remove | boss | bulk | brief | add */
+  kind: string
+  /** move: the target team, '+new' for a new one; add: the team */
+  to: string
+  /** move: the new team's name */
+  newTeam: string
+  /** add: the boss; boss: the new boss */
+  boss: string
+  /** add: the picked tab's handle, and its role */
+  handle: string
+  role: string
+  /** add: live tabs not on the roster, read when the action was picked */
+  tabs: { handle: string; title: string }[]
+  msg: string
+}
+export type View ='closed' | 'roster' | 'new' | 'settings'
 export type Settings = {
   /** stacked: team cards one under another | columns: side by side where the width allows | dock: the panel in a side pane */
   layout: 'stacked' | 'columns' | 'dock'
@@ -70,6 +87,7 @@ declare module 'claude-code' {
       frame: number
       menu: string
       settings: Settings
+      act: Act
     }
   }
 }
