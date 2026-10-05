@@ -314,7 +314,145 @@ async function briefTeam($: any, team: string) {
   await share($)
 }
 
-// Reads state, context, model and effort of every member: Orca's agent state plus the tab's status line.
+// ── Transcripts: <config dir>/projects/<project>/<session id>.jsonl ──────────────────────────────────────────
+// Only three things are taken from a transcript: its last customTitle, and the last assistant message's model,
+// usage (as a context percent), effort and cwd. Nothing else is kept or shown: a transcript can hold secrets.
+type Transcript = { id: string; path: string; mtimeMs: number }
+type Stats = { model: string; ctx: number; effort: string; cwd: string }
+
+// Every transcript, newest first.
+async function transcripts($: any): Promise<Transcript[]> {
+  const none = () => undefined
+  const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
+  const dir = (await $.env.get('CLAUDE_CONFIG_DIR').catch(none)) || (home ? `${home}/.claude` : '')
+  if (!dir) return []
+  const root = `${dir}/projects`
+  const projects = ((await $.fs.list(root).catch(() => [])) as any[]).filter(p => p.kind === 'dir')
+  const lists = await Promise.all(projects.map(async p => ((await $.fs.list(`${root}/${p.name}`).catch(() => [])) as any[]).map(f => ({ ...f, dir: `${root}/${p.name}` }))))
+  return lists
+    .flat()
+    .filter(f => f.kind === 'file' && /^[0-9a-f-]{36}\.jsonl$/.test(f.name))
+    .map(f => ({ id: f.name.slice(0, 36), path: `${f.dir}/${f.name}`, mtimeMs: f.mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+}
+
+// The last TAIL bytes of each file, '' for one it cannot read: one PowerShell per 15 files, since stdout holds
+// 4 MiB, and $.fs.read takes a whole file (at most 4 MiB) where a transcript can be far larger.
+const TAIL = 256 * 1024
+const TAIL_PS =
+  "$o=[Console]::OpenStandardOutput(); foreach($p in $env:TO_FILES -split '\\|'){ $o.WriteByte(0); try { $f=[IO.File]::Open($p,'Open','Read','ReadWrite'); try { $k=[Math]::Min([long]$env:TO_BYTES,$f.Length); [void]$f.Seek(-$k,'End'); $b=New-Object byte[] $k; $o.Write($b,0,$f.Read($b,0,$k)) } finally { $f.Close() } } catch {} }; $o.Flush()"
+async function tails($: any, files: string[]): Promise<string[]> {
+  const out: string[] = []
+  for (let i = 0; i < files.length; i += 15) {
+    const part = files.slice(i, i + 15)
+    const r = await $.process
+      .run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', TAIL_PS], { env: { TO_FILES: part.join('|'), TO_BYTES: String(TAIL) }, timeoutMs: 60000 })
+      .catch(() => undefined)
+    const got = r?.exitCode === 0 ? String(r.stdout).split('\0').slice(1) : []
+    out.push(...part.map((_, j) => got[j] ?? ''))
+  }
+  return out
+}
+
+const lastTitle = (text: string): string | undefined => {
+  const hit = [...text.matchAll(/"customTitle":("(?:[^"\\]|\\.)*")/g)].pop()
+  try {
+    return hit ? String(JSON.parse(hit[1] as string)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// The window is 200k unless the id says [1m]; a session already past 200k must be on the 1M window.
+const lastStats = (text: string): Stats | undefined => {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i] as string
+    if (!l.includes('"type":"assistant"')) continue
+    let d: any
+    try {
+      d = JSON.parse(l)
+    } catch {
+      continue
+    }
+    const u = d?.message?.usage
+    const model = String(d?.message?.model ?? '')
+    if (d?.type !== 'assistant' || d.isSidechain || !u || model === '' || model === '<synthetic>') continue
+    const used = Number(u.input_tokens ?? 0) + Number(u.cache_read_input_tokens ?? 0) + Number(u.cache_creation_input_tokens ?? 0)
+    const window = /\[1m\]$/.test(model) || used > 200000 ? 1000000 : 200000
+    return {
+      model: model.replace(/^claude-/, ''),
+      ctx: Math.round((used * 100) / window),
+      effort: typeof d.effort === 'string' ? d.effort : '',
+      cwd: typeof d.cwd === 'string' ? d.cwd : '',
+    }
+  }
+  return undefined
+}
+
+// What each transcript's tail said, kept until the file changes, so a refresh reads only the files that moved.
+const seen = new Map<string, { mtimeMs: number; title?: string; stats?: Stats }>()
+async function peek($: any, files: Transcript[]) {
+  const stale = files.filter(f => seen.get(f.path)?.mtimeMs !== f.mtimeMs)
+  const texts = await tails($, stale.map(f => f.path))
+  stale.forEach((f, i) => seen.set(f.path, { mtimeMs: f.mtimeMs, title: lastTitle(texts[i] ?? ''), stats: lastStats(texts[i] ?? '') }))
+  return files.map(f => seen.get(f.path)!)
+}
+
+// Session id per name: the newest transcript whose last customTitle is that name.
+async function sessionsNamed($: any, all: Transcript[], names: string[]): Promise<Map<string, string>> {
+  const want = new Set(names)
+  const found = new Map<string, string>()
+  for (let i = 0; i < all.length && found.size < want.size; i += 15) {
+    const part = all.slice(i, i + 15)
+    ;(await peek($, part)).forEach((s, j) => {
+      if (s.title !== undefined && want.has(s.title) && !found.has(s.title)) found.set(s.title, (part[j] as Transcript).id)
+    })
+  }
+  return found
+}
+
+async function statsOf($: any, all: Transcript[], ids: string[]): Promise<Map<string, Stats | undefined>> {
+  const files = all.filter(t => ids.includes(t.id))
+  const got = await peek($, files)
+  return new Map(files.map((f, i) => [f.id, got[i]?.stats]))
+}
+
+// ── Orca tabs ──────────────────────────────────────────────────────────────────────────────────────────────
+// A tab's title is the session name behind a status glyph: "✳ Hualong Workers", "◑ Hualong CEO".
+const bare = (title: string) => title.replace(/^[^\p{L}\p{N}\s]+\s+/u, '').trim()
+const namesOf = (m: Member) => [...new Set([m.address, m.name].filter((x): x is string => !!x))]
+
+async function liveTabs($: any): Promise<any[]> {
+  const r = await orca($, 'terminal', 'list')
+  try {
+    return (JSON.parse(r.out).result.terminals as any[]).filter(t => t.connected !== false)
+  } catch {
+    return []
+  }
+}
+
+async function showTab($: any, handle: string): Promise<any> {
+  const show = await orca($, 'terminal', 'show', '--terminal', handle)
+  if (!show.ok) return undefined
+  try {
+    const t = JSON.parse(show.out).result.terminal
+    return t.connected === false ? undefined : t
+  } catch {
+    return undefined
+  }
+}
+
+const slash = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+const under = (cwd: string, wt: string) => wt !== '' && `${slash(cwd)}/`.startsWith(`${slash(wt)}/`)
+
+// The notes refresh writes; any other note (a launch error, "not ready") stays.
+const DERIVED = /^(no Orca tab|no transcript|several tabs named .*|status line not readable)$/
+const withNotes = (old: string, add: string[]) => [...old.split(', ').filter(p => p !== '' && !DERIVED.test(p)), ...add].join(', ')
+
+// Reads state, context, model and effort of every member: Orca's agent state plus the tab's status line, the
+// transcript where the status line says nothing. A handle that is empty or dead is found again by tab title (a
+// restarted session gets a new one); an empty session id by the transcript's customTitle.
 async function refresh($: any) {
   await pull($)
   const list: Member[] = await readMembers($)
@@ -326,39 +464,66 @@ async function refresh($: any) {
   } catch {
     // keep whatever we had
   }
-  const next = await Promise.all(
-    list.map(async m => {
-      if (!m.handle) return m
-      const show = await orca($, 'terminal', 'show', '--terminal', m.handle)
-      if (!show.ok) return { ...m, state: 'offline' }
-      let t: any = {}
-      try {
-        t = JSON.parse(show.out).result.terminal
-      } catch {
-        return m
+  const shown = await Promise.all(list.map(m => (m.handle ? showTab($, m.handle) : undefined)))
+  // one list of tabs and one transcript scan per refresh, not one per member
+  const tabs = shown.some(t => !t) ? await liveTabs($) : []
+  const all = await transcripts($)
+  const ids = list.some(m => !m.sessionId) ? await sessionsNamed($, all, list.filter(m => !m.sessionId).flatMap(namesOf)) : new Map<string, string>()
+  const firstPass = await Promise.all(
+    list.map(async (m0, i) => {
+      const notes: string[] = []
+      const sessionId = m0.sessionId || namesOf(m0).map(n => ids.get(n)).find(Boolean) || ''
+      let m: Member = { ...m0, sessionId }
+      let t = shown[i]
+      if (!t) {
+        const hits = tabs.filter(x => namesOf(m).includes(bare(String(x.title ?? ''))))
+        const cwd = hits.length > 1 && sessionId ? ((await statsOf($, all, [sessionId])).get(sessionId)?.cwd ?? '') : ''
+        const near = hits.filter(x => cwd !== '' && under(cwd, String(x.worktreePath ?? '')))
+        const pick = hits.length === 1 ? hits[0] : near.length === 1 ? near[0] : undefined
+        if (pick) {
+          t = pick
+          m = { ...m, handle: handleOf(String(pick.handle)) }
+        } else notes.push(hits.length > 1 ? `several tabs named ${m.address || m.name}` : 'no Orca tab')
       }
-      if (t.connected === false) return { ...m, state: 'offline' }
-      const rd = await orca($, 'terminal', 'read', '--terminal', m.handle)
+      if (!sessionId) notes.push('no transcript')
       let screen = ''
       let exited = false
-      try {
-        const rt = JSON.parse(rd.out).result.terminal
-        screen = (rt.tail ?? []).join('\n')
-        exited = rt.status === 'exited'
-      } catch {
-        // no screen
+      if (t) {
+        const rd = await orca($, 'terminal', 'read', '--terminal', m.handle)
+        try {
+          const rt = JSON.parse(rd.out).result.terminal
+          screen = (rt.tail ?? []).join('\n')
+          exited = rt.status === 'exited'
+        } catch {
+          // no screen
+        }
       }
-      if (exited) return { ...m, state: 'offline' }
-      const a = agents.find(x => x.paneKey === `${t.tabId}:${t.leafId}`)
+      const a = t ? agents.find(x => x.paneKey === `${t.tabId}:${t.leafId}`) : undefined
       const raw = String(a?.state ?? '')
-      const state = /work|run/.test(raw) ? 'working' : /block|wait|ask|input|permission|question/.test(raw) ? 'asking' : raw === '' ? m.state : 'idle'
-      const model = screen.match(/Model:\s*(.+?)\s+v\d[\d.]*\s*\|/)?.[1] ?? m.model
-      const effort = screen.match(/Thinking:\s*(\w+)/)?.[1] ?? m.effort
-      const ctx = Number(screen.match(/Context:[^\n]*?\((\d+)%\)/)?.[1] ?? m.ctx)
+      const state = (!t && m.handle) || exited ? 'offline' : /work|run/.test(raw) ? 'working' : /block|wait|ask|input|permission|question/.test(raw) ? 'asking' : raw === '' ? m.state : 'idle'
+      const line = {
+        model: screen.match(/Model:\s*(.+?)\s+v\d[\d.]*\s*\|/)?.[1],
+        effort: screen.match(/Thinking:\s*(\w+)/)?.[1],
+        ctx: screen.match(/Context:[^\n]*?\((\d+)%\)/)?.[1],
+      }
       const noted = m.noted || (m.briefed && /●\s*Noted/.test(screen))
-      return { ...m, state, model, effort, ctx, noted }
+      return { m: { ...m, state, noted }, line, live: !!t && !exited, notes }
     }),
   )
+  // the transcript, in one read, for every member whose status line lacks the model or the context
+  const lacking = firstPass.filter(r => r.m.sessionId && (r.line.model === undefined || r.line.ctx === undefined)).map(r => r.m.sessionId)
+  const stats = lacking.length > 0 ? await statsOf($, all, lacking) : new Map<string, Stats | undefined>()
+  const next = firstPass.map(({ m, line, live, notes }) => {
+    const tr = line.model === undefined || line.ctx === undefined ? stats.get(m.sessionId) : undefined
+    if (live && line.model === undefined && line.ctx === undefined && !tr) notes.push('status line not readable')
+    return {
+      ...m,
+      model: line.model ?? tr?.model ?? m.model,
+      effort: line.effort ?? (tr?.effort || m.effort),
+      ctx: Number(line.ctx ?? tr?.ctx ?? m.ctx),
+      note: withNotes(m.note, notes),
+    }
+  })
   await update($, members, old => next.map(n => ({ ...n, sel: old.find(o => o.name === n.name && (o.team || n.team) === n.team)?.sel ?? n.sel })))
   await share($)
 }
@@ -525,7 +690,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'team_adopt',
       description:
-        'Put ALREADY RUNNING sessions into the roster without launching anything. members ordered boss-first; handle is the Orca terminal handle (may be empty); address is the session name SendMessage uses (default: name); sessionId optional (needed for restart-based rename/model/effort); boss is a member name or "user".',
+        'Put ALREADY RUNNING sessions into the roster without launching anything. members ordered boss-first; handle is the Orca terminal handle (may be empty: it is then found by tab title); address is the session name SendMessage uses (default: name); sessionId optional (empty: found from the transcript whose title is the name; needed for restart-based rename/model/effort); boss is a member name or "user".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -580,8 +745,10 @@ export const register: Register = on => {
     const known = (await readMembers($)).filter(m => m.team === team)
     await put($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
     await update($, view, () => 'roster')
+    // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
-    return { result: `Roster now shows ${adopted.length} adopted sessions.` } as any
+    const notes = (await readMembers($)).filter(m => m.team === team && m.note !== '').map(m => `${m.name}: ${m.note}`)
+    return { result: `Roster now shows ${adopted.length} adopted sessions.${notes.length ? ` Notes: ${notes.join('; ')}.` : ''}` } as any
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
@@ -1258,6 +1425,7 @@ async function rosterView($: any, ui: any, cols: number) {
                       onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
                     />
                   )}
+                  {m.note !== '' && <Text dimColor> {m.note}</Text>}
                 </Box>
               )
             })}
