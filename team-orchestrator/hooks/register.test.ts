@@ -273,3 +273,52 @@ test('the roster rows and team cards remove too', async ($, on) => {
   expect(saved(files).map((m: any) => m.name)).toEqual(['Head'])
   expect(closes(calls)).toBe(0)
 })
+
+// items 8-10: the Open button, a colour per level, a colour per effort
+// every Text in the drawn tree whose own text starts with `start`, with its colour
+const colours = (tree: any, start: string): string[] => {
+  const out: string[] = []
+  const walk = (n: any) => {
+    if (!n || typeof n !== 'object') return
+    const own = (n.children ?? []).filter((c: any) => typeof c === 'string').join('')
+    if (n.type === 'Text' && own.startsWith(start)) out.push(n.props?.color)
+    ;(n.children ?? []).forEach(walk)
+  }
+  walk(tree)
+  return out
+}
+
+test('names take one colour per level in the table and the chart, the same in every team; deeper levels share the last', async ($, on) => {
+  world(on, [], [])
+  await adopt($, [
+    { name: 'L1', role: 'head', level: 1, boss: 'user' },
+    { name: 'L2', role: 'lead', level: 2, boss: 'L1' },
+    { name: 'L3', role: 'worker', level: 3, boss: 'L2' },
+    { name: 'L5', role: 'worker', level: 5, boss: 'L3' },
+  ])
+  await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Other', members: [{ name: 'O2', role: 'x', level: 2, boss: 'user' }] } as any)
+  const tree = await (await mountBand($)).drawn()
+  const table = (name: string) => colours(tree, name)[0]
+  expect([table('L1'), table('L2'), table('L3'), table('L5')]).toEqual(['#ff79c6', '#bd93f9', '#8be9fd', '#a0a8b8'])
+  expect(table('O2')).toBe('#bd93f9')
+  // the chart draws " L2" after the status glyph, in the same colour
+  expect(colours(tree, ' L2')).toContain('#bd93f9')
+  for (const c of ['#ff79c6', '#bd93f9', '#8be9fd', '#a0a8b8']) expect(['green', 'yellow']).not.toContain(c)
+})
+
+test('the effort value is coloured on a scale from low (cool) to max (hot), and Open is a button like Refresh', async ($, on) => {
+  world(on, [{ handle: 'term_jj1', title: 'A', screen: 'Thinking: low' }, { handle: 'term_jj2', title: 'B', screen: 'Thinking: max' }], [])
+  await adopt($, [
+    { name: 'A', role: 'head', level: 1, boss: 'user', handle: 'term_jj1' },
+    { name: 'B', role: 'worker', level: 2, boss: 'A', handle: 'term_jj2' },
+  ])
+  const band = await mountBand($)
+  const tree = await band.drawn()
+  expect(colours(tree, 'low')[0]).toBe('#6c8cff')
+  expect(colours(tree, 'max')[0]).toBe('#ff4d4d')
+  const open: any = await band.find({ key: 'go-Hualong|A' })
+  const refresh: any = await band.find({ key: 'refresh' })
+  expect(open.props.plain).toBeUndefined()
+  expect(open.props.label).toBe('Open')
+  expect(refresh.props.plain).toBeUndefined()
+})

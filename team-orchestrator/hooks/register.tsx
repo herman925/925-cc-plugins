@@ -40,9 +40,14 @@ const LABEL: Record<string, string> = {
 }
 const SHADE: Record<string, string> = {
   default: 'gray', opus: 'magenta', sonnet: 'cyan', haiku: 'green', fable: 'yellow',
-  low: 'green', medium: 'cyan', high: 'yellow', xhigh: 'magenta', max: 'red',
+  // effort: one graded scale, low cool to max hot, in the form and the roster alike
+  low: '#6c8cff', medium: '#4ec9b0', high: '#e5c07b', xhigh: '#ff8c42', max: '#ff4d4d',
 }
 const nice = (v: string) => LABEL[v] ?? v
+// One colour per level for names in the roster and the org chart, the same in every team. None is the green or
+// yellow of the context bar; each reads on a dark background. Deeper levels share the last.
+const LEVEL_SHADE = ['#ff79c6', '#bd93f9', '#8be9fd', '#a0a8b8']
+const levelShade = (level: number) => LEVEL_SHADE[Math.min(Math.max(level, 1), LEVEL_SHADE.length) - 1] as string
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 // When the person last changed a form field. A redraw while they type could drop a keystroke, so the form
 // animates only after 1.5 s of quiet.
@@ -1061,7 +1066,7 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const start = n.x - (text.length >> 1)
     const sending = n.kids.length > 0 && f >= n.depth * 6 && f <= n.depth * 6 + 1
     ;[...text].forEach((ch, i) =>
-      setCell(row, start + i, i === 0 ? { c: ch, k: gc, b: parentSends || sending || n.m.state === 'working' } : { c: ch, b: n.depth === 0, d: dead(n.m) }),
+      setCell(row, start + i, i === 0 ? { c: ch, k: gc, b: parentSends || sending || n.m.state === 'working' } : { c: ch, k: levelShade(n.m.level), b: n.depth === 0, d: dead(n.m) }),
     )
     if (n.kids.length === 0) return
     const cr = row + 1
@@ -1446,21 +1451,21 @@ async function rosterView($: any, ui: any, cols: number) {
                 <Box>
                   <Button key={`sel-${keyOf(m)}`} label={m.sel ? '[x]' : '[ ]'} plain onPress={() => void toggle(keyOf(m))} />
                   <Text> </Text>
-                  <Text>{(r.prefix + r.name).padEnd(nameW)}</Text>
+                  <Text dimColor>{r.prefix}</Text>
+                  <Text color={levelShade(m.level)}>{r.name.padEnd(nameW - r.prefix.length)}</Text>
                   <Text color={color}>{`${glyph} ${label}`.padEnd(11)}</Text>
                   <Text color={ctxColor}>{ctxText.padEnd(16)}</Text>
                   <Text>{(m.model || '-').padEnd(14)}</Text>
-                  <Text>{(m.effort || '-').padEnd(8)}</Text>
+                  <Text color={SHADE[m.effort.toLowerCase()]}>{(m.effort || '-').padEnd(8)}</Text>
                   <Text color={bc}>{bt.padEnd(9)}</Text>
                   {m.handle !== '' && (
                     <Button
                       key={`go-${keyOf(m)}`}
-                      label="open"
-                      plain
+                      label="Open"
                       onPress={() => void $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])}
                     />
                   )}
-                  <Button key={`rm-${keyOf(m)}`} label="remove" plain onPress={() => void remove($, m.team, m.name)} />
+                  <Button key={`rm-${keyOf(m)}`} label="Remove" onPress={() => void remove($, m.team, m.name)} />
                   {m.note !== '' && <Text dimColor> {m.note}</Text>}
                 </Box>
               )
