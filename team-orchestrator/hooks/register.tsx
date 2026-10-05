@@ -215,6 +215,23 @@ const teamFile = async ($: any) => `${String(await $.session.root()).replace(/[\
 
 const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'briefed', 'noted'] as const
 
+// The file sits inside the repo, so the first write of each load lists it in the repo's info/exclude: git then
+// never offers it to a commit. git answers for a worktree (.git is a file there) and a subfolder; outside a repo it fails.
+const excluded = new Set<string>()
+async function exclude($: any) {
+  const root = String(await $.session.root())
+  if (excluded.has(root)) return
+  excluded.add(root)
+  const r = await $.process.run(['git', '-C', root, 'rev-parse', '--show-prefix', '--path-format=absolute', '--git-path', 'info/exclude']).catch(() => undefined)
+  if (r?.exitCode !== 0) return
+  const [prefix, path] = String(r.stdout).split(/\r?\n/)
+  if (!path) return
+  const line = `${prefix ?? ''}.claude/team-orchestrator.json`
+  const before = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
+  if (before.split(/\r?\n/).some(l => l.trim().replace(/^\//, '') === line)) return
+  await $.fs.write(path, `${before}${before === '' || before.endsWith('\n') ? '' : '\n'}${line}\n`)
+}
+
 async function share($: any) {
   const list = await readMembers($)
   const text = JSON.stringify(
@@ -224,7 +241,10 @@ async function share($: any) {
   )
   const file = await teamFile($)
   const before = (await $.fs.exists(file)) ? String(await $.fs.read(file)) : ''
-  if (before !== text) await $.fs.write(file, text)
+  if (before !== text) {
+    await exclude($)
+    await $.fs.write(file, text)
+  }
 }
 
 async function pull($: any) {
