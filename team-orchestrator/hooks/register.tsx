@@ -1477,7 +1477,6 @@ function orgChart(ui: any, list: Member[], t: number, cols: number, go?: (key: s
         <Text color="gray">○ offline  </Text>
         <Text color="red">✗ failed</Text>
       </Text>
-      <Text dimColor>dim = auto short name; set one in Team actions → Set short name. {MARK.trim()} opens that session's tab.</Text>
     </Box>
   )
 }
@@ -1983,7 +1982,7 @@ async function rosterView($: any, ui: any, cols: number) {
       {list.length === 0 && emptyState($, ui, t)}
       {list.length > 0 && s.chart && (
         <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-          <Text bold color="cyan">◆ LIVE ORG{'  '}<Text dimColor>dots follow each session's status; the line shows the boss passing work down</Text></Text>
+          <Text bold color="cyan">◆ LIVE ORG</Text>
           {orgChart(ui, list, t, cols, k => {
             const m = list.find(x => keyOf(x) === k)
             if (m) void goTo($, m).then(msg => setAct({ ...ACT0, to: m.team, msg }))
@@ -2097,7 +2096,6 @@ async function rosterView($: any, ui: any, cols: number) {
         <Button key="refresh" label="Refresh" onPress={() => void refresh($)} />
         <Button key="none" label="Clear selection" onPress={() => void tick(() => false)} />
         <Button key="settings" label="Settings" onPress={() => void update($, view, () => 'settings')} />
-        <Text dimColor> {picked} selected · add, move and remove people from each team's Team actions</Text>
       </Box>
     </Box>
   )

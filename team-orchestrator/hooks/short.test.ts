@@ -186,13 +186,13 @@ test('Set short name: tick one row, type, Save; an empty name clears; ticking no
   expect(JSON.stringify(await band.drawn())).not.toContain('first hand')
 })
 
-test('the chart shows the short name as typed, dims the automatic ones, and says how to set one', async ($, on) => {
+test('the chart shows the short name as typed and dims the automatic ones', async ($, on) => {
   world(on)
   // no tabs: a member with a handle that Orca does not know is drawn dim as offline, so these have none
   await adopt($, HUALONG.map(m => ({ ...m, handle: '', ...(m.name === 'Hualong PC Console Boss' ? { short: 'Boss' } : {}) })))
   const s = await shown($, 100)
   expect(s).not.toContain('PC Boss')
-  expect(s).toContain('dim = auto short name; set one in Team actions → Set short name')
+  expect(s).not.toContain('dim = auto short name') // the explaining line was removed; the dim styling stays (checked below)
   // the automatic ones are drawn dim, the given one is not
   const band = await mountBand($, 100)
   const cells: { s: string; dim?: boolean }[] = []
@@ -234,4 +234,19 @@ test('a long short name is cut with "…" when the chart would not fit, and show
   const narrow = await shown($, 44)
   expect(narrow).not.toContain(long)
   expect(narrow).toContain('the person in…')
+})
+
+test('the explaining hints are gone: no LIVE ORG subtitle, no legend note, no second "selected" count in the bottom bar', async ($, on) => {
+  world(on)
+  await adopt($, HUALONG.map(m => ({ ...m, handle: '' })))
+  const s = await shown($, 100)
+  expect(s).toContain('LIVE ORG')
+  expect(s).toContain('Clear selection') // the bottom bar itself is still there
+  expect(s).not.toContain('dots follow each session')
+  expect(s).not.toContain('the boss passing work down')
+  expect(s).not.toContain('dim = auto short name')
+  expect(s).not.toContain('opens that session')
+  expect(s).not.toContain('add, move and remove people')
+  // the team card keeps its own "N selected"; the bottom bar had a second one, so exactly one team => exactly one
+  expect(s.match(/ selected/g)?.length).toBe(1)
 })

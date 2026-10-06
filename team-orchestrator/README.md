@@ -28,8 +28,7 @@ The short name is saved in the roster file next to the member.
   shows dots only.
 - Two members with **the same short name** both show it. The chart adds "!" after each of them and the roster row says
   "short name used twice". Nothing is renamed behind your back. Capital letters do not count: `Lead` and `lead` are the same.
-- A member with **no** short name gets one from the rule, drawn dim. Under the chart a line says
-  "dim = auto short name; set one in Team actions → Set short name".
+- A member with **no** short name gets one from the rule, drawn dim.
 
 ### The rule (for members with no short name)
 
