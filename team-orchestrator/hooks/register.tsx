@@ -1482,14 +1482,24 @@ function orgChart(ui: any, list: Member[], t: number, cols: number, go?: (key: s
   )
 }
 
-// A row of buttons where the chosen one is drawn in the accent colour and the rest are not.
+// The colour of the chosen option in every row of options (Show / Hide, layout, levels...). A Button cannot carry a
+// colour, so the chosen one is drawn as coloured text in the same "[ label ]" shape; the rest stay pressable buttons.
+const CHOSEN = '#ff5440'
+
+// A row of buttons where the chosen one is drawn in CHOSEN and the rest are not.
 function Seg(ui: any, id: string, items: [string, string][], value: string, pick: (v: string) => void) {
-  const { Box, Button } = ui
+  const { Box, Button, Text } = ui
   return (
     <Box flexWrap="wrap" columnGap={1}>
-      {items.map(([v, label]) => (
-        <Button key={`${id}-${v}`} label={label} variant={v === value ? 'primary' : undefined} onPress={() => pick(v)} />
-      ))}
+      {items.map(([v, label]) =>
+        v === value ? (
+          <Box key={`${id}-${v}`}>
+            <Text color={CHOSEN} bold>{`[ ${label} ]`}</Text>
+          </Box>
+        ) : (
+          <Button key={`${id}-${v}`} label={label} onPress={() => pick(v)} />
+        ),
+      )}
     </Box>
   )
 }

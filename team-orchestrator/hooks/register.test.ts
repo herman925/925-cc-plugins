@@ -406,7 +406,7 @@ test('dock right puts the panel in the dock pane, which says when it cannot sit 
   const band = await bandAt($, 120)
   await band.press({ key: 'tab-settings' })
   await band.press({ key: 'layout-dock' })
-  expect((await band.find({ key: 'layout-dock' }) as any).props.variant).toBe('primary')
+  expect(JSON.stringify(await band.find({ key: 'layout-dock' })).includes('#ff5440')).toBe(true)
   const pane = await $.ui.mount({
     plugin: 'team-orchestrator', surface: 'terminal', component: 'Pane', requestId: 'team-dock',
     props: { title: 'Team Orchestrator', isFocused: false, bodyColumns: 90, placement: 'inline' } as any,
@@ -414,7 +414,7 @@ test('dock right puts the panel in the dock pane, which says when it cannot sit 
   expect(await pane.find({ key: 'tab-settings' })).toBeDefined()
   expect(JSON.stringify(await pane.drawn())).toContain('only in the fullscreen layout')
   await pane.press({ key: 'layout-stacked' })
-  expect((await pane.find({ key: 'layout-stacked' }) as any).props.variant).toBe('primary')
+  expect(JSON.stringify(await pane.find({ key: 'layout-stacked' })).includes('#ff5440')).toBe(true)
 })
 
 // item 11: the Team actions menus and member_move
@@ -535,7 +535,7 @@ test('add member lists live tabs that are not on the roster, and adopts the pick
   expect(await band.find({ key: 'addtab-0-term_0e1' })).toBeDefined()
   expect(await band.find({ key: 'addtab-0-term_a1' })).toBeUndefined()
   // the boss defaults to the team's head
-  expect((await band.find({ key: 'addboss-0-Head' }) as any).props.variant).toBe('primary')
+  expect(JSON.stringify(await band.find({ key: 'addboss-0-Head' })).includes('#ff5440')).toBe(true)
   await band.press({ key: 'addboss-0-W1' })
   await band.input({ key: 'addrole-0', text: 'reviewer', kind: 'change' })
   await band.press({ key: 'addgo-0' })
