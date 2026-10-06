@@ -311,7 +311,7 @@ test('names take one colour per level in the table and the chart, the same in ev
   for (const c of ['#ff79c6', '#bd93f9', '#8be9fd', '#a0a8b8']) expect(['green', 'yellow']).not.toContain(c)
 })
 
-test('the effort value is coloured on a scale from low (cool) to max (hot); rows carry no buttons, Open is in Team actions', async ($, on) => {
+test('the effort value is coloured on a scale from low (cool) to max (hot); a row has only its tick box and the jump marker, Open is in Team actions', async ($, on) => {
   const files = world(on, [{ handle: 'term_jj1', title: 'A', screen: 'Thinking: low' }, { handle: 'term_jj2', title: 'B', screen: 'Thinking: max' }], [])
   await adopt($, [
     { name: 'A', role: 'head', level: 1, boss: 'user', handle: 'term_jj1' },
@@ -321,7 +321,8 @@ test('the effort value is coloured on a scale from low (cool) to max (hot); rows
   const tree = await band.drawn()
   expect(colours(tree, 'low')[0]).toBe('#6c8cff')
   expect(colours(tree, 'max')[0]).toBe('#ff4d4d')
-  expect(await band.find({ key: 'go-Hualong|A' })).toBeUndefined()
+  // the only button on a row besides its tick box is the small jump marker (the name and dot stay coloured text)
+  expect(await band.find({ key: 'go-Hualong|A' })).toBeDefined()
   expect(await band.find({ key: 'rm-Hualong|A' })).toBeUndefined()
   await band.press({ key: 'sel-Hualong|A' })
   await band.press({ key: 'tact-0' })

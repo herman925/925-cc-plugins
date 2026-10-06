@@ -520,6 +520,13 @@ async function showTab($: any, handle: string): Promise<any> {
   }
 }
 
+// What pressing a member's marker does: switch Orca to that member's tab (the same call as "Open selected").
+async function goTo($: any, m: Member): Promise<string> {
+  if (!m.handle) return `${m.name} has no Orca tab.`
+  const r = await orca($, 'terminal', 'switch', '--terminal', m.handle)
+  return r.ok ? `Opened ${m.name}.` : `Could not open ${m.name}: its Orca tab is gone. Refresh looks for it again.`
+}
+
 const slash = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 const under = (cwd: string, wt: string) => wt !== '' && `${slash(cwd)}/`.startsWith(`${slash(wt)}/`)
 
@@ -1295,7 +1302,7 @@ function emptyState($: any, ui: any, t: number) {
 // no signal; one that is working keeps turning; one that is asking blinks for attention.
 
 type TNode = { m: Member; kids: TNode[]; w: number; x: number; depth: number }
-type Cell = { c: string; k?: string; b?: boolean; d?: boolean }
+type Cell = { c: string; k?: string; b?: boolean; d?: boolean; h?: string }
 
 const treeOf = (list: Member[]): TNode[] => {
   const names = new Set(list.map(m => m.name))
@@ -1308,6 +1315,10 @@ const treeOf = (list: Member[]): TNode[] => {
   }
   return list.filter(m => !names.has(m.boss)).map(m => mk(m, 0))
 }
+
+// The jump marker after a node's name in the org chart (a space, then the arrow). A Button cannot carry a colour, so it
+// is a separate cell: the dot and the name keep theirs.
+const MARK = ' \u2197'
 
 const statusGlyph = (state: string, t: number, blink: boolean): [string, string] =>
   state === 'working' ? [['◐', '◓', '◑', '◒'][t % 4] as string, 'yellow']
@@ -1343,7 +1354,7 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
   const widthOf = (mode: string) => {
     const gap = mode === 'dot' ? 1 : 2
     // each node as wide as its own label, so one long name does not widen every other
-    const cell = (n: TNode) => 1 + (tagOf(mode, n.m) ? 1 + tagOf(mode, n.m).length : 0) + 2
+    const cell = (n: TNode) => 1 + (tagOf(mode, n.m) ? 1 + tagOf(mode, n.m).length + MARK.length : 0) + 2
     const lay = (n: TNode): number =>
       (n.w = n.kids.length === 0 ? cell(n) : Math.max(cell(n), n.kids.map(lay).reduce((a, b) => a + b, 0) + gap * (n.kids.length - 1)))
     const total = roots.map(lay).reduce((a, b) => a + b, 0) + gap * (roots.length - 1)
@@ -1381,7 +1392,7 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const parentSends = n.depth > 0 && arriveAt(n.depth - 1, f) && !dead(n.m)
     const [g, gc] = statusGlyph(n.m.state, t, parentSends)
     const tag = tagOf(mode, n.m)
-    const text = tag ? `${g} ${tag}` : g
+    const text = tag ? `${g} ${tag}${MARK}` : g
     const inf = info.get(`${n.m.team}|${n.m.name}`)
     const start = n.x - (text.length >> 1)
     const sending = n.kids.length > 0 && f >= n.depth * 6 && f <= n.depth * 6 + 1
@@ -1391,9 +1402,11 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
         start + i,
         i === 0
           ? { c: ch, k: gc, b: parentSends || sending || n.m.state === 'working' }
-          : inf?.dup && tag !== '' && i === text.length - 1
+          : inf?.dup && tag !== '' && i === text.length - 1 - MARK.length
             ? { c: ch, k: 'red', b: true }
-            : { c: ch, k: levelShade(n.m.level), b: n.depth === 0, d: dead(n.m) || inf?.auto === true },
+            : tag !== '' && i >= text.length - MARK.length + 1
+              ? { c: ch, h: keyOf(n.m) }
+              : { c: ch, k: levelShade(n.m.level), b: n.depth === 0, d: dead(n.m) || inf?.auto === true },
       ),
     )
     if (n.kids.length === 0) return
@@ -1428,29 +1441,33 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
   return grid
 }
 
-function orgChart(ui: any, list: Member[], t: number, cols: number) {
-  const { Box, Text } = ui
+function orgChart(ui: any, list: Member[], t: number, cols: number, go?: (key: string) => void) {
+  const { Box, Text, Button } = ui
   const grid = chartGrid(list, t, cols)
   if (grid.length === 0) return <Text dimColor>No chart: every member reports to a member that is not on the roster.</Text>
   const segs = (r: Cell[]) => {
-    const out: { s: string; k?: string; b?: boolean; d?: boolean }[] = []
+    const out: { s: string; k?: string; b?: boolean; d?: boolean; h?: string }[] = []
     for (const c of r) {
       const last = out[out.length - 1]
-      if (last && last.k === c.k && last.b === c.b && last.d === c.d) last.s += c.c
-      else out.push({ s: c.c, k: c.k, b: c.b, d: c.d })
+      if (last && last.k === c.k && last.b === c.b && last.d === c.d && last.h === c.h) last.s += c.c
+      else out.push({ s: c.c, k: c.k, b: c.b, d: c.d, h: c.h })
     }
     return out
   }
   return (
     <Box flexDirection="column">
       {grid.map(r => (
-        <Text>
-          {segs(r).map(s => (
-            <Text color={s.k} bold={s.b} dimColor={s.d}>
-              {s.s}
-            </Text>
-          ))}
-        </Text>
+        <Box>
+          {segs(r).map(s =>
+            s.h && go ? (
+              <Button key={`node-${s.h}`} label={s.s} plain onPress={() => go(s.h as string)} />
+            ) : (
+              <Text color={s.k} bold={s.b} dimColor={s.d}>
+                {s.s}
+              </Text>
+            ),
+          )}
+        </Box>
       ))}
       <Text>
         <Text color="green">● idle  </Text>
@@ -1460,7 +1477,7 @@ function orgChart(ui: any, list: Member[], t: number, cols: number) {
         <Text color="gray">○ offline  </Text>
         <Text color="red">✗ failed</Text>
       </Text>
-      <Text dimColor>dim = auto short name; set one in Team actions → Set short name</Text>
+      <Text dimColor>dim = auto short name; set one in Team actions → Set short name. {MARK.trim()} opens that session's tab.</Text>
     </Box>
   )
 }
@@ -1957,7 +1974,10 @@ async function rosterView($: any, ui: any, cols: number) {
       {list.length > 0 && s.chart && (
         <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
           <Text bold color="cyan">◆ LIVE ORG{'  '}<Text dimColor>dots follow each session's status; the line shows the boss passing work down</Text></Text>
-          {orgChart(ui, list, t, cols)}
+          {orgChart(ui, list, t, cols, k => {
+            const m = list.find(x => keyOf(x) === k)
+            if (m) void goTo($, m).then(msg => setAct({ ...ACT0, to: m.team, msg }))
+          })}
         </Box>
       )}
       <Box {...(perRow > 1 ? { flexDirection: 'row', flexWrap: 'wrap' } : { flexDirection: 'column' })}>
@@ -2009,6 +2029,13 @@ async function rosterView($: any, ui: any, cols: number) {
                 <Box flexDirection="column">
                   <Box>
                     <Button key={`sel-${keyOf(m)}`} label={m.sel ? '[x]' : '[ ]'} plain onPress={() => void toggle(keyOf(m))} />
+                    <Text> </Text>
+                    <Button
+                      key={`go-${keyOf(m)}`}
+                      label={MARK.trim()}
+                      plain
+                      onPress={() => void goTo($, m).then(msg => setAct({ ...ACT0, to: team, msg }))}
+                    />
                     <Text> </Text>
                     <Text dimColor>{fit(r.prefix, p.nameW - 1)}</Text>
                     <Text color={levelShade(m.level)}>{cell(r.name, p.nameW - Math.min(r.prefix.length, p.nameW - 1))}</Text>

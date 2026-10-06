@@ -7,7 +7,7 @@ export type Col = { id: string; w: number; head: string }
 export type ColumnPlan = { tier: Tier; nameW: number; cols: Col[]; total: number }
 
 // "[x] " before the name; a row has no buttons (Open and Remove are in Team actions)
-export const CHECK = 4
+export const CHECK = 6
 
 // Cells per tier, each width counting its trailing space. Measured sums: wide 58, medium 38, narrow 18; with the
 // checkbox a row needs 62 / 42 / 22 cells plus the name.
