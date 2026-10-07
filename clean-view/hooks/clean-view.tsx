@@ -282,6 +282,10 @@ export function registerCleanView(on: On) {
 
   on('tool.call', { tool: 'mcp__clean-view__ask_choices' }, async ($, e) => {
     const args = e as { question?: unknown; options?: unknown }
+    // A helper cannot put a question on the person's screen: no Needs you, no bell, no picker.
+    if (e.agentId !== undefined) {
+      return { result: "Helpers can't ask the user. Put the question and its options in your final result so the agent that launched you can ask." }
+    }
     const question = cleanName(typeof args.question === 'string' ? args.question.replace(/`[^`]*`/g, '') : '').replace(/…$/, '')
     const options = Array.isArray(args.options) ? args.options.filter((o): o is string => typeof o === 'string').slice(0, 4) : []
     if (options.length < 2) return { result: 'Give a question and 2 to 4 options.' }
