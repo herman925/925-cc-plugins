@@ -582,3 +582,25 @@ test('at 60 columns every row fits inside its card and the org chart shows uniqu
   // the card's top and bottom lines are as wide as the card's inside
   expect(s).toContain(`"${'═'.repeat(54)}"`)
 })
+
+// Two mods draw in the band above the prompt: both must show, ours on top.
+test('with another AbovePrompt handler registered, both bands render, the Team Orchestrator line on top', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return h(Box, null, h(Text, null, 'OTHER MOD BAND'))
+  })
+  const band = await mountBand($)
+  expect(await band.find({ key: 'main' })).toBeDefined()
+  const other = await band.find({ type: 'Text', text: 'OTHER MOD BAND' })
+  expect(other).toBeDefined()
+  const all = JSON.stringify(await band.drawn())
+  expect(all.indexOf('Team Orchestrator')).toBeLessThan(all.indexOf('OTHER MOD BAND'))
+})
+
+test('a failing neighbour does not hide the Team Orchestrator band', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, (() => {
+    throw new Error('boom')
+  }) as any)
+  const band = await mountBand($)
+  expect(await band.find({ key: 'main' })).toBeDefined()
+})

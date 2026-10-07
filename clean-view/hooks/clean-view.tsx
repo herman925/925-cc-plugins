@@ -367,6 +367,22 @@ export function registerCleanView(on: On) {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
+    // Another mod's band (below us in the chain) stays on screen: it goes above ours, in a column.
+    let rest: Awaited<ReturnType<typeof next>> | undefined
+    try {
+      rest = await next(e)
+    } catch {
+      rest = undefined
+    }
+    const stack = (own: RenderChildren) =>
+      rest ? (
+        <Box flexDirection="column">
+          {rest}
+          {own}
+        </Box>
+      ) : (
+        own
+      )
     const enabled = await read($, enabledA)
     const cl = await read($, checklistA)
     const tick = await read($, tickA)
@@ -390,7 +406,7 @@ export function registerCleanView(on: On) {
     const elapsed = formatDuration((cl.finishedAt > 0 ? cl.finishedAt : now) - cl.startedAt)
 
     if (!enabled) {
-      return (
+      return stack(
         <Box flexDirection="row" justifyContent="space-between" width={width}>
           <Text dimColor wrap="truncate">
             {cl.phase === 'done' && files > 0 ? `Changed: ${cl.changedFiles.map(f => f.split(/[\\/]/).pop()).join(', ')}` : ''}
@@ -504,7 +520,7 @@ export function registerCleanView(on: On) {
           )
         : null
 
-    return (
+    return stack(
       <Box flexDirection="column" width={width}>
         <Box flexDirection="row" justifyContent="space-between" width={width}>
           <Box flexGrow={1}>{left}</Box>
