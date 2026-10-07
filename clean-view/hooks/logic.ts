@@ -95,6 +95,7 @@ export function newChecklist(): CleanChecklist {
     changedFiles: [],
     failStreak: 0,
     isBelled: false,
+    bar: 0,
   }
 }
 
@@ -232,6 +233,14 @@ export function applyTaskUpdate(cl: CleanChecklist, args: { taskId?: unknown; st
   return { ...cl, tasks }
 }
 
+/** The whole job as one percent: finished steps count full, the others by what was reported. */
+export function jobPercent(cl: CleanChecklist): number {
+  if (cl.phase === 'done') return 100
+  if (cl.tasks.length === 0) return 0
+  const sum = cl.tasks.reduce((n, t) => n + (t.status === 'done' ? 100 : t.percent), 0)
+  return Math.max(0, Math.min(100, Math.round(sum / cl.tasks.length)))
+}
+
 /** One 250 ms step of easing: meters move toward their percent and never back. */
 export function easeStep(cl: CleanChecklist): CleanChecklist {
   let changed = false
@@ -242,7 +251,25 @@ export function easeStep(cl: CleanChecklist): CleanChecklist {
     const step = Math.max(2, Math.ceil((target - t.shown) * 0.35))
     return { ...t, shown: Math.min(target, t.shown + step) }
   })
-  return changed ? { ...cl, tasks } : cl
+  let bar = cl.bar
+  const goal = jobPercent({ ...cl, tasks })
+  if (bar < goal) {
+    changed = true
+    bar = Math.min(goal, bar + Math.max(1, Math.ceil((goal - bar) * 0.35)))
+  }
+  return changed ? { ...cl, tasks, bar } : cl
+}
+
+/** The bar style's cells: a dotted fill that drifts while live, and an empty rest. */
+export function barText(percent: number, cells: number, frame: number, isLive: boolean): { filled: string; rest: string } {
+  const n = Math.max(0, Math.min(cells, Math.round((percent / 100) * cells)))
+  let filled = ''
+  for (let i = 0; i < n; i++) filled += (i + (isLive ? frame : 0)) % 2 === 0 ? '▓' : '▒'
+  return { filled, rest: '░'.repeat(cells - n) }
+}
+
+export function shortName(name: string, max: number): string {
+  return name.length <= max ? name : name.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
 }
 
 export function stepNumber(cl: CleanChecklist): number {

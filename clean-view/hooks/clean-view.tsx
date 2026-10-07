@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On, RenderChildren, Timer } from 'claude-code'
+import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
-import type { CleanChecklist } from '../types'
+import type { CleanChecklist, CleanFinished, CleanStyle } from '../types'
 import {
   GATE_MESSAGE,
   SECTION_TEXT,
@@ -9,6 +9,7 @@ import {
   applyTaskCreate,
   applyTaskUpdate,
   applyTodos,
+  barText,
   cleanName,
   cleanTitle,
   easeStep,
@@ -21,6 +22,7 @@ import {
   newChecklist,
   planSteps,
   reportProgress,
+  shortName,
   startJob,
   stepNumber,
   sweep,
@@ -32,6 +34,8 @@ type Hooked = EngineInterface
 const enabledA = atom({ plugin: 'clean-view', key: 'cleanViewEnabled' } as const, true)
 const checklistA = atom({ plugin: 'clean-view', key: 'checklist' } as const, newChecklist())
 const tickA = atom({ plugin: 'clean-view', key: 'tick' } as const, 0)
+const styleA = atom({ plugin: 'clean-view', key: 'viewStyle' } as const, 'checklist' as CleanStyle)
+const finishedA = atom({ plugin: 'clean-view', key: 'finished' } as const, [] as CleanFinished[])
 
 const PLAN = 'mcp__clean-view__plan_steps'
 const REPORT = 'mcp__clean-view__report_progress'
@@ -98,10 +102,20 @@ function resume($: Hooked) {
   )
 }
 
+async function setStyle($: Hooked, value: CleanStyle) {
+  await update($, styleA, () => value)
+  await $.store.set('cleanViewStyle', value)
+  $.ui.toast(value === 'bars' ? 'Bar view' : 'List view')
+}
+
 async function setEnabled($: Hooked, value: boolean) {
   await update($, enabledA, () => value)
   await $.store.set('cleanViewEnabled', value)
   $.ui.toast(value ? 'Clean View is on: details are hidden.' : 'Clean View is off: details are showing.')
+}
+
+function title0(cl: CleanChecklist): string {
+  return cl.title === '' ? 'Working on it' : cl.title
 }
 
 export function registerCleanView(on: On) {
@@ -109,6 +123,8 @@ export function registerCleanView(on: On) {
   on('session.start', async ($, e, next) => {
     const saved = await $.store.get('cleanViewEnabled')
     if (typeof saved === 'boolean') await update($, enabledA, () => saved)
+    const savedStyle = await $.store.get('cleanViewStyle')
+    if (savedStyle === 'bars' || savedStyle === 'checklist') await update($, styleA, () => savedStyle)
     await $.tool.register({
       name: 'plan_steps',
       description:
@@ -144,9 +160,11 @@ export function registerCleanView(on: On) {
     })
     await $.command.register({
       name: 'simple',
-      description: 'Turn Clean View on or off (no argument flips it).',
-      argumentHint: 'on|off',
+      description: 'Turn Clean View on or off (no argument flips it), or pick the look: bars or list.',
+      argumentHint: 'on|off|bars|list',
     })
+    await $.command.register({ name: 'progress', description: 'Flip between the bar view and the list view.' })
+    await $.command.register({ name: 'progress-clear', description: 'Remove the finished bars.' })
     const c = await read($, checklistA)
     if (c.phase === 'working' || c.phase === 'needs-you') runClock($)
     return next(e)
@@ -155,10 +173,24 @@ export function registerCleanView(on: On) {
   // ---------- /simple ----------
   on('command.run', { command: 'simple' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
+    if (arg === 'bars' || arg === 'list') {
+      await setStyle($, arg === 'bars' ? 'bars' : 'checklist')
+      return { text: arg === 'bars' ? 'Bar view.' : 'List view.' }
+    }
     const current = await read($, enabledA)
     const value = arg === 'on' ? true : arg === 'off' ? false : !current
     await setEnabled($, value)
     return { text: value ? 'Clean View is on.' : 'Clean View is off.' }
+  })
+
+  on('command.run', { command: 'progress' }, async ($) => {
+    const now = await read($, styleA)
+    await setStyle($, now === 'bars' ? 'checklist' : 'bars')
+    return { text: now === 'bars' ? 'List view.' : 'Bar view.' }
+  })
+  on('command.run', { command: 'progress-clear' }, async ($) => {
+    await update($, finishedA, () => [])
+    return { text: 'Finished bars removed.' }
   })
 
   // ---------- system prompt ----------
@@ -334,6 +366,8 @@ export function registerCleanView(on: On) {
         isCollapsed: false,
         tasks: cl.tasks.map(t => ({ ...t, status: 'done' as const, percent: 100, hasReported: true })),
       }))
+      const seconds = Math.max(0, Math.round((now - c.startedAt) / 1000))
+      await update($, finishedA, f => [...f, { id: `j${c.jobId}`, title: c.title === '' ? 'Working on it' : c.title, seconds }].slice(-3))
       doneTimer?.cancel()
       doneTimer = $.clock.after(5000, () => {
         void patch($, cl => (cl.phase === 'done' ? { ...cl, isCollapsed: true } : cl))
@@ -374,7 +408,7 @@ export function registerCleanView(on: On) {
     } catch {
       rest = undefined
     }
-    const stack = (own: RenderChildren) =>
+    const stack = (own: RenderElement): RenderElement =>
       rest ? (
         <Box flexDirection="column">
           {rest}
@@ -412,6 +446,125 @@ export function registerCleanView(on: On) {
             {cl.phase === 'done' && files > 0 ? `Changed: ${cl.changedFiles.map(f => f.split(/[\\/]/).pop()).join(', ')}` : ''}
           </Text>
           {toggle}
+        </Box>
+      )
+    }
+
+    const style = await read($, styleA)
+    const finished = await read($, finishedA)
+    const styleBtn = (
+      <Button
+        key="style"
+        label={style === 'bars' ? 'List view' : 'Bar view'}
+        onPress={() => setStyle($, style === 'bars' ? 'checklist' : 'bars')}
+      />
+    )
+    const controls = (
+      <Box flexDirection="row">
+        {styleBtn}
+        <Text> </Text>
+        {toggle}
+      </Box>
+    )
+
+    if (style === 'bars') {
+      const titleW = Math.min(26, Math.max(12, Math.floor(width * 0.28)))
+      const pillOf = (label: string, bg: string) => (
+        <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
+          {` ${label} `}
+        </Text>
+      )
+      const barRow = (
+        id: string,
+        name: string,
+        pillText: string,
+        bg: string,
+        pct: number,
+        isLive: boolean,
+        onDismiss: () => void,
+      ) => {
+        const pillW = pillText.length + 2
+        const barW = Math.max(8, width - (2 + titleW + 1 + pillW + 1 + 6 + 5))
+        const cells = barText(pct, barW, tick, isLive && !isStill)
+        return (
+          <Box key={`bar-${id}`} flexDirection="row">
+            <Text color={color(bg)}>● </Text>
+            <Text bold={isLive}>{fitName(shortName(name, titleW), titleW)} </Text>
+            {pillOf(pillText, bg)}
+            <Text> </Text>
+            <Text color={color(bg)}>{cells.filled}</Text>
+            <Text dimColor>{cells.rest}</Text>
+            <Text>{` ${String(pct).padStart(3, ' ')}% `}</Text>
+            <Button key={`x-${id}`} label="×" onPress={onDismiss} />
+          </Box>
+        )
+      }
+      const live = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
+      const active = cl.tasks.find(t => t.status === 'active')
+      let pillText = shortName(active ? active.name : 'Working', 18)
+      let pillBg = 'magenta'
+      if (cl.phase === 'needs-you') {
+        pillText = 'Needs you'
+        pillBg = 'yellow'
+      } else if (cl.phase === 'stuck') {
+        pillText = 'Stuck'
+        pillBg = 'red'
+      } else if (cl.phase === 'stopped') {
+        pillText = 'Stopped'
+        pillBg = 'gray'
+      }
+      const rows: RenderChildren[] = finished.map(f =>
+        barRow(f.id, f.title, `✓ ${formatDuration(f.seconds * 1000)}`, 'green', 100, false, () => {
+          void update($, finishedA, list => list.filter(x => x.id !== f.id))
+        }),
+      )
+      if (live) {
+        rows.push(
+          barRow('now', title0(cl), pillText, pillBg, Math.round(cl.bar), cl.phase === 'working', () => {
+            stopClock()
+            void patch($, c => ({ ...newChecklist(), jobId: c.jobId }))
+          }),
+        )
+      }
+      const nextList =
+        cl.phase === 'needs-you' && cl.question !== null ? (
+          <Box flexDirection="column">
+            <Text dimColor>next: {cl.question.question}</Text>
+            {cl.question.options.map((o, i) => (
+              <Button
+                key={`choice${i + 1}`}
+                hotkey={String(i + 1)}
+                plain
+                label={o}
+                onPress={() => {
+                  void patch($, c => ({ ...c, phase: 'working', needsYouReason: '', question: null, isBelled: false }))
+                  void $.prompt.submit({ text: o, asUser: true })
+                }}
+              />
+            ))}
+            <Button
+              key="dismiss-next"
+              hotkey="0"
+              plain
+              label="dismiss"
+              onPress={() => {
+                void patch($, c => ({ ...c, phase: 'done', needsYouReason: '', question: null, isBelled: false }))
+              }}
+            />
+          </Box>
+        ) : null
+      return stack(
+        <Box flexDirection="column" width={width}>
+          <Box flexDirection="row" justifyContent="space-between" width={width}>
+            <Text dimColor>{rows.length === 0 ? 'Clean View is on' : ''}</Text>
+            {controls}
+          </Box>
+          {rows}
+          {cl.phase === 'stuck' ? (
+            <Text dimColor>{`⚠ ${cl.stuckReason}. Press Esc to stop, or type a message to steer.`}</Text>
+          ) : null}
+          {cl.phase === 'needs-you' && cl.question === null ? <Text dimColor>{`${cl.needsYouReason}  ↓ Answer below`}</Text> : null}
+          {nextList}
         </Box>
       )
     }
@@ -524,7 +677,7 @@ export function registerCleanView(on: On) {
       <Box flexDirection="column" width={width}>
         <Box flexDirection="row" justifyContent="space-between" width={width}>
           <Box flexGrow={1}>{left}</Box>
-          {toggle}
+          {controls}
         </Box>
         {hint}
         {picker}
