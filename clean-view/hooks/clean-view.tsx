@@ -540,12 +540,15 @@ export function registerCleanView(on: On) {
       const maxPill = pillW
       const maxName = Math.max(12, ...items.map(it => it.name.length))
       const textBlock = Math.min(Math.floor(width * 0.6), Math.max(Math.floor(width * 0.35), 2 + maxName + 1 + maxPill))
-      const barW = Math.max(10, width - textBlock - (6 + 5))
+      // Two cells of slack: if a terminal counts a symbol as wide, the bar gives way, never the name.
+      const barW = Math.max(10, width - textBlock - (6 + 5) - 2)
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
-          <Text color={color(it.bg)}>● </Text>
-          <Text bold={it.isLive}>{fitName(shortName(it.name, Math.max(8, textBlock - 3 - pillW)), Math.max(8, textBlock - 3 - pillW))} </Text>
-          {pillOf(shortName(it.pillText, pillW - 2).padEnd(pillW - 2, ' '), it.bg)}
+          <Box width={textBlock - pillW} flexShrink={0} flexDirection="row">
+            <Text color={color(it.bg)}>● </Text>
+            <Text bold={it.isLive} wrap="truncate">{shortName(it.name, Math.max(8, textBlock - 3 - pillW))}</Text>
+          </Box>
+          <Box flexShrink={0}>{pillOf(shortName(it.pillText, pillW - 2).padEnd(pillW - 2, ' '), it.bg)}</Box>
           {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
               <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>

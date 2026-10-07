@@ -570,17 +570,22 @@ test('bar style: name, pill, bar and percent sit together, with the words inside
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: WIDTH } })
   const rows = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.text.includes('%') && b.text.includes('Working on it'))
   const row = rows[rows.length - 1]!.text as string
-  // the row runs to the right edge: percent and x take what is left after the text
+  // the row never overflows
   expect(row.length).toBeLessThanOrEqual(WIDTH)
-  expect(row.length).toBeGreaterThanOrEqual(WIDTH - 6)
   // the words ride inside the bar
   expect(row).toContain(' Reading a file… ')
-  // text gets at least 35% of the width: the bar starts at or after column 42 of 120
-  const barStart = row.search(/[▓▒░]/)
-  expect(barStart).toBeGreaterThanOrEqual(Math.floor(WIDTH * 0.35) - 1)
-  // the bar is the rest: 120 - text block (42) - percent and x (11), words included
+  // text gets at least 35% of the width: the name block plus the pill is 42 of 120 columns
+  const boxes = await ui.findAll({ type: 'Box' })
+  const nameBox = boxes.find((b: any) => String(b.key) === 'bar-now')
+  const nameCol = (await ui.findAll({ type: 'Box' })).find((b: any) => b.props.flexShrink === 0 && typeof b.props.width === 'number' && b.text.startsWith('●'))
+  expect(nameCol).toBeDefined()
+  const pill = (await ui.findAll({ type: 'Text' })).find((t: any) => t.props.bold === true && t.props.backgroundColor !== undefined && t.text.startsWith(' Read your brand notes'))
+  expect(pill).toBeDefined()
+  expect((nameCol!.props.width as number) + (pill!.text as string).length).toBe(Math.floor(WIDTH * 0.35))
+  // the bar takes the rest: 120 - text block (42) - percent and x (11) - 2 spare, words included
   const bar = [...row.matchAll(/[▓▒░]+/g)].map(m => m[0]).join('')
-  expect(bar.length + ' Reading a file… '.length).toBe(WIDTH - 42 - 11)
+  expect(bar.length + ' Reading a file… '.length).toBe(WIDTH - 42 - 11 - 2)
+  expect(nameBox).toBeDefined()
   await ui.unmount()
 })
 
@@ -680,6 +685,10 @@ test('bar style: every pill starts in the same column, finished and live alike',
   // pill start = first run of two-or-more spaces-free coloured text: compare where each row's bar starts
   const barStarts = flat.map((t: string) => t.search(/[▓▒░]/))
   expect(new Set(barStarts).size).toBe(1)
+  // the name columns are fixed-width boxes that never shrink, all the same width
+  const nameWidths = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.flexShrink === 0 && typeof b.props.width === 'number' && b.text.startsWith('●')).map((b: any) => b.props.width)
+  expect(nameWidths.length).toBeGreaterThanOrEqual(3)
+  expect(new Set(nameWidths).size).toBe(1)
   const pillStarts = flat.map((t: string) => t.search(/(✓ \d|Understand)/))
   expect(new Set(pillStarts).size).toBe(1)
   await ui.unmount()
