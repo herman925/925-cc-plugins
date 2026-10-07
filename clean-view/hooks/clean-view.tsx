@@ -530,14 +530,14 @@ export function registerCleanView(on: On) {
         })
       }
       // Nothing floats apart: name, pill, bar, percent and x sit in one run. The name column fits the longest
-      // name (so every name shows whole when there is room), and the bar is capped so the words stay readable.
+      // name (so every name shows whole when there is room), and the bar is 35% of the width (never more than what is left) so the words stay readable.
       const titleW = Math.min(Math.floor(width * 0.5), Math.max(12, ...items.map(it => it.name.length)))
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
           <Text color={color(it.bg)}>● </Text>
           <Text bold={it.isLive}>{fitName(shortName(it.name, titleW), titleW)} </Text>
           {pillOf(it.pillText, it.bg)}
-          {barSegments(it.pct, Math.max(12, Math.min(56, width - (2 + titleW + 1 + (it.pillText.length + 2) + 6 + 5))), tick, it.isLive && !isStill, it.label).map((seg, k) =>
+          {barSegments(it.pct, Math.max(12, Math.min(width - (2 + titleW + 1 + (it.pillText.length + 2) + 6 + 5), Math.floor(width * 0.35))), tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
               <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
                 {seg.text}
