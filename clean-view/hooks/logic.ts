@@ -302,6 +302,14 @@ export function shortName(name: string, max: number): string {
   return name.length <= max ? name : name.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
 }
 
+/** True when the end of Claude's answer asks the person something. */
+export function asksUser(answer: unknown): boolean {
+  const tail = String(answer ?? '').trim().slice(-300)
+  if (tail === '') return false
+  if (/[?？]/.test(tail)) return true
+  return /\b(let me know|shall i|should i|would you like|do you want|want me to|which (one|option)|please confirm|waiting for your)\b/i.test(tail)
+}
+
 export function stepNumber(cl: CleanChecklist): number {
   const i = cl.tasks.findIndex(t => t.status === 'active')
   if (i >= 0) return i + 1

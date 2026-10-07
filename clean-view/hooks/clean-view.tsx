@@ -9,6 +9,7 @@ import {
   applyTaskCreate,
   applyTaskUpdate,
   applyTodos,
+  asksUser,
   barSegments,
   cleanName,
   cleanTitle,
@@ -355,7 +356,9 @@ export function registerCleanView(on: On) {
       await patch($, cl => ({ ...cl, phase: 'stuck', stuckReason: "Claude couldn't help with that request", finishedAt: now, action: '' }))
     } else if (c.question !== null) {
       await needsYou($, c.question.question, c.question)
-    } else if (c.hasPlan && c.tasks.some(t => t.status !== 'done')) {
+    } else if (c.hasPlan && c.tasks.some(t => t.status !== 'done') && asksUser(e.answer)) {
+      // Unfinished steps only mean "waiting for you" when Claude actually asked something; a final answer with no
+      // question means the job is done, even if the last step was never reported at 100.
       await needsYou($, 'Claude is waiting for your reply')
     } else {
       stopClock()
