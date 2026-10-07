@@ -13,6 +13,7 @@ import {
   barSegments,
   cleanName,
   cleanTitle,
+  clampPercent,
   easeStep,
   fitName,
   formatDuration,
@@ -252,6 +253,11 @@ export function registerCleanView(on: On) {
   // ---------- serve our tools ----------
   on('tool.call', { tool: 'mcp__clean-view__plan_steps' }, async ($, e) => {
     const steps = (e as { steps?: unknown }).steps
+    // A subagent's plan is its own business: answer it, leave the member's checklist alone.
+    if (e.agentId !== undefined) {
+      const n = Array.isArray(steps) ? Math.min(Array.isArray(steps) ? steps.length : 0, 8) : 0
+      return { result: n < 1 ? 'Give 1 to 8 short step names as an array of strings.' : `Planned ${n} steps. The first one has started.` }
+    }
     const c = await read($, checklistA)
     const planned = planSteps(c, steps)
     if (planned === null) return { result: 'Give 1 to 8 short step names as an array of strings.' }
@@ -262,6 +268,8 @@ export function registerCleanView(on: On) {
 
   on('tool.call', { tool: 'mcp__clean-view__report_progress' }, async ($, e) => {
     const args = e as { task?: unknown; percent?: unknown }
+    // A subagent's report never touches the member's checklist (the dock may read it per agent).
+    if (e.agentId !== undefined) return { result: `Progress noted: ${clampPercent(args.percent)}%.` }
     let pct = 0
     await patch($, c => {
       const r = reportProgress(c, args.task, args.percent)
