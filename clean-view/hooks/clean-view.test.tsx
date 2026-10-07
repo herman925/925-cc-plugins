@@ -559,3 +559,17 @@ test('with Clean View off, the bar style shows only the button', async ($, on) =
   expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Show details')
   await ui.unmount()
 })
+
+test('bar style: the bar is short and the job name gets the room', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(RUN('bars'))
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 120 } })
+  const all = await ui.findAll({ type: 'Text' })
+  const bar = all.find((t: any) => /^[░]{8,}$/.test(t.text))
+  // 120 columns: the old bar was about 59 cells wide, now about half
+  expect((bar?.text.length ?? 0)).toBeLessThanOrEqual(30)
+  expect((bar?.text.length ?? 0)).toBeGreaterThanOrEqual(25)
+  await ui.unmount()
+})
