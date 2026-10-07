@@ -23,6 +23,7 @@ import {
   planSteps,
   reportProgress,
   shortName,
+  stepsOf,
   startJob,
   stepNumber,
   sweep,
@@ -417,6 +418,7 @@ export function registerCleanView(on: On) {
       ) : (
         own
       )
+    try {
     const enabled = await read($, enabledA)
     const cl = await read($, checklistA)
     const tick = await read($, tickA)
@@ -518,7 +520,7 @@ export function registerCleanView(on: On) {
           name: title0(cl),
           pillText,
           bg: pillBg,
-          pct: Math.round(cl.bar),
+          pct: Math.round(cl.bar ?? 0),
           isLive: cl.phase === 'working',
           label: liveLabel,
           onDismiss: () => {
@@ -714,7 +716,7 @@ export function registerCleanView(on: On) {
             }}
           />
         </Box>
-        {f.steps.length > 1 ? f.steps.map((n, i) => <Text key={`${f.id}-${i}`} dimColor>{`  ✓ ${n}`}</Text>) : null}
+        {stepsOf(f).length > 1 ? stepsOf(f).map((n, i) => <Text key={`${f.id}-${i}`} dimColor>{`  ✓ ${n}`}</Text>) : null}
       </Box>
     ))
     const doneX =
@@ -742,5 +744,15 @@ export function registerCleanView(on: On) {
         {rowEls}
       </Box>
     )
+    } catch (err) {
+      // Never let the band vanish silently: say what went wrong, and how to carry on.
+      const why = err instanceof Error ? err.message : String(err)
+      return stack(
+        <Box flexDirection="column">
+          <Text color="red" wrap="truncate">{`Clean View hit a problem: ${why.slice(0, 80)}`}</Text>
+          <Text dimColor>Type /simple off to hide Clean View, or /simple bars or /simple list to try the other look.</Text>
+        </Box>,
+      )
+    }
   })
 }
