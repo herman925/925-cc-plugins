@@ -535,15 +535,17 @@ export function registerCleanView(on: On) {
       // Text takes at least 35% of the width (more if a name or stage needs it); the bar, percent and x take
       // everything that is left, so the row always runs to the right edge. The pill sits against the bar, and
       // every bar starts at the same column.
-      const maxPill = Math.max(...items.map(it => it.pillText.length + 2), 0)
+      // Every pill is the same width, so pills and bars line up on the left: short ones are padded with their own colour.
+      const pillW = Math.min(34, Math.max(9, ...items.map(it => it.pillText.length + 2)))
+      const maxPill = pillW
       const maxName = Math.max(12, ...items.map(it => it.name.length))
       const textBlock = Math.min(Math.floor(width * 0.6), Math.max(Math.floor(width * 0.35), 2 + maxName + 1 + maxPill))
       const barW = Math.max(10, width - textBlock - (6 + 5))
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
           <Text color={color(it.bg)}>● </Text>
-          <Text bold={it.isLive}>{fitName(shortName(it.name, Math.max(8, textBlock - 3 - (it.pillText.length + 2))), Math.max(8, textBlock - 3 - (it.pillText.length + 2)))} </Text>
-          {pillOf(it.pillText, it.bg)}
+          <Text bold={it.isLive}>{fitName(shortName(it.name, Math.max(8, textBlock - 3 - pillW)), Math.max(8, textBlock - 3 - pillW))} </Text>
+          {pillOf(shortName(it.pillText, pillW - 2).padEnd(pillW - 2, ' '), it.bg)}
           {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
               <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
