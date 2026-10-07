@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, asksUser, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -692,4 +692,45 @@ test('bar style: every pill starts in the same column, finished and live alike',
   const pillStarts = flat.map((t: string) => t.search(/(✓ \d|Understand)/))
   expect(new Set(pillStarts).size).toBe(1)
   await ui.unmount()
+})
+
+test('a subagent report_progress and plan_steps leave the member checklist alone', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
+  await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 20 })
+  // a subagent (it has an agentId) reports 60 on the same step, then an unknown one, then plans its own steps
+  const sub = { agentId: 'sub1' } as any
+  const a = await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 60, ...sub })
+  const b = await $.tool.call({ tool: REPORT, task: 'Check the invoice totals', percent: 100, ...sub })
+  const c = await $.tool.call({ tool: PLAN, steps: ['One', 'Two', 'Three'], ...sub })
+  // each is answered as usual
+  expect(String((a as any).result)).toBe('Progress noted: 60%.')
+  expect(String((b as any).result)).toBe('Progress noted: 100%.')
+  expect(String((c as any).result)).toBe('Planned 3 steps. The first one has started.')
+  // the member's own checklist is exactly as the member left it
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Step 1 of 2')
+  expect(t).toContain('Build the pricing section')
+  expect(t).toContain('Polish the footer')
+  expect(t).toContain('20%')
+  expect(t).not.toContain('60%')
+  expect(t).not.toContain('Check the invoice totals')
+  expect(t).not.toContain('One')
+  await ui.unmount()
+  // and the member's own report still works
+  await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 60 })
+  const ui2 = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui2)).toContain('60%')
+  await ui2.unmount()
+})
+
+test('clampPercent: a number from 0 to 100, anything else is 0', () => {
+  expect(clampPercent(60)).toBe(60)
+  expect(clampPercent(400)).toBe(100)
+  expect(clampPercent(-5)).toBe(0)
+  expect(clampPercent('42')).toBe(42)
+  expect(clampPercent('x')).toBe(0)
+  expect(clampPercent(undefined)).toBe(0)
 })

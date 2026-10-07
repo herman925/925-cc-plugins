@@ -127,10 +127,15 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+/** A reported percent as 0 to 100: a number, rounded, clamped; anything else counts as 0. */
+export function clampPercent(percent: unknown): number {
+  const raw = typeof percent === 'number' && Number.isFinite(percent) ? percent : Number(percent)
+  return Math.max(0, Math.min(100, Number.isFinite(raw) ? Math.round(raw) : 0))
+}
+
 /** report_progress: checks off earlier steps, holds percent, starts the next step at 100. */
 export function reportProgress(cl: CleanChecklist, name: unknown, percent: unknown): { cl: CleanChecklist; pct: number } {
-  const raw = typeof percent === 'number' && Number.isFinite(percent) ? percent : Number(percent)
-  const pct = Math.max(0, Math.min(100, Number.isFinite(raw) ? Math.round(raw) : 0))
+  const pct = clampPercent(percent)
   const wanted = norm(cleanName(name))
   const tasks: CleanTask[] = cl.tasks.map(t => ({ ...t }))
   let idx = tasks.findIndex(t => norm(t.name) === wanted)
