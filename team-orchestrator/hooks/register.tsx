@@ -428,13 +428,16 @@ async function peek($: any, files: Transcript[]) {
   return files.map(f => seen.get(f.path)!)
 }
 
-// Session id per name: the newest transcript whose last customTitle is that name.
-async function sessionsNamed($: any, all: Transcript[], names: string[]): Promise<Map<string, string>> {
+// Session id per name: the newest transcript of THIS project whose last customTitle is that name. A transcript that
+// last ran outside the project folder is another team's, even when it carries the same title.
+async function sessionsNamed($: any, all: Transcript[], names: string[], root: string): Promise<Map<string, string>> {
   const want = new Set(names)
   const found = new Map<string, string>()
   for (let i = 0; i < all.length && found.size < want.size; i += 15) {
     const part = all.slice(i, i + 15)
     ;(await peek($, part)).forEach((s, j) => {
+      const cwd = s.stats?.cwd ?? ''
+      if (cwd !== '' && !under(cwd, root)) return
       if (s.title !== undefined && want.has(s.title) && !found.has(s.title)) found.set(s.title, (part[j] as Transcript).id)
     })
   }
@@ -549,21 +552,31 @@ async function refresh($: any) {
     // keep whatever we had
   }
   const shown = await Promise.all(list.map(m => (m.handle ? showTab($, m.handle) : undefined)))
-  // one list of tabs and one transcript scan per refresh, not one per member
-  const tabs = shown.some(t => !t) ? await liveTabs($) : []
   const all = await transcripts($)
-  const ids = list.some(m => !m.sessionId) ? await sessionsNamed($, all, list.filter(m => !m.sessionId).flatMap(namesOf)) : new Map<string, string>()
+  const root = String(await $.session.root())
+  // Where a member's session runs: the folder its transcript last ran in, else the project's own folder. A tab in
+  // another worktree is never this member's, whatever its title says (two teams may both have a "Head").
+  const ran = await statsOf($, all, list.map(m => m.sessionId).filter(Boolean))
+  const whereOf = (sessionId: string) => ran.get(sessionId)?.cwd || root
+  const fits = (tab: any, where: string) => {
+    const wt = String(tab?.worktreePath ?? '')
+    return wt === '' || under(where, wt)
+  }
+  // one list of tabs and one transcript scan per refresh, not one per member
+  const tabs = shown.some((t, i) => !t || !fits(t, whereOf((list[i] as Member).sessionId))) ? await liveTabs($) : []
+  const ids = list.some(m => !m.sessionId) ? await sessionsNamed($, all, list.filter(m => !m.sessionId).flatMap(namesOf), root) : new Map<string, string>()
   const firstPass = await Promise.all(
     list.map(async (m0, i) => {
       const notes: string[] = []
       const sessionId = m0.sessionId || namesOf(m0).map(n => ids.get(n)).find(Boolean) || ''
       let m: Member = { ...m0, sessionId }
+      const where = whereOf(sessionId)
       let t = shown[i]
+      if (t && !fits(t, where)) t = undefined // a live handle that points into another worktree is not this member's
       if (!t) {
         const hits = tabs.filter(x => namesOf(m).includes(bare(String(x.title ?? ''))))
-        const cwd = hits.length > 1 && sessionId ? ((await statsOf($, all, [sessionId])).get(sessionId)?.cwd ?? '') : ''
-        const near = hits.filter(x => cwd !== '' && under(cwd, String(x.worktreePath ?? '')))
-        const pick = hits.length === 1 ? hits[0] : near.length === 1 ? near[0] : undefined
+        const near = hits.filter(x => fits(x, where))
+        const pick = near.length === 1 ? near[0] : undefined
         if (pick) {
           t = pick
           m = { ...m, handle: handleOf(String(pick.handle)) }

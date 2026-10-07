@@ -45,7 +45,7 @@ export const world = (on: any, tabs: Tab[] = [], trs: Tr[] = [], first?: (e: any
     const h = a[a.indexOf('--terminal') + 1]
     const tab = tabs.find(t => t.handle === h)
     if (a[1] === 'terminal' && a[2] === 'list') return out(JSON.stringify({ result: { terminals: tabs.map(t => ({ ...t, connected: true, tabId: t.handle, leafId: 'l' })) } }))
-    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { title: tab.title, worktreePath: tab.worktreePath, connected: true, tabId: tab.handle, leafId: 'l' } } }))
     if (a[1] === 'terminal' && a[2] === 'read' && tab) return out(JSON.stringify({ result: { terminal: { tail: [tab.screen ?? ''], status: 'running' } } }))
     return { value: no } as any
   })

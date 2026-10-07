@@ -143,7 +143,7 @@ const world = (on: any, tabs: Tab[], trs: Tr[]) => {
     const h = a[a.indexOf('--terminal') + 1]
     const tab = tabs.find(t => t.handle === h)
     if (a[1] === 'terminal' && a[2] === 'list') return out(JSON.stringify({ result: { terminals: tabs.map(t => ({ ...t, connected: true, tabId: t.handle, leafId: 'l' })) } }))
-    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { title: tab.title, worktreePath: tab.worktreePath, connected: true, tabId: tab.handle, leafId: 'l' } } }))
     if (a[1] === 'terminal' && a[2] === 'read' && tab) return out(JSON.stringify({ result: { terminal: { tail: [tab.screen ?? ''], status: 'running' } } }))
     return { value: no } as any
   })
@@ -194,6 +194,51 @@ test('several tabs of one name: the one in the worktree the transcript last ran 
   )
   await adopt($, [{ ...W, handle: 'term_ee1', sessionId: ID1 }])
   expect(saved(files)[0].handle).toBe('term_ee3')
+})
+
+// two teams on one machine can both have a "Head": a tab is only ever this member's if it sits in the member's worktree
+test('the only tab of that name sits in another worktree: it is not adopted', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_ab2', title: '◑ Hualong Workers', worktreePath: 'C:/other' }],
+    [{ id: ID1, title: 'Hualong Workers', model: 'claude-opus-5', used: 1000, cwd: 'C:\\proj' }],
+  )
+  await adopt($, [{ ...W, handle: 'term_ab1', sessionId: ID1 }])
+  expect(saved(files)[0].handle).toBe('term_ab1')
+  expect(await shown($)).toContain('no Orca tab')
+})
+
+test('a live handle that points into another worktree is replaced by the tab in the member\'s own worktree', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_ac1', title: '◑ Hualong Workers', worktreePath: 'C:/other' }, { handle: 'term_ac2', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }],
+    [{ id: ID1, title: 'Hualong Workers', model: 'claude-opus-5', used: 1000, cwd: 'C:\\proj\\sub' }],
+  )
+  await adopt($, [{ ...W, handle: 'term_ac1', sessionId: ID1 }])
+  expect(saved(files)[0].handle).toBe('term_ac2')
+})
+
+test('a live handle in the member\'s own worktree is kept, even when another tab has the same name', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_ad1', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }, { handle: 'term_ad2', title: '◑ Hualong Workers', worktreePath: 'C:/other' }],
+    [{ id: ID1, title: 'Hualong Workers', model: 'claude-opus-5', used: 1000, cwd: 'C:\\proj' }],
+  )
+  await adopt($, [{ ...W, handle: 'term_ad1', sessionId: ID1 }])
+  expect(saved(files)[0].handle).toBe('term_ad1')
+})
+
+test('a session id found by name skips a newer transcript of the same name that last ran outside the project', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_ae1', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }],
+    [
+      { id: ID2, title: 'Hualong Workers', model: 'claude-opus-5', used: 1000, cwd: 'Z:\\other team' },
+      { id: ID1, title: 'Hualong Workers', model: 'claude-opus-5', used: 1000, cwd: 'C:\\proj' },
+    ],
+  )
+  await adopt($, [{ ...W, handle: 'term_ae1' }])
+  expect(saved(files)[0].sessionId).toBe(ID1)
 })
 
 test('no tab of that name: the old handle stays and the row says so', async ($, on) => {
