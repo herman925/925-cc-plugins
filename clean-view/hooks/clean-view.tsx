@@ -418,6 +418,8 @@ export function registerCleanView(on: On) {
       ) : (
         own
       )
+    // PROBE (temporary): shows under the prompt so we can tell whether this hook runs and what it drew.
+    $.ui.status('Clean View: band hook ran')
     try {
     const enabled = await read($, enabledA)
     const cl = await read($, checklistA)
@@ -747,6 +749,7 @@ export function registerCleanView(on: On) {
     } catch (err) {
       // Never let the band vanish silently: say what went wrong, and how to carry on.
       const why = err instanceof Error ? err.message : String(err)
+      $.ui.status(`Clean View: band error: ${why.slice(0, 120)}`)
       return stack(
         <Box flexDirection="column">
           <Text color="red" wrap="truncate">{`Clean View hit a problem: ${why.slice(0, 80)}`}</Text>
