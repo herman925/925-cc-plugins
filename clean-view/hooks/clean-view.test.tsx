@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, barSegments, barText, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -630,4 +630,9 @@ test('switching the view loses nothing: finished jobs show in both', async ($, o
     expect(await ui.find({ key: 'x-j1' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('finished jobs saved by an older version (no steps) do not break the band', () => {
+  expect(stepsOf({})).toEqual([])
+  expect(stepsOf({ steps: ['One', 'Two'] })).toEqual(['One', 'Two'])
 })

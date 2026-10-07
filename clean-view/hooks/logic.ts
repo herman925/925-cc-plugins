@@ -293,6 +293,11 @@ export function barSegments(percent: number, cells: number, frame: number, isLiv
   return out
 }
 
+/** The steps of a finished job; jobs saved by older versions have none. */
+export function stepsOf(f: { steps?: string[] }): string[] {
+  return Array.isArray(f.steps) ? f.steps : []
+}
+
 export function shortName(name: string, max: number): string {
   return name.length <= max ? name : name.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
 }
