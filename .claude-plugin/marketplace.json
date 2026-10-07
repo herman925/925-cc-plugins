@@ -16,6 +16,11 @@
       "name": "team-orchestrator",
       "source": "./team-orchestrator",
       "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs."
+    },
+    {
+      "name": "clean-view",
+      "source": "./clean-view",
+      "description": "Clean View: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button and in-band choices."
     }
   ]
 }
