@@ -46,7 +46,7 @@ export type CleanChecklist = {
 export type CleanStyle = 'checklist' | 'bars'
 
 /** A finished job kept as a dismissible bar. */
-export type CleanFinished = { id: string; title: string; seconds: number }
+export type CleanFinished = { id: string; title: string; seconds: number; steps: string[] }
 
 declare module 'claude-code' {
   interface PluginState {

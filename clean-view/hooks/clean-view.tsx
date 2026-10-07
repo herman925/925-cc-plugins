@@ -367,7 +367,7 @@ export function registerCleanView(on: On) {
         tasks: cl.tasks.map(t => ({ ...t, status: 'done' as const, percent: 100, hasReported: true })),
       }))
       const seconds = Math.max(0, Math.round((now - c.startedAt) / 1000))
-      await update($, finishedA, f => [...f, { id: `j${c.jobId}`, title: c.title === '' ? 'Working on it' : c.title, seconds }].slice(-3))
+      await update($, finishedA, f => [...f, { id: `j${c.jobId}`, title: c.title === '' ? 'Working on it' : c.title, seconds, steps: c.tasks.map(t => t.name) }].slice(-3))
       doneTimer?.cancel()
       doneTimer = $.clock.after(5000, () => {
         void patch($, cl => (cl.phase === 'done' ? { ...cl, isCollapsed: true } : cl))
@@ -613,7 +613,7 @@ export function registerCleanView(on: On) {
     const showRows =
       !isSingle &&
       cl.tasks.length > 0 &&
-      (cl.phase === 'working' || cl.phase === 'needs-you' || (cl.phase === 'done' && !cl.isCollapsed))
+      (cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'done')
     const nameCol = Math.max(12, width - 22)
     const { doneCount, rows } = visibleRows(cl)
     const firstUpcoming = rows.findIndex(t => t.status === 'upcoming')
@@ -675,11 +675,43 @@ export function registerCleanView(on: On) {
           )
         : null
 
+    // Older finished jobs stay, with their steps ticked, until they are dismissed.
+    const older = finished.filter(f => !(cl.phase === 'done' && f.id === `j${cl.jobId}`))
+    const olderEls = older.map(f => (
+      <Box key={`old-${f.id}`} flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" width={width}>
+          <Text dimColor color={color('success')} wrap="truncate">
+            {`✓ ${f.title} · took ${formatDuration(f.seconds * 1000)}`}
+          </Text>
+          <Button
+            key={`x-${f.id}`}
+            label="×"
+            onPress={() => {
+              void update($, finishedA, list => list.filter(x => x.id !== f.id))
+            }}
+          />
+        </Box>
+        {f.steps.length > 1 ? f.steps.map((n, i) => <Text key={`${f.id}-${i}`} dimColor>{`  ✓ ${n}`}</Text>) : null}
+      </Box>
+    ))
+    const doneX =
+      cl.phase === 'done' ? (
+        <Button
+          key="x-now"
+          label="×"
+          onPress={() => {
+            void update($, finishedA, list => list.filter(x => x.id !== `j${cl.jobId}`))
+            void patch($, c => ({ ...newChecklist(), jobId: c.jobId }))
+          }}
+        />
+      ) : null
     return stack(
       <Box flexDirection="column" width={width}>
+        {olderEls}
         <Box flexDirection="row" justifyContent="space-between" width={width}>
           <Box flexGrow={1}>{left}</Box>
           {controls}
+          {doneX}
         </Box>
         {hint}
         {picker}
