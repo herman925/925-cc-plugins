@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, asksUser, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -636,4 +636,27 @@ test('switching the view loses nothing: finished jobs show in both', async ($, o
 test('finished jobs saved by an older version (no steps) do not break the band', () => {
   expect(stepsOf({})).toEqual([])
   expect(stepsOf({ steps: ['One', 'Two'] })).toEqual(['One', 'Two'])
+})
+
+test('asksUser: only a real question counts as waiting', () => {
+  expect(asksUser('All done. The report is on the shared drive.')).toBe(false)
+  expect(asksUser('Reported to Head. Nothing else to do.')).toBe(false)
+  expect(asksUser('')).toBe(false)
+  expect(asksUser('Which style do you want?')).toBe(true)
+  expect(asksUser('I built it. Let me know if you want changes.')).toBe(true)
+  expect(asksUser('Shall I go on')).toBe(true)
+})
+
+test('a final answer with no question ends the job as Done, even if the last step was never reported', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Update the docs', 'Report to the head'] })
+  await $.tool.call({ tool: REPORT, task: 'Update the docs', percent: 80 })
+  await $.turn.complete({ answer: 'The docs are updated and the report is sent.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('✓ All done')
+  expect(t).not.toContain('Needs you')
+  expect(t).not.toContain('Waiting')
+  await ui.unmount()
 })
