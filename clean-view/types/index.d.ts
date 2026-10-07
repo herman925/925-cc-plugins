@@ -39,7 +39,14 @@ export type CleanChecklist = {
   failStreak: number
   /** True once the bell rang for the current Needs-you event. */
   isBelled: boolean
+  /** The eased whole-job percent the bar style draws; never goes down. */
+  bar: number
 }
+
+export type CleanStyle = 'checklist' | 'bars'
+
+/** A finished job kept as a dismissible bar. */
+export type CleanFinished = { id: string; title: string; seconds: number }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -47,6 +54,8 @@ declare module 'claude-code' {
       cleanViewEnabled: boolean
       checklist: CleanChecklist
       tick: number
+      viewStyle: CleanStyle
+      finished: CleanFinished[]
     }
   }
 }

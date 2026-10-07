@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, cleanName, friendlyError, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, barText, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -435,6 +435,127 @@ test('with Clean View off, the other band still shows', async ($, on) => {
   await $.command.run({ command: 'simple', args: 'off', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await texts(ui)).toContain('OTHER MOD BAND')
+  expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Show details')
+  await ui.unmount()
+})
+
+// ---- the bar style ----
+const RUN = (args: string) => ({ command: 'simple', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } }) as any
+
+test('bar math: the job percent follows the steps and the eased bar never goes back', () => {
+  let c = planSteps(newChecklist(), ['One', 'Two', 'Three', 'Four'])!
+  expect(jobPercent(c)).toBe(0)
+  c = reportProgress(c, 'Two', 50).cl
+  expect(jobPercent(c)).toBe(38)
+  let prev = 0
+  for (let i = 0; i < 12; i++) {
+    c = easeStep(c)
+    expect(c.bar).toBeGreaterThanOrEqual(prev)
+    prev = c.bar
+  }
+  expect(c.bar).toBe(38)
+  expect(barText(50, 10, 0, false)).toEqual({ filled: '▓▒▓▒▓', rest: '░░░░░' })
+})
+
+test('bar style: a row with the job name, a stage pill, a bar, a percent and a dismiss button', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(RUN('bars'))
+  await $.tool.call({ tool: PLAN, steps: ['Read your brand notes', 'Build the pricing section', 'Polish the footer'] })
+  await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 60 })
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const t = await texts(ui)
+    expect(t).toContain('Working on it')
+    expect(t).toContain(' Build the pricing… ')
+    expect(t).toMatch(/\d+%/)
+    expect(t).not.toContain('Up next')
+    expect(await ui.find({ key: 'x-now' })).toBeDefined()
+    expect((await ui.find({ key: 'style' }))?.props.label).toBe('List view')
+    expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Hide details')
+    await ui.unmount()
+  }
+})
+
+test('bar style: a finished job stays as a green bar with its time until it is dismissed', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(RUN('bars'))
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
+  await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 100 })
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toMatch(/✓ \d+s/)
+  expect(t).toContain('100%')
+  expect(await ui.find({ key: 'x-j1' })).toBeDefined()
+  await ui.press({ key: 'x-j1' })
+  expect(await ui.find({ key: 'x-j1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('bar style: next steps show as numbered choices with 0 to dismiss, and a press sends the answer', async ($, on) => {
+  world(on)
+  const sent: string[] = []
+  on('prompt.submit', (_$: any, e: any) => {
+    sent.push(e.text)
+    return { text: e.text }
+  })
+  await begin($)
+  await $.command.run(RUN('bars'))
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
+  await $.tool.call({ tool: ASK, question: 'What next?', options: ['Ship steps 1 and 2', 'Fix the four bugs first'] })
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const t = await texts(ui)
+    expect(t).toContain('next: What next?')
+    expect(t).toContain(' Needs you ')
+    expect((await ui.find({ key: 'choice1' }))?.props.hotkey).toBe('1')
+    expect((await ui.find({ key: 'dismiss-next' }))?.props.hotkey).toBe('0')
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'choice2' })
+  expect(sent).toEqual(['Fix the four bugs first'])
+  await ui.unmount()
+})
+
+test('the style flips with the button, /progress and /simple list, and /progress-clear empties the finished bars', async ($, on) => {
+  world(on)
+  await begin($)
+  let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'style' }))?.props.label).toBe('Bar view')
+  await ui.press({ key: 'style' })
+  expect((await ui.find({ key: 'style' }))?.props.label).toBe('List view')
+  await ui.press({ key: 'style' })
+  expect((await ui.find({ key: 'style' }))?.props.label).toBe('Bar view')
+  await ui.unmount()
+  await $.command.run({ command: 'progress', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'style' }))?.props.label).toBe('List view')
+  await ui.unmount()
+  await $.command.run(RUN('list'))
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'style' }))?.props.label).toBe('Bar view')
+  await ui.unmount()
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
+  await $.tool.call({ tool: REPORT, task: 'Build the pricing section', percent: 100 })
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.command.run(RUN('bars'))
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'x-j1' })).toBeDefined()
+  await $.command.run({ command: 'progress-clear', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  expect(await ui.find({ key: 'x-j1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with Clean View off, the bar style shows only the button', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(RUN('bars'))
+  await $.command.run(RUN('off'))
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'style' })).toBeUndefined()
   expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Show details')
   await ui.unmount()
 })
