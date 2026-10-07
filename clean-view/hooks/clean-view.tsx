@@ -532,15 +532,19 @@ export function registerCleanView(on: On) {
           },
         })
       }
-      // Nothing floats apart: name, pill, bar, percent and x sit in one run. The name column fits the longest
-      // name (so every name shows whole when there is room), and the bar is 35% of the width (never more than what is left) so the words stay readable.
-      const titleW = Math.min(Math.floor(width * 0.5), Math.max(12, ...items.map(it => it.name.length)))
+      // Text takes at least 35% of the width (more if a name or stage needs it); the bar, percent and x take
+      // everything that is left, so the row always runs to the right edge. The pill sits against the bar, and
+      // every bar starts at the same column.
+      const maxPill = Math.max(...items.map(it => it.pillText.length + 2), 0)
+      const maxName = Math.max(12, ...items.map(it => it.name.length))
+      const textBlock = Math.min(Math.floor(width * 0.6), Math.max(Math.floor(width * 0.35), 2 + maxName + 1 + maxPill))
+      const barW = Math.max(10, width - textBlock - (6 + 5))
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
           <Text color={color(it.bg)}>● </Text>
-          <Text bold={it.isLive}>{fitName(shortName(it.name, titleW), titleW)} </Text>
+          <Text bold={it.isLive}>{fitName(shortName(it.name, Math.max(8, textBlock - 3 - (it.pillText.length + 2))), Math.max(8, textBlock - 3 - (it.pillText.length + 2)))} </Text>
           {pillOf(it.pillText, it.bg)}
-          {barSegments(it.pct, Math.max(12, Math.min(width - (2 + titleW + 1 + (it.pillText.length + 2) + 6 + 5), Math.floor(width * 0.35))), tick, it.isLive && !isStill, it.label).map((seg, k) =>
+          {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
               <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
                 {seg.text}

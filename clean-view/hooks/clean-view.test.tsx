@@ -570,15 +570,17 @@ test('bar style: name, pill, bar and percent sit together, with the words inside
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: WIDTH } })
   const rows = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.text.includes('%') && b.text.includes('Working on it'))
   const row = rows[rows.length - 1]!.text as string
-  // no wide hole between the parts of the row, and the row fits
-  expect(/ {6,}/.test(row)).toBe(false)
+  // the row runs to the right edge: percent and x take what is left after the text
   expect(row.length).toBeLessThanOrEqual(WIDTH)
+  expect(row.length).toBeGreaterThanOrEqual(WIDTH - 6)
   // the words ride inside the bar
   expect(row).toContain(' Reading a file… ')
-  // and the bar is long: most of what is left after the name and pill
+  // text gets at least 35% of the width: the bar starts at or after column 42 of 120
+  const barStart = row.search(/[▓▒░]/)
+  expect(barStart).toBeGreaterThanOrEqual(Math.floor(WIDTH * 0.35) - 1)
+  // the bar is the rest: 120 - text block (42) - percent and x (11), words included
   const bar = [...row.matchAll(/[▓▒░]+/g)].map(m => m[0]).join('')
-  // 35% of the width, so 42 cells at 120 columns, the words included
-  expect(bar.length + ' Reading a file… '.length).toBe(42)
+  expect(bar.length + ' Reading a file… '.length).toBe(WIDTH - 42 - 11)
   await ui.unmount()
 })
 
