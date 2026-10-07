@@ -662,3 +662,25 @@ test('a final answer with no question ends the job as Done, even if the last ste
   expect(t).not.toContain('Waiting')
   await ui.unmount()
 })
+
+test('bar style: every pill starts in the same column, finished and live alike', async ($, on) => {
+  world(on)
+  await $.command.run(RUN('bars'))
+  for (const n of ['a', 'b']) {
+    await $.turn.start({ text: n, turnId: 't' + n })
+    await $.tool.call({ tool: PLAN, steps: ['Configure token access'] })
+    await $.tool.call({ tool: REPORT, task: 'Configure token access', percent: 100 })
+    await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't' + n, reason: 'answer' })
+  }
+  await $.turn.start({ text: 'c', turnId: 'tc' })
+  await $.tool.call({ tool: PLAN, steps: ['Understand your request', 'Audit the site'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 150 } })
+  const flat = (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('bar-')).map((b: any) => (b.text as string).replace(/\n/g, ''))
+  expect(flat.length).toBeGreaterThanOrEqual(3)
+  // pill start = first run of two-or-more spaces-free coloured text: compare where each row's bar starts
+  const barStarts = flat.map((t: string) => t.search(/[▓▒░]/))
+  expect(new Set(barStarts).size).toBe(1)
+  const pillStarts = flat.map((t: string) => t.search(/(✓ \d|Understand)/))
+  expect(new Set(pillStarts).size).toBe(1)
+  await ui.unmount()
+})
