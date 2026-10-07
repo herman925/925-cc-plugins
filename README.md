@@ -6,6 +6,7 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod.
 |---|---|---|
 | `speaker-colours` | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
 | `team-orchestrator` | Builds and manages a team of Claude Code sessions as Orca tabs. Welcome screen with quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, a live roster (move, remove, add, settings for layout and columns) and an animated org chart whose dots follow each session's status. Short names for the chart are set by the person. A guard keeps roster members from starting subagents, and heads from writing files, unless the person allows it (see the mod's README). | 0.4.3 |
+| `clean-view` | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). | 0.1.0 |
 
 ## Install
 
