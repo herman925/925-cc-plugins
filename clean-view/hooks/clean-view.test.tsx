@@ -22,12 +22,19 @@ const REPORT = 'mcp__clean-view__report_progress'
 const ASK = 'mcp__clean-view__ask_choices'
 
 // The world beneath the plugin: a clock, a store, an env and a tool bottom that says ok.
-function world(on: any, env: Record<string, string> = {}) {
+function world(on: any, env: Record<string, string> = {}, hasOwnBand = false) {
   mock.clock(on)
   mock.store(on)
   mock.env(on, env)
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+  // The engine draws nothing in the band of its own, so what is beneath us is empty.
+  if (!hasOwnBand) {
+    on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+      const { Box } = $.ui.resolve(e)
+      return <Box />
+    })
+  }
   // Bash always fails beneath the plugin, so the failure test can reach it.
   on('tool.call', (_$: any, e: any) =>
     e.tool === 'Bash' ? { result: 'failed', text: 'failed', isError: true } : { result: 'ok', text: 'ok' },
@@ -385,5 +392,49 @@ test('an unknown step name ticks nothing off', async ($, on) => {
   expect(t).toContain('50%')
   // step 1 was ticked off by the planned-name report; nothing else was
   expect((t.match(/Done/g) ?? []).length).toBe(1)
+  await ui.unmount()
+})
+
+test('with two AbovePrompt handlers registered, both bands render', async ($, on) => {
+  world(on, {}, true)
+  // Another mod's band, beneath ours in the chain.
+  on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text>OTHER MOD BAND</Text>
+      </Box>
+    )
+  })
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const t = await texts(ui)
+    expect(t).toContain('OTHER MOD BAND')
+    expect(t).toContain('Build the pricing section')
+    expect(t).toContain('Step 1 of 2')
+    expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Hide details')
+    // the other band sits above ours
+    expect(t.indexOf('OTHER MOD BAND')).toBeLessThan(t.indexOf('Step 1 of 2'))
+    await ui.unmount()
+  }
+})
+
+test('with Clean View off, the other band still shows', async ($, on) => {
+  world(on, {}, true)
+  on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text>OTHER MOD BAND</Text>
+      </Box>
+    )
+  })
+  await begin($)
+  await $.command.run({ command: 'simple', args: 'off', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).toContain('OTHER MOD BAND')
+  expect((await ui.find({ key: 'toggle' }))?.props.label).toBe('Show details')
   await ui.unmount()
 })

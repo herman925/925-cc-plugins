@@ -1064,6 +1064,13 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
+    // Another mod's band (below us in the chain) stays on screen, under ours. If it fails, ours still draws.
+    let rest: Awaited<ReturnType<typeof next>> | undefined
+    try {
+      rest = await next(e)
+    } catch {
+      rest = undefined
+    }
     const list = await readMembers($)
     const v = await read($, view)
     const teams = [...new Set(list.map(m => m.team))]
@@ -1106,6 +1113,7 @@ export const register: Register = on => {
           {teams.length > 0 && <Text dimColor> │ {teams.map(t => '@' + t).join(' ')}</Text>}
         </Box>
         {open && !(await docked($)) && (await panel($, ui, v, Number((e.props as any).bodyColumns) || 100))}
+        {rest}
       </Box>
     )
   })
