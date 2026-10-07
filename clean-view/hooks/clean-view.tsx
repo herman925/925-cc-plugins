@@ -9,7 +9,7 @@ import {
   applyTaskCreate,
   applyTaskUpdate,
   applyTodos,
-  barText,
+  barSegments,
   cleanName,
   cleanTitle,
   easeStep,
@@ -468,41 +468,14 @@ export function registerCleanView(on: On) {
     )
 
     if (style === 'bars') {
-      // The bar is half as long as it was; the room it gave up goes to the job name.
-      const pillMax = 20
-      const avail = width - (2 + 1 + pillMax + 1 + 6 + 5)
-      const wasTitleW = Math.min(26, Math.max(12, Math.floor(width * 0.28)))
-      const barW = Math.max(8, Math.floor(Math.max(8, avail - wasTitleW) / 2))
-      const titleW = Math.max(12, avail - barW)
       const pillOf = (label: string, bg: string) => (
         <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
           {` ${label} `}
         </Text>
       )
-      const barRow = (
-        id: string,
-        name: string,
-        pillText: string,
-        bg: string,
-        pct: number,
-        isLive: boolean,
-        onDismiss: () => void,
-      ) => {
-        const cells = barText(pct, barW, tick, isLive && !isStill)
-        return (
-          <Box key={`bar-${id}`} flexDirection="row">
-            <Text color={color(bg)}>● </Text>
-            <Text bold={isLive}>{fitName(shortName(name, titleW), titleW)} </Text>
-            <Box width={pillMax}>{pillOf(pillText, bg)}</Box>
-            <Text color={color(bg)}>{cells.filled}</Text>
-            <Text dimColor>{cells.rest}</Text>
-            <Text>{` ${String(pct).padStart(3, ' ')}% `}</Text>
-            <Button key={`x-${id}`} label="×" onPress={onDismiss} />
-          </Box>
-        )
-      }
       const live = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
       const active = cl.tasks.find(t => t.status === 'active')
+      const upcoming = cl.tasks.find(t => t.status === 'upcoming')
       let pillText = shortName(active ? active.name : 'Working', 18)
       let pillBg = 'magenta'
       if (cl.phase === 'needs-you') {
@@ -515,19 +488,69 @@ export function registerCleanView(on: On) {
         pillText = 'Stopped'
         pillBg = 'gray'
       }
-      const rows: RenderChildren[] = finished.map(f =>
-        barRow(f.id, f.title, `✓ ${formatDuration(f.seconds * 1000)}`, 'green', 100, false, () => {
+      // The words inside the bar: what Claude is doing now, else the step that comes next.
+      const liveLabel = cl.phase === 'working' ? (cl.action !== '' ? `${cl.action}…` : upcoming ? upcoming.name : '') : ''
+      type Item = {
+        id: string
+        name: string
+        pillText: string
+        bg: string
+        pct: number
+        isLive: boolean
+        label: string
+        onDismiss: () => void
+      }
+      const items: Item[] = finished.map(f => ({
+        id: f.id,
+        name: f.title,
+        pillText: `✓ ${formatDuration(f.seconds * 1000)}`,
+        bg: 'green',
+        pct: 100,
+        isLive: false,
+        label: '',
+        onDismiss: () => {
           void update($, finishedA, list => list.filter(x => x.id !== f.id))
-        }),
-      )
+        },
+      }))
       if (live) {
-        rows.push(
-          barRow('now', title0(cl), pillText, pillBg, Math.round(cl.bar), cl.phase === 'working', () => {
+        items.push({
+          id: 'now',
+          name: title0(cl),
+          pillText,
+          bg: pillBg,
+          pct: Math.round(cl.bar),
+          isLive: cl.phase === 'working',
+          label: liveLabel,
+          onDismiss: () => {
             stopClock()
             void patch($, c => ({ ...newChecklist(), jobId: c.jobId }))
-          }),
-        )
+          },
+        })
       }
+      // Columns fit what is shown, so nothing floats apart: name, pill, bar (with its words), percent, ×.
+      const titleW = Math.min(Math.floor(width * 0.4), Math.max(12, ...items.map(it => it.name.length)))
+      const pillCol = Math.min(20, Math.max(9, ...items.map(it => it.pillText.length + 2)))
+      const barW = Math.max(10, width - (2 + titleW + 1 + pillCol + 6 + 5))
+      const rows: RenderChildren[] = items.map(it => (
+        <Box key={`bar-${it.id}`} flexDirection="row">
+          <Text color={color(it.bg)}>● </Text>
+          <Text bold={it.isLive}>{fitName(shortName(it.name, titleW), titleW)} </Text>
+          <Box width={pillCol}>{pillOf(it.pillText, it.bg)}</Box>
+          {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
+            seg.kind === 'label' ? (
+              <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
+                {seg.text}
+              </Text>
+            ) : seg.kind === 'fill' ? (
+              <Text key={`seg-${k}`} color={color(it.bg)}>{seg.text}</Text>
+            ) : (
+              <Text key={`seg-${k}`} dimColor>{seg.text}</Text>
+            ),
+          )}
+          <Text>{` ${String(it.pct).padStart(3, ' ')}% `}</Text>
+          <Button key={`x-${it.id}`} label="×" onPress={it.onDismiss} />
+        </Box>
+      ))
       const nextList =
         cl.phase === 'needs-you' && cl.question !== null ? (
           <Box flexDirection="column">

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, barText, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, barSegments, barText, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -560,18 +560,34 @@ test('with Clean View off, the bar style shows only the button', async ($, on) =
   await ui.unmount()
 })
 
-test('bar style: the bar is short and the job name gets the room', async ($, on) => {
+test('bar style: name, pill, bar and percent sit together, with the words inside the bar', async ($, on) => {
   world(on)
   await begin($)
   await $.command.run(RUN('bars'))
-  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 120 } })
-  const all = await ui.findAll({ type: 'Text' })
-  const bar = all.find((t: any) => /^[░]{8,}$/.test(t.text))
-  // 120 columns: the old bar was about 59 cells wide, now about half
-  expect((bar?.text.length ?? 0)).toBeLessThanOrEqual(30)
-  expect((bar?.text.length ?? 0)).toBeGreaterThanOrEqual(25)
+  await $.tool.call({ tool: PLAN, steps: ['Read your brand notes', 'Build the pricing section', 'Polish the footer'] })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/p/a.md' })
+  const WIDTH = 120
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: WIDTH } })
+  const rows = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.text.includes('%') && b.text.includes('Working on it'))
+  const row = rows[rows.length - 1]!.text as string
+  // no wide hole between the parts of the row, and the row fits
+  expect(/ {6,}/.test(row)).toBe(false)
+  expect(row.length).toBeLessThanOrEqual(WIDTH)
+  // the words ride inside the bar
+  expect(row).toContain(' Reading a file… ')
+  // and the bar is long: most of what is left after the name and pill
+  const bar = [...row.matchAll(/[▓▒░]+/g)].map(m => m[0]).join('')
+  expect(bar.length).toBeGreaterThanOrEqual(30)
   await ui.unmount()
+})
+
+test('bar words: the label rides the edge of the fill, never outside the bar', () => {
+  const segs = barSegments(50, 30, 0, false, 'Reading a file…')
+  const joined = segs.map(s => s.text).join('')
+  expect(joined.length).toBe(30)
+  expect(segs.some(s => s.kind === 'label' && s.text.trim() === 'Reading a file…')).toBe(true)
+  expect(barSegments(0, 30, 0, false, '').every(s => s.kind !== 'label')).toBe(true)
+  expect(barSegments(100, 12, 0, false, 'a very long label that cannot fit').map(s => s.text).join('').length).toBe(12)
 })
 
 test('list view keeps finished jobs with their steps ticked until they are dismissed', async ($, on) => {

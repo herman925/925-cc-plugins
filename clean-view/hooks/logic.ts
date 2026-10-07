@@ -268,6 +268,31 @@ export function barText(percent: number, cells: number, frame: number, isLive: b
   return { filled, rest: '░'.repeat(cells - n) }
 }
 
+export type BarSegment = { text: string; kind: 'fill' | 'rest' | 'label' }
+
+/** The bar with its words inside: dotted fill, empty rest, and a label that rides the edge of the fill. */
+export function barSegments(percent: number, cells: number, frame: number, isLive: boolean, label: string): BarSegment[] {
+  const base = barText(percent, cells, frame, isLive)
+  const chars = [...base.filled, ...base.rest]
+  const n = base.filled.length
+  const text = label.trim() === '' ? '' : ` ${shortName(label.trim(), Math.max(1, cells - 4))} `
+  const len = text.length
+  const at = len === 0 || len >= cells ? -1 : Math.max(1, Math.min(cells - len - 1, n - len))
+  const out: BarSegment[] = []
+  const push = (t: string, kind: BarSegment['kind']) => {
+    const last = out[out.length - 1]
+    if (last && last.kind === kind) last.text += t
+    else out.push({ text: t, kind })
+  }
+  for (let i = 0; i < chars.length; i++) {
+    if (at >= 0 && i === at) {
+      push(text, 'label')
+      i += len - 1
+    } else push(chars[i]!, i < n ? 'fill' : 'rest')
+  }
+  return out
+}
+
 export function shortName(name: string, max: number): string {
   return name.length <= max ? name : name.slice(0, Math.max(1, max - 1)).trimEnd() + '…'
 }
