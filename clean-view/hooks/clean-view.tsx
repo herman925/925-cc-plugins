@@ -468,7 +468,12 @@ export function registerCleanView(on: On) {
     )
 
     if (style === 'bars') {
-      const titleW = Math.min(26, Math.max(12, Math.floor(width * 0.28)))
+      // The bar is half as long as it was; the room it gave up goes to the job name.
+      const pillMax = 20
+      const avail = width - (2 + 1 + pillMax + 1 + 6 + 5)
+      const wasTitleW = Math.min(26, Math.max(12, Math.floor(width * 0.28)))
+      const barW = Math.max(8, Math.floor(Math.max(8, avail - wasTitleW) / 2))
+      const titleW = Math.max(12, avail - barW)
       const pillOf = (label: string, bg: string) => (
         <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
           {` ${label} `}
@@ -483,15 +488,12 @@ export function registerCleanView(on: On) {
         isLive: boolean,
         onDismiss: () => void,
       ) => {
-        const pillW = pillText.length + 2
-        const barW = Math.max(8, width - (2 + titleW + 1 + pillW + 1 + 6 + 5))
         const cells = barText(pct, barW, tick, isLive && !isStill)
         return (
           <Box key={`bar-${id}`} flexDirection="row">
             <Text color={color(bg)}>● </Text>
             <Text bold={isLive}>{fitName(shortName(name, titleW), titleW)} </Text>
-            {pillOf(pillText, bg)}
-            <Text> </Text>
+            <Box width={pillMax}>{pillOf(pillText, bg)}</Box>
             <Text color={color(bg)}>{cells.filled}</Text>
             <Text dimColor>{cells.rest}</Text>
             <Text>{` ${String(pct).padStart(3, ' ')}% `}</Text>
