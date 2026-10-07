@@ -467,7 +467,7 @@ test('bar style: a row with the job name, a stage pill, a bar, a percent and a d
     const ui = await $.ui.mount({ ...BAND, surface })
     const t = await texts(ui)
     expect(t).toContain('Working on it')
-    expect(t).toContain(' Build the pricing… ')
+    expect(t).toContain(' Build the pricing section ')
     expect(t).toMatch(/\d+%/)
     expect(t).not.toContain('Up next')
     expect(await ui.find({ key: 'x-now' })).toBeDefined()

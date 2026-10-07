@@ -418,8 +418,6 @@ export function registerCleanView(on: On) {
       ) : (
         own
       )
-    // PROBE (temporary): shows under the prompt so we can tell whether this hook runs and what it drew.
-    $.ui.status('Clean View: band hook ran')
     try {
     const enabled = await read($, enabledA)
     const cl = await read($, checklistA)
@@ -480,7 +478,7 @@ export function registerCleanView(on: On) {
       const live = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
       const active = cl.tasks.find(t => t.status === 'active')
       const upcoming = cl.tasks.find(t => t.status === 'upcoming')
-      let pillText = shortName(active ? active.name : 'Working', 18)
+      let pillText = shortName(active ? active.name : 'Working', 32)
       let pillBg = 'magenta'
       if (cl.phase === 'needs-you') {
         pillText = 'Needs you'
@@ -531,16 +529,15 @@ export function registerCleanView(on: On) {
           },
         })
       }
-      // Columns fit what is shown, so nothing floats apart: name, pill, bar (with its words), percent, ×.
-      const titleW = Math.min(Math.floor(width * 0.4), Math.max(12, ...items.map(it => it.name.length)))
-      const pillCol = Math.min(20, Math.max(9, ...items.map(it => it.pillText.length + 2)))
-      const barW = Math.max(10, width - (2 + titleW + 1 + pillCol + 6 + 5))
+      // Nothing floats apart: name, pill, bar, percent and x sit in one run. The name column fits the longest
+      // name (so every name shows whole when there is room), and the bar is capped so the words stay readable.
+      const titleW = Math.min(Math.floor(width * 0.5), Math.max(12, ...items.map(it => it.name.length)))
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
           <Text color={color(it.bg)}>● </Text>
           <Text bold={it.isLive}>{fitName(shortName(it.name, titleW), titleW)} </Text>
-          <Box width={pillCol}>{pillOf(it.pillText, it.bg)}</Box>
-          {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
+          {pillOf(it.pillText, it.bg)}
+          {barSegments(it.pct, Math.max(12, Math.min(56, width - (2 + titleW + 1 + (it.pillText.length + 2) + 6 + 5))), tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
               <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
                 {seg.text}
@@ -749,7 +746,6 @@ export function registerCleanView(on: On) {
     } catch (err) {
       // Never let the band vanish silently: say what went wrong, and how to carry on.
       const why = err instanceof Error ? err.message : String(err)
-      $.ui.status(`Clean View: band error: ${why.slice(0, 120)}`)
       return stack(
         <Box flexDirection="column">
           <Text color="red" wrap="truncate">{`Clean View hit a problem: ${why.slice(0, 80)}`}</Text>

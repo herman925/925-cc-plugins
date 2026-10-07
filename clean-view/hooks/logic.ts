@@ -277,7 +277,7 @@ export function barSegments(percent: number, cells: number, frame: number, isLiv
   const n = base.filled.length
   const text = label.trim() === '' ? '' : ` ${shortName(label.trim(), Math.max(1, cells - 4))} `
   const len = text.length
-  const at = len === 0 || len >= cells ? -1 : Math.max(1, Math.min(cells - len - 1, n - len))
+  const at = len === 0 || len >= cells ? -1 : Math.max(2, Math.min(cells - len - 1, n - len))
   const out: BarSegment[] = []
   const push = (t: string, kind: BarSegment['kind']) => {
     const last = out[out.length - 1]
