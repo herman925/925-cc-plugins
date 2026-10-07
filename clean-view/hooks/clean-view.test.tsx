@@ -577,7 +577,8 @@ test('bar style: name, pill, bar and percent sit together, with the words inside
   expect(row).toContain(' Reading a file… ')
   // and the bar is long: most of what is left after the name and pill
   const bar = [...row.matchAll(/[▓▒░]+/g)].map(m => m[0]).join('')
-  expect(bar.length).toBeGreaterThanOrEqual(30)
+  // 35% of the width, so 42 cells at 120 columns, the words included
+  expect(bar.length + ' Reading a file… '.length).toBe(42)
   await ui.unmount()
 })
 
