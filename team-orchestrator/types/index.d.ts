@@ -48,6 +48,8 @@ export type Member = {
   worktree?: string
   /** the status file this member's session writes, relative to .claude/team-orchestrator/ (status/<name>.json) */
   statusFile?: string
+  /** on the roster since Create but never started: it starts, fresh and briefed, on its first message (team_message) */
+  pending?: boolean
 }
 export type Bulk = {
   prefix: string
@@ -79,6 +81,8 @@ export type Act = {
   msg: string
 }
 export type View = 'closed' | 'roster' | 'new' | 'settings'
+/** a Create in progress: the members it starts now, the batch being started (1-based) and how many batches; empty when none */
+export type Spawn = { names: string[]; batch: number; of: number }
 export type Settings = {
   /** stacked: team cards one under another | columns: side by side where the width allows | dock: the panel in a side pane */
   layout: 'stacked' | 'columns' | 'dock'
@@ -101,6 +105,7 @@ declare module 'claude-code' {
       menu: string
       settings: Settings
       act: Act
+      spawn: Spawn
     }
   }
 }

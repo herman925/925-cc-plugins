@@ -39,9 +39,13 @@ export type TeamSettings = {
   reopen: 'resume' | 'fresh'
   /** most sessions open at once; 0 = no cap */
   maxOpen: number
+  /** at Create: start only the top and the team heads under it (the rest on their first message), or everyone */
+  launch: 'demand' | 'all'
+  /** sessions started at once at Create; the next batch waits until these are ready and briefed */
+  batch: number
 }
 
-export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8 }
+export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8, launch: 'demand', batch: 3 }
 
 export const MIN = 60_000
 /** a member with no write for this long shows as offline */
@@ -107,3 +111,30 @@ export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSett
 
 /** One short line for the task field. */
 export const taskLine = (text: string) => text.trim().split(/\r?\n/)[0]!.slice(0, 120)
+
+/**
+ * Who starts at Create when the rest start on demand: the top (boss "user") and, under a CEO, each team's head (a
+ * report of the top in another team). Leads and workers start the first time someone messages them.
+ */
+export const startsAtCreate = (m: Member, list: Member[]) =>
+  m.boss === 'user' || list.some(t => t.boss === 'user' && t.name === m.boss && t.team !== m.team)
+
+/** xs in groups of n (n below 1 counts as 1). */
+export const chunk = <T>(xs: T[], n: number): T[][] => {
+  const size = Math.max(1, Math.floor(n) || 1)
+  const out: T[][] = []
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size))
+  return out
+}
+
+/**
+ * The "name [ref]" of the session on this machine named name, from a ListAgents listing, or '' when there is none.
+ * Remote Control mirrors of old sessions often share a member's name, and then the bare name is ambiguous.
+ */
+export const localRef = (listing: string, name: string) => {
+  for (const line of listing.split(/\r?\n/)) {
+    const m = line.match(/^\s*(.+?) \[([0-9a-f]+)\]\s+·\s+interactive\b/)
+    if (m && m[1] === name) return `${name} [${m[2]}]`
+  }
+  return ''
+}

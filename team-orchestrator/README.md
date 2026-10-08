@@ -137,3 +137,16 @@ busy, the message waits in the queue. Anyone with reports is never closed.
 
 The old single file `.claude/team-orchestrator.json` is moved into the folder on first use (a copy stays as
 `roster.json.bak`), and the old path is left as a pointer.
+
+## Staged Create and on-demand members (0.5.03)
+
+Create writes the whole roster to `roster.json` first. It then starts only the top member and, under a CEO, each team's head. Leads and workers are marked "not yet" (`pending` in the roster). Each one starts the first time its boss messages it with the `team_message` tool. It starts fresh, gets its briefing, and then receives the message.
+
+Sessions start a batch at a time. The default batch size is 3. Each batch is started, waited for until ready, and briefed, and the next batch follows 5 s later. While this runs, a "Starting the team" window takes over the panel and shows each member's progress.
+
+Settings → Workers has two options for this:
+
+- **Launch:** "On demand" (the default) or "All at Create".
+- **Batch size:** 1, 2, 3, 4 or 6.
+
+Bosses message their reports with `team_message`, not `SendMessage`. SendMessage checks the name before any plugin hook runs, so it cannot start a member that has no session yet. It also rejects a name that a Remote Control copy shares. `team_message` starts or reopens the member when needed, then sends to the session on this machine by its `name [ref]`.

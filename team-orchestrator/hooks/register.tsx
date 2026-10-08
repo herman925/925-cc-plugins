@@ -1,12 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Act, Bulk, Form, Member, Settings, View } from '../types'
+import type { Act, Bulk, Form, Member, Settings, Spawn, View } from '../types'
 import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import type { Status, TeamSettings } from './status'
-import { admit, COUNT_EVERY_MS, MIN, needsTabCheck, nextCheckInterval, shownState, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, needsTabCheck, nextCheckInterval, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
@@ -15,6 +15,7 @@ const ADOPT = 'mcp__team-orchestrator__team_adopt'
 const REMOVE_TEAM = 'mcp__team-orchestrator__team_remove'
 const REMOVE_MEMBER = 'mcp__team-orchestrator__member_remove'
 const MOVE = 'mcp__team-orchestrator__member_move'
+const MESSAGE = 'mcp__team-orchestrator__team_message'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -100,6 +101,8 @@ const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
 const DOCK = 'team-dock'
+const SPAWN0: Spawn = { names: [], batch: 0, of: 0 }
+const spawn = atom({ plugin: 'team-orchestrator', key: 'spawn' } as const, SPAWN0)
 const bulk = atom({ plugin: 'team-orchestrator', key: 'bulk' } as const, {
   prefix: '',
   base: '',
@@ -210,6 +213,9 @@ const look = (s: string): [string, string, string] =>
   : s === 'starting' ? ['◌', 'starting', 'cyan']
   : s === 'offline' ? ['○', 'offline', 'gray']
   : s === 'failed' ? ['✗', 'failed', 'red']
+  : s === 'closed' ? ['–', 'closed', 'gray']
+  : s === 'unstarted' ? ['·', 'not yet', 'gray']
+  : s === 'queued' ? ['○', 'queued', 'gray']
   : ['?', s.slice(0, 8), 'magenta']
 
 // `cells` wide bar and the percent on one line; 0 cells is the percent alone
@@ -249,7 +255,7 @@ const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
 
-const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile'] as const
+const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending'] as const
 
 // The Orca workspace (worktree id) this session runs in, from `orca worktree current` run in the session's own folder.
 async function currentWorktree($: any): Promise<string> {
@@ -322,7 +328,8 @@ async function pull($: any) {
   await update($, members, old =>
     saved.map(m => {
       const o = old.find(x => x.name === m.name && (x.team || m.team) === m.team)
-      return { ...fresh, ...(o ?? {}), ...m, sel: o?.sel ?? false } as Member
+      // a member that never started shows so in every session, whatever state this one last saw
+      return { ...fresh, ...(o ?? {}), ...m, sel: o?.sel ?? false, ...(m.pending ? { state: 'unstarted' } : {}) } as Member
     }),
   )
 }
@@ -340,7 +347,8 @@ const briefText = (m: Member, list: Member[], team: string): string => {
       (m.boss === 'user' ? 'You report to the user. ' : `Your boss: ${m.boss}. `) +
       `COMMUNICATION: you may message your boss, your direct reports, and any other head or lead in any department` +
       (peers.length ? ` (${peers.map(addr).join(', ')})` : '') +
-      `. Do not bypass a lead to instruct someone else's worker.`
+      `. Do not bypass a lead to instruct someone else's worker. ` +
+      `Message your direct reports with the team_message tool (mcp__team-orchestrator__team_message, { to: "<name>", message: "..." }), not SendMessage: a report may not have started yet or may have been closed while idle, and team_message starts it, briefs it and then delivers.`
     : `YOUR JOB: you EXECUTE the tasks your direct boss gives you and report results back. Your direct boss (one level up): ${m.boss}. ` +
       `COMMUNICATION: talk ONLY to your direct boss. Do NOT message your boss's boss, other leads, or other workers. ` +
       `Worker-to-worker contact is forbidden unless your boss explicitly names that worker to you in a message.`
@@ -348,7 +356,7 @@ const briefText = (m: Member, list: Member[], team: string): string => {
     `TEAM BRIEFING (one-time, from the Team Orchestrator). You are ${m.name} in team "${m.team}". Role: ${m.role}. ${rules} ` +
     `Team structure: ${roster}. ` +
     `TEAM FILES: the team lives in .claude/team-orchestrator/ in the project. roster.json is the structure (teams, bosses, roles) and lists the status file each member writes; never edit it by hand. status/<name>.json is each member's live status, which the Team Orchestrator writes for its own session automatically (state, task, model, context, last "clean"); never edit another member's status file. settings.json holds the team's worker settings. ` +
-    `To message a teammate use the SendMessage tool (Claude Code's native agent messaging), e.g. SendMessage({ to: "<their name>", message: "..." }), where the name is the quoted name shown above or in the structure list. If SendMessage says the name is ambiguous, run ListAgents and retry with the exact "name [ref]" shown there. Do NOT use orca terminal send or the terminal for messages to teammates. ` +
+    `To message a teammate use the SendMessage tool (Claude Code's native agent messaging), e.g. SendMessage({ to: "<their name>", message: "..." }), where the name is the quoted name shown above or in the structure list. If SendMessage says the name is ambiguous or unknown and the person is on the team, use team_message with the plain name instead (it picks the session on this machine, never a Remote Control copy). Do NOT use orca terminal send or the terminal for messages to teammates. ` +
     `Now reply with exactly "Noted" plus one short line restating your role and reporting line, then wait for instructions.`
   )
 }
@@ -633,7 +641,7 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out)
-  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: resume ? m.briefed : false }
+  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: resume ? m.briefed : false, pending: false }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
   await share($)
@@ -676,7 +684,30 @@ async function admitAndReopen($: any, target: Member, list: Member[], t: TeamSet
   return reopen($, target, t)
 }
 
-const isClosed = (m: Member, s: Status | undefined) => m.state === 'closed' || s?.state === 'closed'
+// "unstarted": on the roster since Create but never launched; it starts, fresh and briefed, on its first message
+const isClosed = (m: Member, s: Status | undefined) => !!m.pending || m.state === 'closed' || m.state === 'unstarted' || s?.state === 'closed'
+
+// Send a message to a member, starting or reopening it first. The local session's "name [ref]" is used when
+// Remote Control mirrors share the name. A string result goes back to the sender.
+async function deliver($: any, target: Member, message: string, summary: string): Promise<string> {
+  if (isClosed(target, await readStatus($, target.name))) {
+    const t = await readTeamSettings($)
+    await $.ui.toast(`${target.state === 'unstarted' ? 'Starting' : 'Reopening'} ${target.name}…`)
+    const ok = await admitAndReopen($, target, await readMembers($), t)
+    if (ok === undefined) {
+      const me = await rosterSelf($)
+      const q = await readQueue($)
+      await writeQueue($, [...q, { to: target.name, from: me?.me.name ?? 'someone', message, at: Date.now() }])
+      return `${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${q.length + 1}) and is delivered as soon as a worker frees up.`
+    }
+    if (!ok) return `${target.name} could not be started. Ask the person to open its tab.`
+  }
+  const name = target.address || target.name
+  const listing: any = await $.tool.call({ tool: 'ListAgents' } as any).catch(() => undefined)
+  const to = localRef(String(listing?.text ?? ''), name) || name
+  const r: any = await $.tool.call({ tool: 'SendMessage', to, message, summary } as any)
+  return `${r?.isError ? 'Not sent' : 'Sent'} to ${to}: ${String(r?.text ?? '').slice(0, 200)}`
+}
 
 // The team top's round: close workers idle past the set minutes, then deliver queued messages as room appears.
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
@@ -693,7 +724,7 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
       left.push(q)
       continue
     }
-    await $.tool.call({ tool: 'SendMessage', to: target.address || target.name, message: `[queued message from ${q.from}] ${q.message}`, summary: `queued message for ${target.name}` } as any)
+    await deliver($, target, `[queued message from ${q.from}] ${q.message}`, `queued message for ${target.name}`)
   }
   await writeQueue($, left)
 }
@@ -787,7 +818,8 @@ async function refresh($: any) {
   await monitor($, list, statuses, now)
   // Orca is asked only when it must be: a member lacks its tab, session id or status file, or the gentle tab check is
   // due (some open member silent for over two minutes, at most once per interval, the interval doubling while Orca is slow).
-  const missing = list.some(m => !m.handle || !m.sessionId || !statuses.has(m.name))
+  // a closed or not-yet-started member has no tab on purpose: it is not missing
+  const missing = list.some(m => !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
   if (!missing && !(now >= tabCheck.next && needsTabCheck([...statuses.values()], now))) return
   const started = Date.now()
   const ps = await orca($, 'worktree', 'ps')
@@ -1016,43 +1048,65 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
   const specs = named.map(s => ({ ...s, boss: s.boss === 'user' ? 'user' : (renamed.get(s.boss) ?? clean(s.boss)) }))
   const wt = await currentWorktree($)
   if (!wt) return 'Cannot find the Orca worktree of this session.'
-  const made: Member[] = []
   const teamsMade = [...new Set(specs.map(s => s.team))]
-  for (const s of specs) {
-    const sessionId = uuid()
-    const r = await orca(
-      $,
-      'terminal', 'create', '--worktree', `id:${wt}`, '--title', s.name,
-      '--command', `claude --name ${s.name} --session-id ${sessionId}${flags(s.model, s.effort)}`,
-    )
-    const handle = r.ok ? handleOf(r.out) : ''
-    made.push({
-      team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle, sessionId, worktree: wt,
-      state: handle ? 'starting' : 'failed', ctx: -1,
-      model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
-      sel: false, note: handle ? '' : r.out.slice(0, 80), briefed: false, noted: false,
-      ...(s.short?.trim() ? { short: s.short.trim() } : {}),
-    })
-    await put($, teamsMade, made)
-  }
-  await Promise.all(
-    made
-      .filter(m => m.handle)
-      .map(async m => {
-        const w = await orca($, 'terminal', 'wait', '--terminal', m.handle, '--for', 'tui-idle', '--timeout-ms', '90000')
-        if (!w.ok || !/"satisfied":\s*true/.test(w.out)) {
-          m.state = 'failed'
-          m.note = 'not ready'
-          return
-        }
-        const s = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, made, team), '--enter')
-        m.state = s.ok ? 'working' : 'failed'
-        m.briefed = s.ok
-      }),
-  )
+  // the whole roster is written first; nobody is launched yet
+  const made: Member[] = specs.map(s => ({
+    team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle: '', sessionId: '', worktree: wt,
+    state: 'unstarted', ctx: -1,
+    model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
+    sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(s.name), pending: true,
+    ...(s.short?.trim() ? { short: s.short.trim() } : {}),
+  }))
   await put($, teamsMade, made)
+  // then the top and the team heads (or everyone), a few at a time: each batch is started, waited for, briefed, and
+  // given 5 s before the next one, so a big team does not start a dozen claude processes at once
+  const t = await readTeamSettings($)
+  const now = t.launch === 'all' ? made : made.filter(m => startsAtCreate(m, made))
+  const batches = chunk(now, t.batch)
+  for (const m of now) (m.state = 'queued'), (m.pending = false)
+  await put($, teamsMade, made)
+  for (const [i, group] of batches.entries()) {
+    await update($, spawn, () => ({ names: now.map(m => m.name), batch: i + 1, of: batches.length }))
+    for (const m of group) {
+      m.sessionId = uuid()
+      const r = await orca(
+        $,
+        'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name,
+        '--command', `claude --name ${m.name} --session-id ${m.sessionId}${flags(m.model, m.effort)}`,
+      )
+      m.handle = r.ok ? handleOf(r.out) : ''
+      m.state = m.handle ? 'starting' : 'failed'
+      m.note = m.handle ? '' : r.out.slice(0, 80)
+      if (!m.handle) m.sessionId = ''
+      await put($, teamsMade, made)
+    }
+    await Promise.all(
+      group
+        .filter(m => m.handle)
+        .map(async m => {
+          const w = await orca($, 'terminal', 'wait', '--terminal', m.handle, '--for', 'tui-idle', '--timeout-ms', '90000')
+          if (!w.ok || !/"satisfied":\s*true/.test(w.out)) {
+            m.state = 'failed'
+            m.note = 'not ready'
+            return
+          }
+          const s = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, made, m.team), '--enter')
+          m.state = s.ok ? 'working' : 'failed'
+          m.briefed = s.ok
+        }),
+    )
+    await put($, teamsMade, made)
+    if (i < batches.length - 1) await $.clock.sleep(5000)
+  }
+  await update($, spawn, () => SPAWN0)
   await refresh($)
-  return `Launched ${made.length} sessions in ${teamsMade.length === 1 ? `"${teamsMade[0]}"` : `${teamsMade.length} teams (${teamsMade.join(', ')})`}, all briefed.`
+  const later = made.length - now.length
+  const failed = now.filter(m => m.state === 'failed').length
+  return (
+    `Created ${teamsMade.length === 1 ? `"${teamsMade[0]}"` : `${teamsMade.length} teams (${teamsMade.join(', ')})`}: ` +
+    `started and briefed ${now.length - failed} of ${now.length}${failed ? ` (${failed} failed)` : ''}` +
+    (later ? `; ${later} more start on their first message.` : '.')
+  )
 }
 
 // One name from three independent parts: prefix + (base or the current name) + optional running number.
@@ -1182,6 +1236,16 @@ export const register: Register = on => {
       },
     })
     await $.tool.register({
+      name: 'team_message',
+      description:
+        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name.',
+      inputSchema: {
+        type: 'object',
+        properties: { to: { type: 'string' }, message: { type: 'string' }, summary: { type: 'string' } },
+        required: ['to', 'message'],
+      },
+    })
+    await $.tool.register({
       name: 'team_remove',
       description: 'Take a whole team off the roster (memory and the roster file). Closes no terminal and stops no session.',
       inputSchema: { type: 'object', properties: { team: { type: 'string' } }, required: ['team'] },
@@ -1217,7 +1281,7 @@ export const register: Register = on => {
     $.clock.every(300, () =>
       void (async () => {
         const [m, v, n] = [await read($, members), await read($, view), await read($, note)]
-        const busy = n.startsWith('⏳')
+        const busy = n.startsWith('⏳') || (await read($, spawn)).names.length > 0
         const quiet = Date.now() - typedAt > 1500
         if ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet) || busy) await update($, frame, x => x + 1)
       })(),
@@ -1271,20 +1335,12 @@ export const register: Register = on => {
   on('tool.call', { tool: 'SendMessage' } as any, async ($, e, next) => {
     const to = String((e as any).to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const message = typeof (e as any).message === 'string' ? (e as any).message : ''
-    // a message for a worker that auto-close shut down: reopen it first (making room under the cap), or queue it
+    // a message for a worker that auto-close shut down (or that never started): start it first, or queue it. This runs
+    // only when the name resolved (SendMessage checks names before any hook); team_message covers the other cases.
     const list0 = to ? await readMembers($) : []
     const target = list0.find(m => m.name === to || m.address === to)
     if (target && message && isClosed(target, await readStatus($, target.name))) {
-      const t = await readTeamSettings($)
-      await $.ui.toast(`Reopening ${target.name}…`)
-      const ok = await admitAndReopen($, target, list0, t)
-      if (ok === undefined) {
-        const me = await rosterSelf($)
-        const q = await readQueue($)
-        await writeQueue($, [...q, { to: target.name, from: me?.me.name ?? 'someone', message, at: Date.now() }])
-        return { result: `${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${q.length + 1}) and is delivered as soon as a worker frees up.` } as any
-      }
-      if (!ok) return { result: `${target.name} was closed and could not be reopened. Ask the person to reopen its tab.` } as any
+      return { result: await deliver($, target, message, String((e as any).summary ?? `message for ${target.name}`)) } as any
     }
     const r: any = await next(e)
     if (r?.deny !== undefined) return r
@@ -1337,6 +1393,14 @@ export const register: Register = on => {
       void writeMine($, { task: taskLine(String((e as any).task)) })
     }
     return next(e)
+  })
+
+  on('tool.call', { tool: MESSAGE }, async ($, e) => {
+    const input = e as unknown as { to: string; message: string; summary?: string }
+    const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
+    const target = (await readMembers($)).find(m => m.name === to || m.address === to)
+    if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
+    return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`) } as any
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
@@ -1512,7 +1576,45 @@ async function panel($: any, ui: any, v: View, cols: number) {
         </Box>
         <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
       </Box>
-      {v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+      {(await read($, spawn)).names.length > 0
+        ? await spawnView($, ui)
+        : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+    </Box>
+  )
+}
+
+// While Create starts sessions, this takes the panel: each member being started and where it is, batch by batch.
+const SPAWN_LOOK: Record<string, [string, string, string]> = {
+  queued: ['○', 'gray', 'waiting for its batch'],
+  starting: ['◐', 'yellow', 'starting'],
+  working: ['●', 'green', 'ready and briefed'],
+  failed: ['✕', 'red', 'failed'],
+}
+async function spawnView($: any, ui: any) {
+  const { Box, Text } = ui
+  const sp: Spawn = await read($, spawn)
+  const list: Member[] = await readMembers($)
+  const t: number = await read($, frame)
+  const spin = SPIN[t % SPIN.length] as string
+  const rows = sp.names.map(n => list.find(m => m.name === n)).filter((m): m is Member => !!m)
+  const teams = new Set(rows.map(m => m.team))
+  const later = list.filter(m => teams.has(m.team) && m.state === 'unstarted').length
+  return (
+    <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
+      <Text color="yellow">
+        ┤ STARTING THE TEAM · batch {sp.batch} of {sp.of} ├
+      </Text>
+      {rows.map(m => {
+        const [glyph, color, what] = SPAWN_LOOK[m.state] ?? ['●', 'green', m.state]
+        return (
+          <Text>
+            <Text color={color}>{m.state === 'starting' ? spin : glyph} </Text>
+            <Text color={levelShade(m.level)}>{fit(m.name, 28).padEnd(29)}</Text>
+            <Text dimColor>{what}{m.note ? ` (${m.note})` : ''}</Text>
+          </Text>
+        )
+      })}
+      {later > 0 && <Text dimColor>{later} more start the first time their boss messages them.</Text>}
     </Box>
   )
 }
@@ -1586,6 +1688,17 @@ async function settingsView($: any, ui: any) {
         <Text bold>{'Max open'.padEnd(13)}</Text>
         {Seg(ui, 'ts-max', [['0', 'No cap'], ['6', '6'], ['8', '8'], ['10', '10'], ['12', '12']], String(ts.maxOpen), v => void setTeam({ maxOpen: Number(v) }))}
       </Box>
+      <Box>
+        <Text bold>{'Launch'.padEnd(13)}</Text>
+        {Seg(ui, 'ts-launch', [['demand', 'On demand'], ['all', 'All at Create']], ts.launch, v => void setTeam({ launch: v as TeamSettings['launch'] }))}
+      </Box>
+      <Box>
+        <Text bold>{'Batch size'.padEnd(13)}</Text>
+        {Seg(ui, 'ts-batch', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4'], ['6', '6']], String(ts.batch), v => void setTeam({ batch: Number(v) }))}
+      </Box>
+      <Text dimColor>
+        {' '.repeat(13)}On demand: Create starts only the top and the team heads; leads and workers start, fresh and briefed, the first time their boss messages them. Either way sessions start a batch at a time, 5 s apart.
+      </Text>
       {workers.length > 0 && (
         <Box>
           <Text bold>{'Never close'.padEnd(13)}</Text>
@@ -1727,6 +1840,7 @@ const statusGlyph = (state: string, t: number, blink: boolean): [string, string]
   : state === 'starting' ? [['◜', '◝', '◞', '◟'][t % 4] as string, 'cyan']
   : state === 'offline' ? ['○', 'gray']
   : state === 'failed' ? ['✗', 'red']
+  : state === 'closed' || state === 'unstarted' || state === 'queued' ? [state === 'closed' ? '–' : '·', 'gray']
   : [blink ? '◉' : '●', 'green']
 
 // level d sends during frames [6d, 6d+4]; its reports blink on arrival, frames [6d+4, 6d+6]

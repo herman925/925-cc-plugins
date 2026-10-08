@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
 import type { Status } from './status'
-import { admit, MIN, needsTabCheck, nextCheckInterval, openCount, shownState, statusFile, TEAM_SETTINGS0, toClose } from './status'
+import { admit, chunk, localRef, MIN, needsTabCheck, nextCheckInterval, openCount, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, toClose } from './status'
 
 const m = (name: string, boss: string): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
@@ -59,4 +59,30 @@ test('a closed worker reopens under the cap, makes room by closing the longest-i
   s.set('W1', st('W1', 'working', 0))
   expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 3 }, NOW)).toEqual({ kind: 'queue' })
   expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 0 }, NOW)).toEqual({ kind: 'open' })
+})
+
+test('on-demand Create starts the top and, under a CEO, the team heads; leads and workers wait', () => {
+  const t = (name: string, boss: string, team: string): Member => ({ ...m(name, boss), team })
+  const org = [t('CEO', 'user', 'Org'), t('A-Head', 'CEO', 'A'), t('A-W1', 'A-Head', 'A'), t('B-Head', 'CEO', 'B'), t('B-Lead', 'B-Head', 'B')]
+  expect(org.filter(x => startsAtCreate(x, org)).map(x => x.name)).toEqual(['CEO', 'A-Head', 'B-Head'])
+  expect(list.filter(x => startsAtCreate(x, list)).map(x => x.name)).toEqual(['Head'])
+  expect(TEAM_SETTINGS0.launch).toBe('demand')
+  expect(TEAM_SETTINGS0.batch).toBe(3)
+})
+
+test('sessions start in batches of the set size', () => {
+  expect(chunk([1, 2, 3, 4, 5, 6, 7], 3)).toEqual([[1, 2, 3], [4, 5, 6], [7]])
+  expect(chunk([1, 2], 0)).toEqual([[1], [2]])
+  expect(chunk([], 3)).toEqual([])
+})
+
+test('a message goes to the session on this machine, never a Remote Control copy of the same name', () => {
+  const listing = [
+    'Peer sessions (3):',
+    '  Citation-Checker [0a0f17]  ·  Remote Control  ·  idle',
+    '  Citation-Checker [3c9e21]  ·  interactive  ·  working  ·  started 1m ago',
+    '  Citation-Checker-2 [777777]  ·  interactive  ·  idle',
+  ].join('\r\n')
+  expect(localRef(listing, 'Citation-Checker')).toBe('Citation-Checker [3c9e21]')
+  expect(localRef(listing, 'Press-Conference-Analyst')).toBe('')
 })
