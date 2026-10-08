@@ -249,7 +249,13 @@ const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
 
-const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile'] as const
+const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile'] as const
+
+// The Orca workspace (worktree id) this session runs in, from `orca worktree current` run in the session's own folder.
+async function currentWorktree($: any): Promise<string> {
+  const cur = await orca($, 'worktree', 'current')
+  return cur.ok ? (cur.out.match(/"worktree":\s*\{\s*"id":\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? '').replace(/\\\\/g, '\\') : ''
+}
 
 // Before 0.5.0 the roster was one file, .claude/team-orchestrator.json. Its content moves into the folder once (a copy
 // stays as roster.json.bak) and the old file is left as a pointer, so an old copy of the mod no longer reads it as a roster.
@@ -599,12 +605,16 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   const resume = t.reopen === 'resume' && !!m.sessionId
   const sessionId = resume ? m.sessionId : uuid()
   const cmd = resume ? `claude --resume ${sessionId} --name ${m.name}` : `claude --name ${m.name} --session-id ${sessionId}`
-  const r = await orca($, 'terminal', 'create', '--worktree', 'active', '--title', m.name, '--command', `${cmd}${flags(m.model, m.effort)}`)
+  // back in the member's own workspace (recorded at launch), never Orca's "active" one, which is whatever the person
+  // is looking at; a member launched before that was recorded goes to this session's workspace, the project's own
+  const wt = m.worktree || (await currentWorktree($))
+  if (!wt) return false
+  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', `${cmd}${flags(m.model, m.effort)}`)
   const handle = r.ok ? handleOf(r.out) : ''
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out)
-  const back = { ...m, handle, sessionId, state: ready ? 'idle' : 'starting', briefed: resume ? m.briefed : false }
+  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: resume ? m.briefed : false }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
   await share($)
@@ -664,6 +674,9 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
 // The gentle tab check (see refresh): its own interval, doubled while Orca is slow.
 const tabCheck = { every: 2 * MIN, next: 0 }
 
+// The allow lines already toasted in this session (see guard).
+const toasted = new Set<string>()
+
 // What the person allowed for the turn that is running: set by the person's own prompt, cleared when the turn ends.
 let turn: Grants = NO_GRANTS
 
@@ -677,7 +690,11 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
   if (!me) return undefined
   const v = judge({ me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) })
   if (!v) return undefined
-  await $.ui.toast(v.line)
+  // a block toasts every time; an allow toasts once per session and reason, not on every write
+  if (v.kind === 'deny' || !toasted.has(v.line)) {
+    if (v.kind === 'allow') toasted.add(v.line)
+    await $.ui.toast(v.line)
+  }
   return v.kind === 'deny' ? v.reason : undefined
 }
 
@@ -970,9 +987,8 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
     return { ...s, name, team: t }
   })
   const specs = named.map(s => ({ ...s, boss: s.boss === 'user' ? 'user' : (renamed.get(s.boss) ?? clean(s.boss)) }))
-  const cur = await orca($, 'worktree', 'current')
-  const wt = (cur.out.match(/"worktree":\s*\{\s*"id":\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? '').replace(/\\\\/g, '\\')
-  if (!cur.ok || !wt) return `Cannot find the Orca worktree: ${cur.out.slice(0, 200)}`
+  const wt = await currentWorktree($)
+  if (!wt) return 'Cannot find the Orca worktree of this session.'
   const made: Member[] = []
   const teamsMade = [...new Set(specs.map(s => s.team))]
   for (const s of specs) {
@@ -984,7 +1000,7 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
     )
     const handle = r.ok ? handleOf(r.out) : ''
     made.push({
-      team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle, sessionId,
+      team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle, sessionId, worktree: wt,
       state: handle ? 'starting' : 'failed', ctx: -1,
       model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
       sel: false, note: handle ? '' : r.out.slice(0, 80), briefed: false, noted: false,
@@ -1043,9 +1059,10 @@ async function applyBulk($: any) {
     const canRestart = m.sessionId !== '' && m.handle !== '' && m.state === 'idle'
     if (canRestart) {
       await orca($, 'terminal', 'close', '--terminal', m.handle)
+      const wt = m.worktree || (await currentWorktree($))
       const r = await orca(
         $,
-        'terminal', 'create', '--worktree', 'active', '--title', newName,
+        'terminal', 'create', '--worktree', wt ? `id:${wt}` : 'active', '--title', newName,
         '--command', `claude --resume ${m.sessionId} --name ${newName}${flags(wantModel ? b.model : '', wantEffort ? b.effort : '')}`,
       )
       const handle = r.ok ? handleOf(r.out) : ''

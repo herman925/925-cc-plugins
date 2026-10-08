@@ -51,7 +51,7 @@ test('a cleanup confirmation does not trigger the head note again (no ping-pong)
 
 test('a real report that mentions cleanup still triggers the head note', () => {
   expect(isCleanConfirmation(say('Analyst', 'Tables saved to report-tables/. Housekeeping: clean.'))).toBe(false)
-  expect(isCleanConfirmation(say('Analyst', 'clean ' + 'x'.repeat(500)))).toBe(false)
+  expect(isCleanConfirmation(say('Analyst', 'clean ' + 'x'.repeat(900)))).toBe(false)
   expect(onReceive(lead, list, say('Analyst', 'Tables saved. Housekeeping: clean.'))).toBe(HEAD_NOTE('Analyst'))
 })
 
@@ -66,4 +66,10 @@ test('only the team top (boss "user") or a non-member session polls Orca', () =>
   expect(shouldPoll(undefined)).toBe(true)
   expect(shouldPoll(lead)).toBe(false)
   expect(shouldPoll(w1)).toBe(false)
+})
+
+test('a confirmation with a spaced speaker label and a longer housekeeping note still counts as "clean"', () => {
+  const long = 'Report lead: clean. Scratch folder emptied. Stopped 11 browser-automation server processes that my session started (Playwright and Chrome DevTools MCP trees); I had not used them. Left running: the status-line helper and the Pencil MCP server, both part of this session\'s own setup, plus the current shell. The report files are in outputs/report (HTML and Word, last build 16:37:05). Note: the Playwright and Chrome DevTools MCP tools will be unavailable until those servers restart.'
+  expect(isCleanConfirmation(say('HTML-Report-Lead', long))).toBe(true)
+  expect(isCleanConfirmation(say('HTML-Report-Lead', 'Report lead: tables 1-8 inserted, build 16:01. Housekeeping clean.'))).toBe(false)
 })

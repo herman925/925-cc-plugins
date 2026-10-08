@@ -58,8 +58,11 @@ const bodyOf = (text: string) => (text.match(/<cross-session-message[^>]*>([\s\S
  * not a work report. Longer messages that merely mention cleanup are still reports.
  */
 export const isCleanConfirmation = (text: string) => {
-  const body = bodyOf(text).replace(/^[\w-]+:\s*/, '') // "Data-and-Numbers-Lead: clean …"
-  return body.length <= 400 && /^\W*(all\s+)?clean\b/i.test(body)
+  // the body may start with a short speaker label: "Data-and-Numbers-Lead: clean …", "Report lead: clean …"
+  const body = bodyOf(text)
+  const unlabelled = body.replace(/^[A-Za-z][\w -]{0,38}:\s*/, '')
+  const starts = (s: string) => /^\W*(all\s+)?clean\b/i.test(s)
+  return body.length <= 800 && (starts(body) || starts(unlabelled))
 }
 
 /**

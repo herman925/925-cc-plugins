@@ -44,6 +44,8 @@ export type Member = {
   briefed: boolean
   /** the session answered "Noted" on screen */
   noted: boolean
+  /** the Orca workspace (worktree id) the member was launched in; a reopen goes back there, never to the "active" one */
+  worktree?: string
   /** the status file this member's session writes, relative to .claude/team-orchestrator/ (status/<name>.json) */
   statusFile?: string
 }
