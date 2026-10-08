@@ -193,7 +193,7 @@ test('a switch set in the roster file by another session is seen at once', async
   await adopt($, withIds(HUALONG))
   expect(allowed(await use($, 'Agent'))).toBe(false)
   const next = saved(files).map((x: any) => (x.name === 'Hualong CEO' ? { ...x, allowAgent: true } : x))
-  files.set('C:/proj/.claude/team-orchestrator.json', JSON.stringify(next))
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(next))
   expect(allowed(await use($, 'Agent'))).toBe(true)
 })
 

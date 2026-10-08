@@ -90,23 +90,23 @@ const adoptIn = async ($: any, on: any, root: string, git: () => any, seed: [str
 
 test('the first write lists the roster file in the repo info/exclude, after the lines already there', async ($, on) => {
   const files = await adoptIn($, on, 'C:/repo', () => ok('\nC:/repo/.git/info/exclude\n'), [['C:/repo/.git/info/exclude', '*.log']])
-  expect(files.get('C:/repo/.git/info/exclude')).toBe('*.log\n.claude/team-orchestrator.json\n')
-  expect(files.has('C:/repo/.claude/team-orchestrator.json')).toBe(true)
+  expect(files.get('C:/repo/.git/info/exclude')).toBe('*.log\n.claude/team-orchestrator/\n')
+  expect(files.has('C:/repo/.claude/team-orchestrator/roster.json')).toBe(true)
 })
 
 test('a line already in info/exclude is not added again', async ($, on) => {
-  const files = await adoptIn($, on, 'C:/kept', () => ok('\nC:/kept/.git/info/exclude\n'), [['C:/kept/.git/info/exclude', '*.log\n/.claude/team-orchestrator.json']])
-  expect(files.get('C:/kept/.git/info/exclude')).toBe('*.log\n/.claude/team-orchestrator.json')
+  const files = await adoptIn($, on, 'C:/kept', () => ok('\nC:/kept/.git/info/exclude\n'), [['C:/kept/.git/info/exclude', '*.log\n/.claude/team-orchestrator/']])
+  expect(files.get('C:/kept/.git/info/exclude')).toBe('*.log\n/.claude/team-orchestrator/')
 })
 
 test('a worktree in a subfolder writes the prefixed line to the exclude file git names (the common dir)', async ($, on) => {
   const files = await adoptIn($, on, 'C:/wt/sub', () => ok('sub/\nC:/main/.git/info/exclude\n'))
-  expect(files.get('C:/main/.git/info/exclude')).toBe('sub/.claude/team-orchestrator.json\n')
+  expect(files.get('C:/main/.git/info/exclude')).toBe('sub/.claude/team-orchestrator/\n')
 })
 
 test('outside a git repo nothing but the roster file is written', async ($, on) => {
   const files = await adoptIn($, on, 'C:/plain', () => ({ ...no, exitCode: 128, stderr: 'fatal: not a git repository' }))
-  expect([...files.keys()]).toEqual(['C:/plain/.claude/team-orchestrator.json'])
+  expect([...files.keys()]).toEqual(['C:/plain/.claude/team-orchestrator/roster.json'])
 })
 
 // items 1 and 2: handles and session ids found by name, stats from the transcript where the status line says nothing
@@ -151,7 +151,7 @@ const world = (on: any, tabs: Tab[], trs: Tr[]) => {
 }
 const adopt = ($: any, members: any[]) => $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Hualong', members } as any)
 // what the roster file says, and the text the roster shows (notes, model, effort, context are live, not saved)
-const saved = (files: Map<string, string>) => JSON.parse(files.get('C:/proj/.claude/team-orchestrator.json')!)
+const saved = (files: Map<string, string>) => JSON.parse(files.get('C:/proj/.claude/team-orchestrator/roster.json')!)
 const shown = async ($: any) => JSON.stringify(await (await mountBand($)).drawn())
 const W = { name: 'Hualong Workers', role: 'worker', level: 2, boss: 'Hualong CEO' }
 
@@ -648,4 +648,13 @@ test('a failing neighbour does not hide the Team Orchestrator band', async ($, o
   }) as any)
   const band = await mountBand($)
   expect(await band.find({ key: 'main' })).toBeDefined()
+})
+
+test('the old single roster file moves into the folder once, keeping a backup and leaving a pointer', async ($, on) => {
+  const files = world(on, [{ handle: 'term_c', title: 'Hualong CEO' }], [])
+  files.set('C:/proj/.claude/team-orchestrator.json', JSON.stringify([{ team: 'Hualong', name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c', sessionId: '' }]))
+  await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c' }])
+  expect(files.has('C:/proj/.claude/team-orchestrator/roster.json.bak')).toBe(true)
+  expect(JSON.parse(files.get('C:/proj/.claude/team-orchestrator.json')!).movedTo).toBe('.claude/team-orchestrator/roster.json')
+  expect(saved(files)[0].statusFile).toBe('status/Hualong_CEO.json')
 })

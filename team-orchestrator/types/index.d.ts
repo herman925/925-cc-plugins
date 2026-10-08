@@ -44,6 +44,8 @@ export type Member = {
   briefed: boolean
   /** the session answered "Noted" on screen */
   noted: boolean
+  /** the status file this member's session writes, relative to .claude/team-orchestrator/ (status/<name>.json) */
+  statusFile?: string
 }
 export type Bulk = {
   prefix: string

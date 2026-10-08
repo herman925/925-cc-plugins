@@ -54,7 +54,7 @@ export const world = (on: any, tabs: Tab[] = [], trs: Tr[] = [], first?: (e: any
 
 export const adopt = ($: any, members: any[], team = 'Hualong') => $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team, members } as any)
 /** what the roster file says */
-export const saved = (files: Map<string, string>) => JSON.parse(files.get('C:/proj/.claude/team-orchestrator.json')!)
+export const saved = (files: Map<string, string>) => JSON.parse(files.get('C:/proj/.claude/team-orchestrator/roster.json')!)
 /** the text the band shows */
 export const shown = async ($: any, bodyColumns?: number) => JSON.stringify(await (await mountBand($, bodyColumns)).drawn())
 

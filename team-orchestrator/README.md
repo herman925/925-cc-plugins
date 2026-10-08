@@ -114,3 +114,26 @@ A subagent runs inside its session, so a refusal for the session covers its suba
 - A prompt you type while a turn is running applies at once to the turn that is running.
 - The one-turn grant lives in the session's memory: a reload of the plugin (`/reload-plugins`) forgets it.
 - A session that is on the roster but whose id and name the plugin cannot match (no transcript yet) is treated as not on the roster.
+
+## Team files and live status (0.5.0)
+
+Everything a team needs lives in `.claude/team-orchestrator/` inside the project (git-excluded):
+
+| File | What it holds | Who writes it |
+|---|---|---|
+| `roster.json` | Structure: teams, bosses, roles, levels, and each member's `statusFile` | The mod, on a structural change |
+| `status/<name>.json` | One member's live status: state, last turn, heartbeat, model, effort, context %, task line, last "clean", leftover-process count | That member's own session only |
+| `settings.json` | Team worker settings: auto-close, idle minutes, never-close list, reopen as resume or fresh, max open sessions | Settings → Workers |
+| `queue.json` | Messages for closed workers waiting for room under the session cap | The mod |
+
+Members report their own state on turn start and end, when they ask you something, and on a 60 s heartbeat. A member
+silent for 5 minutes shows as offline. Nobody reads other members' screens any more. Only the team's top session asks
+Orca whether tabs still exist, at most every 2 minutes, one call at a time, and only when someone has been silent for
+over 2 minutes; the interval doubles (up to 10 minutes) while Orca answers slowly.
+
+Workers that said "clean" and stayed idle for the set minutes are closed. A message to a closed worker reopens it
+(`claude --resume`, or fresh and briefed again) and is then delivered. When the session cap is full and every worker is
+busy, the message waits in the queue. Anyone with reports is never closed.
+
+The old single file `.claude/team-orchestrator.json` is moved into the folder on first use (a copy stays as
+`roster.json.bak`), and the old path is left as a pointer.
