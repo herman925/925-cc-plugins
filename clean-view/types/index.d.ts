@@ -52,6 +52,8 @@ declare module 'claude-code' {
   interface PluginState {
     'clean-view': {
       cleanViewEnabled: boolean
+      askChoicesEnabled: boolean
+      settingsOpen: boolean
       checklist: CleanChecklist
       tick: number
       viewStyle: CleanStyle
