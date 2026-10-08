@@ -6,15 +6,18 @@ import { saved, world } from './test-world'
 test('Create starts the CEO and the heads, briefs them, and leaves the workers for their first message', async ($, on) => {
   let n = 0
   const created: string[] = []
+  const commands: string[] = []
+  let typed = 0
   const files = world(on, [], [], e => {
     const a = JSON.stringify(e)
     if (a.includes('"current"')) return '{"result":{"worktree":{"id":"wt1"}}}'
     if (a.includes('"create"')) {
       created.push(a.match(/"--title","([^"]+)"/)?.[1] ?? '?')
+      commands.push(a)
       return `{"result":{"terminal":{"handle":"term_${++n}"}}}`
     }
     if (a.includes('"wait"')) return '{"result":{"satisfied": true}}'
-    if (a.includes('"send"')) return '{}'
+    if (a.includes('"send"')) return (typed++, '{}')
     return undefined
   })
   const r: any = await $.tool.call({
@@ -29,6 +32,10 @@ test('Create starts the CEO and the heads, briefs them, and leaves the workers f
     ],
   } as any)
   expect(created).toEqual(['CEO', 'A-Head', 'B-Head'])
+  // each starts with its role pointer and the welcome; nothing is typed into a terminal
+  expect(commands.every(c => c.includes('--append-system-prompt') && c.includes('roles/') && c.includes('Read your role file now'))).toBe(true)
+  expect(typed).toBe(0)
+  expect(files.get('C:/proj/.claude/team-orchestrator/roles/A-Worker-1.md')).toContain('Boss: A-Head.')
   const by = new Map(saved(files).map((m: any) => [m.name, m]))
   expect((by.get('A-Head') as any).briefed).toBe(true)
   expect((by.get('A-Worker-1') as any).pending).toBe(true)

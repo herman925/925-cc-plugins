@@ -150,3 +150,22 @@ Settings → Workers has two options for this:
 - **Batch size:** 1, 2, 3, 4 or 6.
 
 Bosses message their reports with `team_message`, not `SendMessage`. SendMessage checks the name before any plugin hook runs, so it cannot start a member that has no session yet. It also rejects a name that a Remote Control copy shares. `team_message` starts or reopens the member when needed, then sends to the session on this machine by its `name [ref]`.
+
+## Role files and the start-up pointer (0.5.04)
+
+Each member's role lives in `.claude/team-orchestrator/roles/<name>.md`. The file has two parts:
+
+- **Above the marker:** the generated part, built from the roster. It holds the job for the member's level, its boss and reports, messaging rules, housekeeping, the team and the team files. It is rewritten whenever the team changes.
+- **Below the marker:** "Personality and notes", for a voice, a working style or extra rules. The mod never changes this part.
+
+Every session starts with a short pointer in its system prompt, passed with `--append-system-prompt` at Create, on an on-demand start and on every reopen, whether resumed or fresh. The pointer gives three things:
+
+- the member's name and boss
+- the one rule for its level
+- the path of its role file
+
+The member reads the file once. When the file changes, Claude Code tells the session what changed, so nothing is re-sent every turn except the short pointer.
+
+Create's first prompt asks each new session to read its role file and answer "Noted". Nothing is typed into a terminal any more.
+
+The SendMessage description now says that a teammate who is not running is unknown to it, and that `team_message` should be used instead. On a team, `team_message` is listed up front, not behind ToolSearch.

@@ -6,7 +6,8 @@ import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from '.
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import type { Status, TeamSettings } from './status'
-import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, needsTabCheck, nextCheckInterval, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
+import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
@@ -310,7 +311,30 @@ async function share($: any) {
     await exclude($)
     await $.fs.write(file, text)
   }
+  await writeRoles($, list)
 }
+
+// Each member's role file (roles.ts): the generated part follows the roster, the person's notes below the marker stay.
+// A file is read and written only when its generated part changed since this session last wrote or checked it.
+const roleSeen = new Map<string, string>()
+async function writeRoles($: any, list: Member[]) {
+  const dir = await teamDir($)
+  for (const m of list) {
+    const generated = roleText(m, orgOf(list, m.team))
+    const path = `${dir}/${roleFile(m.name)}`
+    if (roleSeen.get(path) === generated) continue
+    const before = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : undefined
+    const after = mergeRole(before, generated)
+    if (after !== before) await $.fs.write(path, after)
+    roleSeen.set(path, generated)
+  }
+}
+
+// The command that starts a member: its role pointer in the system prompt, and an optional first prompt. cmd.exe types
+// it, so the texts go in double quotes and carry none themselves (pointer() and WELCOME see to that).
+const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean, name = m.name, model = m.model, effort = m.effort, first = '') =>
+  `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name ${name}${flags(model, effort)}` +
+  ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
 
 async function pull($: any) {
   await migrate($)
@@ -365,12 +389,7 @@ async function briefTeam($: any, team: string, only?: Set<string>) {
   const all: Member[] = await readMembers($)
   const mine = all.filter(m => m.team === team)
   // the briefing lists the team and every boss above it, so a head learns who its CEO is
-  const org = new Set(mine.map(m => m.name))
-  for (let grew = true; grew; ) {
-    grew = false
-    for (const m of all) if (org.has(m.name)) for (const b of all) if (b.name === m.boss && !org.has(b.name)) (org.add(b.name), (grew = true))
-  }
-  const list = all.filter(m => org.has(m.name))
+  const list = orgOf(all, team)
   const sent = new Set<string>()
   await Promise.all(
     mine
@@ -627,25 +646,24 @@ async function closeMember($: any, m: Member): Promise<boolean> {
   return true
 }
 
-// Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session and briefs it.
+// Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session. Either way it
+// starts with its role pointer (roles.ts), so a fresh session needs no typed briefing.
 async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   const resume = t.reopen === 'resume' && !!m.sessionId
   const sessionId = resume ? m.sessionId : uuid()
-  const cmd = resume ? `claude --resume ${sessionId} --name ${m.name}` : `claude --name ${m.name} --session-id ${sessionId}`
   // back in the member's own workspace (recorded at launch), never Orca's "active" one, which is whatever the person
   // is looking at; a member launched before that was recorded goes to this session's workspace, the project's own
   const wt = m.worktree || (await currentWorktree($))
   if (!wt) return false
-  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', `${cmd}${flags(m.model, m.effort)}`)
+  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume))
   const handle = r.ok ? handleOf(r.out) : ''
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out)
-  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: resume ? m.briefed : false, pending: false }
+  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: true, pending: false }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
   await share($)
-  if (!resume && ready) await briefTeam($, m.team, new Set([keyOf(back)]))
   return ready
 }
 
@@ -1072,7 +1090,7 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
       const r = await orca(
         $,
         'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name,
-        '--command', `claude --name ${m.name} --session-id ${m.sessionId}${flags(m.model, m.effort)}`,
+        '--command', startCmd(m, made, m.sessionId, false, m.name, m.model, m.effort, WELCOME),
       )
       m.handle = r.ok ? handleOf(r.out) : ''
       m.state = m.handle ? 'starting' : 'failed'
@@ -1084,15 +1102,12 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
       group
         .filter(m => m.handle)
         .map(async m => {
-          const w = await orca($, 'terminal', 'wait', '--terminal', m.handle, '--for', 'tui-idle', '--timeout-ms', '90000')
-          if (!w.ok || !/"satisfied":\s*true/.test(w.out)) {
-            m.state = 'failed'
-            m.note = 'not ready'
-            return
-          }
-          const s = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, made, m.team), '--enter')
-          m.state = s.ok ? 'working' : 'failed'
-          m.briefed = s.ok
+          // it starts with its role pointer and the welcome as its first prompt: ready means it has read its role
+          const w = await orca($, 'terminal', 'wait', '--terminal', m.handle, '--for', 'tui-idle', '--timeout-ms', '120000')
+          const ready = w.ok && /"satisfied":\s*true/.test(w.out)
+          m.state = ready ? 'working' : 'starting'
+          m.note = ready ? '' : 'slow to start'
+          m.briefed = true
         }),
     )
     await put($, teamsMade, made)
@@ -1144,7 +1159,7 @@ async function applyBulk($: any) {
       const r = await orca(
         $,
         'terminal', 'create', '--worktree', wt ? `id:${wt}` : 'active', '--title', newName,
-        '--command', `claude --resume ${m.sessionId} --name ${newName}${flags(wantModel ? b.model : '', wantEffort ? b.effort : '')}`,
+        '--command', startCmd(m, list, m.sessionId, true, newName, wantModel ? b.model : '', wantEffort ? b.effort : ''),
       )
       const handle = r.ok ? handleOf(r.out) : ''
       done.set(key(m), {
@@ -1393,6 +1408,22 @@ export const register: Register = on => {
       void writeMine($, { task: taskLine(String((e as any).task)) })
     }
     return next(e)
+  })
+
+  // SendMessage checks names before any hook runs, so it cannot start a teammate that is not running: its own
+  // description says so where the model reads it, and on a team, team_message is listed in front, not behind ToolSearch.
+  on('tool.describe', { tool: 'SendMessage' } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    return {
+      ...r,
+      description:
+        `${r.description}\n\nTeam Orchestrator teams: a teammate that is not running yet, or was closed while idle, is unknown to SendMessage (or shares its name with a Remote Control copy). ` +
+        'Message your own reports with the team_message tool instead; it starts the teammate and then delivers.',
+    }
+  })
+  on('tool.describe', { tool: MESSAGE } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    return (await rosterSelf($)) ? { ...r, isDeferred: false } : r
   })
 
   on('tool.call', { tool: MESSAGE }, async ($, e) => {

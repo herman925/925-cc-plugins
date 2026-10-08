@@ -58,6 +58,9 @@ export const COUNT_EVERY_MS = 5 * MIN
 /** A file-safe name for a member's status file. */
 export const statusFile = (name: string) => `status/${name.replace(/[^\p{L}\p{N}._-]+/gu, '_')}.json`
 
+/** A member's role file, beside its status file: roles/<name>.md (read by the member through its start-up pointer). */
+export const roleFile = (name: string) => `roles/${name.replace(/[^\p{L}\p{N}._-]+/gu, '_')}.md`
+
 /** The state to show: a silent member is offline; a closed one stays closed. */
 export const shownState = (s: Status | undefined, now: number) =>
   !s ? undefined : s.state === 'closed' ? 'closed' : now - s.heartbeat > STALE_MS ? 'offline' : s.state

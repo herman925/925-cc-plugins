@@ -104,9 +104,10 @@ test('a worktree in a subfolder writes the prefixed line to the exclude file git
   expect(files.get('C:/main/.git/info/exclude')).toBe('sub/.claude/team-orchestrator/\n')
 })
 
-test('outside a git repo nothing but the roster file is written', async ($, on) => {
+test('outside a git repo nothing but the team folder is written (roster and role files; no exclude file)', async ($, on) => {
   const files = await adoptIn($, on, 'C:/plain', () => ({ ...no, exitCode: 128, stderr: 'fatal: not a git repository' }))
-  expect([...files.keys()]).toEqual(['C:/plain/.claude/team-orchestrator/roster.json'])
+  expect([...files.keys()].every(k => k === 'C:/plain/.claude/team-orchestrator/roster.json' || k.startsWith('C:/plain/.claude/team-orchestrator/roles/'))).toBe(true)
+  expect(files.has('C:/plain/.claude/team-orchestrator/roster.json')).toBe(true)
 })
 
 // items 1 and 2: handles and session ids found by name, stats from the transcript where the status line says nothing
