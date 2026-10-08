@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { HEAD_NOTE, onReceive, onSend, senderOf, WORKER_NOTE } from './housekeeping'
+import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, WORKER_NOTE } from './housekeeping'
 
 const m = (name: string, boss: string, extra: Partial<Member> = {}): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
@@ -37,4 +37,26 @@ test('a message from a non-report, a boss, or with no sender carries no note', (
   expect(onReceive(w1, list, peer('Data-and-Numbers-Lead'))).toBeUndefined() // from the boss
   expect(onReceive(lead, list, 'plain text')).toBeUndefined()
   expect(senderOf(peer('X Y'))).toBe('X Y')
+})
+
+const say = (from: string, body: string) => `<cross-session-message from="uds:x" from-name="${from}" from-mode="bypass">\n${body}\n</cross-session-message>`
+
+test('a cleanup confirmation does not trigger the head note again (no ping-pong)', () => {
+  expect(isCleanConfirmation(say('Analyst', 'clean.'))).toBe(true)
+  expect(isCleanConfirmation(say('Analyst', 'clean. My scratch and /tmp files are deleted; only the live tool runtime remains.'))).toBe(true)
+  expect(isCleanConfirmation(say('Data-Lead', 'Data-Lead: clean. Analysts confirmed.'))).toBe(true)
+  expect(isCleanConfirmation(say('Analyst', 'All clean: no processes left.'))).toBe(true)
+  expect(onReceive(lead, list, say('Analyst', 'clean.'))).toBeUndefined()
+})
+
+test('a real report that mentions cleanup still triggers the head note', () => {
+  expect(isCleanConfirmation(say('Analyst', 'Tables saved to report-tables/. Housekeeping: clean.'))).toBe(false)
+  expect(isCleanConfirmation(say('Analyst', 'clean ' + 'x'.repeat(500)))).toBe(false)
+  expect(onReceive(lead, list, say('Analyst', 'Tables saved. Housekeeping: clean.'))).toBe(HEAD_NOTE('Analyst'))
+})
+
+test('both notes cover idle browser-automation servers', () => {
+  expect(WORKER_NOTE).toContain('playwright/mcp')
+  expect(WORKER_NOTE).toContain('chrome-devtools-mcp')
+  expect(HEAD_NOTE('Analyst')).toContain('browser-automation')
 })
