@@ -4,6 +4,7 @@ import type { Register } from 'claude-code'
 import type { Act, Bulk, Form, Member, Settings, View } from '../types'
 import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
+import { onReceive, onSend } from './housekeeping'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
@@ -479,6 +480,15 @@ async function claudeDirs($: any): Promise<string[]> {
   const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
   const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
   return [custom, home ? `${home}/.claude` : ''].filter((x): x is string => !!x)
+}
+
+// This session's roster entry and the roster, or undefined when the session is not a member.
+async function rosterSelf($: any): Promise<{ me: Member; list: Member[] } | undefined> {
+  await pull($)
+  const list = await readMembers($)
+  if (list.length === 0) return undefined
+  const me = await whoAmI($, list)
+  return me ? { me, list } : undefined
 }
 
 // What the person allowed for the turn that is running: set by the person's own prompt, cleared when the turn ends.
@@ -1008,6 +1018,15 @@ export const register: Register = on => {
       return deny !== undefined ? ({ deny } as any) : next(e)
     })
 
+  // housekeeping by role: a worker that reports to its boss is told to clean up after itself; a head that hears
+  // from one of its reports is told to check on that worker's leftovers (see housekeeping.ts)
+  on('tool.call', { tool: 'SendMessage' } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    if (r?.deny !== undefined) return r
+    const who = await rosterSelf($)
+    const note = who && onSend(who.me, who.list, String((e as any).to ?? ''))
+    return note ? { ...r, context: [...(r.context ?? []), note] } : r
+  })
   // the turn ends: what the person allowed for it goes with it
   on('turn.complete', async ($, e, next) => {
     if ((e as any).agentId === undefined) turn = NO_GRANTS
@@ -1045,6 +1064,12 @@ export const register: Register = on => {
     if (g) turn = g
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
+    // a report from another session: its head is told to check on that worker's leftovers (housekeeping.ts)
+    if (o?.kind === 'peer' || o?.kind === 'peer-send-message') {
+      const who = await rosterSelf($)
+      const note = who && onReceive(who.me, who.list, e.text)
+      return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
+    }
     if (o !== undefined && o.kind !== 'composer' && !o.asUser) return next(e)
     const list = await readMembers($)
     for (const team of new Set(list.map(m => m.team))) {
