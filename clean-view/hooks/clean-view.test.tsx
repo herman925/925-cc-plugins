@@ -734,3 +734,28 @@ test('clampPercent: a number from 0 to 100, anything else is 0', () => {
   expect(clampPercent('x')).toBe(0)
   expect(clampPercent(undefined)).toBe(0)
 })
+
+test('a subagent ask_choices stays out of the band; the member own ask_choices still shows the picker', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
+  const sub = { agentId: 'sub1' } as any
+  const r = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['Light', 'Dark'], ...sub })
+  expect(String((r as any).result)).toBe("Helpers can't ask the user. Put the question and its options in your final result so the agent that launched you can ask.")
+  // the band is as the member left it: working, no picker, no Needs you
+  let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  let t = await texts(ui)
+  expect(t).toContain('Step 1 of 2')
+  expect(t).not.toContain('Needs you')
+  expect(t).not.toContain('Which style?')
+  expect(await ui.find({ key: 'choice1' })).toBeUndefined()
+  await ui.unmount()
+  // the member's own question still shows the picker
+  await $.tool.call({ tool: ASK, question: 'Which style?', options: ['Light', 'Dark'] })
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  t = await texts(ui)
+  expect(t).toContain('Needs you')
+  expect(t).toContain('Which style?')
+  expect((await ui.find({ key: 'choice1' }))?.props.label).toBe('Light')
+  await ui.unmount()
+})
