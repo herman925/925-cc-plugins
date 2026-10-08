@@ -558,7 +558,10 @@ async function writeMine($: any, patch: Partial<Status>) {
   const who = await rosterSelf($)
   if (!who) return
   const sessionId = String(await $.session.id().catch(() => '')) || who.me.sessionId
-  await writeStatusOf($, who.me, { ...patch, sessionId, heartbeat: Date.now() })
+  // a session that is writing is running: a "closed" left in its file is stale
+  const old = await readStatus($, who.me.name)
+  const revive = old?.state === 'closed' && patch.state === undefined ? { state: 'idle' } : {}
+  await writeStatusOf($, who.me, { ...revive, ...patch, sessionId, heartbeat: Date.now() })
 }
 
 // Count this session's own leftover shells and runtimes, found under the claude.exe whose command line carries the
@@ -593,11 +596,27 @@ async function writeTeamSettings($: any, patch: Partial<TeamSettings>) {
 }
 
 // ── Closing and reopening workers ────────────────────────────────────────────────────────────────────────────
-async function closeMember($: any, m: Member) {
-  if (m.handle) await orca($, 'terminal', 'close', '--terminal', m.handle)
+// The member's live Orca tab: its recorded handle if that tab still exists, else the one live tab with its name (a
+// relaunch gives a member a new tab, so a recorded handle can be stale). '' when there is none, or more than one.
+async function liveHandleOf($: any, m: Member): Promise<string> {
+  if (m.handle && (await showTab($, m.handle))) return m.handle
+  // only tabs in this project's folder: another project may have a member of the same name
+  const root = await rootOf($)
+  const hits = (await liveTabs($)).filter(t => namesOf(m).includes(bare(String(t.title ?? ''))) && (!t.worktreePath || under(root, String(t.worktreePath))))
+  return hits.length === 1 ? handleOf(String(hits[0].handle)) : ''
+}
+
+// Close a member's tab and only then mark it closed: a close sent to a stale handle must not leave a live session
+// marked "closed" (a later message would then start a second copy of the same conversation).
+async function closeMember($: any, m: Member): Promise<boolean> {
+  const handle = await liveHandleOf($, m)
+  if (!handle) return false
+  await orca($, 'terminal', 'close', '--terminal', handle)
+  if (await showTab($, handle)) return false
   await writeStatusOf($, m, { state: 'closed' })
   await update($, members, old => old.map(x => (x.name === m.name ? { ...x, state: 'closed', handle: '' } : x)))
   await share($)
+  return true
 }
 
 // Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session and briefs it.
@@ -639,6 +658,14 @@ const writeQueue = async ($: any, q: Queued[]) => $.fs.write(await queueFile($),
 
 // Make room for, and reopen, a closed member; undefined when it must wait in the queue.
 async function admitAndReopen($: any, target: Member, list: Member[], t: TeamSettings): Promise<boolean | undefined> {
+  // still running after all (its tab is live): never start a second copy of the same conversation
+  const live = await liveHandleOf($, target)
+  if (live) {
+    await update($, members, old => old.map(x => (x.name === target.name ? { ...x, handle: live, state: 'idle' } : x)))
+    await writeStatusOf($, target, { state: 'idle' })
+    await share($)
+    return true
+  }
   const statuses = await readStatuses($, list)
   const a = admit(list, statuses, t, Date.now())
   if (a.kind === 'queue') return undefined
