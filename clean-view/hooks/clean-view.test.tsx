@@ -789,6 +789,7 @@ test('clampPercent: a number from 0 to 100, anything else is 0', () => {
 test('a subagent ask_choices stays out of the band; the member own ask_choices still shows the picker', async ($, on) => {
   world(on)
   await begin($)
+  await $.command.run(ASK_CMD('on')) // the gap only matters when ask_choices is on (off by default)
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
   const sub = { agentId: 'sub1' } as any
   const r = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['Light', 'Dark'], ...sub })
