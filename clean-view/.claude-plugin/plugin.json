@@ -2,5 +2,28 @@
   "name": "clean-view",
   "version": "0.1.0",
   "description": "Clean View: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button.",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "cleanView": {
+      "type": "string",
+      "title": "Clean View",
+      "description": "on: hide tool calls and show the step checklist. off: show every tool call.",
+      "options": ["on", "off"],
+      "default": "on"
+    },
+    "view": {
+      "type": "string",
+      "title": "Progress look",
+      "description": "list: a step checklist. bars: one progress bar for each job.",
+      "options": ["list", "bars"],
+      "default": "list"
+    },
+    "askChoices": {
+      "type": "string",
+      "title": "ask_choices tool",
+      "description": "on: Claude may ask with the in-band ask_choices picker. off: Claude asks with AskUserQuestion.",
+      "options": ["off", "on"],
+      "default": "off"
+    }
+  }
 }

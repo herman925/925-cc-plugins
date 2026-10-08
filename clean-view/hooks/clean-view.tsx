@@ -35,6 +35,8 @@ import {
 type Hooked = EngineInterface
 
 const enabledA = atom({ plugin: 'clean-view', key: 'cleanViewEnabled' } as const, true)
+const askEnabledA = atom({ plugin: 'clean-view', key: 'askChoicesEnabled' } as const, false)
+const settingsOpenA = atom({ plugin: 'clean-view', key: 'settingsOpen' } as const, false)
 const checklistA = atom({ plugin: 'clean-view', key: 'checklist' } as const, newChecklist())
 const tickA = atom({ plugin: 'clean-view', key: 'tick' } as const, 0)
 const styleA = atom({ plugin: 'clean-view', key: 'viewStyle' } as const, 'checklist' as CleanStyle)
@@ -105,29 +107,46 @@ function resume($: Hooked) {
   )
 }
 
+/** Keeps the /config row in step with a button or slash command; a session without the row ignores the call. */
+async function syncRow($: Hooked, field: string, value: string) {
+  await $.config.set({ key: `clean-view.${field}`, value }).catch(() => undefined)
+}
+
 async function setStyle($: Hooked, value: CleanStyle) {
   await update($, styleA, () => value)
   await $.store.set('cleanViewStyle', value)
   $.ui.toast(value === 'bars' ? 'Bar view' : 'List view')
+  await syncRow($, 'view', value === 'bars' ? 'bars' : 'list')
 }
 
 async function setEnabled($: Hooked, value: boolean) {
   await update($, enabledA, () => value)
   await $.store.set('cleanViewEnabled', value)
   $.ui.toast(value ? 'Clean View is on: details are hidden.' : 'Clean View is off: details are showing.')
+  await syncRow($, 'cleanView', value ? 'on' : 'off')
+}
+
+async function setAskEnabled($: Hooked, value: boolean) {
+  await update($, askEnabledA, () => value)
+  await $.store.set('askChoicesEnabled', value)
+  $.ui.toast(value ? 'ask_choices is on.' : 'ask_choices is off: Claude uses AskUserQuestion.')
+  await syncRow($, 'askChoices', value ? 'on' : 'off')
 }
 
 function title0(cl: CleanChecklist): string {
   return cl.title === '' ? 'Working on it' : cl.title
 }
 
-export function registerCleanView(on: On) {
+export function registerCleanView(on: On, options: Record<string, unknown> = {}) {
   // ---------- session start: tools, command, saved setting ----------
+  // The /config menu rows (options) win; where a row is unset, the setting kept by a button or command applies.
   on('session.start', async ($, e, next) => {
-    const saved = await $.store.get('cleanViewEnabled')
+    const saved = options.cleanView === 'on' ? true : options.cleanView === 'off' ? false : await $.store.get('cleanViewEnabled')
     if (typeof saved === 'boolean') await update($, enabledA, () => saved)
-    const savedStyle = await $.store.get('cleanViewStyle')
+    const savedStyle = options.view === 'bars' ? 'bars' : options.view === 'list' ? 'checklist' : await $.store.get('cleanViewStyle')
     if (savedStyle === 'bars' || savedStyle === 'checklist') await update($, styleA, () => savedStyle)
+    const savedAsk = options.askChoices === 'on' ? true : options.askChoices === 'off' ? false : await $.store.get('askChoicesEnabled')
+    if (typeof savedAsk === 'boolean') await update($, askEnabledA, () => savedAsk)
     await $.tool.register({
       name: 'plan_steps',
       description:
@@ -151,7 +170,7 @@ export function registerCleanView(on: On) {
     await $.tool.register({
       name: 'ask_choices',
       description:
-        "Clean View: ask the person a question with 2 to 4 options, the recommended option first. Use this whenever you need their input, then stop and wait for their reply.",
+        'Off by default: use AskUserQuestion to ask the person. Call this only if the person has said they turned on ask_choices. When on: ask a question with 2 to 4 options, the recommended option first, then stop and wait for their reply.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -160,6 +179,11 @@ export function registerCleanView(on: On) {
         },
         required: ['question', 'options'],
       },
+    })
+    await $.command.register({
+      name: 'askchoices',
+      description: 'Turn the ask_choices question tool on or off (no argument flips it). Off by default.',
+      argumentHint: 'on|off',
     })
     await $.command.register({
       name: 'simple',
@@ -186,6 +210,14 @@ export function registerCleanView(on: On) {
     return { text: value ? 'Clean View is on.' : 'Clean View is off.' }
   })
 
+  on('command.run', { command: 'askchoices' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    const current = await read($, askEnabledA)
+    const value = arg === 'on' ? true : arg === 'off' ? false : !current
+    await setAskEnabled($, value)
+    return { text: value ? 'ask_choices is on.' : 'ask_choices is off.' }
+  })
+
   on('command.run', { command: 'progress' }, async ($) => {
     const now = await read($, styleA)
     await setStyle($, now === 'bars' ? 'checklist' : 'bars')
@@ -200,7 +232,10 @@ export function registerCleanView(on: On) {
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
     if (!(await read($, enabledA))) return result
-    return { sections: [...result.sections, { id: 'clean-view:rules', text: SECTION_TEXT, scope: 'session' as const }] }
+    const text = (await read($, askEnabledA))
+      ? SECTION_TEXT
+      : SECTION_TEXT.split('\n').filter(l => !l.includes('ask_choices')).join('\n')
+    return { sections: [...result.sections, { id: 'clean-view:rules', text, scope: 'session' as const }] }
   })
 
   // ---------- a prompt starts a job ----------
@@ -252,6 +287,7 @@ export function registerCleanView(on: On) {
 
   // ---------- serve our tools ----------
   on('tool.call', { tool: 'mcp__clean-view__plan_steps' }, async ($, e) => {
+    if (!(await read($, enabledA))) return { result: 'Clean View is off. No plan needed. Continue the work.' }
     const steps = (e as { steps?: unknown }).steps
     // A subagent's plan is its own business: answer it, leave the member's checklist alone.
     if (e.agentId !== undefined) {
@@ -267,6 +303,7 @@ export function registerCleanView(on: On) {
   })
 
   on('tool.call', { tool: 'mcp__clean-view__report_progress' }, async ($, e) => {
+    if (!(await read($, enabledA))) return { result: 'Clean View is off. No progress report needed. Continue the work.' }
     const args = e as { task?: unknown; percent?: unknown }
     // A subagent's report never touches the member's checklist (the dock may read it per agent).
     if (e.agentId !== undefined) return { result: `Progress noted: ${clampPercent(args.percent)}%.` }
@@ -281,6 +318,7 @@ export function registerCleanView(on: On) {
   })
 
   on('tool.call', { tool: 'mcp__clean-view__ask_choices' }, async ($, e) => {
+    if (!(await read($, enabledA)) || !(await read($, askEnabledA))) return { result: 'ask_choices is off. Ask this question with AskUserQuestion instead.' }
     const args = e as { question?: unknown; options?: unknown }
     const question = cleanName(typeof args.question === 'string' ? args.question.replace(/`[^`]*`/g, '') : '').replace(/…$/, '')
     const options = Array.isArray(args.options) ? args.options.filter((o): o is string => typeof o === 'string').slice(0, 4) : []
@@ -440,52 +478,133 @@ export function registerCleanView(on: On) {
       ((await $.env.get('REDUCE_MOTION')) ?? '') !== '' ||
       ((await $.env.get('PREFERS_REDUCED_MOTION')) ?? '') !== ''
     const color = (c: string): string | undefined => (isPlain ? undefined : c)
-    const width = e.props.bodyColumns
-
-    const toggle = (
-      <Button
-        key="toggle"
-        label={enabled ? 'Hide details' : 'Show details'}
-        onPress={() => setEnabled($, !enabled)}
-      />
-    )
+    // The whole mod sits in one rounded frame so it never blends into another mod's band. Inside it, `width` is the
+    // room left after the two border cells and one cell of padding on each side.
+    const outer = e.props.bodyColumns
+    const width = Math.max(20, outer - 4)
     const files = cl.changedFiles.length
     const elapsed = formatDuration((cl.finishedAt > 0 ? cl.finishedAt : now) - cl.startedAt)
+    const style = await read($, styleA)
+    const finished = await read($, finishedA)
+    const askOn = await read($, askEnabledA)
+    const settingsOpen = await read($, settingsOpenA)
+
+    // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
+    const pillOf = (label: string, bg: string) => (
+      <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
+        {` ${label} `}
+      </Text>
+    )
+
+    // Settings are data: add an entry here and it shows in the dropdown. A toggle is on or off; a choice picks one value.
+    type Setting =
+      | { id: string; label: string; hint: string; kind: 'toggle'; isOn: boolean; set: (v: boolean) => void }
+      | { id: string; label: string; hint: string; kind: 'choice'; value: string; options: Array<{ value: string; label: string }>; set: (v: string) => void }
+    const settings: Setting[] = [
+      {
+        id: 'details',
+        label: 'Hide tool details',
+        hint: 'Show a step checklist instead of every tool call',
+        kind: 'toggle',
+        isOn: enabled,
+        set: v => void setEnabled($, v),
+      },
+      {
+        id: 'ask',
+        label: 'Ask choices',
+        hint: 'Let Claude ask with the picker in this box',
+        kind: 'toggle',
+        isOn: askOn,
+        set: v => void setAskEnabled($, v),
+      },
+      {
+        id: 'look',
+        label: 'Progress look',
+        hint: 'A checklist or one bar for each job',
+        kind: 'choice',
+        value: style === 'bars' ? 'bars' : 'list',
+        options: [
+          { value: 'list', label: 'List' },
+          { value: 'bars', label: 'Bars' },
+        ],
+        set: v => void setStyle($, v === 'bars' ? 'bars' : 'checklist'),
+      },
+    ]
+    const labelW = Math.max(...settings.map(s => s.label.length))
+    const settingRows = settings.map(s => {
+      const name = <Text bold>{s.label.padEnd(labelW, ' ')}</Text>
+      if (s.kind === 'toggle') {
+        return (
+          <Box key={`row-${s.id}`} flexDirection="row">
+            {s.isOn ? pillOf(' ON ', 'green') : pillOf(' OFF', 'gray')}
+            <Text> </Text>
+            <Button key={`set-${s.id}`} plain label={s.label.padEnd(labelW, ' ')} onPress={() => s.set(!s.isOn)} />
+            <Text dimColor>{`  ${s.hint}`}</Text>
+          </Box>
+        )
+      }
+      return (
+        <Box key={`row-${s.id}`} flexDirection="row">
+          {name}
+          <Text>  </Text>
+          {s.options.map(o =>
+            o.value === s.value ? (
+              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                {pillOf(o.label, 'magenta')}
+                <Text> </Text>
+              </Box>
+            ) : (
+              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
+                <Text> </Text>
+              </Box>
+            ),
+          )}
+          <Text dimColor>{`  ${s.hint}`}</Text>
+        </Box>
+      )
+    })
+    const settingsButton = (
+      <Button
+        key="settings"
+        variant={settingsOpen ? 'primary' : 'secondary'}
+        label={settingsOpen ? '⚙ Settings ▴' : '⚙ Settings ▾'}
+        onPress={() => void update($, settingsOpenA, v => !v)}
+      />
+    )
+    // Frame: a title tab and the Settings button on top, the dropdown under them, then the body.
+    const frame = (body: RenderChildren): RenderElement =>
+      stack(
+        <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer}>
+          <Box flexDirection="row" justifyContent="space-between" width={width}>
+            <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
+              {enabled ? ' Clean View ' : ' Clean View · off '}
+            </Text>
+            {settingsButton}
+          </Box>
+          {settingsOpen ? (
+            <Box flexDirection="row" justifyContent="flex-end" width={width}>
+              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1}>
+                <Text bold>Settings</Text>
+                {settingRows}
+              </Box>
+            </Box>
+          ) : null}
+          {body}
+        </Box>,
+      )
 
     if (!enabled) {
-      return stack(
-        <Box flexDirection="row" justifyContent="space-between" width={width}>
-          <Text dimColor wrap="truncate">
-            {cl.phase === 'done' && files > 0 ? `Changed: ${cl.changedFiles.map(f => f.split(/[\\/]/).pop()).join(', ')}` : ''}
-          </Text>
-          {toggle}
-        </Box>
+      return frame(
+        <Text dimColor wrap="truncate">
+          {cl.phase === 'done' && files > 0
+            ? `Changed: ${cl.changedFiles.map(f => f.split(/[\\/]/).pop()).join(', ')}`
+            : 'Tool calls are showing. Open Settings to hide them again.'}
+        </Text>,
       )
     }
 
-    const style = await read($, styleA)
-    const finished = await read($, finishedA)
-    const styleBtn = (
-      <Button
-        key="style"
-        label={style === 'bars' ? 'List view' : 'Bar view'}
-        onPress={() => setStyle($, style === 'bars' ? 'checklist' : 'bars')}
-      />
-    )
-    const controls = (
-      <Box flexDirection="row">
-        {styleBtn}
-        <Text> </Text>
-        {toggle}
-      </Box>
-    )
-
     if (style === 'bars') {
-      const pillOf = (label: string, bg: string) => (
-        <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
-          {` ${label} `}
-        </Text>
-      )
       const live = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
       const active = cl.tasks.find(t => t.status === 'active')
       const upcoming = cl.tasks.find(t => t.status === 'upcoming')
@@ -599,12 +718,9 @@ export function registerCleanView(on: On) {
             />
           </Box>
         ) : null
-      return stack(
+      return frame(
         <Box flexDirection="column" width={width}>
-          <Box flexDirection="row" justifyContent="space-between" width={width}>
-            <Text dimColor>{rows.length === 0 ? 'Clean View is on' : ''}</Text>
-            {controls}
-          </Box>
+          {rows.length === 0 ? <Text dimColor>Waiting for your next request.</Text> : null}
           {rows}
           {cl.phase === 'stuck' ? (
             <Text dimColor>{`⚠ ${cl.stuckReason}. Press Esc to stop, or type a message to steer.`}</Text>
@@ -615,52 +731,44 @@ export function registerCleanView(on: On) {
       )
     }
 
-    const title = cl.title === '' ? 'Working on it' : cl.title
+    const title = title0(cl)
     const isSingle = cl.hasPlan && cl.tasks.length <= 1
-    let left: RenderChildren = <Text dimColor>Clean View is on</Text>
-    let hint: RenderChildren = null
-    if (cl.phase === 'working') {
-      left = (
-        <Text bold wrap="truncate">
-          {title}
-          {isSingle || cl.tasks.length === 0 ? '' : ` · Step ${stepNumber(cl)} of ${cl.tasks.length}`} · {elapsed}
-        </Text>
-      )
-    } else if (cl.phase === 'needs-you') {
-      left = (
-        <Text wrap="truncate">
-          <Text inverse bold color={color('permission')}>
-            {' Needs you '}
-          </Text>
-          <Text> {cl.needsYouReason}</Text>
-          <Text dimColor>  ↓ Answer below</Text>
-        </Text>
-      )
-    } else if (cl.phase === 'stuck') {
-      left = (
-        <Text bold color={color('error')} wrap="truncate">
-          ⚠ Stuck: {cl.stuckReason}
-        </Text>
-      )
-      hint = <Text dimColor>Press Esc to stop, or type a message to steer.</Text>
-    } else if (cl.phase === 'stopped') {
-      left = <Text wrap="truncate">■ Stopped · {title} · you pressed Esc</Text>
-    } else if (cl.phase === 'done') {
-      left = (
-        <Text bold color={color('success')} wrap="truncate">
-          ✓ All done · {title} · took {elapsed}
-          {files > 0 ? ` · changed ${files} ${files === 1 ? 'file' : 'files'}` : ''}
-        </Text>
-      )
-    }
+    const isLive = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
+    const phasePill =
+      cl.phase === 'needs-you'
+        ? pillOf('Needs you', 'yellow')
+        : cl.phase === 'stuck'
+          ? pillOf('Stuck', 'red')
+          : cl.phase === 'stopped'
+            ? pillOf('Stopped', 'gray')
+            : pillOf('Working', 'magenta')
+    const stepNote = isSingle || cl.tasks.length === 0 ? '' : ` · Step ${stepNumber(cl)} of ${cl.tasks.length}`
+    const detail =
+      cl.phase === 'needs-you'
+        ? `${cl.needsYouReason}  ↓ Answer below`
+        : cl.phase === 'stuck'
+          ? `${cl.stuckReason}. Press Esc to stop, or type a message to steer.`
+          : cl.phase === 'stopped'
+            ? 'You pressed Esc.'
+            : cl.action !== ''
+              ? `${cl.action}…`
+              : ''
+    const liveHead = isLive ? (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          {phasePill}
+          <Text bold wrap="truncate">{` ${title}`}</Text>
+          <Text dimColor>{`${stepNote} · ${elapsed}`}</Text>
+        </Box>
+        {detail !== '' ? <Text dimColor wrap="truncate">{`  ${detail}`}</Text> : null}
+      </Box>
+    ) : null
 
-    const showRows =
-      !isSingle &&
-      cl.tasks.length > 0 &&
-      (cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'done')
-    const nameCol = Math.max(12, width - 22)
+    const showRows = isLive && !isSingle && cl.tasks.length > 0 && (cl.phase === 'working' || cl.phase === 'needs-you')
+    const nameCol = Math.max(12, width - 24)
     const { doneCount, rows } = visibleRows(cl)
     const firstUpcoming = rows.findIndex(t => t.status === 'upcoming')
+    const pct = (n: number) => `${String(Math.round(n)).padStart(3, ' ')}%`
 
     const rowEls = showRows
       ? rows.map((t, i) => {
@@ -677,14 +785,11 @@ export function registerCleanView(on: On) {
           if (t.status === 'active') {
             const waiting = cl.phase === 'needs-you'
             return (
-              <Box key={`r-${t.id}`} flexDirection="column">
-                <Box flexDirection="row">
-                  <Text bold>{waiting ? '‖ ' : '▶ '}</Text>
-                  <Text bold>{fitName(t.name, nameCol)} </Text>
-                  <Text color={color('claude')}>{t.hasReported ? meter(t.shown) : sweep(tick, isStill || waiting)}</Text>
-                  <Text>{t.hasReported ? `  ${Math.round(t.percent)}%` : waiting ? '  Waiting' : '  Working'}</Text>
-                </Box>
-                {cl.action !== '' && cl.phase === 'working' ? <Text dimColor>{`   ${cl.action}…`}</Text> : null}
+              <Box key={`r-${t.id}`} flexDirection="row">
+                <Text bold color={color(waiting ? 'yellow' : 'magenta')}>{waiting ? '‖ ' : '▶ '}</Text>
+                <Text bold>{fitName(t.name, nameCol)} </Text>
+                <Text color={color(waiting ? 'yellow' : 'magenta')}>{t.hasReported ? meter(t.shown) : sweep(tick, isStill || waiting)}</Text>
+                <Text bold>{t.hasReported ? `  ${pct(t.percent)}` : waiting ? '  Waiting' : '  Working'}</Text>
               </Box>
             )
           }
@@ -719,48 +824,42 @@ export function registerCleanView(on: On) {
           )
         : null
 
-    // Older finished jobs stay, with their steps ticked, until they are dismissed.
-    const older = finished.filter(f => !(cl.phase === 'done' && f.id === `j${cl.jobId}`))
-    const olderEls = older.map(f => (
-      <Box key={`old-${f.id}`} flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between" width={width}>
-          <Text dimColor color={color('success')} wrap="truncate">
-            {`✓ ${f.title} · took ${formatDuration(f.seconds * 1000)}`}
-          </Text>
-          <Button
-            key={`x-${f.id}`}
-            label="×"
-            onPress={() => {
-              void update($, finishedA, list => list.filter(x => x.id !== f.id))
-            }}
-          />
+    // Finished jobs keep themselves, as in the bar view: the last three stay as one calm row each, with a × to clear
+    // one. The newest also shows its steps ticked.
+    const lastId = finished.length > 0 ? finished[finished.length - 1]!.id : ''
+    const historyEls = finished.map(f => {
+      const isJustDone = cl.phase === 'done' && f.id === `j${cl.jobId}`
+      const changed = isJustDone && files > 0 ? ` · changed ${files} ${files === 1 ? 'file' : 'files'}` : ''
+      return (
+        <Box key={`old-${f.id}`} flexDirection="column">
+          <Box flexDirection="row" justifyContent="space-between" width={width}>
+            <Text wrap="truncate">
+              <Text bold color={color('success')}>{'✓ '}</Text>
+              <Text>{f.title}</Text>
+              <Text dimColor>{` · took ${formatDuration(f.seconds * 1000)}${changed}`}</Text>
+            </Text>
+            <Button
+              key={`x-${f.id}`}
+              label="×"
+              onPress={() => {
+                void update($, finishedA, list => list.filter(x => x.id !== f.id))
+              }}
+            />
+          </Box>
+          {f.id === lastId && stepsOf(f).length > 1
+            ? stepsOf(f).map((n, i) => <Text key={`${f.id}-${i}`} dimColor>{`  ✓ ${n}`}</Text>)
+            : null}
         </Box>
-        {stepsOf(f).length > 1 ? stepsOf(f).map((n, i) => <Text key={`${f.id}-${i}`} dimColor>{`  ✓ ${n}`}</Text>) : null}
-      </Box>
-    ))
-    const doneX =
-      cl.phase === 'done' ? (
-        <Button
-          key="x-now"
-          label="×"
-          onPress={() => {
-            void update($, finishedA, list => list.filter(x => x.id !== `j${cl.jobId}`))
-            void patch($, c => ({ ...newChecklist(), jobId: c.jobId }))
-          }}
-        />
-      ) : null
-    return stack(
+      )
+    })
+    return frame(
       <Box flexDirection="column" width={width}>
-        {olderEls}
-        <Box flexDirection="row" justifyContent="space-between" width={width}>
-          <Box flexGrow={1}>{left}</Box>
-          {controls}
-          {doneX}
-        </Box>
-        {hint}
+        {historyEls}
+        {liveHead}
         {picker}
         {showRows && doneCount > 0 ? <Text dimColor color={color('success')}>{`✓ ${doneCount} steps done`}</Text> : null}
         {rowEls}
+        {!isLive && finished.length === 0 ? <Text dimColor>Waiting for your next request.</Text> : null}
       </Box>
     )
     } catch (err) {
