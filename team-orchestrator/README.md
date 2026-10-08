@@ -169,3 +169,7 @@ The member reads the file once. When the file changes, Claude Code tells the ses
 Create's first prompt asks each new session to read its role file and answer "Noted". Nothing is typed into a terminal any more.
 
 The SendMessage description now says that a teammate who is not running is unknown to it, and that `team_message` should be used instead. On a team, `team_message` is listed up front, not behind ToolSearch.
+
+## Design notes
+
+- [Cross-CLI orchestration](docs/cross-cli-orchestration.md): an idea note on whether one team could hold sessions of different agent CLIs as peers. Idea only, no code.
