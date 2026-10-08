@@ -60,6 +60,12 @@ export const isCleanConfirmation = (text: string) => {
   return body.length <= 400 && /^\W*(all\s+)?clean\b/i.test(body)
 }
 
+/**
+ * Whether a session polls Orca for the roster: the team's top member (boss "user") does, and so does a session that
+ * is not on the roster (the person's own). Every other member only reads the roster file the poller shares.
+ */
+export const shouldPoll = (me: Member | undefined) => !me || me.boss === 'user'
+
 /** The note for a peer message a member receives, or undefined: only a report from one of its own reports counts. */
 export function onReceive(me: Member, list: Member[], text: string): string | undefined {
   const from = senderOf(text)

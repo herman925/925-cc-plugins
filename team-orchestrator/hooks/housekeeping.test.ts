@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, WORKER_NOTE } from './housekeeping'
+import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll, WORKER_NOTE } from './housekeeping'
 
 const m = (name: string, boss: string, extra: Partial<Member> = {}): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
@@ -59,4 +59,11 @@ test('both notes cover idle browser-automation servers', () => {
   expect(WORKER_NOTE).toContain('playwright/mcp')
   expect(WORKER_NOTE).toContain('chrome-devtools-mcp')
   expect(HEAD_NOTE('Analyst')).toContain('browser-automation')
+})
+
+test('only the team top (boss "user") or a non-member session polls Orca', () => {
+  expect(shouldPoll(ceo)).toBe(true)
+  expect(shouldPoll(undefined)).toBe(true)
+  expect(shouldPoll(lead)).toBe(false)
+  expect(shouldPoll(w1)).toBe(false)
 })

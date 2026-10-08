@@ -4,7 +4,7 @@ import type { Register } from 'claude-code'
 import type { Act, Bulk, Form, Member, Settings, View } from '../types'
 import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
-import { onReceive, onSend } from './housekeeping'
+import { onReceive, onSend, shouldPoll } from './housekeeping'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
@@ -482,6 +482,12 @@ async function claudeDirs($: any): Promise<string[]> {
   return [custom, home ? `${home}/.claude` : ''].filter((x): x is string => !!x)
 }
 
+// Whether this session is the one that polls Orca for the roster (see refresh).
+async function pollsOrca($: any, list: Member[]): Promise<boolean> {
+  const me = await whoAmI($, list)
+  return shouldPoll(me)
+}
+
 // This session's roster entry and the roster, or undefined when the session is not a member.
 async function rosterSelf($: any): Promise<{ me: Member; list: Member[] } | undefined> {
   await pull($)
@@ -554,6 +560,10 @@ async function refresh($: any) {
   await pull($)
   const list: Member[] = await readMembers($)
   if (list.length === 0) return
+  // Only one session polls Orca: the team's top member (boss "user"), or a session not on the roster (the person's
+  // own). Every other member just pulls the roster file that session shares. Fourteen sessions each reading fourteen
+  // terminals every refresh queued ~200 orca calls at once and made Orca's own typing and scrolling lag.
+  if (!(await pollsOrca($, list))) return
   const ps = await orca($, 'worktree', 'ps')
   const agents: any[] = []
   try {
@@ -963,7 +973,7 @@ export const register: Register = on => {
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
-    $.clock.every(15000, () => void refresh($))
+    $.clock.every(30000, () => void refresh($))
     // ~3 frames a second, and only where something animates: the band or welcome screen with no team,
     // the form and the roster's org chart once typing has paused, and the spinner while a launch runs.
     $.clock.every(300, () =>
