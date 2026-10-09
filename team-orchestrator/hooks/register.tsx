@@ -19,7 +19,17 @@ async function isWindows($: any): Promise<boolean> {
   if (os.windows === undefined) os.windows = String((await $.env.get('OS').catch(() => undefined)) ?? '') === 'Windows_NT'
   return os.windows
 }
-const cfg = { orcaCommand: '' }
+const cfg = { orcaCommand: '', version: '', versionRead: false }
+// the version shown in the panel, read once per load from this plugin's own manifest, so it always matches what is installed
+async function readVersion($: any) {
+  if (cfg.versionRead) return
+  cfg.versionRead = true
+  try {
+    cfg.version = String(JSON.parse(String(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))).version ?? '')
+  } catch {
+    cfg.version = ''
+  }
+}
 const ORCA_KEY = 'team-orchestrator.orcaCommand'
 const orcaBin = async ($: any) => cfg.orcaCommand || ((await isWindows($)) ? 'orca.exe' : 'orca')
 /** '' when the command starts and answers --version, else why not, in a sentence. */
@@ -1344,6 +1354,7 @@ export const register: Register = (on, options) => {
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
     void orcaSetup($)
+    void readVersion($)
     $.clock.every(30000, () => void refresh($))
     // this session's own status: alive now, and a heartbeat every minute (a silent member shows offline after 5 min)
     void writeMine($, { state: 'idle' })
@@ -1684,13 +1695,15 @@ async function docked($: any) {
 async function panel($: any, ui: any, v: View, cols: number) {
   const { Box, Text, Button } = ui
   const go = (to: View) => update($, view, () => to)
+  await readVersion($)
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
         <Box>
           <Text bold color="cyan">
-            ◆ TEAM ORCHESTRATOR{'  '}
+            ◆ TEAM ORCHESTRATOR
           </Text>
+          <Text dimColor>{cfg.version ? ` v${cfg.version}` : ''}{'  '}</Text>
           <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
           <Button key="tab-new" label="New team" onPress={() => void go('new')} />
           <Button key="tab-settings" label="Settings" onPress={() => void go('settings')} />
