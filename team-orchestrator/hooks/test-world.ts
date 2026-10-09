@@ -17,14 +17,31 @@ export const ID1 = '11111111-1111-4111-8111-111111111111'
 export const ID2 = '22222222-2222-4222-8222-222222222222'
 export const ID3 = '33333333-3333-4333-8333-333333333333'
 
-/** files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title */
-export const world = (on: any, tabs: Tab[] = [], trs: Tr[] = [], first?: (e: any) => string | undefined) => {
+/** one record of the machine's session registry (~/.claude/sessions/<pid>.json) */
+export type RegEntry = { sessionId: string; cwd?: string; name?: string }
+/** by default the three test sessions run on this machine, in the project folder, with no name of their own */
+export const REG0: RegEntry[] = [{ sessionId: ID1 }, { sessionId: ID2 }, { sessionId: ID3 }]
+
+/**
+ * files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title. opts.env
+ * adds environment values (ORCA_TERMINAL_HANDLE, say); opts.registry replaces the session registry.
+ */
+export const world = (
+  on: any,
+  tabs: Tab[] = [],
+  trs: Tr[] = [],
+  first?: (e: any) => string | undefined,
+  opts: { env?: Record<string, string>; registry?: RegEntry[] } = {},
+) => {
+  const registry = opts.registry ?? REG0
+  const regDir = 'C:/home/.claude/sessions'
   const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
   const p = (s: string) => s.replace(/\\/g, '/')
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) => (t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '')
   on('session.root', async () => ({ value: 'C:/proj' }) as any)
-  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : undefined }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : opts.env?.[e.name] }) as any)
+  registry.forEach((r, i) => files.set(`${regDir}/${100 + i}.json`, JSON.stringify({ pid: 100 + i, sessionId: r.sessionId, cwd: r.cwd ?? 'C:/proj', name: r.name ?? '', kind: 'interactive' })))
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
   on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) }) as any)
   on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
@@ -32,6 +49,7 @@ export const world = (on: any, tabs: Tab[] = [], trs: Tr[] = [], first?: (e: any
     const at = p(e.path)
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
     if (at === dir) return { value: trs.map((t, i) => ({ name: `${t.id}.jsonl`, kind: 'file', size: 9, mtimeMs: 1000 - i, isLink: false })) } as any
+    if (at === regDir) return { value: [...files.keys()].filter(k => k.startsWith(`${regDir}/`)).map(k => ({ name: k.slice(regDir.length + 1), kind: 'file', size: 9, mtimeMs: 0, isLink: false })) } as any
     return { value: [] } as any
   })
   on('process.run', async (_$: any, e: any) => {

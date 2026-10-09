@@ -82,7 +82,7 @@ If the short name matters, set it.
 ## The guard: no subagents, and heads do not write
 
 A hook watches the tools of every session that is **on the roster**. A session that is not on the roster is never touched.
-The plugin knows which member a session is by its **session id**, and if that fails by **its name** (the title in its transcript).
+The plugin knows which member a session is from its Orca tab, its **session id** and **its name**; see [Identity (0.5.10)](#identity-0510).
 
 | Tool | Who is refused | Unless |
 |---|---|---|
@@ -113,7 +113,7 @@ A subagent runs inside its session, so a refusal for the session covers its suba
 - The engine hands the hook the whole prompt text, so a keyword you **paste** into your own prompt counts like one you type.
 - A prompt you type while a turn is running applies at once to the turn that is running.
 - The one-turn grant lives in the session's memory: a reload of the plugin (`/reload-plugins`) forgets it.
-- A session that is on the roster but whose id and name the plugin cannot match (no transcript yet) is treated as not on the roster.
+- A session that matches nothing on the roster (no tab, id or name of a member) is treated as not on the roster.
 
 ## Team files and live status (0.5.0)
 
@@ -199,3 +199,33 @@ The panel header shows the installed version next to the title (`◆ TEAM ORCHES
 ## Band title pill (0.5.09)
 
 The band above the prompt starts with a filled title pill in the same colours as Clean View: cyan background, bold black text. It reads `◆ Team Orchestrator v0.5.09`. With NO_COLOR set, it uses reverse video instead. A Button cannot take a background colour, so the open and close control is the small `▸` / `▾` button beside the pill. The `t` hotkey still opens and closes the panel.
+
+## Identity (0.5.10)
+
+A member stays recognised after `/clear`, `/rename` or a fresh `claude` in its tab (#57). Each session checks three
+facts against the roster: its Orca tab (`ORCA_TERMINAL_HANDLE` against the member's handle), its session id, and its
+name (from the machine's session registry, `~/.claude/sessions/<pid>.json`, else its transcript title). The rules are
+in `hooks/identity.ts`; the answer is worked out once per refresh, not on every tool call.
+
+| Facts that match | Treated as | Roster update |
+|---|---|---|
+| tab + id + name | the member, full rights | none |
+| tab + id, new name (`/rename`) | the member, full rights | name and address take the new name, its reports follow, its role and status files move, a toast says so |
+| tab + name, new id (`/clear`) | the member, full rights | session id = the new id, so a reopen resumes the right conversation |
+| id + name, another tab | the member if its own tab is gone; **on hold** if that tab is still open | handle = this tab |
+| tab only (a fresh `claude` in the tab) | the member, re-attached | takes the id and name; the next prompt carries "You are X in team T. Your role file is …; read it now." once |
+| id only, or name only | **on hold** | none |
+| nothing | not on the team | none |
+
+- **Outside Orca** (no tab handle) the tab is unknown, not a mismatch. A registry record with the session's id in a
+  folder under the project counts in place of the tab, as proof of the same machine, beside an id or a name and only
+  while the member is not running elsewhere. No record (another device) means on hold.
+- **A `/rename` to another member's name is not followed**: the session stays who its tab and id say, with that
+  member's rights, never the other's.
+- **On hold** means the strictest guard (Write, Edit, NotebookEdit and Agent refused unless Herman types
+  `#allow-write` or `#allow-subagent` for that turn), every team tool refused with a sentence saying why, and no status
+  written under the member's name. Once per session id the mod records the case in `claims.json`, warns the member's
+  head, and tells the team top (by session id, `$.session.send`) to ask Herman at once with AskUserQuestion: **this is
+  X**, **new member under X's boss**, or **reject**. The top applies the answer with the `member_claim` tool
+  (`{ sessionId, decision: "is" | "new" | "reject", member }`), which only the confirmed team top may call.
+- **#61:** the roster's bulk rename and restart keeps each member's saved model and effort when they are left on "keep".

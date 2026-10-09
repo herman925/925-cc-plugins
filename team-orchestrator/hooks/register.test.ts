@@ -670,3 +670,33 @@ test('a close sent to a stale handle does not mark a live member closed, and a m
   expect(creates.length).toBe(0)
   expect(JSON.parse(files.get('C:/proj/.claude/team-orchestrator/status/Hualong_Workers.json')!).state).toBe('idle')
 })
+
+// #61: a bulk rename restarts an idle member with --resume; with model and effort left on "keep" it comes back on
+// the member's own saved model and effort, not the CLI defaults
+test('a bulk rename restart keeps the member\'s saved model and effort when they are left on keep', async ($, on) => {
+  const files = world(on, [{ handle: 'term_h', title: 'Head' }, { handle: 'term_w1', title: 'W1' }], [])
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as any)
+  on('ui.close', async () => ({ value: undefined }) as any)
+  await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_adopt',
+    team: 'Alpha',
+    members: [
+      { name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_h' },
+      { name: 'W1', role: 'worker', level: 2, boss: 'Head', handle: 'term_w1', sessionId: ID1 },
+    ],
+  } as any)
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => (m.name === 'W1' ? { ...m, model: 'sonnet', effort: 'high' } : m))))
+  const band = await mountBand($)
+  await band.press({ key: 'refresh' })
+  await band.press({ key: 'sel-Alpha|W1' })
+  await teamAct(band, 0, 'bulk')
+  await band.input({ key: 'bbase', text: 'W9', kind: 'change' })
+  await band.press({ key: 'apply' })
+  const create = () => files.calls.find(a => a[1] === 'terminal' && a[2] === 'create' && a.includes('W9'))
+  for (let i = 0; i < 50 && !create(); i++) await band.drawn()
+  const cmd = String(create()?.[create()!.indexOf('--command') + 1] ?? '')
+  expect(cmd).toContain(`--resume ${ID1}`)
+  expect(cmd).toContain('--name W9')
+  expect(cmd).toContain('--model sonnet')
+  expect(cmd).toContain('--effort high')
+})

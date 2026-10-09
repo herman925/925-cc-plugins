@@ -5,6 +5,8 @@ import type { Act, Bulk, Form, Member, Settings, Spawn, View } from '../types'
 import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
+import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
+import type { Claim, Level } from './identity'
 import type { Status, TeamSettings } from './status'
 import { countFromPs, scratchDeleteAllowed } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
@@ -43,6 +45,7 @@ const REMOVE_TEAM = 'mcp__team-orchestrator__team_remove'
 const REMOVE_MEMBER = 'mcp__team-orchestrator__member_remove'
 const MOVE = 'mcp__team-orchestrator__member_move'
 const MESSAGE = 'mcp__team-orchestrator__team_message'
+const CLAIM = 'mcp__team-orchestrator__member_claim'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -547,27 +550,199 @@ async function statsOf($: any, all: Transcript[], ids: string[]): Promise<Map<st
   return new Map(files.map((f, i) => [f.id, got[i]?.stats]))
 }
 
-// ── Who this session is ──
-// The roster member this session is: the one whose session id matches, else the one whose name is the title this
-// session's transcript carries. A session that is neither is not on the roster and is never judged. The answer for a
-// session that is not found is kept for half a minute, so an unrelated session in the same project does not make
-// every tool call read its transcript.
-const found = new Map<string, { at: number; key: string }>()
-async function whoAmI($: any, list: Member[]): Promise<Member | undefined> {
-  const id = String(await $.session.id().catch(() => ''))
-  if (id === '') return undefined
-  const byId = list.find(m => m.sessionId === id)
-  if (byId) return byId
-  const kept = found.get(id)
-  if (kept && Date.now() - kept.at < 30000) return list.find(m => keyOf(m) === kept.key)
-  let me: Member | undefined
-  const own = (await transcripts($)).filter(t => t.id === id)
-  if (own.length > 0) {
-    const title = (await peek($, own))[0]?.title
-    if (title) me = list.find(m => namesOf(m).includes(title))
+// ── Who this session is (identity.ts) ──
+// The tab, the session id and the name are matched against the roster by identify(); the answer is worked out once
+// per refresh and kept while the session id and the roster's identity fields stay the same, so a tool call does not
+// read the registry or a transcript.
+type Reg = { sessionId: string; cwd: string; name: string }
+// The machine's session registry: <config dir>/sessions/<pid>.json, one per live local session. Only the id, the
+// folder and the name are taken; the .key files beside them are never read.
+async function registry($: any): Promise<Reg[]> {
+  const out: Reg[] = []
+  for (const dir of [...new Set(await claudeDirs($))]) {
+    const at = `${dir}/sessions`
+    const files = ((await $.fs.list(at).catch(() => [])) as any[]).filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))
+    for (const f of files) {
+      try {
+        const o = JSON.parse(String(await $.fs.read(`${at}/${f.name}`)))
+        if (typeof o?.sessionId === 'string') out.push({ sessionId: o.sessionId, cwd: String(o.cwd ?? ''), name: typeof o.name === 'string' ? o.name : '' })
+      } catch {
+        // a record being rewritten: skip it this time
+      }
+    }
   }
-  found.set(id, { at: Date.now(), key: me ? keyOf(me) : '' })
-  return me
+  return out
+}
+
+type Who = { me?: Member; level: Level; why: string }
+const NOBODY: Who = { level: 'none', why: '' }
+const sigOf = (list: Member[]) => list.map(m => [m.team, m.name, m.address ?? '', m.handle, m.sessionId, m.boss].join('|')).join('\n')
+const self = {
+  cur: undefined as undefined | { id: string; sig: string; key: string; level: Level; why: string },
+  busy: undefined as undefined | Promise<Who>,
+}
+// the one-time note this session's next prompt carries: the role-file pointer after a re-attach, or the hold notice
+let pendingNote: { id: string; text: string } | undefined
+
+async function identity($: any, list0?: Member[]): Promise<Who> {
+  const list = list0 ?? (await readMembers($))
+  if (list.length === 0) return NOBODY
+  const id = String(await $.session.id().catch(() => ''))
+  const c = self.cur
+  if (c && c.id === id && c.sig === sigOf(list)) {
+    if (c.level === 'none') return NOBODY
+    const me = list.find(m => keyOf(m) === c.key)
+    if (me) return { me, level: c.level, why: c.why }
+  }
+  if (!self.busy) self.busy = identifyNow($, list, id).finally(() => void (self.busy = undefined))
+  return self.busy
+}
+
+async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
+  const none = () => undefined
+  const tab = String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(none)) ?? '').trim()
+  const root = await rootOf($)
+  const reg = id ? await registry($) : []
+  const mine = reg.filter(r => r.sessionId === id)
+  const local = mine.some(r => under(r.cwd, root))
+  let name = mine.find(r => r.name !== '')?.name ?? ''
+  if (name === '' && id !== '') {
+    const own = (await transcripts($)).filter(t => t.id === id)
+    if (own.length > 0) name = (await peek($, own))[0]?.title ?? ''
+  }
+  // of the members this session might be, the ones running elsewhere: another live session holds their id, or their
+  // own tab is open (Orca is asked only about those members, and only when this tab does not settle it)
+  const others = new Set(reg.filter(r => r.sessionId !== id).map(r => r.sessionId))
+  const live = new Set<string>()
+  for (const m of list) {
+    if (!((id !== '' && m.sessionId === id) || (name !== '' && namesOf(m).includes(name)))) continue
+    if (m.sessionId && m.sessionId !== id && others.has(m.sessionId)) live.add(keyOf(m))
+    else if (m.handle && m.handle !== tab && (await showTab($, m.handle))) live.add(keyOf(m))
+  }
+  const r = identify({ list, facts: { tab, sessionId: id, name }, local, live })
+  const me = r.member
+  if (r.changed && me) {
+    if (r.renamedFrom) await moveFiles($, r.renamedFrom, me.name)
+    await update($, members, () => r.list)
+    await share($)
+    if (r.renamedFrom) await $.ui.toast(`Team Orchestrator: ${r.renamedFrom} is now ${me.name} (renamed).`)
+  }
+  if (r.reattached && me) pendingNote = { id, text: roleNote(me) }
+  if (r.level === 'restricted' && me) await holdOnce($, me, r.why, { sessionId: id, tab, name })
+  self.cur = { id, sig: sigOf(r.list), key: me ? keyOf(me) : '', level: r.level, why: r.why }
+  return { me, level: r.level, why: r.why }
+}
+
+// A relabelled member's files follow its new name: the role file (the person's notes in it kept) and the status file.
+// The old files are left as pointers to the new ones.
+async function moveFiles($: any, from: string, to: string) {
+  const dir = await teamDir($)
+  const [ro, rn] = [`${dir}/${roleFile(from)}`, `${dir}/${roleFile(to)}`]
+  if (ro !== rn && (await $.fs.exists(ro))) {
+    if (!(await $.fs.exists(rn))) await $.fs.write(rn, String(await $.fs.read(ro)))
+    await $.fs.write(ro, `# ${from} was renamed\n\n${from} is now ${to}. Its role file is .claude/team-orchestrator/${roleFile(to)}.\n`)
+    roleSeen.delete(ro)
+  }
+  const s = await readStatus($, from)
+  if (s && statusFile(from) !== statusFile(to)) {
+    await $.fs.write(await statusPath($, to), JSON.stringify({ ...s, name: to }, null, 1))
+    await $.fs.write(await statusPath($, from), JSON.stringify({ name: from, movedTo: statusFile(to) }, null, 1))
+  }
+}
+
+// Held sessions waiting for Herman's decision, one per session id: <team folder>/claims.json.
+const claimsFile = async ($: any) => `${await teamDir($)}/claims.json`
+async function readClaims($: any): Promise<Claim[]> {
+  const p = await claimsFile($)
+  if (!(await $.fs.exists(p))) return []
+  try {
+    const c = JSON.parse(String(await $.fs.read(p)))
+    return Array.isArray(c) ? c : []
+  } catch {
+    return []
+  }
+}
+const writeClaims = async ($: any, c: Claim[]) => $.fs.write(await claimsFile($), JSON.stringify(c, null, 1))
+
+// Once per session id: record the claim, warn the member's head, and tell the team top to ask Herman at once.
+async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string }) {
+  const claims = await readClaims($)
+  if (claims.some(c => c.sessionId === f.sessionId)) return
+  const c: Claim = { sessionId: f.sessionId, member: x.name, team: x.team, tab: f.tab, name: f.name, why, at: Date.now() }
+  await writeClaims($, [...claims, c])
+  pendingNote = { id: f.sessionId, text: holdNote(x, why) }
+  const list = await readMembers($)
+  const head = x.boss === 'user' ? undefined : (list.find(m => m.team === x.team && m.name === x.boss) ?? list.find(m => m.name === x.boss))
+  const top = topOf(list, x)
+  const say = async (to: Member | undefined, text: string) => {
+    if (!to?.sessionId) return false
+    const r: any = await $.session.send({ to: { sessionId: to.sessionId }, text }).catch(() => undefined)
+    return !!r?.isDelivered
+  }
+  const told: string[] = []
+  const ask = topAsk(c, x.boss === 'user' ? x.name : x.boss)
+  if (head && top && keyOf(head) === keyOf(top)) {
+    if (await say(top, `${headWarning(c)}\n\n${ask}`)) told.push(top.name)
+  } else {
+    if (head && (await say(head, headWarning(c)))) told.push(head.name)
+    if (top && (await say(top, ask))) told.push(top.name)
+  }
+  await $.ui.toast(
+    `Team Orchestrator: this session is on hold; it looks like ${x.name} but is not confirmed. ` +
+      (told.length > 0 ? `Told ${told.join(' and ')}.` : 'Nobody on the team could be told: ask Herman.'),
+  )
+}
+
+// The team top applies Herman's answer to a held session (member_claim).
+async function settleClaim($: any, input: { sessionId?: string; decision?: string; member?: string }): Promise<string> {
+  const claims = await readClaims($)
+  const c = claims.find(x => x.sessionId === String(input.sessionId ?? '').trim())
+  if (!c) return `No session ${String(input.sessionId ?? '')} is waiting for an identity decision.`
+  const decision = String(input.decision ?? '')
+  if (decision !== 'is' && decision !== 'new' && decision !== 'reject') return 'decision must be "is", "new" or "reject".'
+  const list = await readMembers($)
+  const wanted = String(input.member ?? '').trim() || c.member
+  const x = list.find(m => m.team === c.team && (m.name === wanted || m.address === wanted)) ?? list.find(m => m.name === wanted || m.address === wanted)
+  if (!x && decision !== 'reject') return `No member "${wanted}" on the roster.`
+  const tell = (text: string) => $.session.send({ to: { sessionId: c.sessionId }, text }).catch(() => undefined)
+  // whoever held the session's id or tab lets go of it
+  const letGo = (m: Member) => ({ ...m, ...(m.sessionId === c.sessionId ? { sessionId: '' } : {}), ...(c.tab && m.handle === c.tab ? { handle: '' } : {}) })
+  let out = `Rejected: session ${c.sessionId} stays on hold and off the team.`
+  if (decision === 'reject' || !x) {
+    await tell('TEAM ORCHESTRATOR: Herman did not take this session onto the team. It stays on hold: no writes, no subagents, no team tools.')
+  } else if (decision === 'is') {
+    let next = list.map(m => (m === x ? { ...m, sessionId: c.sessionId, ...(c.tab ? { handle: c.tab } : {}) } : letGo(m)))
+    let name = x.name
+    if (c.name && !namesOf(x).includes(c.name) && !nameTaken(list, c.name, x)) {
+      next = relabel(next, keyOf(x), c.name)
+      await moveFiles($, x.name, c.name)
+      name = c.name
+    }
+    await update($, members, () => next)
+    out = `Session ${c.sessionId} is ${name} of team ${x.team}: the roster took its id${c.tab ? ', tab' : ''} and name.`
+    await tell(`TEAM ORCHESTRATOR: Herman confirmed it. ${roleNote({ ...x, name })}`)
+  } else {
+    const boss = x.boss === 'user' ? x : (list.find(m => m.team === x.team && m.name === x.boss) ?? x)
+    const name = freshName(list, c.name, x.name)
+    const added: Member = {
+      team: x.team, name, address: name, role: 'worker', level: boss.level + 1, boss: boss.name, handle: c.tab, sessionId: c.sessionId,
+      state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(name),
+    }
+    await update($, members, () => [...list.map(letGo), added])
+    out = `Added ${name} to team ${x.team} as a worker under ${boss.name}, with its own role file.`
+    await tell(`TEAM ORCHESTRATOR: Herman added this session to the team as a new member. ${roleNote(added)}${name !== c.name ? ` Run /rename ${name} so teammates reach you by that name.` : ''}`)
+  }
+  await writeClaims($, claims.map(x => (x.sessionId === c.sessionId ? { ...x, decision: decision as Claim['decision'] } : x)))
+  await share($)
+  self.cur = undefined
+  return out
+}
+
+// A team tool asked by a held session: refused with a sentence that says why.
+async function onHold($: any, tool: string): Promise<any> {
+  await pull($)
+  const w = await identity($)
+  return w.level === 'restricted' && w.me ? { deny: holdTool(tool, w.me, w.why) } : undefined
 }
 
 // The person's own Claude config folders: where a memory folder lives (<dir>/projects/<project>/memory/).
@@ -579,9 +754,10 @@ async function claudeDirs($: any): Promise<string[]> {
 }
 
 // Whether this session is the one that polls Orca for the roster (see refresh).
+// A held session never polls: it does no roster work until Herman decides.
 async function pollsOrca($: any, list: Member[]): Promise<boolean> {
-  const me = await whoAmI($, list)
-  return shouldPoll(me)
+  const w = await identity($, list)
+  return w.level !== 'restricted' && shouldPoll(w.level === 'full' ? w.me : undefined)
 }
 
 // This session's roster entry and the roster, or undefined when the session is not a member.
@@ -589,8 +765,9 @@ async function rosterSelf($: any): Promise<{ me: Member; list: Member[] } | unde
   await pull($)
   const list = await readMembers($)
   if (list.length === 0) return undefined
-  const me = await whoAmI($, list)
-  return me ? { me, list } : undefined
+  // only a session confirmed as the member: a held one writes no status and gets no notes under its name
+  const w = await identity($, list)
+  return w.level === 'full' && w.me ? { me: w.me, list } : undefined
 }
 
 // ── Member status files (see status.ts) ────────────────────────────────────────────────────────────────────
@@ -618,14 +795,19 @@ async function writeStatusOf($: any, m: Member, patch: Partial<Status>) {
   await $.fs.write(await statusPath($, m.name), JSON.stringify({ ...old, ...patch, name: m.name }, null, 1))
 }
 
+// Every caller fires it without waiting, so it never throws: a missed heartbeat is written by the next one.
 async function writeMine($: any, patch: Partial<Status>) {
-  const who = await rosterSelf($)
-  if (!who) return
-  const sessionId = String(await $.session.id().catch(() => '')) || who.me.sessionId
-  // a session that is writing is running: a "closed" left in its file is stale
-  const old = await readStatus($, who.me.name)
-  const revive = old?.state === 'closed' && patch.state === undefined ? { state: 'idle' } : {}
-  await writeStatusOf($, who.me, { ...revive, ...patch, sessionId, heartbeat: Date.now() })
+  try {
+    const who = await rosterSelf($)
+    if (!who) return
+    const sessionId = String(await $.session.id().catch(() => '')) || who.me.sessionId
+    // a session that is writing is running: a "closed" left in its file is stale
+    const old = await readStatus($, who.me.name)
+    const revive = old?.state === 'closed' && patch.state === undefined ? { state: 'idle' } : {}
+    await writeStatusOf($, who.me, { ...revive, ...patch, sessionId, heartbeat: Date.now() })
+  } catch {
+    // the session is closing, or the team folder is not writable just now
+  }
 }
 
 // Count this session's own leftover shells and runtimes, found under the claude process whose command line carries the
@@ -803,9 +985,13 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
   await pull($)
   const list = await readMembers($)
   if (list.length === 0) return undefined
-  const me = await whoAmI($, list)
-  if (!me) return undefined
-  const v = judge({ me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) })
+  const w = await identity($, list)
+  if (w.level === 'none' || !w.me) return undefined
+  // a held session gets the strictest guard: only the person's one-turn word lets a write or a subagent through
+  const v =
+    w.level === 'restricted'
+      ? judgeHeld({ me: w.me, why: w.why, tool, grants: turn })
+      : judge({ me: w.me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) })
   if (!v) return undefined
   // a block toasts every time; an allow toasts once per session and reason, not on every write
   if (v.kind === 'deny' || !toasted.has(v.line)) {
@@ -859,8 +1045,11 @@ const withNotes = (old: string, add: string[]) => [...old.split(', ').filter(p =
 // restarted session gets a new one); an empty session id by the transcript's customTitle.
 async function refresh($: any) {
   await pull($)
+  if ((await readMembers($)).length === 0) return
+  // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster
+  self.cur = undefined
+  await identity($)
   const list: Member[] = await readMembers($)
-  if (list.length === 0) return
   // Live status comes from each member's own status file, not from its screen: merge those into the roster's columns.
   const now = Date.now()
   const statuses = await readStatuses($, list)
@@ -1200,7 +1389,7 @@ async function applyBulk($: any) {
       const r = await orca(
         $,
         'terminal', 'create', '--worktree', wt ? `id:${wt}` : 'active', '--title', newName,
-        '--command', startCmd(m, list, m.sessionId, true, newName, wantModel ? b.model : '', wantEffort ? b.effort : ''),
+        '--command', startCmd(m, list, m.sessionId, true, newName, wantModel ? b.model : m.model, wantEffort ? b.effort : m.effort),
       )
       const handle = r.ok ? handleOf(r.out) : ''
       done.set(key(m), {
@@ -1346,6 +1535,20 @@ export const register: Register = (on, options) => {
         required: ['team', 'name', 'toTeam'],
       },
     })
+    await $.tool.register({
+      name: 'member_claim',
+      description:
+        'Team top only: apply Herman\'s answer about a session on hold that looks like a team member. decision "is": the roster takes its id, tab and name as that member; "new": it joins as a worker under that member\'s boss, with its own role file; "reject": it stays on hold, off the team. sessionId is the held session\'s id; member is the member it looks like.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          decision: { type: 'string', enum: ['is', 'new', 'reject'] },
+          member: { type: 'string' },
+        },
+        required: ['sessionId', 'decision'],
+      },
+    })
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
     // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
@@ -1373,6 +1576,8 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: ADOPT }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'team_adopt')
+    if (held) return held
     const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
@@ -1392,16 +1597,22 @@ export const register: Register = (on, options) => {
   }))
 
   on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'team_remove')
+    if (held) return held
     const input = e as unknown as { team: string }
     return { result: await remove($, input.team) } as any
   }))
 
   on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'member_remove')
+    if (held) return held
     const input = e as unknown as { team: string; name: string }
     return { result: await remove($, input.team, input.name) } as any
   }))
 
   on('tool.call', { tool: MOVE }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'member_move')
+    if (held) return held
     const input = e as unknown as { team: string; name: string; toTeam: string; boss?: string }
     return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
   }))
@@ -1495,6 +1706,8 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: MESSAGE }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'team_message')
+    if (held) return held
     const input = e as unknown as { to: string; message: string; summary?: string }
     const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
@@ -1502,7 +1715,23 @@ export const register: Register = (on, options) => {
     return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`) } as any
   }))
 
+  // the team top settles a held session with Herman's answer; nobody else may
+  on('tool.call', { tool: CLAIM } as any, async ($, e) => safely(async () => {
+    await pull($)
+    const w = await identity($)
+    if (w.level !== 'full' || !w.me || w.me.boss !== 'user')
+      return { deny: 'member_claim is for the team top only (the confirmed member that reports to the user). Ask the team top to apply Herman\'s answer.' } as any
+    return { result: await settleClaim($, e as any) } as any
+  }))
+  on('tool.describe', { tool: CLAIM } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    const who = await rosterSelf($)
+    return who && who.me.boss === 'user' ? { ...r, isDeferred: false } : r
+  })
+
   on('tool.call', { tool: TOOL }, async ($, e) => safely(async () => {
+    const held = await onHold($, 'team_launch')
+    if (held) return held
     const input = e as unknown as { team: string; members: Spec[] }
     await update($, view, () => 'roster')
     return { result: await launch($, input.team, input.members) } as any
@@ -1564,6 +1793,13 @@ export const register: Register = (on, options) => {
     // prompt of the person's replaces the grants, so one without the words takes them back.
     const g = grantsFrom(e.origin, e.text)
     if (g) turn = g
+    // a one-time note for this session (re-attached to its member: the role-file pointer; or on hold) rides along
+    // with its next prompt
+    await identity($)
+    const sid = String(await $.session.id().catch(() => ''))
+    const once = pendingNote && pendingNote.id === sid ? pendingNote.text : undefined
+    if (once) pendingNote = undefined
+    const withOnce = (x: typeof e) => (once ? { ...x, context: [...(x.context ?? []), once] } : x)
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
     // a report from another session: its head is told to check on that worker's leftovers (housekeeping.ts)
@@ -1577,9 +1813,9 @@ export const register: Register = (on, options) => {
         const body = (e.text.match(/<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/)?.[1] ?? e.text).trim()
         void writeMine($, { task: taskLine(body) })
       }
-      return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
+      return next(withOnce(note ? { ...e, context: [...(e.context ?? []), note] } : e))
     }
-    if (o !== undefined && o.kind !== 'composer' && !o.asUser) return next(e)
+    if (o !== undefined && o.kind !== 'composer' && !o.asUser) return next(withOnce(e))
     const list = await readMembers($)
     for (const team of new Set(list.map(m => m.team))) {
       const mention = new RegExp(`(^|\\s)@${team}(?=\\s|$)`, 'i')
@@ -1602,9 +1838,11 @@ export const register: Register = (on, options) => {
         ok = t.ok
         why = `${why} | terminal fallback: ${t.out.slice(0, 80)}`
       }
+      // this prompt goes nowhere in this session: the note waits for the next one
+      if (once) pendingNote = { id: sid, text: once }
       return { drop: ok ? `Sent to team @${team}: ${head.name} will pick it up.` : `Could not reach ${head.name}: ${why.slice(0, 160)}` }
     }
-    return next(e)
+    return next(withOnce(e))
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
