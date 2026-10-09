@@ -86,16 +86,22 @@ export function judge(args: { me: Member; list: Member[]; tool: string; path: st
 // subagents) and the team's settings (auto-approve, the session cap). Only the mod's own code (it writes through
 // $.fs, not a tool), sessions that are not on the roster (the person's own) and the team top (boss "user") may change
 // them. Every other member is refused Write, Edit and NotebookEdit on them, and any Bash or PowerShell command that
-// names them and is not plainly read-only. status/, roles/ and queue.json stay writable.
+// names them and is not plainly read-only. From 0.5.12 (#59) the same holds for meta.json (the schema stamp) and the
+// change files in changes/, which the top folds into the roster: a forged change file would be a forged roster.
+// roles/ and queue/ stay writable; status files live on each machine, outside the project.
 
 export const SHELL_TOOLS = ['Bash', 'PowerShell'] as const
 
 // one path segment as Windows reads it: no alternate stream (":$DATA"), no trailing dots or spaces
 const plain = (s: string) => s.replace(/:.*$/, '').replace(/[. ]+$/, '')
 const TEAM_DIR = /^(team-orchestrator|team-o~\d+)$/
-const TEAM_FILE = /^(roster\.json|settings\.json|roster~\d+\.jso|settin~\d+\.jso)$/
+const TEAM_FILE = /^(roster\.json|settings\.json|meta\.json|roster~\d+\.jso|settin~\d+\.jso|meta~\d+\.jso)$/
+const CHANGES_DIR = /^(changes|change~\d+)$/
 
-/** The path is .claude/team-orchestrator/roster.json or settings.json (any root; "." and ".." folded; 8.3 names too). */
+/**
+ * The path is .claude/team-orchestrator/roster.json, settings.json or meta.json, or a file in its changes/ folder (any
+ * root; "." and ".." folded; 8.3 names too).
+ */
 export function isTeamFilePath(path: string): boolean {
   const segs: string[] = []
   for (const s of path.replace(/\\/g, '/').toLowerCase().split('/')) {
@@ -104,6 +110,7 @@ export function isTeamFilePath(path: string): boolean {
     else segs.push(s)
   }
   const n = segs.length
+  if (n >= 3 && CHANGES_DIR.test(plain(segs[n - 2] as string)) && TEAM_DIR.test(plain(segs[n - 3] as string))) return true
   return n >= 2 && TEAM_FILE.test(plain(segs[n - 1] as string)) && TEAM_DIR.test(plain(segs[n - 2] as string))
 }
 
@@ -116,6 +123,8 @@ export function namesTeamFile(command: string): boolean {
   const c = command.replace(/\\/g, '/').toLowerCase()
   const dir = /team-orchestrator|team-o~\d/.test(c)
   if (/roster(\.json|~\d)/.test(c)) return true
+  if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d)\b/.test(c)) return true
+  if (dir && /meta(\.json|~\d)/.test(c)) return true
   if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
   return dir && /[*?[\]{}$`]/.test(c)
 }
@@ -142,7 +151,7 @@ export function notReadOnly(command: string): string {
   return ''
 }
 
-const LOCKED = '.claude/team-orchestrator/roster.json and settings.json'
+const LOCKED = '.claude/team-orchestrator/roster.json, settings.json, meta.json and changes/'
 
 /**
  * Judge one call against the team files. `confirmed` is false for a held session, which is locked whatever its boss.

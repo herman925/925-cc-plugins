@@ -253,3 +253,53 @@ in `hooks/identity.ts`; the answer is worked out once per refresh, not on every 
 - **Helpers (#73).** A subagent's or a workflow agent's call (it carries `agentId`) is judged as its spawning member,
   by the grants standing right now: Allow writes and Allow subagents, and a one-turn `#allow-…` until the spawner's
   own turn ends. Tests in `hooks/lock.test.ts`.
+
+## One writer, and teams on two PCs (0.5.12)
+
+**One writer (#59).** Only the team top's session, on the top's machine, writes `roster.json` and `settings.json`.
+
+- Every other session writes a small change file instead, `.claude/team-orchestrator/changes/<ms>-<rand>.json`. It holds
+  only the member fields that session changed (or a settings patch). The session's own panel shows the change at once.
+- Every session reads the roster as the file plus the change files not yet applied, oldest first, field by field. So
+  all sessions see the same team before the top has caught up.
+- The top's refresh (every 30 s) folds the change files into the files. The mod cannot delete a file, so applied
+  change files stay where they are and `changes/applied.json` lists them. A change file older than 7 days is ignored by
+  its name alone.
+- Until a team has a running top on this machine, a session that is not on the roster (Herman's own) writes in its
+  place. The first write of a new team is always direct.
+- A change of Allow writes or Allow subagents that arrives in a change file is toasted to the top, with who made it.
+  Members may not write `changes/` or `meta.json` with tools, so a change file cannot be forged by hand.
+
+**Schema stamp.** `meta.json`, beside the roster, holds `schemaVersion`, `writtenBy` (the top's mod version) and
+`topMachine`. `roster.json` stays a plain array, so 0.5.11 and older still read it. A session whose mod is older than
+`writtenBy` writes no team file. It toasts once: update team-orchestrator and `/reload-plugins`. Its changes wait as
+change files for a current top.
+
+**Queue.** One file per message, `queue/<ms>-<rand>.json`: `to`, `from`, `message`, `created`, `state`
+(pending, sending, delivered, failed) and `tries`.
+
+- The top's round delivers what has room. "No room under the cap" is not a failed try.
+- After 3 failed tries the entry is marked failed, and the sender's head is told.
+- Delivered and failed entries are pruned after a day, everything after 7 days. `queue/pruned.json` lists them.
+- An old `queue.json` is moved in once and left as `[]`.
+
+**Machines (#64).** Status files live on each machine, never in the project:
+`<claude config dir>/team-orchestrator/<project key>/status/<name>.json`. The project key is the project path with
+every character but a letter or digit turned into `-`, the way Claude names its projects folders. A status file an older
+version left in the project is read once per member and moved.
+
+- Every member records its home machine (`machine`, the computer name) at launch, adopt, reopen and identity re-attach.
+- A member whose home is another PC is never matched by tab or registry here. With only its id and name it is held for
+  Herman.
+- Reopen, auto-close, the tab check and messaging skip it. The roster shows it dimmed, "on PC-X".
+- `team_message` to it answers that its conversation lives on that PC, and asks whether to start a fresh copy here.
+  With Herman's yes, `startHere: true` starts one, and this PC becomes its home.
+- When `meta.json` records another PC as the top's, team-top actions here are off: writing the team files, auto-close
+  and the queue. A toast names the PC that holds the top.
+- The top's session here is told to ask Herman with AskUserQuestion. `team_take_top { take: true }` moves the top to
+  this PC, and only after an AskUserQuestion answered in the same turn. The old PC's sessions then write change files.
+
+**Updating a running team.** Reload every session (`/reload-plugins`), the top first. Until a session reloads, it still
+writes `roster.json` itself and its status in the project, and the updated top shows it offline.
+
+Rules: `hooks/changes.ts`. Tests: `hooks/writers.test.ts`.

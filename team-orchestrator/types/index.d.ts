@@ -46,7 +46,9 @@ export type Member = {
   noted: boolean
   /** the Orca workspace (worktree id) the member was launched in; a reopen goes back there, never to the "active" one */
   worktree?: string
-  /** the status file this member's session writes, relative to .claude/team-orchestrator/ (status/<name>.json) */
+  /** the member's home machine (its computer name), set at launch, adopt, reopen and identity re-attach; empty: this one */
+  machine?: string
+  /** the status file this member's session writes, relative to <claude config dir>/team-orchestrator/<project>/ on its machine (status/<name>.json) */
   statusFile?: string
   /** on the roster since Create but never started: it starts, fresh and briefed, on its first message (team_message) */
   pending?: boolean

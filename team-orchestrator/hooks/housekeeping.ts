@@ -27,8 +27,8 @@ export const workerNote = (win = true) =>
   'HOUSEKEEPING (Team Orchestrator, mandatory): you just reported to your boss. Now close every process YOUR ' +
   `session started (${PROCS(win)}; trace them to your own ${OWNER(win)}), ` +
   'delete your scratch and temporary files (deletes inside your own session\'s temporary folder are approved ' +
-  'automatically), and tell your boss "clean" (that word is recorded in your status file, ' +
-  '.claude/team-orchestrator/status/<your name>.json, with a count of your leftover processes). ' +
+  'automatically), and tell your boss "clean" (that word is recorded in your status file on this PC, ' +
+  '~/.claude/team-orchestrator/<project>/status/<your name>.json, with a count of your leftover processes). ' +
   BROWSER(win) +
   ' Touch only processes your own session started.'
 export const WORKER_NOTE = workerNote(true)
@@ -37,7 +37,7 @@ export const HEAD_NOTE = (worker: string, win = true) =>
   `HOUSEKEEPING (Team Orchestrator, mandatory): ${worker} just reported to you. Before going on, scan for ` +
   `leftover processes from ${worker}'s session (${PROCS(win)} owned by ` +
   `its ${OWNER(win)}, or orphans whose owner is gone), including idle browser-automation servers (playwright/mcp, ` +
-  `chrome-devtools-mcp) it is not using (its status file, .claude/team-orchestrator/status/, shows its last "clean" ` +
+  `chrome-devtools-mcp) it is not using (its status file on this PC, under ~/.claude/team-orchestrator/, shows its last "clean" ` +
   `and leftover count), and tell ${worker} by SendMessage to close the processes it started and ` +
   'delete its scratch and /tmp files, then confirm "clean". Do not kill another session\'s processes yourself, and ' +
   'never kill by name machine-wide.'

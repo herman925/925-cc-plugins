@@ -1,6 +1,8 @@
 // A stand-in for the outside world (files, git, Orca, transcripts) that the new tests share. Not a test itself and
 // not loaded by the plugin: only the *.test.ts files import it.
 
+import { applyOps, rosterOps, timeOf } from './changes'
+
 export const mountBand = ($: any, bodyColumns?: number) =>
   $.ui.mount({
     plugin: 'team-orchestrator',
@@ -25,14 +27,14 @@ export const REG0: RegEntry[] = [{ sessionId: ID1 }, { sessionId: ID2 }, { sessi
 /**
  * files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title. opts.env
  * adds environment values (ORCA_TERMINAL_HANDLE, say); opts.registry replaces the session registry; opts.dirs gives
- * folder listings by path (links included).
+ * folder listings by path (links included); opts.version is the version the mod's own manifest says.
  */
 export const world = (
   on: any,
   tabs: Tab[] = [],
   trs: Tr[] = [],
   first?: (e: any) => string | undefined,
-  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]> } = {},
+  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string } = {},
 ) => {
   const registry = opts.registry ?? REG0
   const regDir = 'C:/home/.claude/sessions'
@@ -44,7 +46,8 @@ export const world = (
   on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : opts.env?.[e.name] }) as any)
   registry.forEach((r, i) => files.set(`${regDir}/${100 + i}.json`, JSON.stringify({ pid: 100 + i, sessionId: r.sessionId, cwd: r.cwd ?? 'C:/proj', name: r.name ?? '', kind: 'interactive' })))
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
-  on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) }) as any)
+  const manifest = (path: string) => (opts.version && path.endsWith('/.claude-plugin/plugin.json') ? JSON.stringify({ name: 'team-orchestrator', version: opts.version }) : undefined)
+  on('fs.read', async (_$: any, e: any) => ({ value: manifest(p(e.path)) ?? files.get(p(e.path)) }) as any)
   on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
   on('fs.list', async (_$: any, e: any) => {
     const at = p(e.path)
@@ -53,7 +56,15 @@ export const world = (
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
     if (at === dir) return { value: trs.map((t, i) => ({ name: `${t.id}.jsonl`, kind: 'file', size: 9, mtimeMs: 1000 - i, isLink: false })) } as any
     if (at === regDir) return { value: [...files.keys()].filter(k => k.startsWith(`${regDir}/`)).map(k => ({ name: k.slice(regDir.length + 1), kind: 'file', size: 9, mtimeMs: 0, isLink: false })) } as any
-    return { value: [] } as any
+    // any other folder: what the files in memory hold directly under it (change files, queue entries)
+    const kids = new Map<string, string>()
+    for (const k of files.keys()) {
+      if (!k.startsWith(`${at}/`)) continue
+      const rest = k.slice(at.length + 1)
+      const cut = rest.indexOf('/')
+      kids.set(cut < 0 ? rest : rest.slice(0, cut), cut < 0 ? 'file' : 'dir')
+    }
+    return { value: [...kids].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })) } as any
   })
   on('process.run', async (_$: any, e: any) => {
     const a: string[] = e.argv
@@ -74,8 +85,23 @@ export const world = (
 }
 
 export const adopt = ($: any, members: any[], team = 'Hualong') => $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team, members } as any)
-/** what the roster file says */
-export const saved = (files: Map<string, string>) => JSON.parse(files.get('C:/proj/.claude/team-orchestrator/roster.json')!)
+export const TEAM = 'C:/proj/.claude/team-orchestrator'
+/** where a member's status file is kept on this machine (0.5.12): the config folder, by project key */
+export const STATUS = 'C:/home/.claude/team-orchestrator/C--proj/status'
+/** the change files written and not yet applied, oldest first */
+export const pendingChanges = (files: Map<string, string>) => {
+  const applied = new Set<string>(files.has(`${TEAM}/changes/applied.json`) ? JSON.parse(files.get(`${TEAM}/changes/applied.json`)!).names : [])
+  return [...files.keys()]
+    .filter(k => k.startsWith(`${TEAM}/changes/`) && !Number.isNaN(timeOf(k.slice(TEAM.length + 9))))
+    .map(k => k.slice(TEAM.length + 9))
+    .filter(n => !applied.has(n))
+    .sort()
+    .map(name => ({ name, change: JSON.parse(files.get(`${TEAM}/changes/${name}`)!) }))
+}
+/** what the roster file says, as raw */
+export const rawSaved = (files: Map<string, string>) => JSON.parse(files.get(`${TEAM}/roster.json`)!)
+/** what the roster says, as every session reads it: the file plus the change files the team top has not applied yet */
+export const saved = (files: Map<string, string>): any => applyOps(rawSaved(files), rosterOps(pendingChanges(files)))
 /** the text the band shows */
 export const shown = async ($: any, bodyColumns?: number) => JSON.stringify(await (await mountBand($, bodyColumns)).drawn())
 

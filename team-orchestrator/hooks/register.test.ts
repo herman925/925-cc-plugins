@@ -664,11 +664,12 @@ test('a close sent to a stale handle does not mark a live member closed, and a m
   // the member's recorded handle is stale; its live tab (new handle, same name) is found and must not be duplicated
   const files = world(on, [{ handle: 'term_ab9', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }], [{ id: ID1, title: 'Hualong Workers' }])
   await adopt($, [{ ...W, handle: 'term_dead1', sessionId: ID1 }])
-  files.set('C:/proj/.claude/team-orchestrator/status/Hualong_Workers.json', JSON.stringify({ name: 'Hualong Workers', sessionId: ID1, state: 'closed', heartbeat: Date.now() }))
+  // status files are kept on the machine (0.5.12), not in the project
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Workers.json', JSON.stringify({ name: 'Hualong Workers', sessionId: ID1, state: 'closed', heartbeat: Date.now() }))
   await $.tool.call({ tool: 'SendMessage', to: 'Hualong Workers', message: 'hello' } as any).catch(() => undefined)
   const creates = files.calls.filter(a => a[1] === 'terminal' && a[2] === 'create')
   expect(creates.length).toBe(0)
-  expect(JSON.parse(files.get('C:/proj/.claude/team-orchestrator/status/Hualong_Workers.json')!).state).toBe('idle')
+  expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Workers.json')!).state).toBe('idle')
 })
 
 // #61: a bulk rename restarts an idle member with --resume; with model and effort left on "keep" it comes back on

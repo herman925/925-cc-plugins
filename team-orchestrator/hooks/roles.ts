@@ -59,7 +59,7 @@ export function roleText(m: Member, list: Member[]): string {
     '',
     '## Team files',
     '',
-    'The team lives in .claude/team-orchestrator/. roster.json is the structure; never edit it by hand. status/<name>.json is each member\'s live status, which the Team Orchestrator writes for its own session; never edit another member\'s. settings.json holds the team settings. This file is ' + roleFile(m.name) + '.',
+    'The team lives in .claude/team-orchestrator/. roster.json is the structure and settings.json the team settings; only the team top\'s session writes them, and every other session\'s change waits in changes/ until the top applies it. Never edit roster.json, settings.json, meta.json or changes/ by hand. Each member\'s live status is kept on its own PC, under ~/.claude/team-orchestrator/<project>/status/, written by the Team Orchestrator for its own session; never edit another member\'s. This file is ' + roleFile(m.name) + '.',
     '',
   ]
   return lines.join('\r\n')

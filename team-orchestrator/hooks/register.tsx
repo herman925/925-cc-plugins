@@ -10,7 +10,9 @@ import type { Claim, Level } from './identity'
 import type { Status, TeamSettings } from './status'
 import { countFromPs, linkFree, scratchDeletePlan } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
-import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, STRUCT, timeOf, topElsewhere } from './changes'
+import type { Change, Meta, QEntry } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
@@ -46,6 +48,7 @@ const REMOVE_MEMBER = 'mcp__team-orchestrator__member_remove'
 const MOVE = 'mcp__team-orchestrator__member_move'
 const MESSAGE = 'mcp__team-orchestrator__team_message'
 const CLAIM = 'mcp__team-orchestrator__member_claim'
+const TAKE = 'mcp__team-orchestrator__team_take_top'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -246,6 +249,7 @@ const look = (s: string): [string, string, string] =>
   : s === 'closed' ? ['–', 'closed', 'gray']
   : s === 'unstarted' ? ['·', 'not yet', 'gray']
   : s === 'queued' ? ['○', 'queued', 'gray']
+  : s === 'away' ? ['◌', 'away', 'gray']
   : ['?', s.slice(0, 8), 'magenta']
 
 // `cells` wide bar and the percent on one line; 0 cells is the percent alone
@@ -279,15 +283,14 @@ const readMembers = async ($: any): Promise<Member[]> => {
 
 // Every session runs its own copy of this mod, so the teams live in one folder per project, inside the project:
 // <project root>/.claude/team-orchestrator/. roster.json holds the structure (teams, bosses, roles) and, for each
-// member, the status file it writes (statusFile); status/<name>.json holds that member's live status, written only by
-// its own session; settings.json holds the team-wide worker settings. Another project has its own folder.
+// member, the status file it writes (statusFile); settings.json holds the team-wide worker settings; meta.json the schema
+// stamp; changes/ the changes other sessions made, waiting for the team top; queue/ the messages waiting for room.
+// Another project has its own folder. Live status is kept on each machine, outside the project (see readStatus).
 const rootOf = async ($: any) => String(await $.session.root()).replace(/[\/]+$/, '')
 const teamDir = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator`
 const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
-
-const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort'] as const
 
 // The Orca workspace (worktree id) this session runs in, from `orca worktree current` run in the session's own folder.
 async function currentWorktree($: any): Promise<string> {
@@ -332,14 +335,211 @@ async function exclude($: any) {
   await $.fs.write(path, `${before}${before === '' || before.endsWith('\n') ? '' : '\n'}${line}\n`)
 }
 
-async function share($: any) {
-  await migrate($)
+// ── One writer (0.5.12, #59) and machines (#64), see changes.ts ──────────────────────────────────────────────
+// Only the team top's session, on the top's machine, writes roster.json and settings.json. Every other session writes
+// a change file (changes/<ms>-<rand>.json) with the fields it changed, and applies the change to its own view at once;
+// every session reads the roster as the file plus the change files not yet applied, so all of them see the same team.
+// The top folds the change files into the file on its next refresh (30 s at most) and lists them in changes/applied.json
+// (the mod cannot delete a file). Until a team has a running top on this machine, a session that is not on the roster
+// (the person's own) writes in its place; the first write of a new team is always direct.
+
+// This machine's name, for each member's home machine and the top machine; '' when the platform gives none.
+async function machineOf($: any): Promise<string> {
+  const none = () => undefined
+  return String((await $.env.get('COMPUTERNAME').catch(none)) || (await $.env.get('HOSTNAME').catch(none)) || '').trim()
+}
+
+const changesDir = async ($: any) => `${await teamDir($)}/changes`
+const metaFile = async ($: any) => `${await teamDir($)}/meta.json`
+const rand = () => Math.random().toString(36).slice(2, 10).padEnd(8, '0')
+
+async function readJson($: any, path: string): Promise<any> {
+  if (!(await $.fs.exists(path).catch(() => false))) return undefined
+  try {
+    return JSON.parse(String(await $.fs.read(path)))
+  } catch {
+    return undefined
+  }
+}
+
+async function readMeta($: any): Promise<Meta> {
+  const m = await readJson($, await metaFile($))
+  return m && typeof m === 'object' && !Array.isArray(m) ? { ...META0, ...m } : META0
+}
+
+// A change file never changes once written, so each is read once per load.
+const changeMemo = new Map<string, Change>()
+type Pending = { name: string; change: Change }
+async function readApplied($: any): Promise<string[]> {
+  const v = await readJson($, `${await changesDir($)}/applied.json`)
+  return Array.isArray(v?.names) ? v.names.filter((n: unknown): n is string => typeof n === 'string') : []
+}
+
+/** The change files not yet applied, oldest first. */
+async function pendingChanges($: any): Promise<Pending[]> {
+  const dir = await changesDir($)
+  const now = Date.now()
+  const names = ((await $.fs.list(dir).catch(() => [])) as any[])
+    .filter(f => f.kind === 'file')
+    .map(f => String(f.name))
+    .filter(n => now - timeOf(n) <= KEEP_MS)
+  if (names.length === 0) return []
+  const out: Pending[] = []
+  for (const n of pendingNames(names, new Set(await readApplied($)), now)) {
+    let c = changeMemo.get(n)
+    if (!c) {
+      const v = await readJson($, `${dir}/${n}`)
+      // one being written (or synced) right now is read next time
+      if (!v || (v.kind !== 'roster' && v.kind !== 'settings')) continue
+      c = v as Change
+      changeMemo.set(n, c)
+    }
+    out.push({ name: n, change: c })
+  }
+  return out
+}
+
+async function markApplied($: any, names: string[]) {
+  if (names.length === 0) return
+  await $.fs.write(`${await changesDir($)}/applied.json`, JSON.stringify({ names: appliedAfter(await readApplied($), names, Date.now()) }, null, 1))
+}
+
+// The roster as this session last read it (the file plus the pending changes), and which change files that read
+// included: a non-writer's change file holds only what differs from this base, field by field.
+const seenRoster = { base: undefined as Partial<Member>[] | undefined, overlay: new Set<string>() }
+
+/** The roster file's rows with the pending change files applied; undefined when there is no roster file. */
+async function effective($: any): Promise<{ rows: Partial<Member>[]; applied: string[] } | undefined> {
+  const file = await teamFile($)
+  if (!(await $.fs.exists(file))) return undefined
+  let saved: unknown
+  try {
+    saved = JSON.parse(String(await $.fs.read(file)))
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(saved)) return undefined
+  const roster = (await pendingChanges($)).filter(c => c.change.kind === 'roster')
+  return { rows: roster.length > 0 ? applyOps(saved as Partial<Member>[], rosterOps(roster)) : (saved as Partial<Member>[]), applied: roster.map(c => c.name) }
+}
+
+/**
+ * Who writes the team files from this session:
+ *  - top: the confirmed team top on the top's machine; standin: a session not on the roster while no top runs on this
+ *    machine; boot: there is no roster file yet. These three write the files.
+ *  - member: any other session; old: this mod is older than the one that last wrote the roster; away: the top machine
+ *    is another PC. These write change files.
+ */
+type Role = 'top' | 'standin' | 'boot' | 'member' | 'old' | 'away'
+type Writer = { role: Role; meta: Meta; here: string; me: string }
+const writes = (r: Writer) => r.role === 'top' || r.role === 'standin' || r.role === 'boot'
+// what this session has been told (once each); reset at each load
+const told = { old: false, away: '', asked: false, declined: false }
+// an AskUserQuestion was answered in the turn that is running: team_take_top needs Herman's answer first
+const turnAsk = { answered: false }
+
+async function writerRole($: any, who?: Who): Promise<Writer> {
+  await readVersion($)
+  const meta = await readMeta($)
+  const here = await machineOf($)
+  const base = { meta, here, me: who?.me?.name ?? '' }
+  if (olderThan(cfg.version, meta.writtenBy)) {
+    if (!told.old) {
+      told.old = true
+      await $.ui.toast(
+        `Team Orchestrator: this team's files were written by team-orchestrator ${meta.writtenBy}, newer than this session's ${cfg.version}. ` +
+          'Update team-orchestrator and /reload-plugins. Until then this session writes no team file; its roster changes wait for the team top.',
+      )
+    }
+    return { ...base, role: 'old' }
+  }
+  if (!(await $.fs.exists(await teamFile($)))) return { ...base, role: 'boot' }
   const list = await readMembers($)
-  const text = JSON.stringify(
-    list.map(m => Object.fromEntries(STRUCT.map(k => [k, k === 'statusFile' ? statusFile(m.name) : (m as any)[k]]))),
-    null,
-    1,
-  )
+  const w = who ?? (await identity($, list))
+  const me = w.me?.name ?? ''
+  const top = projectTop(list)
+  const elsewhere = topElsewhere(meta, here)
+  if (w.level === 'full' && w.me && top && keyOf(w.me) === keyOf(top)) {
+    if (!elsewhere) return { ...base, me, role: 'top' }
+    await topAway($, meta, here, true)
+    return { ...base, me, role: 'away' }
+  }
+  if (w.level === 'none') {
+    if (elsewhere) {
+      await topAway($, meta, here, false)
+      return { ...base, me, role: 'away' }
+    }
+    if (!(await topLive($, list, here))) return { ...base, me, role: 'standin' }
+  }
+  return { ...base, me, role: 'member' }
+}
+
+// The team top is running: its status on this machine is fresh, or this machine's registry lists its session. A top
+// whose home is another PC counts as running: this PC does not stand in for it.
+async function topLive($: any, list: Member[], here: string): Promise<boolean> {
+  const top = projectTop(list)
+  if (!top) return false
+  if (isAway(top, here)) return true
+  const s = await readStatus($, top.name)
+  if (s && s.state !== 'closed' && Date.now() - s.heartbeat < STALE_MS) return true
+  return !!top.sessionId && (await registry($)).some(r => r.sessionId === top.sessionId)
+}
+
+const takeAsk = (there: string, here: string) =>
+  `TEAM ORCHESTRATOR, act now: the team top is recorded on ${there}, not on this PC (${here}). Until that changes this session ` +
+  'writes no team file, closes no idle worker and delivers no queued message. Ask Herman AT ONCE with AskUserQuestion whether this PC ' +
+  `takes over as the team top, with two options: (1) "Take over on ${here}": the roster records this PC as the top's, and ${there} becomes read-only; ` +
+  `(2) "Keep ${there}". Then apply his answer with team_take_top { take: true | false }.`
+
+// The top machine is another PC: said once per session, and a top session's model is asked to check with Herman.
+async function topAway($: any, meta: Meta, here: string, isTop: boolean) {
+  if (told.away !== meta.topMachine) {
+    told.away = meta.topMachine
+    await $.ui.toast(
+      `Team Orchestrator: the team top runs on ${meta.topMachine}, not this PC (${here}). Here the team files are read-only: ` +
+        `changes wait in changes/ for ${meta.topMachine}, and auto-close and the queue run there.` +
+        (isTop ? ' Herman is asked whether this PC takes over.' : ' team_take_top moves the top here, with Herman\'s yes.'),
+    )
+  }
+  if (isTop && !told.asked && !told.declined) {
+    told.asked = true
+    addNote(String(await $.session.id().catch(() => '')), takeAsk(meta.topMachine, here))
+  }
+}
+
+// One writer at a time inside this session (a refresh and a Settings press may overlap).
+const lock = { chain: Promise.resolve() as Promise<unknown> }
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const run = lock.chain.then(fn, fn)
+  lock.chain = run.catch(() => undefined)
+  return run
+}
+
+const FRESH = { state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false }
+const rowText = (list: Partial<Member>[]) =>
+  JSON.stringify(list.map(m => Object.fromEntries(STRUCT.map(k => [k, k === 'statusFile' ? statusFile(String(m.name ?? '')) : (m as any)[k]]))), null, 1)
+
+// Persist this session's roster: written by the writer, else as a change file. Role files follow either way.
+// `who` is given by identity itself, which must not wait for its own answer.
+async function share($: any, who?: Who) {
+  await migrate($)
+  const r = await writerRole($, who)
+  await serial(() => (writes(r) ? writeRoster($, r) : writeChange($, r)))
+  if (r.role !== 'old') await writeRoles($, await readMembers($))
+}
+
+// The writer: change files that arrived since this session last read the roster are applied on top of its own view,
+// in time order, field by field; then the file is written and every pending change is listed as applied.
+async function writeRoster($: any, r: Writer) {
+  const pending = await pendingChanges($)
+  const roster = pending.filter(c => c.change.kind === 'roster')
+  const fresh = roster.filter(c => !seenRoster.overlay.has(c.name))
+  let list = await readMembers($)
+  if (fresh.length > 0) {
+    list = applyOps(list, rosterOps(fresh)).map(m => ({ ...FRESH, ...m }) as Member)
+    await update($, members, () => list)
+  }
+  const text = rowText(list)
   const file = await teamFile($)
   const before = (await $.fs.exists(file)) ? String(await $.fs.read(file)) : ''
   if (before !== text) {
@@ -348,7 +548,41 @@ async function share($: any) {
     await $.fs.write(file, text)
     await writeGrantRecord($, file, recordAfterWrite(prev, grantMap(rowsOf(before)), grantMap(list)))
   }
-  await writeRoles($, list)
+  // the stamp: the newest mod version that wrote, and the top's machine (moved only by team_take_top once set)
+  if (r.role === 'top') {
+    const next = metaAfter(r.meta, cfg.version, r.here)
+    const was = { schemaVersion: r.meta.schemaVersion, writtenBy: r.meta.writtenBy, topMachine: r.meta.topMachine }
+    if (JSON.stringify(next) !== JSON.stringify(was) || !(await $.fs.exists(await metaFile($)))) await $.fs.write(await metaFile($), JSON.stringify(next, null, 1))
+  }
+  const settingsChanges = pending.filter(c => c.change.kind === 'settings')
+  if (settingsChanges.length > 0) await writeSettingsFile($, applySettings(await readSettingsFile($), settingsChanges))
+  await markApplied($, pending.map(c => c.name))
+  const rights = rightsChanges(roster)
+  if (rights.length > 0) await $.ui.toast(`Team Orchestrator: applied a change of rights made in another session: ${rights.join('; ')}.`)
+  seenRoster.base = list.map(project)
+  seenRoster.overlay = new Set()
+}
+
+async function writeChangeFile($: any, r: Writer, body: { kind: 'roster'; ops: any[] } | { kind: 'settings'; patch: Partial<TeamSettings> }) {
+  const at = Date.now()
+  const name = fileName(at, rand())
+  const sid = String(await $.session.id().catch(() => ''))
+  const c = { v: 1, ...body, at, by: { session: sid, member: r.me, machine: r.here, version: cfg.version } } as Change
+  await $.fs.write(`${await changesDir($)}/${name}`, JSON.stringify(c, null, 1))
+  changeMemo.set(name, c)
+  // this session's view has it already: as the writer later, it does not apply it again over newer edits
+  seenRoster.overlay.add(name)
+}
+
+// Everyone else: what this session changed since it last read the roster, as one change file. Its own view keeps the
+// change (it was made there first), and the next read shows the same, since every read applies pending change files.
+async function writeChange($: any, r: Writer) {
+  const list = await readMembers($)
+  const base = seenRoster.base ?? (await effective($))?.rows ?? []
+  const ops = diffOps(base, list)
+  if (ops.length === 0) return
+  await writeChangeFile($, r, { kind: 'roster', ops })
+  seenRoster.base = list.map(project)
 }
 
 // ── Grants changed outside the mod (#58) ──
@@ -425,18 +659,15 @@ const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean,
   `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name ${name}${flags(model, effort)}` +
   ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
 
+// The roster as every session sees it: the file plus the change files not yet applied (see share).
 async function pull($: any) {
   await migrate($)
-  const file = await teamFile($)
-  if (!(await $.fs.exists(file))) return
-  let saved: Partial<Member>[] = []
-  try {
-    saved = JSON.parse(String(await $.fs.read(file)))
-  } catch {
-    return
-  }
+  const eff = await effective($)
   // an empty list is a real state (the last team was removed), not a missing file
-  if (!Array.isArray(saved)) return
+  if (!eff) return
+  const saved = eff.rows
+  seenRoster.base = saved.map(project)
+  seenRoster.overlay = new Set(eff.applied)
   const fresh = { state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '' }
   await update($, members, old =>
     saved.map(m => {
@@ -468,7 +699,7 @@ const briefText = (m: Member, list: Member[], team: string): string => {
   return (
     `TEAM BRIEFING (one-time, from the Team Orchestrator). You are ${m.name} in team "${m.team}". Role: ${m.role}. ${rules} ` +
     `Team structure: ${roster}. ` +
-    `TEAM FILES: the team lives in .claude/team-orchestrator/ in the project. roster.json is the structure (teams, bosses, roles) and lists the status file each member writes; never edit it by hand. status/<name>.json is each member's live status, which the Team Orchestrator writes for its own session automatically (state, task, model, context, last "clean"); never edit another member's status file. settings.json holds the team's worker settings. ` +
+    `TEAM FILES: the team lives in .claude/team-orchestrator/ in the project. roster.json is the structure (teams, bosses, roles) and settings.json the team's worker settings; only the team top's session writes them, and a change made in any other session waits in changes/ until the top applies it. Never edit roster.json, settings.json, meta.json or changes/ by hand. Each member's live status (state, task, model, context, last "clean") is written by the Team Orchestrator for its own session, on its own PC under ~/.claude/team-orchestrator/; never edit another member's status file. ` +
     `To message a teammate use the SendMessage tool (Claude Code's native agent messaging), e.g. SendMessage({ to: "<their name>", message: "..." }), where the name is the quoted name shown above or in the structure list. If SendMessage says the name is ambiguous or unknown and the person is on the team, use team_message with the plain name instead (it picks the session on this machine, never a Remote Control copy). Do NOT use orca terminal send or the terminal for messages to teammates. ` +
     `Now reply with exactly "Noted" plus one short line restating your role and reporting line, then wait for instructions.`
   )
@@ -480,9 +711,11 @@ async function briefTeam($: any, team: string, only?: Set<string>) {
   // the briefing lists the team and every boss above it, so a head learns who its CEO is
   const list = orgOf(all, team)
   const sent = new Set<string>()
+  // a member on another PC has its tab there: its handle means nothing here
+  const here = await machineOf($)
   await Promise.all(
     mine
-      .filter(m => m.handle && (!only || only.has(keyOf(m))))
+      .filter(m => m.handle && !isAway(m, here) && (!only || only.has(keyOf(m))))
       .map(async m => {
         const r = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, list, team), '--enter')
         if (r.ok) sent.add(m.name)
@@ -629,13 +862,17 @@ async function registry($: any): Promise<Reg[]> {
 
 type Who = { me?: Member; level: Level; why: string }
 const NOBODY: Who = { level: 'none', why: '' }
-const sigOf = (list: Member[]) => list.map(m => [m.team, m.name, m.address ?? '', m.handle, m.sessionId, m.boss].join('|')).join('\n')
+const sigOf = (list: Member[]) => list.map(m => [m.team, m.name, m.address ?? '', m.handle, m.sessionId, m.boss, m.machine ?? ''].join('|')).join('\n')
 const self = {
   cur: undefined as undefined | { id: string; sig: string; key: string; level: Level; why: string },
   busy: undefined as undefined | Promise<Who>,
 }
 // the one-time note this session's next prompt carries: the role-file pointer after a re-attach, or the hold notice
+// (or the question about taking over the team top); several notes for one session ride together
 let pendingNote: { id: string; text: string } | undefined
+const addNote = (id: string, text: string) => {
+  pendingNote = pendingNote && pendingNote.id === id ? (pendingNote.text.includes(text) ? pendingNote : { id, text: `${pendingNote.text}\n\n${text}` }) : { id, text }
+}
 
 async function identity($: any, list0?: Member[]): Promise<Who> {
   const list = list0 ?? (await readMembers($))
@@ -654,6 +891,7 @@ async function identity($: any, list0?: Member[]): Promise<Who> {
 async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
   const none = () => undefined
   const tab = String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(none)) ?? '').trim()
+  const here = await machineOf($)
   const root = await rootOf($)
   const reg = id ? await registry($) : []
   const mine = reg.filter(r => r.sessionId === id)
@@ -668,20 +906,22 @@ async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
   const others = new Set(reg.filter(r => r.sessionId !== id).map(r => r.sessionId))
   const live = new Set<string>()
   for (const m of list) {
+    // a member from another PC: its tab and its registry are that PC's, never asked about here
+    if (isAway(m, here)) continue
     if (!((id !== '' && m.sessionId === id) || (name !== '' && namesOf(m).includes(name)))) continue
     if (m.sessionId && m.sessionId !== id && others.has(m.sessionId)) live.add(keyOf(m))
     else if (m.handle && m.handle !== tab && (await showTab($, m.handle))) live.add(keyOf(m))
   }
-  const r = identify({ list, facts: { tab, sessionId: id, name }, local, live })
+  const r = identify({ list, facts: { tab, sessionId: id, name }, local, live, here })
   const me = r.member
   if (r.changed && me) {
     if (r.renamedFrom) await moveFiles($, r.renamedFrom, me.name)
     await update($, members, () => r.list)
-    await share($)
+    await share($, { me, level: r.level, why: r.why })
     if (r.renamedFrom) await $.ui.toast(`Team Orchestrator: ${r.renamedFrom} is now ${me.name} (renamed).`)
   }
-  if (r.reattached && me) pendingNote = { id, text: roleNote(me) }
-  if (r.level === 'restricted' && me) await holdOnce($, me, r.why, { sessionId: id, tab, name })
+  if (r.reattached && me) addNote(id, roleNote(me))
+  if (r.level === 'restricted' && me) await holdOnce($, me, r.why, { sessionId: id, tab, name, machine: here })
   self.cur = { id, sig: sigOf(r.list), key: me ? keyOf(me) : '', level: r.level, why: r.why }
   return { me, level: r.level, why: r.why }
 }
@@ -718,12 +958,12 @@ async function readClaims($: any): Promise<Claim[]> {
 const writeClaims = async ($: any, c: Claim[]) => $.fs.write(await claimsFile($), JSON.stringify(c, null, 1))
 
 // Once per session id: record the claim, warn the member's head, and tell the team top to ask Herman at once.
-async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string }) {
+async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string; machine: string }) {
   const claims = await readClaims($)
   if (claims.some(c => c.sessionId === f.sessionId)) return
-  const c: Claim = { sessionId: f.sessionId, member: x.name, team: x.team, tab: f.tab, name: f.name, why, at: Date.now() }
+  const c: Claim = { sessionId: f.sessionId, member: x.name, team: x.team, tab: f.tab, name: f.name, why, at: Date.now(), ...(f.machine ? { machine: f.machine } : {}) }
   await writeClaims($, [...claims, c])
-  pendingNote = { id: f.sessionId, text: holdNote(x, why) }
+  addNote(f.sessionId, holdNote(x, why))
   const list = await readMembers($)
   const head = x.boss === 'user' ? undefined : (list.find(m => m.team === x.team && m.name === x.boss) ?? list.find(m => m.name === x.boss))
   const top = topOf(list, x)
@@ -764,7 +1004,7 @@ async function settleClaim($: any, input: { sessionId?: string; decision?: strin
   if (decision === 'reject' || !x) {
     await tell('TEAM ORCHESTRATOR: Herman did not take this session onto the team. It stays on hold: no writes, no subagents, no team tools.')
   } else if (decision === 'is') {
-    let next = list.map(m => (m === x ? { ...m, sessionId: c.sessionId, ...(c.tab ? { handle: c.tab } : {}) } : letGo(m)))
+    let next = list.map(m => (m === x ? { ...m, sessionId: c.sessionId, ...(c.tab ? { handle: c.tab } : {}), ...(c.machine ? { machine: c.machine } : {}) } : letGo(m)))
     let name = x.name
     if (c.name && !namesOf(x).includes(c.name) && !nameTaken(list, c.name, x)) {
       next = relabel(next, keyOf(x), c.name)
@@ -780,6 +1020,7 @@ async function settleClaim($: any, input: { sessionId?: string; decision?: strin
     const added: Member = {
       team: x.team, name, address: name, role: 'worker', level: boss.level + 1, boss: boss.name, handle: c.tab, sessionId: c.sessionId,
       state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(name),
+      ...(c.machine ? { machine: c.machine } : {}),
     }
     await update($, members, () => [...list.map(letGo), added])
     out = `Added ${name} to team ${x.team} as a worker under ${boss.name}, with its own role file.`
@@ -824,19 +1065,49 @@ async function rosterSelf($: any): Promise<{ me: Member; list: Member[] } | unde
 }
 
 // ── Member status files (see status.ts) ────────────────────────────────────────────────────────────────────
-const statusPath = async ($: any, name: string) => `${await teamDir($)}/${statusFile(name)}`
+// From 0.5.12 (#64) status files live on the machine, never in the project folder (which may be synced between PCs):
+// <claude config dir>/team-orchestrator/<project key>/status/<name>.json. That removes most of the team's file traffic
+// from a synced folder, and every sync-lag and clock-skew error with it.
+async function configDir($: any): Promise<string> {
+  const none = () => undefined
+  const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
+  return String((await $.env.get('CLAUDE_CONFIG_DIR').catch(none)) || (home ? `${home}/.claude` : '')).replace(/[\\/]+$/, '')
+}
+async function machineDir($: any): Promise<string> {
+  const dir = await configDir($)
+  return dir ? `${dir}/team-orchestrator/${projectKey(await rootOf($))}` : await teamDir($)
+}
+const statusPath = async ($: any, name: string) => `${await machineDir($)}/${statusFile(name)}`
 
+// A status file of an older version, in the project folder, is read once per member and session and copied here.
+const statusMigrated = new Set<string>()
 async function readStatus($: any, name: string): Promise<Status | undefined> {
   const p = await statusPath($, name)
-  if (!(await $.fs.exists(p))) return undefined
+  if (await $.fs.exists(p)) {
+    try {
+      return JSON.parse(String(await $.fs.read(p))) as Status
+    } catch {
+      return undefined
+    }
+  }
+  if (statusMigrated.has(p)) return undefined
+  statusMigrated.add(p)
+  const old = `${await teamDir($)}/${statusFile(name)}`
+  if (old === p || !(await $.fs.exists(old))) return undefined
   try {
-    return JSON.parse(String(await $.fs.read(p))) as Status
+    const s = JSON.parse(String(await $.fs.read(old)))
+    if (!s || typeof s !== 'object' || typeof s.heartbeat !== 'number') return undefined
+    await $.fs.write(p, JSON.stringify(s, null, 1))
+    return s as Status
   } catch {
     return undefined
   }
 }
 
-async function readStatuses($: any, list: Member[]): Promise<Map<string, Status>> {
+// Members of this machine only: a member from another PC writes its status there.
+async function readStatuses($: any, list0: Member[]): Promise<Map<string, Status>> {
+  const here = await machineOf($)
+  const list = list0.filter(m => !isAway(m, here))
   const got = await Promise.all(list.map(async m => [m.name, await readStatus($, m.name)] as const))
   return new Map(got.filter((x): x is readonly [string, Status] => !!x[1]))
 }
@@ -884,8 +1155,10 @@ async function countLeftovers($: any, sessionId: string): Promise<number | undef
 }
 
 // ── Team settings (worker auto-close), shared by every session in .claude/team-orchestrator/settings.json ──
+// Like the roster, the file has one writer (the team top); a change made in any other session waits as a change file,
+// and every session reads the file with those changes applied.
 const teamSettingsFile = async ($: any) => `${await teamDir($)}/settings.json`
-async function readTeamSettings($: any): Promise<TeamSettings> {
+async function readSettingsFile($: any): Promise<TeamSettings> {
   const p = await teamSettingsFile($)
   if (!(await $.fs.exists(p))) return TEAM_SETTINGS0
   try {
@@ -894,14 +1167,28 @@ async function readTeamSettings($: any): Promise<TeamSettings> {
     return TEAM_SETTINGS0
   }
 }
+const writeSettingsFile = async ($: any, s: TeamSettings) => $.fs.write(await teamSettingsFile($), JSON.stringify(s, null, 1))
+async function readTeamSettings($: any): Promise<TeamSettings> {
+  const file = await readSettingsFile($)
+  const changes = (await pendingChanges($)).filter(c => c.change.kind === 'settings')
+  return changes.length > 0 ? applySettings(file, changes) : file
+}
 async function writeTeamSettings($: any, patch: Partial<TeamSettings>) {
-  await $.fs.write(await teamSettingsFile($), JSON.stringify({ ...(await readTeamSettings($)), ...patch }, null, 1))
+  const r = await writerRole($)
+  await serial(async () => {
+    if (!writes(r)) return writeChangeFile($, r, { kind: 'settings', patch })
+    const changes = (await pendingChanges($)).filter(c => c.change.kind === 'settings')
+    await writeSettingsFile($, { ...applySettings(await readSettingsFile($), changes), ...patch })
+    await markApplied($, changes.map(c => c.name))
+  })
 }
 
 // ── Closing and reopening workers ────────────────────────────────────────────────────────────────────────────
 // The member's live Orca tab: its recorded handle if that tab still exists, else the one live tab with its name (a
 // relaunch gives a member a new tab, so a recorded handle can be stale). '' when there is none, or more than one.
 async function liveHandleOf($: any, m: Member): Promise<string> {
+  // a member from another PC has no tab here, whatever this PC's tabs are called
+  if (isAway(m, await machineOf($))) return ''
   if (m.handle && (await showTab($, m.handle))) return m.handle
   // only tabs in this project's folder: another project may have a member of the same name
   const root = await rootOf($)
@@ -923,7 +1210,7 @@ async function closeMember($: any, m: Member): Promise<boolean> {
 }
 
 // Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session. Either way it
-// starts with its role pointer (roles.ts), so a fresh session needs no typed briefing.
+// starts with its role pointer (roles.ts), so a fresh session needs no typed briefing. Its home is this machine from now.
 async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   const resume = t.reopen === 'resume' && !!m.sessionId
   const sessionId = resume ? m.sessionId : uuid()
@@ -936,30 +1223,77 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out)
-  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: true, pending: false }
+  const here = await machineOf($)
+  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: true, pending: false, ...(here ? { machine: here } : {}) }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
   await share($)
   return ready
 }
 
-// Messages for closed workers that had to wait for room under the session cap.
-type Queued = { to: string; from: string; message: string; at: number }
-const queueFile = async ($: any) => `${await teamDir($)}/queue.json`
-async function readQueue($: any): Promise<Queued[]> {
-  const p = await queueFile($)
-  if (!(await $.fs.exists(p))) return []
-  try {
-    const q = JSON.parse(String(await $.fs.read(p)))
-    return Array.isArray(q) ? q : []
-  } catch {
-    return []
-  }
+// ── The queue (0.5.12, #59): one file per message, queue/<ms>-<rand>.json, see changes.ts ──
+// The sender writes an entry; only the team top's round changes it (sending, delivered, failed) and prunes it. The mod
+// cannot delete a file, so a pruned entry is listed in queue/pruned.json; one older than 7 days is ignored by its name.
+const queueDir = async ($: any) => `${await teamDir($)}/queue`
+type QFile = { name: string; q: QEntry }
+async function readPruned($: any): Promise<string[]> {
+  const v = await readJson($, `${await queueDir($)}/pruned.json`)
+  return Array.isArray(v?.names) ? v.names.filter((n: unknown): n is string => typeof n === 'string') : []
 }
-const writeQueue = async ($: any, q: Queued[]) => $.fs.write(await queueFile($), JSON.stringify(q, null, 1))
+async function readQueue($: any): Promise<QFile[]> {
+  const dir = await queueDir($)
+  const now = Date.now()
+  const names = ((await $.fs.list(dir).catch(() => [])) as any[])
+    .filter(f => f.kind === 'file')
+    .map(f => String(f.name))
+    .filter(n => now - timeOf(n) <= KEEP_MS)
+    .sort()
+  if (names.length === 0) return []
+  const pruned = new Set(await readPruned($))
+  const out: QFile[] = []
+  for (const n of names) {
+    if (pruned.has(n)) continue
+    const q = await readJson($, `${dir}/${n}`)
+    if (q && typeof q.to === 'string' && typeof q.message === 'string') out.push({ name: n, q: q as QEntry })
+  }
+  return out
+}
+const writeQ = async ($: any, f: QFile) => $.fs.write(`${await queueDir($)}/${f.name}`, JSON.stringify(f.q, null, 1))
+async function enqueue($: any, to: string, from: string, message: string): Promise<QFile> {
+  const created = Date.now()
+  const f: QFile = { name: fileName(created, rand()), q: { to, from, message, created, state: 'pending', tries: 0 } }
+  await writeQ($, f)
+  return f
+}
+async function markPruned($: any, names: string[]) {
+  if (names.length === 0) return
+  await $.fs.write(`${await queueDir($)}/pruned.json`, JSON.stringify({ names: appliedAfter(await readPruned($), names, Date.now()) }, null, 1))
+}
+// The single queue.json of earlier versions: its messages move into queue/ once, and the file is left empty.
+async function migrateQueue($: any) {
+  const old = `${await teamDir($)}/queue.json`
+  const entries = fromOldQueue(await readJson($, old), Date.now())
+  if (entries.length === 0) return
+  for (const q of entries) await writeQ($, { name: fileName(q.created, rand()), q })
+  await $.fs.write(old, '[]')
+}
+
+// A queued message that failed for good: the sender's head is told (the sender itself when it is the top); when nobody
+// can be told, the person sees a toast.
+async function tellSenderHead($: any, q: QEntry) {
+  const list = await readMembers($)
+  const sender = list.find(m => m.name === q.from || m.address === q.from)
+  const head = !sender ? undefined : sender.boss === 'user' ? sender : (list.find(m => m.team === sender.team && m.name === sender.boss) ?? list.find(m => m.name === sender.boss))
+  const text =
+    `QUEUE (Team Orchestrator): the message from ${q.from} to ${q.to} was not delivered after ${q.tries} ${q.tries === 1 ? 'try' : 'tries'}` +
+    `${q.error ? ` (${q.error})` : ''}. It is marked failed in .claude/team-orchestrator/queue/. The message: "${q.message.slice(0, 300)}"`
+  const r: any = head?.sessionId ? await $.session.send({ to: { sessionId: head.sessionId }, text }).catch(() => undefined) : undefined
+  if (!r?.isDelivered)
+    await $.ui.toast(`Team Orchestrator: a queued message for ${q.to} failed${q.error ? ` (${q.error})` : ''}; ${head ? `${head.name} could not be told` : 'its sender has no head on the roster'}.`)
+}
 
 // Make room for, and reopen, a closed member; undefined when it must wait in the queue.
-async function admitAndReopen($: any, target: Member, list: Member[], t: TeamSettings): Promise<boolean | undefined> {
+async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings): Promise<boolean | undefined> {
   // still running after all (its tab is live): never start a second copy of the same conversation
   const live = await liveHandleOf($, target)
   if (live) {
@@ -968,6 +1302,9 @@ async function admitAndReopen($: any, target: Member, list: Member[], t: TeamSet
     await share($)
     return true
   }
+  // only this machine's members count toward its cap, and only they may be closed to make room
+  const here = await machineOf($)
+  const list = list0.filter(m => !isAway(m, here))
   const statuses = await readStatuses($, list)
   const a = admit(list, statuses, t, Date.now())
   if (a.kind === 'queue') return undefined
@@ -981,46 +1318,84 @@ async function admitAndReopen($: any, target: Member, list: Member[], t: TeamSet
 // "unstarted": on the roster since Create but never launched; it starts, fresh and briefed, on its first message
 const isClosed = (m: Member, s: Status | undefined) => !!m.pending || m.state === 'closed' || m.state === 'unstarted' || s?.state === 'closed'
 
-// Send a message to a member, starting or reopening it first. The local session's "name [ref]" is used when
-// Remote Control mirrors share the name. A string result goes back to the sender.
-async function deliver($: any, target: Member, message: string, summary: string): Promise<string> {
-  if (isClosed(target, await readStatus($, target.name))) {
+// What a message to a member on another PC gets back: its conversation is there, so only a fresh copy can start here.
+const awayAnswer = (m: Member, here: string) =>
+  `${m.name} runs on ${m.machine}, not on this PC${here ? ` (${here})` : ''}. Its conversation lives in that PC's ~/.claude, so it cannot be ` +
+  `resumed or messaged from here. Ask Herman whether to start a fresh copy of ${m.name} on this PC. If he says yes, call team_message ` +
+  'again with the same message and startHere: true: the copy starts fresh from its role file, and this PC becomes its home.'
+
+// Send a message to a member that is running. The local session's "name [ref]" is used when Remote Control mirrors
+// share the name.
+async function sendNow($: any, target: Member, message: string, summary: string): Promise<{ ok: boolean; text: string }> {
+  const name = target.address || target.name
+  const listing: any = await $.tool.call({ tool: 'ListAgents' } as any).catch(() => undefined)
+  const to = localRef(String(listing?.text ?? ''), name) || name
+  const r: any = await $.tool.call({ tool: 'SendMessage', to, message, summary } as any)
+  const ok = !r?.isError && r?.deny === undefined
+  return { ok, text: `${ok ? 'Sent' : 'Not sent'} to ${to}: ${String(r?.text ?? r?.deny ?? '').slice(0, 200)}` }
+}
+
+// Send a message to a member, starting or reopening it first. A string result goes back to the sender.
+async function deliver($: any, target: Member, message: string, summary: string, startHere = false): Promise<string> {
+  const here = await machineOf($)
+  if (isAway(target, here)) {
+    if (!startHere) return awayAnswer(target, here)
+    const t = await readTeamSettings($)
+    await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
+    // its Orca workspace id is the other PC's: the copy starts in this session's workspace
+    const ok = await reopen($, { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
+    if (!ok) return `A fresh copy of ${target.name} could not be started here. Ask the person to open its tab.`
+  } else if (isClosed(target, await readStatus($, target.name))) {
     const t = await readTeamSettings($)
     await $.ui.toast(`${target.state === 'unstarted' ? 'Starting' : 'Reopening'} ${target.name}…`)
     const ok = await admitAndReopen($, target, await readMembers($), t)
     if (ok === undefined) {
       const me = await rosterSelf($)
-      const q = await readQueue($)
-      await writeQueue($, [...q, { to: target.name, from: me?.me.name ?? 'someone', message, at: Date.now() }])
-      return `${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${q.length + 1}) and is delivered as soon as a worker frees up.`
+      const ahead = (await readQueue($)).filter(f => f.q.state === 'pending' || f.q.state === 'sending').length
+      await enqueue($, target.name, me?.me.name ?? 'someone', message)
+      return `${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
     }
     if (!ok) return `${target.name} could not be started. Ask the person to open its tab.`
   }
-  const name = target.address || target.name
-  const listing: any = await $.tool.call({ tool: 'ListAgents' } as any).catch(() => undefined)
-  const to = localRef(String(listing?.text ?? ''), name) || name
-  const r: any = await $.tool.call({ tool: 'SendMessage', to, message, summary } as any)
-  return `${r?.isError ? 'Not sent' : 'Sent'} to ${to}: ${String(r?.text ?? '').slice(0, 200)}`
+  return (await sendNow($, target, message, summary)).text
 }
 
-// The team top's round: close workers idle past the set minutes, then deliver queued messages as room appears.
+// The team top's round: close workers idle past the set minutes, then work the queue: deliver what has room, mark
+// what failed three times (and tell the sender's head), and prune what is done (a day) or old (7 days).
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
+  const here = await machineOf($)
   const t = await readTeamSettings($)
-  for (const m of toClose(list, statuses, t, now)) await closeMember($, m)
+  for (const m of toClose(list.filter(x => !isAway(x, here)), statuses, t, now)) await closeMember($, m)
+  await migrateQueue($)
   const queue = await readQueue($)
-  if (queue.length === 0) return
-  const left: Queued[] = []
-  for (const q of queue) {
-    const target = (await readMembers($)).find(x => x.name === q.to || x.address === q.to)
-    if (!target) continue
-    const open = !isClosed(target, await readStatus($, target.name)) || (await admitAndReopen($, target, await readMembers($), t))
-    if (open === undefined) {
-      left.push(q)
+  const prune: string[] = []
+  for (const f of queue) {
+    const act = queueAction(f.q, Date.now())
+    if (act === 'prune') prune.push(f.name)
+    if (act !== 'try') continue
+    const all = await readMembers($)
+    const target = all.find(x => x.name === f.q.to || x.address === f.q.to)
+    // nobody to deliver to here: failed at once (a member from another PC is never messaged from this one)
+    const gone = !target ? `no member ${f.q.to} on the roster` : isAway(target, here) ? `${target.name} runs on ${target.machine}` : ''
+    if (gone || !target) {
+      const failed: QEntry = { ...f.q, state: 'failed', updated: Date.now(), error: gone }
+      await writeQ($, { name: f.name, q: failed })
+      await tellSenderHead($, failed)
       continue
     }
-    await deliver($, target, `[queued message from ${q.from}] ${q.message}`, `queued message for ${target.name}`)
+    await writeQ($, { name: f.name, q: { ...f.q, state: 'sending', updated: Date.now() } })
+    const open = !isClosed(target, await readStatus($, target.name)) || (await admitAndReopen($, target, all, t))
+    let next: QEntry
+    if (open === undefined) next = afterTry(f.q, undefined, Date.now())
+    else if (!open) next = afterTry(f.q, false, Date.now(), `${target.name} could not be started`)
+    else {
+      const s = await sendNow($, target, `[queued message from ${f.q.from}] ${f.q.message}`, `queued message for ${target.name}`)
+      next = afterTry(f.q, s.ok, Date.now(), s.ok ? '' : s.text.slice(0, 160))
+    }
+    await writeQ($, { name: f.name, q: next })
+    if (next.state === 'failed') await tellSenderHead($, next)
   }
-  await writeQueue($, left)
+  await markPruned($, prune)
 }
 
 // The gentle tab check (see refresh): its own interval, doubled while Orca is slow.
@@ -1110,14 +1485,22 @@ async function refresh($: any) {
   // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster
   self.cur = undefined
   const who = await identity($)
+  const role = await writerRole($, who)
+  const writer = role.role === 'top' || role.role === 'standin'
+  // the writer folds the other sessions' change files into the team files: at most one refresh (30 s) after they came
+  if (writer && (await pendingChanges($)).length > 0) await share($, who)
   // the team top checks that every member's rights in the roster file are the ones the mod wrote
-  if (who.level === 'full' && who.me?.boss === 'user') await checkGrants($).catch(() => undefined)
+  if (role.role === 'top') await checkGrants($).catch(() => undefined)
   const list: Member[] = await readMembers($)
+  const here = role.here
+  // a member whose home is another PC: never asked about here, shown as "on <that PC>"
+  const away = (m: Member) => isAway(m, here)
   // Live status comes from each member's own status file, not from its screen: merge those into the roster's columns.
   const now = Date.now()
   const statuses = await readStatuses($, list)
   await update($, members, old =>
     old.map(m => {
+      if (away(m)) return { ...m, state: 'away' }
       const s = statuses.get(m.name)
       return s ? { ...m, state: shownState(s, now) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
@@ -1126,11 +1509,14 @@ async function refresh($: any) {
   // own). Every other member just pulls the roster file that session shares. Fourteen sessions each reading fourteen
   // terminals every refresh queued ~200 orca calls at once and made Orca's own typing and scrolling lag.
   if (!(await pollsOrca($, list))) return
-  await monitor($, list, statuses, now)
+  // the top machine is another PC: its team-top actions (auto-close, the queue, the tab check) run there
+  if (role.role === 'away') return
+  // auto-close and the queue: the writer only, so a message is never delivered twice
+  if (writes(role)) await monitor($, list, statuses, now)
   // Orca is asked only when it must be: a member lacks its tab, session id or status file, or the gentle tab check is
   // due (some open member silent for over two minutes, at most once per interval, the interval doubling while Orca is slow).
   // a closed or not-yet-started member has no tab on purpose: it is not missing
-  const missing = list.some(m => !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
+  const missing = list.some(m => !away(m) && !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
   if (!missing && !(now >= tabCheck.next && needsTabCheck([...statuses.values()], now))) return
   const started = Date.now()
   const ps = await orca($, 'worktree', 'ps')
@@ -1142,25 +1528,28 @@ async function refresh($: any) {
   }
   // one Orca call at a time, never a burst
   const shown: any[] = []
-  for (const m of list) shown.push(m.handle && !isClosed(m, statuses.get(m.name)) ? await showTab($, m.handle) : undefined)
+  for (const m of list) shown.push(m.handle && !away(m) && !isClosed(m, statuses.get(m.name)) ? await showTab($, m.handle) : undefined)
   tabCheck.every = nextCheckInterval(tabCheck.every, (Date.now() - started) / Math.max(1, list.length + 1))
   tabCheck.next = Date.now() + tabCheck.every
   const all = await transcripts($)
   const root = String(await $.session.root())
   // Where a member's session runs: the folder its transcript last ran in, else the project's own folder. A tab in
   // another worktree is never this member's, whatever its title says (two teams may both have a "Head").
-  const ran = await statsOf($, all, list.map(m => m.sessionId).filter(Boolean))
+  const ran = await statsOf($, all, list.filter(m => !away(m)).map(m => m.sessionId).filter(Boolean))
   const whereOf = (sessionId: string) => ran.get(sessionId)?.cwd || root
   const fits = (tab: any, where: string) => {
     const wt = String(tab?.worktreePath ?? '')
     return wt === '' || under(where, wt)
   }
   // one list of tabs and one transcript scan per refresh, not one per member
-  const tabs = shown.some((t, i) => !t || !fits(t, whereOf((list[i] as Member).sessionId))) ? await liveTabs($) : []
-  const ids = list.some(m => !m.sessionId) ? await sessionsNamed($, all, list.filter(m => !m.sessionId).flatMap(namesOf), root) : new Map<string, string>()
+  const tabs = shown.some((t, i) => !away(list[i] as Member) && (!t || !fits(t, whereOf((list[i] as Member).sessionId)))) ? await liveTabs($) : []
+  const nameless = list.filter(m => !away(m) && !m.sessionId)
+  const ids = nameless.length > 0 ? await sessionsNamed($, all, nameless.flatMap(namesOf), root) : new Map<string, string>()
   const firstPass = await Promise.all(
     list.map(async (m0, i) => {
       const notes: string[] = []
+      // a member from another PC keeps what the roster says; its tab and transcript are on that PC
+      if (away(m0)) return { m: { ...m0, state: 'away' }, line: { model: m0.model, effort: m0.effort, ctx: String(m0.ctx) }, live: false, notes }
       const sessionId = m0.sessionId || namesOf(m0).map(n => ids.get(n)).find(Boolean) || ''
       let m: Member = { ...m0, sessionId }
       const where = whereOf(sessionId)
@@ -1324,9 +1713,10 @@ async function addMember($: any, handle: string, title: string, team: string, bo
   const name = bare(title)
   if (name === '' || all.some(m => m.team === team && m.name === name)) return `Team "${team}" already has "${name}".`
   const b = all.find(m => m.team === team && m.name === boss)
+  const here = await machineOf($)
   const added: Member = {
     team, name, address: name, role: role || 'member', level: b ? b.level + 1 : 1, boss: b ? b.name : 'user', handle, sessionId: '',
-    state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
+    state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...(here ? { machine: here } : {}),
   }
   await update($, members, () => [...all.map(m => ({ ...m, sel: false })), added])
   await share($)
@@ -1360,9 +1750,12 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
   const wt = await currentWorktree($)
   if (!wt) return 'Cannot find the Orca worktree of this session.'
   const teamsMade = [...new Set(specs.map(s => s.team))]
+  // every member starts on this machine
+  const here = await machineOf($)
   // the whole roster is written first; nobody is launched yet
   const made: Member[] = specs.map(s => ({
     team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle: '', sessionId: '', worktree: wt,
+    ...(here ? { machine: here } : {}),
     state: 'unstarted', ctx: -1,
     model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
     sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(s.name), pending: true,
@@ -1521,6 +1914,13 @@ const safely = async (fn: () => Promise<any>): Promise<any> => {
 
 export const register: Register = (on, options) => {
   cfg.orcaCommand = String((options as any)?.orcaCommand ?? '').trim()
+  // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
+  cfg.versionRead = false
+  seenRoster.base = undefined
+  seenRoster.overlay = new Set()
+  Object.assign(told, { old: false, away: '', asked: false, declined: false })
+  turnAsk.answered = false
+  statusMigrated.clear()
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
     await $.tool.register({
@@ -1584,12 +1984,18 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'team_message',
       description:
-        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name.',
+        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name. startHere: only after Herman said yes, for a member whose home is another PC: start a fresh copy of it on this PC.',
       inputSchema: {
         type: 'object',
-        properties: { to: { type: 'string' }, message: { type: 'string' }, summary: { type: 'string' } },
+        properties: { to: { type: 'string' }, message: { type: 'string' }, summary: { type: 'string' }, startHere: { type: 'boolean' } },
         required: ['to', 'message'],
       },
+    })
+    await $.tool.register({
+      name: 'team_take_top',
+      description:
+        'Apply Herman\'s answer about moving the team top to this PC, after asking him with AskUserQuestion in this turn. take true: the roster records this PC as the team top\'s machine, and the PC that had it becomes read-only for the team files; take false: nothing changes and he is not asked again in this session.',
+      inputSchema: { type: 'object', properties: { take: { type: 'boolean' } }, required: ['take'] },
     })
     await $.tool.register({
       name: 'team_remove',
@@ -1658,9 +2064,12 @@ export const register: Register = (on, options) => {
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
     const team = clean(input.team || '') || 'team'
+    // the tabs adopted run on this machine
+    const here = await machineOf($)
     const adopted: Member[] = input.members.map(m => ({
       team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss, handle: m.handle ?? '',
       sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
+      ...(here ? { machine: here } : {}),
     }))
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
@@ -1710,7 +2119,8 @@ export const register: Register = (on, options) => {
     // only when the name resolved (SendMessage checks names before any hook); team_message covers the other cases.
     const list0 = to ? await readMembers($) : []
     const target = list0.find(m => m.name === to || m.address === to)
-    if (target && message && isClosed(target, await readStatus($, target.name))) {
+    // a member from another PC is never reopened from here: SendMessage answers for it as it can
+    if (target && message && !isAway(target, await machineOf($)) && isClosed(target, await readStatus($, target.name))) {
       return { result: await deliver($, target, message, String((e as any).summary ?? `message for ${target.name}`)) } as any
     }
     const r: any = await next(e)
@@ -1724,6 +2134,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     if ((e as any).agentId !== undefined) return next(e)
     turn = NO_GRANTS
+    turnAsk.answered = false
     const r = await next(e)
     void (async () => {
       const who = await rosterSelf($)
@@ -1753,7 +2164,9 @@ export const register: Register = (on, options) => {
     const tool = String((e as any).tool ?? '')
     if (tool === 'AskUserQuestion') {
       void writeMine($, { state: 'asking' })
-      const r = await next(e)
+      const r: any = await next(e)
+      // Herman answered a question in this turn: what team_take_top needs before it moves the team top
+      if (r && r.deny === undefined && !r.isError) turnAsk.answered = true
       void writeMine($, { state: 'working' })
       return r
     }
@@ -1785,12 +2198,47 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: MESSAGE }, async ($, e) => safely(async () => {
     const held = await onHold($, 'team_message')
     if (held) return held
-    const input = e as unknown as { to: string; message: string; summary?: string }
+    const input = e as unknown as { to: string; message: string; summary?: string; startHere?: boolean }
     const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
     if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
-    return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`) } as any
+    return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`, input.startHere === true) } as any
   }))
+
+  // Herman's answer about moving the team top to this PC (#64): only the team top's session or his own (not on the
+  // roster), and only after an AskUserQuestion answered in this same turn
+  on('tool.call', { tool: TAKE } as any, async ($, e) => safely(async () => {
+    await pull($)
+    const list = await readMembers($)
+    const w = await identity($, list)
+    const top = projectTop(list)
+    const isTop = w.level === 'full' && !!w.me && !!top && keyOf(w.me) === keyOf(top)
+    if (!isTop && w.level !== 'none')
+      return { deny: 'team_take_top is for the team top\'s own session, or Herman\'s session that is not on the roster.' } as any
+    const meta = await readMeta($)
+    const here = await machineOf($)
+    if (!(e as any).take) {
+      told.declined = true
+      return { result: `Kept ${meta.topMachine || 'the recorded PC'} as the team top's machine. This session stays read-only for the team files and is not asked again.` } as any
+    }
+    if (!turnAsk.answered) return { deny: 'Ask Herman first with AskUserQuestion in this turn; team_take_top applies his answer.' } as any
+    if (!here) return { result: 'This PC gives no computer name (COMPUTERNAME or HOSTNAME), so it cannot be recorded as the team top\'s machine.' } as any
+    const was = meta.topMachine
+    await serial(async () => $.fs.write(await metaFile($), JSON.stringify({ ...metaAfter(meta, cfg.version, here), topMachine: here }, null, 1)))
+    told.away = ''
+    told.asked = false
+    await $.ui.toast(`Team Orchestrator: this PC (${here}) now holds the team top.${was && was !== here ? ` ${was} is read-only for the team files from now on.` : ''}`)
+    await share($)
+    return {
+      result:
+        `This PC (${here}) now holds the team top: it writes the team files, closes idle workers and works the queue.` +
+        (was && was !== here ? ` Sessions on ${was} write change files from now on, applied here.` : ''),
+    } as any
+  }))
+  on('tool.describe', { tool: TAKE } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    return told.asked && !told.declined ? { ...r, isDeferred: false } : r
+  })
 
   // the team top settles a held session with Herman's answer; nobody else may
   on('tool.call', { tool: CLAIM } as any, async ($, e) => safely(async () => {
@@ -2302,7 +2750,7 @@ const statusGlyph = (state: string, t: number, blink: boolean): [string, string]
   state === 'working' ? [['◐', '◓', '◑', '◒'][t % 4] as string, 'yellow']
   : state === 'asking' ? [t % 2 === 0 ? '◆' : '◇', 'magenta']
   : state === 'starting' ? [['◜', '◝', '◞', '◟'][t % 4] as string, 'cyan']
-  : state === 'offline' ? ['○', 'gray']
+  : state === 'offline' || state === 'away' ? [state === 'away' ? '◌' : '○', 'gray']
   : state === 'failed' ? ['✗', 'red']
   : state === 'closed' || state === 'unstarted' || state === 'queued' ? [state === 'closed' ? '–' : '·', 'gray']
   : [blink ? '◉' : '●', 'green']
@@ -2364,7 +2812,7 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const row = grid[r]
     if (row && x >= 0 && x < row.length) row[x] = cell
   }
-  const dead = (m: Member) => m.state === 'offline' || m.state === 'failed'
+  const dead = (m: Member) => m.state === 'offline' || m.state === 'failed' || m.state === 'away'
 
   const draw = (n: TNode) => {
     const row = n.depth * 2
@@ -2751,8 +3199,12 @@ async function rosterView($: any, ui: any, cols: number) {
   }
   const s = await readSettings($)
   const labelInfo = chartLabelInfo(list)
+  // a member whose home is another PC is drawn dimmed, with that PC's name (#64)
+  const here = await machineOf($)
+  const away = (m: Member) => isAway(m, here)
   // a derived note: never stored, so it goes the moment the second short name changes
-  const noteOf = (m: Member) => [m.note, labelInfo.get(keyOf(m))?.dup ? 'short name used twice' : ''].filter(x => x !== '').join(', ')
+  const noteOf = (m: Member) =>
+    [away(m) ? `on ${m.machine}` : '', m.note, labelInfo.get(keyOf(m))?.dup ? 'short name used twice' : ''].filter(x => x !== '').join(', ')
   // a card's widest wish is its wide plan with whole names; side by side fits as many of those as the width holds
   const widest = Math.max(1, ...teams.map(team => columnPlan(treeLines(list.filter(m => m.team === team)), 1000, s.hide).total + FRAME))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
@@ -3026,9 +3478,9 @@ async function rosterView($: any, ui: any, cols: number) {
                     />
                     <Text> </Text>
                     <Text dimColor>{fit(r.prefix, p.nameW - 1)}</Text>
-                    <Text color={levelShade(m.level)}>{cell(r.name, p.nameW - Math.min(r.prefix.length, p.nameW - 1))}</Text>
+                    <Text color={levelShade(m.level)} dimColor={away(m)}>{cell(r.name, p.nameW - Math.min(r.prefix.length, p.nameW - 1))}</Text>
                     {p.cols.map(c => (
-                      <Text color={value[c.id]?.[1]}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
+                      <Text color={value[c.id]?.[1]} dimColor={away(m)}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
                     ))}
                     {rowNote !== '' && room > rowNote.length && <Text dimColor> {rowNote}</Text>}
                   </Box>

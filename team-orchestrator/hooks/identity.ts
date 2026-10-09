@@ -17,11 +17,16 @@
 // (~/.claude/sessions/<pid>.json) vouches for it in place of the tab when it lists this session's id in a folder under
 // the project root: it is then on this machine. That proof stands in for the tab only next to an id or a name, never
 // alone, and never while the member it points at is live somewhere else (that would be a second copy).
+//
+// A member whose home is another PC (0.5.12, #64) is never matched by tab or registry here: handles and the registry
+// are valid only on their own machine. An id and a name alone then hold the session for Herman, like any other doubt.
+// A session confirmed as a member with no machine recorded takes this one.
 
 import type { Member } from '../types'
 import { AGENT_TOOL, KEYWORDS, WRITE_TOOLS } from './guard'
 import type { Grants, Verdict } from './guard'
 import { roleFile } from './status'
+import { isAway } from './changes'
 
 export type Level = 'full' | 'restricted' | 'none'
 export type Row = 'tab+id+name' | 'tab+id' | 'tab+name' | 'id+name' | 'tab' | 'id' | 'name' | 'none'
@@ -80,8 +85,10 @@ export function relabel(list: Member[], key: string, to: string): Member[] {
  *  - live: the members (team|name) that are running somewhere else right now: a live tab, or another live session
  *    with their id
  */
-export function identify(args: { list: Member[]; facts: Facts; local: boolean; live: ReadonlySet<string> }): Identity {
+export function identify(args: { list: Member[]; facts: Facts; local: boolean; live: ReadonlySet<string>; here?: string }): Identity {
   const { list, facts, local, live } = args
+  const here = args.here ?? ''
+  const away = (m: Member) => isAway(m, here)
   const none: Identity = { level: 'none', row: 'none', list, changed: false, reattached: false, why: '' }
   if (list.length === 0) return none
   const tabKnown = facts.tab !== ''
@@ -91,7 +98,7 @@ export function identify(args: { list: Member[]; facts: Facts; local: boolean; l
     // the tab: a real match or mismatch where both sides have one; else the registry's proof, which stands in for
     // the tab only beside an id or a name, and only while the member is not live elsewhere
     const both = tabKnown && m.handle !== ''
-    const tab = both ? m.handle === facts.tab : local && !live.has(keyOf(m)) && (id || name)
+    const tab = away(m) ? false : both ? m.handle === facts.tab : local && !live.has(keyOf(m)) && (id || name)
     if (tab && id && name) return 'tab+id+name'
     if (tab && id) return 'tab+id'
     if (tab && name) return 'tab+name'
@@ -112,6 +119,7 @@ export function identify(args: { list: Member[]; facts: Facts; local: boolean; l
   if (top.length > 1) return held(`it fits ${top.map(r => r.m.name).join(' and ')} equally well`)
   const elsewhere = (why: string) => (tabKnown ? why : `${why}, and this session has no Orca tab`)
   if (row === 'id+name') {
+    if (away(x)) return held(`its home is ${x.machine}, so this may be a second copy of the session running there`)
     if (!tabKnown && !local) return held('it is not in this machine\'s session registry, so it may be running on another device')
     if (live.has(keyOf(x))) return held(`${x.name}'s own tab is still open, so this looks like a second copy`)
   }
@@ -123,6 +131,8 @@ export function identify(args: { list: Member[]; facts: Facts; local: boolean; l
     next = next.map(m => (keyOf(m) === keyOf(x) ? { ...m, ...patch } : m))
   }
   if (row === 'tab+name' || row === 'tab') set({ sessionId: facts.sessionId })
+  // its home is this machine, recorded when the roster has none for it (a member from another PC never gets this far)
+  if (here !== '' && !x.machine) set({ machine: here })
   if (row === 'id+name' && tabKnown) {
     set({ handle: facts.tab })
     // a member still recorded on this tab is not in it any more: a close of that member must not close this one
@@ -185,7 +195,7 @@ export function topOf(list: Member[], x: Member): Member | undefined {
 }
 
 /** A pending identity question: a held session and the member it looks like. */
-export type Claim = { sessionId: string; member: string; team: string; tab: string; name: string; why: string; at: number; decision?: 'is' | 'new' | 'reject' }
+export type Claim = { sessionId: string; member: string; team: string; tab: string; name: string; why: string; at: number; machine?: string; decision?: 'is' | 'new' | 'reject' }
 
 /** The warning X's head gets once. */
 export const headWarning = (c: Claim) =>

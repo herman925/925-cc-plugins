@@ -198,6 +198,7 @@ test('a held session is denied Write and team_message, writes no status as X, an
   await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as any)
   await write($)
   expect(files.has('C:/proj/.claude/team-orchestrator/status/Hualong_Workers.json')).toBe(false)
+  expect(files.has('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Workers.json')).toBe(false)
   // the person's one-turn word still works
   await $.prompt.submit({ text: 'go #allow-write', origin: { kind: 'composer' }, wait: false } as any)
   expect((await write($) as any).deny).toBeUndefined()
@@ -258,6 +259,7 @@ test('a /rename in the same tab relabels the member, its reports follow, and its
   expect([crew.address, crew.sessionId, crew.handle]).toEqual(['Hualong Crew', ID2, 'term_w'])
   expect(list.find((x: any) => x.name === 'Hualong Worker 5').boss).toBe('Hualong Crew')
   expect(files.has('C:/proj/.claude/team-orchestrator/roles/Hualong_Crew.md')).toBe(true)
-  expect(JSON.parse(files.get('C:/proj/.claude/team-orchestrator/status/Hualong_Crew.json')!).name).toBe('Hualong Crew')
+  // the status file follows on this machine (an older version's file in the project is read once and moved)
+  expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Crew.json')!).name).toBe('Hualong Crew')
   expect(toasts.some(t => t.includes('Hualong Workers is now Hualong Crew'))).toBe(true)
 })
