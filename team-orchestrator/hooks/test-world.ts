@@ -24,14 +24,15 @@ export const REG0: RegEntry[] = [{ sessionId: ID1 }, { sessionId: ID2 }, { sessi
 
 /**
  * files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title. opts.env
- * adds environment values (ORCA_TERMINAL_HANDLE, say); opts.registry replaces the session registry.
+ * adds environment values (ORCA_TERMINAL_HANDLE, say); opts.registry replaces the session registry; opts.dirs gives
+ * folder listings by path (links included).
  */
 export const world = (
   on: any,
   tabs: Tab[] = [],
   trs: Tr[] = [],
   first?: (e: any) => string | undefined,
-  opts: { env?: Record<string, string>; registry?: RegEntry[] } = {},
+  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]> } = {},
 ) => {
   const registry = opts.registry ?? REG0
   const regDir = 'C:/home/.claude/sessions'
@@ -47,6 +48,8 @@ export const world = (
   on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
   on('fs.list', async (_$: any, e: any) => {
     const at = p(e.path)
+    const fake = opts.dirs?.[at]
+    if (fake) return { value: fake.map(x => ({ size: 0, mtimeMs: 0, ...x })) } as any
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
     if (at === dir) return { value: trs.map((t, i) => ({ name: `${t.id}.jsonl`, kind: 'file', size: 9, mtimeMs: 1000 - i, isLink: false })) } as any
     if (at === regDir) return { value: [...files.keys()].filter(k => k.startsWith(`${regDir}/`)).map(k => ({ name: k.slice(regDir.length + 1), kind: 'file', size: 9, mtimeMs: 0, isLink: false })) } as any

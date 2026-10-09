@@ -229,3 +229,27 @@ in `hooks/identity.ts`; the answer is worked out once per refresh, not on every 
   X**, **new member under X's boss**, or **reject**. The top applies the answer with the `member_claim` tool
   (`{ sessionId, decision: "is" | "new" | "reject", member }`), which only the confirmed team top may call.
 - **#61:** the roster's bulk rename and restart keeps each member's saved model and effort when they are left on "keep".
+
+## Locked team files, safe scratch clean-up, Orca self-fix (0.5.11)
+
+- **Team files (#58).** `.claude/team-orchestrator/roster.json` and `settings.json` are changed only by the mod itself,
+  by sessions not on the roster, and by the team top (boss `user`). Every other member, and any session on hold, is
+  refused `Write`, `Edit` and `NotebookEdit` on them, and any `Bash` or `PowerShell` command that names them and is not
+  plainly read-only (`cat`, `type`, `Get-Content`, `ls`, `dir`, `grep`, `Select-String`, `jq` without `-i`, one plain
+  command or a pipe of them). A mixed or unclear command (a redirect, a substitution, another program) is refused
+  with the reason. No grant opens them: `#allow-write` and Allow writes do not. `status/`, `roles/` and `queue.json`
+  stay writable. Rules: `isTeamFilePath`, `namesTeamFile`, `notReadOnly`, `judgeTeamFiles` in `hooks/guard.ts`.
+- **Rights changed outside the mod (#58).** What the mod last wrote for each member's Allow writes and Allow subagents
+  is recorded in the plugin's store. The team top's refresh compares the roster file with it; a difference seen on two
+  refreshes in a row is toasted to the top once and noted on the member's row. Nothing is reverted.
+- **Scratch auto-approve (#60).** Only plain literal paths: a `*`, `?`, `[` or `]` in a target, or a trailing slash,
+  leaves the engine's ask. Before approving, every folder from the allowed root down to the target, and the target,
+  is listed: a link (or anything that is neither a file nor a folder) asks. A recursive delete (`rm -r`, `rm -rf`,
+  `Remove-Item -Recurse`, `rd /s`, `rmdir /s`, `del /s`) also walks the target, up to 2000 entries, and asks if any
+  entry inside is a link or the folder is larger. Hard links are left alone. Rules: `scratchDeletePlan` and
+  `linkFree` in `hooks/platform.ts`.
+- **Orca command (#70).** At start, a saved Orca command that fails `--version` while the platform default (`orca.exe`
+  on Windows, `orca` elsewhere) works is switched to the default in `/config`, with a toast.
+- **Helpers (#73).** A subagent's or a workflow agent's call (it carries `agentId`) is judged as its spawning member,
+  by the grants standing right now: Allow writes and Allow subagents, and a one-turn `#allow-…` until the spawner's
+  own turn ends. Tests in `hooks/lock.test.ts`.

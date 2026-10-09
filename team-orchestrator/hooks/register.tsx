@@ -2,13 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Act, Bulk, Form, Member, Settings, Spawn, View } from '../types'
-import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from './guard'
+import { AGENT_TOOL, grantChanges, type GrantMap, grantMap, grantsFrom, judge, judgeTeamFiles, namesTeamFile, NO_GRANTS, pathOf, recordAfterWrite, SHELL_TOOLS, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
 import type { Claim, Level } from './identity'
 import type { Status, TeamSettings } from './status'
-import { countFromPs, scratchDeleteAllowed } from './platform'
+import { countFromPs, linkFree, scratchDeletePlan } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
 import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
@@ -344,9 +344,62 @@ async function share($: any) {
   const before = (await $.fs.exists(file)) ? String(await $.fs.read(file)) : ''
   if (before !== text) {
     await exclude($)
+    const prev = await readGrantRecord($, file)
     await $.fs.write(file, text)
+    await writeGrantRecord($, file, recordAfterWrite(prev, grantMap(rowsOf(before)), grantMap(list)))
   }
   await writeRoles($, list)
+}
+
+// ── Grants changed outside the mod (#58) ──
+// What the mod last wrote for each member's Allow writes and Allow subagents, per roster file: in $.store, which every
+// session of this machine shares, with this session's own copy as the fallback. The team top's refresh compares the
+// file with it (checkGrants). Reported only, never reverted.
+const grantMemo = new Map<string, GrantMap>()
+const grantKey = (file: string) => `grants:${file.replace(/\\/g, '/').toLowerCase()}`
+async function readGrantRecord($: any, file: string): Promise<GrantMap | undefined> {
+  const v = await $.store.get(grantKey(file)).catch(() => undefined)
+  return v && typeof v === 'object' ? (v as GrantMap) : grantMemo.get(grantKey(file))
+}
+async function writeGrantRecord($: any, file: string, g: GrantMap) {
+  grantMemo.set(grantKey(file), g)
+  await $.store.set(grantKey(file), g).catch(() => undefined)
+}
+const rowsOf = (text: string): Partial<Member>[] => {
+  try {
+    const v = JSON.parse(text)
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
+
+// A difference is reported once it shows on two refreshes in a row (a write by another session's mod, caught between
+// its file and its record, is gone by the next one), and each difference once.
+const tamper = { last: '', told: new Set<string>() }
+const TAMPER_NOTE = 'roster.json changed outside the mod'
+async function checkGrants($: any) {
+  const file = await teamFile($)
+  if (!(await $.fs.exists(file))) return
+  const now = grantMap(rowsOf(String(await $.fs.read(file))))
+  const rec = await readGrantRecord($, file)
+  if (!rec) return void (await writeGrantRecord($, file, now))
+  const diff = grantChanges(rec, now)
+  const sig = JSON.stringify(diff)
+  const twice = sig === tamper.last
+  tamper.last = sig
+  if (diff.length === 0 || !twice || tamper.told.has(sig)) return
+  tamper.told.add(sig)
+  const say = diff.map(d => `${d.name}: ${d.changes.join(', ')}`).join('; ')
+  await $.ui.toast(`Team Orchestrator: ${TAMPER_NOTE} (${say}). Nothing was reverted; check Settings → Allow writes / Allow subagents.`)
+  await update($, members, old =>
+    old.map(m => {
+      const d = diff.find(x => x.key === keyOf(m))
+      if (!d) return m
+      const kept = m.note.split(', ').filter(p => p !== '' && !p.startsWith(TAMPER_NOTE))
+      return { ...m, note: [...kept, `${TAMPER_NOTE}: ${d.changes.join(', ')}`].join(', ') }
+    }),
+  )
 }
 
 // Each member's role file (roles.ts): the generated part follows the roster, the person's notes below the marker stay.
@@ -981,17 +1034,25 @@ let turn: Grants = NO_GRANTS
 
 // One call of the Agent, Write, Edit or NotebookEdit tool by a roster member: refused, or let through (with a line
 // in the toast when a grant made the difference). A session that is not on the roster is let through untouched.
+// A helper's call (a subagent's or a workflow agent's, carrying agentId) runs in this same session, so it is judged
+// as this session's member, by the grants standing right now: a helper has exactly what its spawner has (#73).
+// Bash and PowerShell are judged only against the team files (#58).
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
+  const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
+  const command = shell ? String(e.command ?? '') : ''
+  if (shell && !namesTeamFile(command)) return undefined
   await pull($)
   const list = await readMembers($)
   if (list.length === 0) return undefined
   const w = await identity($, list)
   if (w.level === 'none' || !w.me) return undefined
-  // a held session gets the strictest guard: only the person's one-turn word lets a write or a subagent through
+  // the team files first: no grant opens them, only being the team top
   const v =
-    w.level === 'restricted'
+    judgeTeamFiles({ me: w.me, confirmed: w.level === 'full', tool, path: pathOf(e), command }) ??
+    // a held session gets the strictest guard: only the person's one-turn word lets a write or a subagent through
+    (w.level === 'restricted'
       ? judgeHeld({ me: w.me, why: w.why, tool, grants: turn })
-      : judge({ me: w.me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) })
+      : judge({ me: w.me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) }))
   if (!v) return undefined
   // a block toasts every time; an allow toasts once per session and reason, not on every write
   if (v.kind === 'deny' || !toasted.has(v.line)) {
@@ -1048,7 +1109,9 @@ async function refresh($: any) {
   if ((await readMembers($)).length === 0) return
   // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster
   self.cur = undefined
-  await identity($)
+  const who = await identity($)
+  // the team top checks that every member's rights in the roster file are the ones the mod wrote
+  if (who.level === 'full' && who.me?.boss === 'user') await checkGrants($).catch(() => undefined)
   const list: Member[] = await readMembers($)
   // Live status comes from each member's own status file, not from its screen: merge those into the roster's columns.
   const now = Date.now()
@@ -1420,14 +1483,27 @@ async function applyBulk($: any) {
 }
 
 // At start: an empty Orca command is filled in once from the platform (written to the plugin option, which reloads the
-// mod with it); a set one is checked, and only a failure is shown.
+// mod with it); a set one is checked. A set one that fails here while the platform's default works (settings synced
+// from another platform carry orca.exe to a Mac) is switched to the default, with a toast (#70); any other failure is
+// only shown.
 async function orcaSetup($: any) {
+  const guess = (await isWindows($)) ? 'orca.exe' : 'orca'
   if (cfg.orcaCommand) {
     const problem = await orcaProblem($, cfg.orcaCommand)
-    if (problem) await $.ui.toast(`Team Orchestrator: ${problem} Fix "Orca command" in /config.`)
+    if (!problem) return
+    const was = cfg.orcaCommand
+    if (was !== guess && !(await orcaProblem($, guess))) {
+      const saved = await $.config.set({ key: ORCA_KEY, value: guess }).then((r: any) => r?.deny === undefined, () => false)
+      cfg.orcaCommand = guess
+      return void (await $.ui.toast(
+        saved
+          ? `Team Orchestrator: "Orca command" was ${was}, which does not run here; switched it to ${guess}, this platform's default.`
+          : `Team Orchestrator: "Orca command" ${was} does not run here; using ${guess} for this session (it could not be saved, fix it in /config).`,
+      ))
+    }
+    await $.ui.toast(`Team Orchestrator: ${problem} Fix "Orca command" in /config.`)
     return
   }
-  const guess = (await isWindows($)) ? 'orca.exe' : 'orca'
   const problem = await orcaProblem($, guess)
   if (problem) return void (await $.ui.toast(`Team Orchestrator: Orca not found. ${problem} Set "Orca command" in /config.`))
   await $.config.set({ key: ORCA_KEY, value: guess }).catch(() => undefined)
@@ -1617,8 +1693,9 @@ export const register: Register = (on, options) => {
     return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
   }))
 
-  // a roster member may not use subagents, and a member with reports may not write files itself, unless allowed
-  for (const tool of [AGENT_TOOL, ...WRITE_TOOLS])
+  // a roster member may not use subagents, and a member with reports may not write files itself, unless allowed;
+  // only the team top changes the team files, by tool or by shell
+  for (const tool of [AGENT_TOOL, ...WRITE_TOOLS, ...SHELL_TOOLS])
     on('tool.call', { tool } as any, async ($, e, next) => {
       const deny = await guard($, e, tool)
       return deny !== undefined ? ({ deny } as any) : next(e)
@@ -1750,14 +1827,17 @@ export const register: Register = (on, options) => {
       const none = () => undefined
       const temps = [await $.env.get('TEMP').catch(none), await $.env.get('TMP').catch(none), await $.env.get('TMPDIR').catch(none), '/tmp'].map(x => String(x ?? ''))
       const root = await rootOf($)
-      const ok = scratchDeleteAllowed(command, {
+      const plan = scratchDeletePlan(command, {
         cwd: String(await $.session.cwd().catch(() => root)),
         sessionId: String(await $.session.id().catch(() => '')) || who.me.sessionId,
         head: who.list.some(m => m !== who.me && m.boss === who.me.name),
         temps,
         projectScratch: t.scratchDir.trim() ? `${root}/${t.scratchDir.trim().replace(/^[\\/]+/, '')}` : '',
       })
-      return ok ? { ...r, decision: 'allow', reason: 'Team Orchestrator: scratch clean-up of this member\'s own temporary files' } : r
+      // the words allow it; the disk must too: no link from the allowed root down to the target, nor inside a folder
+      // a recursive delete empties (a link there would carry the delete into real files). Else the engine's ask stands.
+      if (!plan || !(await linkFree(plan, p => $.fs.list(p)))) return r
+      return { ...r, decision: 'allow', reason: 'Team Orchestrator: scratch clean-up of this member\'s own temporary files' }
     })
 
   // the Orca command option: a value that does not start is refused, with the reason shown in /config

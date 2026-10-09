@@ -80,3 +80,126 @@ export function judge(args: { me: Member; list: Member[]; tool: string; path: st
     line: `blocked ${tool}: ${me.name} has reports and no write permission`,
   }
 }
+
+// ── The team files (0.5.11, #58) ──────────────────────────────────────────────────────────────────────────────
+// roster.json and settings.json in .claude/team-orchestrator/ carry every member's rights (Allow writes, Allow
+// subagents) and the team's settings (auto-approve, the session cap). Only the mod's own code (it writes through
+// $.fs, not a tool), sessions that are not on the roster (the person's own) and the team top (boss "user") may change
+// them. Every other member is refused Write, Edit and NotebookEdit on them, and any Bash or PowerShell command that
+// names them and is not plainly read-only. status/, roles/ and queue.json stay writable.
+
+export const SHELL_TOOLS = ['Bash', 'PowerShell'] as const
+
+// one path segment as Windows reads it: no alternate stream (":$DATA"), no trailing dots or spaces
+const plain = (s: string) => s.replace(/:.*$/, '').replace(/[. ]+$/, '')
+const TEAM_DIR = /^(team-orchestrator|team-o~\d+)$/
+const TEAM_FILE = /^(roster\.json|settings\.json|roster~\d+\.jso|settin~\d+\.jso)$/
+
+/** The path is .claude/team-orchestrator/roster.json or settings.json (any root; "." and ".." folded; 8.3 names too). */
+export function isTeamFilePath(path: string): boolean {
+  const segs: string[] = []
+  for (const s of path.replace(/\\/g, '/').toLowerCase().split('/')) {
+    if (s === '' || s === '.') continue
+    if (s === '..') segs.pop()
+    else segs.push(s)
+  }
+  const n = segs.length
+  return n >= 2 && TEAM_FILE.test(plain(segs[n - 1] as string)) && TEAM_DIR.test(plain(segs[n - 2] as string))
+}
+
+/**
+ * The command names a team file: roster.json anywhere; settings.json beside the team folder's name or bare (the shell
+ * may stand in the team folder); or the team folder with a wildcard, a variable or a substitution (the target is
+ * then unknowable). Best effort: a name built at run time is not seen.
+ */
+export function namesTeamFile(command: string): boolean {
+  const c = command.replace(/\\/g, '/').toLowerCase()
+  const dir = /team-orchestrator|team-o~\d/.test(c)
+  if (/roster(\.json|~\d)/.test(c)) return true
+  if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
+  return dir && /[*?[\]{}$`]/.test(c)
+}
+
+const READERS = /^(cat|type|get-content|gc|ls|dir|get-childitem|gci|grep|select-string|sls|jq)$/
+// a redirect that only drops output or merges stderr writes nothing
+const HARMLESS = /\d?>>?\s*(&\d|\/dev\/null|\$null|nul)(?=$|[\s;|&)])/gi
+
+/** Why the command is not plainly read-only, or '' when it is: only cat, type, Get-Content, ls, dir, grep, Select-String or jq (without -i). */
+export function notReadOnly(command: string): string {
+  if (/`|\$\(|\$\{|<\(|>\(/.test(command)) return 'it runs a substitution, so what it does is unclear'
+  // quoted text is an argument (a jq filter, a grep pattern), never a redirect or a second command
+  const c = command.replace(/'[^']*'|"[^"]*"/g, ' Q ').replace(HARMLESS, ' ')
+  if (/['"]/.test(c)) return 'its quoting is unbalanced, so what it does is unclear'
+  if (/>/.test(c)) return 'it redirects output into a file'
+  const parts = c.replace(/<\s*\S+/g, ' ').split(/&&|\|\||[;|&\n\r]/).map(p => p.trim()).filter(p => p !== '')
+  if (parts.length === 0) return 'it is empty'
+  for (const p of parts) {
+    const w = p.split(/\s+/)
+    const first = (w[0] ?? '').toLowerCase()
+    if (!READERS.test(first)) return `it runs "${first}", which is not a plain read (cat, type, Get-Content, ls, dir, grep, Select-String, jq)`
+    if (first === 'jq' && w.some(x => x === '--in-place' || /^-[a-z]*i[a-z]*$/i.test(x))) return 'it runs jq -i, which writes in place'
+  }
+  return ''
+}
+
+const LOCKED = '.claude/team-orchestrator/roster.json and settings.json'
+
+/**
+ * Judge one call against the team files. `confirmed` is false for a held session, which is locked whatever its boss.
+ * undefined: the call does not touch them, or this member may (the team top).
+ */
+export function judgeTeamFiles(args: { me: Member; confirmed: boolean; tool: string; path: string; command: string }): Verdict {
+  const { me, confirmed, tool, path, command } = args
+  if (confirmed && me.boss === 'user') return undefined
+  const who = `${me.name}${confirmed ? '' : ' (on hold)'}`
+  const tail = `Only the team top and the Team Orchestrator itself change ${LOCKED}; ask the team top or Herman (Settings in the Team Orchestrator panel).`
+  if ((WRITE_TOOLS as readonly string[]).includes(tool)) {
+    if (!isTeamFilePath(path)) return undefined
+    return { kind: 'deny', reason: `Blocked ${tool}: ${who} may not change the team file ${path}. ${tail}`, line: `blocked ${tool}: ${me.name} on a team file` }
+  }
+  if (!(SHELL_TOOLS as readonly string[]).includes(tool) || !namesTeamFile(command)) return undefined
+  const why = notReadOnly(command)
+  if (why === '') return undefined
+  return {
+    kind: 'deny',
+    reason: `Blocked ${tool}: this command names a team file (${LOCKED}) and is not plainly read-only: ${why}. ${who} may only read them (cat, type, Get-Content, ls, dir, grep, Select-String, jq without -i), one plain command at a time. ${tail}`,
+    line: `blocked ${tool}: ${me.name} on a team file`,
+  }
+}
+
+// ── Grants changed outside the mod (0.5.11, #58) ──
+// What the mod last wrote for each member's Allow writes and Allow subagents is recorded beside the roster; the team
+// top's refresh compares the file with it and reports a difference. Nothing is reverted.
+
+export type GrantMap = Record<string, { agent: boolean; write: boolean }>
+
+/** team|name → the two standing switches, from roster rows. */
+export const grantMap = (rows: Partial<Member>[]): GrantMap =>
+  Object.fromEntries(rows.filter(r => typeof r?.name === 'string').map(r => [`${r.team ?? ''}|${r.name}`, { agent: r.allowAgent === true, write: r.allowWrite === true }]))
+
+const same = (a?: { agent: boolean; write: boolean }, b?: { agent: boolean; write: boolean }) => !!a && !!b && a.agent === b.agent && a.write === b.write
+
+/**
+ * The record after the mod writes the roster. A member whose switches this write changed (or that is new) is recorded
+ * as written; one the write left as the file had it keeps its earlier record, so a change somebody else made to the
+ * file, pulled in and written back unchanged, is not taken as the mod's.
+ */
+export function recordAfterWrite(prev: GrantMap | undefined, before: GrantMap, written: GrantMap): GrantMap {
+  const out: GrantMap = {}
+  for (const [k, v] of Object.entries(written)) out[k] = same(before[k], v) && prev?.[k] ? (prev[k] as GrantMap[string]) : v
+  return out
+}
+
+/** The members whose switches in the file differ from what the mod last wrote, with the rights in words. */
+export function grantChanges(recorded: GrantMap, file: GrantMap): { key: string; name: string; changes: string[] }[] {
+  const out: { key: string; name: string; changes: string[] }[] = []
+  for (const [k, v] of Object.entries(file)) {
+    const r = recorded[k]
+    if (!r || same(r, v)) continue
+    const changes: string[] = []
+    if (r.write !== v.write) changes.push(`Allow writes ${v.write ? 'on' : 'off'}`)
+    if (r.agent !== v.agent) changes.push(`Allow subagents ${v.agent ? 'on' : 'off'}`)
+    out.push({ key: k, name: k.slice(k.indexOf('|') + 1), changes })
+  }
+  return out
+}
