@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { CHECK, cell, chartLabels, columnPlan, headerLine } from './layout'
+import { CHECK, cell, chartLabels, columnPlan, headerLine , sideBySide } from './layout'
 
 // the Hualong roster as it stands: long names, a tree three deep
 const ROWS = [
@@ -143,4 +143,13 @@ test('org chart labels, the roster file of 2026-10-05 (teams Hualong-HQ and Hual
   ]
   const labels = chartLabels(list)
   expect(list.map(m => labels.get(`${m.team}|${m.name}`))).toEqual(['CEO', 'Workers', 'Messenger', 'Lead', 'WA', 'WB'])
+})
+
+test('side by side shows a 2 x 2 grid for four teams on a 1920 x 1080 screen, and never fewer than two cards when two fit at all', () => {
+  expect(sideBySide(180, 4, 4)).toBe(2)
+  expect(sideBySide(130, 4, 4)).toBe(2)
+  expect(sideBySide(80, 4, 4)).toBe(2)
+  expect(sideBySide(60, 4, 4)).toBe(1)
+  expect(sideBySide(260, 4, 4)).toBe(4)
+  expect(sideBySide(260, 1, 4)).toBe(1)
 })

@@ -21,6 +21,20 @@ const SHORT_HEAD: Record<string, string> = { STATUS: '', CONTEXT: 'CTX', MODEL: 
 const NAME_ROOM = 16
 const NAME_MIN = 8
 
+/**
+ * Cards per row in the side-by-side layout. Each card needs at least the medium tier with a short name (or, to keep
+ * two side by side, the narrow tier); a card that gets more width simply draws a wider tier. So a 1920x1080 screen
+ * (about 160-210 columns) shows a 2 x 2 grid for four teams instead of one card per row.
+ */
+export function sideBySide(cols: number, cards: number, frame: number): number {
+  if (cards <= 1) return 1
+  const mediumMin = CHECK + 38 + NAME_ROOM + frame
+  const narrowMin = CHECK + 18 + NAME_MIN + frame
+  const fit = Math.floor(cols / mediumMin)
+  const n = fit >= 2 ? fit : Math.floor(cols / narrowMin) >= 2 ? 2 : 1
+  return Math.max(1, Math.min(cards, n))
+}
+
 /** `s` cut to `w` cells, the last one "…" when cut */
 export const fit = (s: string, w: number) => (w <= 0 ? '' : s.length <= w ? s : `${s.slice(0, w - 1)}…`)
 /** `s` as a cell of `w`: cut to w - 1, then padded, so one space always follows */

@@ -434,13 +434,15 @@ test('settings hide the chart and columns, and stay after a refresh and a new dr
   expect(JSON.stringify(await band.drawn())).toContain('MODEL')
 })
 
-test('side by side: cards share a row only where two fit; a narrow terminal stays stacked', async ($, on) => {
+test('side by side: two cards share a row at the narrower tiers, and a very narrow terminal stays stacked', async ($, on) => {
   await twoSmallTeams($, on)
   const band = await bandAt($, 120)
   await band.press({ key: 'tab-settings' })
   await band.press({ key: 'layout-columns' })
   await band.press({ key: 'tab-roster' })
-  expect(cardWidths(await band.drawn())).toEqual([120, 120])
+  expect(cardWidths(await band.drawn())).toEqual([60, 60])
+  const narrow = await bandAt($, 60)
+  expect(cardWidths(await narrow.drawn())).toEqual([60, 60])
   const wide = await bandAt($, 300)
   const widths = cardWidths(await wide.drawn())
   expect(widths.length).toBe(2)

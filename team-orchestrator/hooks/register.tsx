@@ -13,7 +13,7 @@ import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
 import { admit, chunk, cliOf, COUNT_EVERY_MS, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry } from './changes'
-import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
+import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -127,8 +127,9 @@ const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF'] as const
 // a card's border and padding, around the cells columnPlan lays out
 const FRAME = 4
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
-const cardsPerRow = (s: Settings, cols: number, cardW: number, cards: number) =>
-  s.layout === 'columns' ? Math.max(1, Math.min(cards, Math.floor(cols / cardW))) : 1
+// side by side: as many cards as fit at the narrower tiers (each card then picks the widest tier its width allows)
+const cardsPerRow = (s: Settings, cols: number, _cardW: number, cards: number) =>
+  s.layout === 'columns' ? sideBySide(cols, cards, FRAME) : 1
 const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
