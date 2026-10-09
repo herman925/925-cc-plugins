@@ -178,3 +178,16 @@ The roster shows a short model name, such as `haiku-5-5`. Before 0.5.05, a start
 - Full `claude-...` ids pass as they are.
 - Short names (`haiku-5-5`) and display names (`Haiku 5.5`) become `claude-haiku-5-5`.
 - Anything else is left out, so the session uses its default model.
+
+## Windows, macOS and Linux (0.5.06)
+
+- **Orca command.** This is a plugin option, `Orca command`, in `/config`. When it is empty, the mod chooses `orca.exe` on Windows and `orca` elsewhere, checks that the command starts (`--version`), and saves it into the option once. When you edit the option, the mod refuses a command that does not start and shows the error. At every start the mod checks the command again and shows a toast only on failure.
+- **Workspace.** New members open in the workspace of the tab you typed in. The mod reads `ORCA_WORKTREE_ID`, which Orca sets in every terminal, before it asks `orca worktree current`. Asking by folder picks the wrong workspace when two Orca workspaces share one folder.
+- **Errors.** A team tool never crashes; it returns a sentence that says what failed. Before this release, a hook that threw was skipped, and the engine then said no hook had answered, which looked like missing code.
+- **macOS and Linux.**
+  - Transcript tails are read with `tail`.
+  - The leftover count uses `ps`, counting shells and runtimes under the member's own `claude` process. It shows "unknown", not zero, when that process cannot be found.
+  - Housekeeping notes give each platform's own process names.
+  - The start text also removes `$`, the backtick and the backslash.
+- **Scratch clean-up without asking.** This is in Settings → Workers and is on by default. A worker may delete inside its own session's temporary folder without a prompt. Heads and leads may also delete in the system temp folder and in the project scratch folder (`.claude/scratch` by default). The mod approves only a single plain delete command, lifting an "ask" to "allow"; it never overrides a deny. Everything else still asks. The cross-CLI design (Codex, Hermes and others) is tracked in #51 and #55.
+- **Model and effort saved in the roster.** Before this release, `roster.json` did not keep them. A member started on demand from another session (for example, a lead's first `team_message`) then came up on the CLI defaults instead of the values chosen at Create.

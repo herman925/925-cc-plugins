@@ -6,11 +6,27 @@ import { AGENT_TOOL, grantsFrom, judge, NO_GRANTS, pathOf, WRITE_TOOLS } from '.
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import type { Status, TeamSettings } from './status'
+import { countFromPs, scratchDeleteAllowed } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
 import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
-const ORCA = 'orca.exe'
+// Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
+// empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
+// PowerShell (transcript tails, leftover counts) is Windows only; macOS and Linux use tail and ps.
+const os = { windows: undefined as boolean | undefined }
+async function isWindows($: any): Promise<boolean> {
+  if (os.windows === undefined) os.windows = String((await $.env.get('OS').catch(() => undefined)) ?? '') === 'Windows_NT'
+  return os.windows
+}
+const cfg = { orcaCommand: '' }
+const ORCA_KEY = 'team-orchestrator.orcaCommand'
+const orcaBin = async ($: any) => cfg.orcaCommand || ((await isWindows($)) ? 'orca.exe' : 'orca')
+/** '' when the command starts and answers --version, else why not, in a sentence. */
+async function orcaProblem($: any, command: string): Promise<string> {
+  const r = await $.process.run([command, '--version'], { timeoutMs: 20000 }).catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+  return r.exitCode === 0 ? '' : `"${command} --version" did not run (${String(r.stderr || r.stdout || `exit ${r.exitCode}`).trim().slice(0, 160)}).`
+}
 const TOOL = 'mcp__team-orchestrator__team_launch'
 const ADOPT = 'mcp__team-orchestrator__team_adopt'
 const REMOVE_TEAM = 'mcp__team-orchestrator__team_remove'
@@ -230,7 +246,7 @@ const bar = (pct: number, cells = 8): [string, string] => {
 const handleOf = (json: string): string => json.match(/term_[0-9a-f-]+/)?.[0] ?? ''
 
 async function orca($: any, ...args: string[]) {
-  const r = await $.process.run([ORCA, ...args, '--json'], { timeoutMs: 120000 })
+  const r = await $.process.run([await orcaBin($), ...args, '--json'], { timeoutMs: 120000 }).catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
   return r.exitCode === 0
     ? { ok: true, out: r.stdout as string }
     : { ok: false, out: String(r.stderr || r.stdout) }
@@ -258,10 +274,14 @@ const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
 
-const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending'] as const
+const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort'] as const
 
 // The Orca workspace (worktree id) this session runs in, from `orca worktree current` run in the session's own folder.
 async function currentWorktree($: any): Promise<string> {
+  // Orca names the workspace of the tab this session runs in; asking Orca by folder picks the wrong one when two
+  // workspaces share a folder
+  const own = String((await $.env.get('ORCA_WORKTREE_ID').catch(() => undefined)) ?? '').trim()
+  if (own) return own
   const cur = await orca($, 'worktree', 'current')
   return cur.ok ? (cur.out.match(/"worktree":\s*\{\s*"id":\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? '').replace(/\\\\/g, '\\') : ''
 }
@@ -432,12 +452,16 @@ async function transcripts($: any): Promise<Transcript[]> {
 const TAIL = 256 * 1024
 const TAIL_PS =
   "$o=[Console]::OpenStandardOutput(); foreach($p in $env:TO_FILES -split '\\|'){ $o.WriteByte(0); try { $f=[IO.File]::Open($p,'Open','Read','ReadWrite'); try { $k=[Math]::Min([long]$env:TO_BYTES,$f.Length); [void]$f.Seek(-$k,'End'); $b=New-Object byte[] $k; $o.Write($b,0,$f.Read($b,0,$k)) } finally { $f.Close() } } catch {} }; $o.Flush()"
+// the same on macOS and Linux: tail -c per file, each preceded by a NUL
+const TAIL_SH = 'for p in "$@"; do printf "\\0"; tail -c "$TO_BYTES" "$p" 2>/dev/null; done'
 async function tails($: any, files: string[]): Promise<string[]> {
   const out: string[] = []
+  const win = await isWindows($)
   for (let i = 0; i < files.length; i += 15) {
     const part = files.slice(i, i + 15)
+    const cmd = win ? ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', TAIL_PS] : ['sh', '-c', TAIL_SH, 'sh', ...part]
     const r = await $.process
-      .run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', TAIL_PS], { env: { TO_FILES: part.join('|'), TO_BYTES: String(TAIL) }, timeoutMs: 60000 })
+      .run(cmd, { env: { TO_FILES: part.join('|'), TO_BYTES: String(TAIL) }, timeoutMs: 60000 })
       .catch(() => undefined)
     const got = r?.exitCode === 0 ? String(r.stdout).split('\0').slice(1) : []
     out.push(...part.map((_, j) => got[j] ?? ''))
@@ -599,6 +623,10 @@ const counted = { at: 0 }
 async function countLeftovers($: any, sessionId: string): Promise<number | undefined> {
   if (!sessionId || Date.now() - counted.at < COUNT_EVERY_MS) return undefined
   counted.at = Date.now()
+  if (!(await isWindows($))) {
+    const r = await $.process.run(['ps', '-eo', 'pid=,ppid=,args='], { timeoutMs: 20000 }).catch(() => undefined)
+    return r?.exitCode === 0 ? countFromPs(String(r.stdout), sessionId) : -1
+  }
   const ps =
     `$all=Get-CimInstance Win32_Process; $me=$all|?{$_.Name -eq 'claude.exe' -and [string]$_.CommandLine -match '${sessionId}'}|select -First 1; ` +
     `if(-not $me){'-1';exit}; $ids=@{}; $all|%{$ids[[int]$_.ProcessId]=$_}; $n=0; ` +
@@ -1191,7 +1219,32 @@ async function applyBulk($: any) {
   await update($, bulk, o => ({ ...o, msg: report.join(' | ') || 'Nothing to change.' }))
 }
 
-export const register: Register = on => {
+// At start: an empty Orca command is filled in once from the platform (written to the plugin option, which reloads the
+// mod with it); a set one is checked, and only a failure is shown.
+async function orcaSetup($: any) {
+  if (cfg.orcaCommand) {
+    const problem = await orcaProblem($, cfg.orcaCommand)
+    if (problem) await $.ui.toast(`Team Orchestrator: ${problem} Fix "Orca command" in /config.`)
+    return
+  }
+  const guess = (await isWindows($)) ? 'orca.exe' : 'orca'
+  const problem = await orcaProblem($, guess)
+  if (problem) return void (await $.ui.toast(`Team Orchestrator: Orca not found. ${problem} Set "Orca command" in /config.`))
+  await $.config.set({ key: ORCA_KEY, value: guess }).catch(() => undefined)
+}
+
+// A team tool never crashes: an error comes back as a sentence the model can act on. (A hook that throws is skipped,
+// and the engine then reports that no hook answered the tool, which reads like missing code.)
+const safely = async (fn: () => Promise<any>): Promise<any> => {
+    try {
+      return await fn()
+    } catch (err) {
+      return { result: `Team Orchestrator could not finish this: ${String(err).slice(0, 300)}. If Orca was not found, set "Orca command" in /config to Orca's command-line tool.` }
+    }
+  }
+
+export const register: Register = (on, options) => {
+  cfg.orcaCommand = String((options as any)?.orcaCommand ?? '').trim()
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
     await $.tool.register({
@@ -1289,6 +1342,7 @@ export const register: Register = on => {
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
+    void orcaSetup($)
     $.clock.every(30000, () => void refresh($))
     // this session's own status: alive now, and a heartbeat every minute (a silent member shows offline after 5 min)
     void writeMine($, { state: 'idle' })
@@ -1306,7 +1360,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('tool.call', { tool: ADOPT }, async ($, e) => {
+  on('tool.call', { tool: ADOPT }, async ($, e) => safely(async () => {
     const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
@@ -1323,22 +1377,22 @@ export const register: Register = on => {
     await refresh($)
     const notes = (await readMembers($)).filter(m => m.team === team && m.note !== '').map(m => `${m.name}: ${m.note}`)
     return { result: `Roster now shows ${adopted.length} adopted sessions.${notes.length ? ` Notes: ${notes.join('; ')}.` : ''}` } as any
-  })
+  }))
 
-  on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => {
+  on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => safely(async () => {
     const input = e as unknown as { team: string }
     return { result: await remove($, input.team) } as any
-  })
+  }))
 
-  on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => {
+  on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => safely(async () => {
     const input = e as unknown as { team: string; name: string }
     return { result: await remove($, input.team, input.name) } as any
-  })
+  }))
 
-  on('tool.call', { tool: MOVE }, async ($, e) => {
+  on('tool.call', { tool: MOVE }, async ($, e) => safely(async () => {
     const input = e as unknown as { team: string; name: string; toTeam: string; boss?: string }
     return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
-  })
+  }))
 
   // a roster member may not use subagents, and a member with reports may not write files itself, unless allowed
   for (const tool of [AGENT_TOOL, ...WRITE_TOOLS])
@@ -1362,7 +1416,7 @@ export const register: Register = on => {
     const r: any = await next(e)
     if (r?.deny !== undefined) return r
     const who = await rosterSelf($)
-    const note = who && onSend(who.me, who.list, String((e as any).to ?? ''))
+    const note = who && onSend(who.me, who.list, String((e as any).to ?? ''), await isWindows($))
     if (note && isCleanConfirmation(message)) void writeMine($, { lastClean: Date.now() })
     return note ? { ...r, context: [...(r.context ?? []), note] } : r
   })
@@ -1428,18 +1482,51 @@ export const register: Register = on => {
     return (await rosterSelf($)) ? { ...r, isDeferred: false } : r
   })
 
-  on('tool.call', { tool: MESSAGE }, async ($, e) => {
+  on('tool.call', { tool: MESSAGE }, async ($, e) => safely(async () => {
     const input = e as unknown as { to: string; message: string; summary?: string }
     const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
     if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
     return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`) } as any
-  })
+  }))
 
-  on('tool.call', { tool: TOOL }, async ($, e) => {
+  on('tool.call', { tool: TOOL }, async ($, e) => safely(async () => {
     const input = e as unknown as { team: string; members: Spec[] }
     await update($, view, () => 'roster')
     return { result: await launch($, input.team, input.members) } as any
+  }))
+
+  // routine clean-up never waits for the person: a delete of the member's own scratch is approved here (platform.ts).
+  // Only an "ask" is lifted to "allow"; a deny from a rule or the organization stands.
+  for (const tool of ['Bash', 'PowerShell'])
+    on('tool.check', { tool } as any, async ($, e, next) => {
+      const r: any = await next(e)
+      if (r?.decision !== 'ask') return r
+      const command = String((e as any).input?.command ?? '')
+      const t = await readTeamSettings($)
+      const who = await rosterSelf($)
+      if (!t.autoScratch || !who || !command) return r
+      const none = () => undefined
+      const temps = [await $.env.get('TEMP').catch(none), await $.env.get('TMP').catch(none), await $.env.get('TMPDIR').catch(none), '/tmp'].map(x => String(x ?? ''))
+      const root = await rootOf($)
+      const ok = scratchDeleteAllowed(command, {
+        cwd: String(await $.session.cwd().catch(() => root)),
+        sessionId: String(await $.session.id().catch(() => '')) || who.me.sessionId,
+        head: who.list.some(m => m !== who.me && m.boss === who.me.name),
+        temps,
+        projectScratch: t.scratchDir.trim() ? `${root}/${t.scratchDir.trim().replace(/^[\\/]+/, '')}` : '',
+      })
+      return ok ? { ...r, decision: 'allow', reason: 'Team Orchestrator: scratch clean-up of this member\'s own temporary files' } : r
+    })
+
+  // the Orca command option: a value that does not start is refused, with the reason shown in /config
+  on('config.set', { key: ORCA_KEY } as any, async ($, e, next) => {
+    const value = String((e as any).value ?? '').trim()
+    if (value) {
+      const problem = await orcaProblem($, value)
+      if (problem) return { deny: `${problem} Give the full path to Orca's command-line tool, or leave it empty to detect it.` } as any
+    }
+    return next(e)
   })
 
   on('command.run', { command: 'team' }, async ($, e) => {
@@ -1470,7 +1557,7 @@ export const register: Register = on => {
     // a report from another session: its head is told to check on that worker's leftovers (housekeeping.ts)
     if (o?.kind === 'peer' || o?.kind === 'peer-send-message') {
       const who = await rosterSelf($)
-      const note = who && onReceive(who.me, who.list, e.text)
+      const note = who && onReceive(who.me, who.list, e.text, await isWindows($))
       // an order from this member's own boss becomes its task line (when Clean View gives none)
       const from = senderOf(e.text)
       const boss = who && who.list.find(m => m.name === who.me.boss)
@@ -1653,7 +1740,7 @@ async function spawnView($: any, ui: any) {
 }
 
 async function settingsView($: any, ui: any) {
-  const { Box, Text, Button } = ui
+  const { Box, Text, Button, Input } = ui
   const s = await readSettings($)
   const list: Member[] = await readMembers($)
   // a standing permission of one member, kept in the roster file like the rest of its structure
@@ -1731,6 +1818,17 @@ async function settingsView($: any, ui: any) {
       </Box>
       <Text dimColor>
         {' '.repeat(13)}On demand: Create starts only the top and the team heads; leads and workers start, fresh and briefed, the first time their boss messages them. Either way sessions start a batch at a time, 5 s apart.
+      </Text>
+      <Box>
+        <Text bold>{'Scratch'.padEnd(13)}</Text>
+        {Seg(ui, 'ts-scratch', [['1', 'Auto-approve clean-up'], ['0', 'Ask each time']], ts.autoScratch ? '1' : '0', v => void setTeam({ autoScratch: v === '1' }))}
+      </Box>
+      <Box>
+        <Text bold>{'Scratch dir'.padEnd(13)}</Text>
+        <Input key="ts-scratchdir" value={ts.scratchDir} placeholder=".claude/scratch" onInput={(v: string) => void setTeam({ scratchDir: v })} onSubmit={() => {}} />
+      </Box>
+      <Text dimColor>
+        {' '.repeat(13)}Workers may delete inside their own session's temporary folder without asking; heads and leads may also clean the system temp folder and this project folder. Any other delete still asks.
       </Text>
       {workers.length > 0 && (
         <Box>
@@ -2352,7 +2450,7 @@ async function rosterView($: any, ui: any, cols: number) {
     if (kind === 'movehere') return void (await finish(team, move($, ticked, team)))
     if (kind === 'open') {
       const m = list.find(x => x.sel && x.handle !== '')
-      if (m) await $.process.run([ORCA, 'terminal', 'switch', '--terminal', m.handle, '--json'])
+      if (m) await orca($, 'terminal', 'switch', '--terminal', m.handle)
       return void (await setAct({ ...ACT0, to: team, msg: m ? `Opened ${m.name}.` : 'No ticked row has an Orca tab.' }))
     }
     if (kind === 'brief') return void (await finish(team, briefTeam($, team).then(() => `Briefed team @${team}.`)))

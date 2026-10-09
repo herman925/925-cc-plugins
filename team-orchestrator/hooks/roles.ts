@@ -72,8 +72,9 @@ export function mergeRole(existing: string | undefined, generated: string): stri
   return `${generated}${MARKER}\r\n${notes}`
 }
 
-// cmd.exe types the start command: no double quote (it would end the argument), no % (a variable), no line breaks
-const safe = (s: string) => s.replace(/["%\r\n]+/g, ' ')
+// a shell types the start command (cmd.exe on Windows, sh or zsh elsewhere): no double quote (it would end the
+// argument), no % $ ` or backslash (variables and escapes), no line breaks
+const safe = (s: string) => s.replace(/["%$`\\\r\n]+/g, ' ')
 
 /** The system-prompt pointer a member starts with: short, because it is sent on every turn. */
 export function pointer(m: Member, list: Member[]): string {

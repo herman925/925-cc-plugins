@@ -13,23 +13,30 @@
 
 import type { Member } from '../types'
 
-const BROWSER =
-  'Browser-automation servers (node.exe running playwright/mcp or chrome-devtools-mcp, and their cmd.exe wrappers) ' +
-  'under your own claude.exe: if you are not using browser tools, stop them; if you used them, stop them as soon as ' +
+const BROWSER = (win: boolean) =>
+  `Browser-automation servers (${win ? 'node.exe' : 'node'} running playwright/mcp or chrome-devtools-mcp${win ? ', and their cmd.exe wrappers' : ''}) ` +
+  `under your own ${win ? 'claude.exe' : 'claude process'}: if you are not using browser tools, stop them; if you used them, stop them as soon as ` +
   'the browser task is done.'
 
-export const WORKER_NOTE =
-  'HOUSEKEEPING (Team Orchestrator, mandatory): you just reported to your boss. Now close every process YOUR ' +
-  'session started (bash.exe, sh.exe, node.exe, python*.exe, conhost.exe; trace them to your own claude.exe), ' +
-  'delete your scratch and /tmp files, and tell your boss "clean" (that word is recorded in your status file, ' +
-  '.claude/team-orchestrator/status/<your name>.json, with a count of your leftover processes). ' +
-  BROWSER +
-  ' Touch only processes your own session started.'
+// the process names a member looks for, per platform
+const PROCS = (win: boolean) =>
+  win ? 'bash.exe, sh.exe, node.exe, python*.exe, conhost.exe' : 'bash, zsh, sh, node, python, deno, bun'
+const OWNER = (win: boolean) => (win ? 'claude.exe' : 'claude process')
 
-export const HEAD_NOTE = (worker: string) =>
+export const workerNote = (win = true) =>
+  'HOUSEKEEPING (Team Orchestrator, mandatory): you just reported to your boss. Now close every process YOUR ' +
+  `session started (${PROCS(win)}; trace them to your own ${OWNER(win)}), ` +
+  'delete your scratch and temporary files (deletes inside your own session\'s temporary folder are approved ' +
+  'automatically), and tell your boss "clean" (that word is recorded in your status file, ' +
+  '.claude/team-orchestrator/status/<your name>.json, with a count of your leftover processes). ' +
+  BROWSER(win) +
+  ' Touch only processes your own session started.'
+export const WORKER_NOTE = workerNote(true)
+
+export const HEAD_NOTE = (worker: string, win = true) =>
   `HOUSEKEEPING (Team Orchestrator, mandatory): ${worker} just reported to you. Before going on, scan for ` +
-  `leftover processes from ${worker}'s session (bash.exe, sh.exe, node.exe, python*.exe, conhost.exe owned by ` +
-  `its claude.exe, or orphans whose owner is gone), including idle browser-automation servers (playwright/mcp, ` +
+  `leftover processes from ${worker}'s session (${PROCS(win)} owned by ` +
+  `its ${OWNER(win)}, or orphans whose owner is gone), including idle browser-automation servers (playwright/mcp, ` +
   `chrome-devtools-mcp) it is not using (its status file, .claude/team-orchestrator/status/, shows its last "clean" ` +
   `and leftover count), and tell ${worker} by SendMessage to close the processes it started and ` +
   'delete its scratch and /tmp files, then confirm "clean". Do not kill another session\'s processes yourself, and ' +
@@ -41,10 +48,10 @@ const names = (m: Member) => [m.address, m.name].filter((x): x is string => !!x)
 const bareTo = (to: string) => to.replace(/\s*\[[^\]]*\]\s*$/, '').trim().toLowerCase()
 
 /** The note for a member's SendMessage, or undefined: only a message to that member's own boss counts. */
-export function onSend(me: Member, list: Member[], to: string): string | undefined {
+export function onSend(me: Member, list: Member[], to: string, win = true): string | undefined {
   if (me.boss === 'user') return undefined
   const boss = list.find(m => m.name === me.boss && m.team === me.team) ?? list.find(m => m.name === me.boss)
-  return boss && names(boss).includes(bareTo(to)) ? WORKER_NOTE : undefined
+  return boss && names(boss).includes(bareTo(to)) ? workerNote(win) : undefined
 }
 
 /** The sender name a peer delivery carries (from-name="…"), if any. */
@@ -72,9 +79,9 @@ export const isCleanConfirmation = (text: string) => {
 export const shouldPoll = (me: Member | undefined) => !me || me.boss === 'user'
 
 /** The note for a peer message a member receives, or undefined: only a report from one of its own reports counts. */
-export function onReceive(me: Member, list: Member[], text: string): string | undefined {
+export function onReceive(me: Member, list: Member[], text: string, win = true): string | undefined {
   const from = senderOf(text)
   if (!from || isCleanConfirmation(text)) return undefined
   const worker = list.find(m => m !== me && m.boss === me.name && names(m).includes(from.toLowerCase()))
-  return worker ? HEAD_NOTE(worker.name) : undefined
+  return worker ? HEAD_NOTE(worker.name, win) : undefined
 }

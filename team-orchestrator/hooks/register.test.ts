@@ -125,7 +125,7 @@ const world = (on: any, tabs: Tab[], trs: Tr[]) => {
       t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '',
     ].join('\n')
   on('session.root', async () => ({ value: 'C:/proj' }) as any)
-  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : undefined }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : undefined }) as any)
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
   on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) }) as any)
   on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)

@@ -1,6 +1,14 @@
 {
   "name": "team-orchestrator",
-  "version": "0.5.05",
+  "version": "0.5.06",
   "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs.",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "orcaCommand": {
+      "type": "string",
+      "title": "Orca command",
+      "description": "Orca's command-line tool: orca.exe on Windows, orca on macOS and Linux, or a full path. Empty: detected and filled in at the next start. A command that does not start is refused.",
+      "default": ""
+    }
+  }
 }

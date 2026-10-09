@@ -43,9 +43,13 @@ export type TeamSettings = {
   launch: 'demand' | 'all'
   /** sessions started at once at Create; the next batch waits until these are ready and briefed */
   batch: number
+  /** deletes of a member's own scratch are approved without asking (platform.ts) */
+  autoScratch: boolean
+  /** the project's scratch folder, relative to the project; heads and leads may clean it without asking */
+  scratchDir: string
 }
 
-export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8, launch: 'demand', batch: 3 }
+export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8, launch: 'demand', batch: 3, autoScratch: true, scratchDir: '.claude/scratch' }
 
 export const MIN = 60_000
 /** a member with no write for this long shows as offline */
