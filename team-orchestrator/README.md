@@ -169,3 +169,12 @@ The member reads the file once. When the file changes, Claude Code tells the ses
 Create's first prompt asks each new session to read its role file and answer "Noted". Nothing is typed into a terminal any more.
 
 The SendMessage description now says that a teammate who is not running is unknown to it, and that `team_message` should be used instead. On a team, `team_message` is listed up front, not behind ToolSearch.
+
+## Model names on start and reopen (0.5.05)
+
+The roster shows a short model name, such as `haiku-5-5`. Before 0.5.05, a start or reopen passed that name to `claude --model`. Claude Code launched with it, but the API rejected it on the first call, often an automatic compaction. Every start, reopen and restart now normalises the name:
+
+- Aliases (`opus`, `sonnet`, `haiku`, `fable`) pass as they are.
+- Full `claude-...` ids pass as they are.
+- Short names (`haiku-5-5`) and display names (`Haiku 5.5`) become `claude-haiku-5-5`.
+- Anything else is left out, so the session uses its default model.

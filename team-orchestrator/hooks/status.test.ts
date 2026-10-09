@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
 import type { Status } from './status'
-import { admit, chunk, localRef, MIN, needsTabCheck, nextCheckInterval, openCount, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, toClose } from './status'
+import { admit, chunk, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, openCount, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, toClose } from './status'
 
 const m = (name: string, boss: string): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
@@ -85,4 +85,17 @@ test('a message goes to the session on this machine, never a Remote Control copy
   ].join('\r\n')
   expect(localRef(listing, 'Citation-Checker')).toBe('Citation-Checker [3c9e21]')
   expect(localRef(listing, 'Press-Conference-Analyst')).toBe('')
+})
+
+test('a start or reopen passes a model name the API accepts, never the short name shown on screen', () => {
+  expect(modelArg('haiku-5-5')).toBe('claude-haiku-5-5')
+  expect(modelArg('Haiku 5.5')).toBe('claude-haiku-5-5')
+  expect(modelArg('opus-5-5[1m]')).toBe('claude-opus-5-5[1m]')
+  expect(modelArg('claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
+  expect(modelArg('haiku')).toBe('haiku')
+  expect(modelArg('Sonnet')).toBe('sonnet')
+  expect(modelArg('default')).toBe('')
+  expect(modelArg('keep')).toBe('')
+  expect(modelArg('')).toBe('')
+  expect(modelArg('gpt-4o')).toBe('')
 })

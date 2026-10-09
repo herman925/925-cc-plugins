@@ -141,3 +141,17 @@ export const localRef = (listing: string, name: string) => {
   }
   return ''
 }
+
+/**
+ * A model name as claude --model accepts it. The roster keeps the short name shown on screen ("haiku-5-5", from
+ * "claude-haiku-5-5" with the prefix cut, or "Haiku 5.5" from a status line), which the API rejects, so every start and
+ * reopen passes it through here. Aliases and full ids stay; short and display names get the "claude-" id back; anything
+ * else is left out, so the session falls back to its default model rather than a broken one.
+ */
+export function modelArg(model: string): string {
+  const s = model.trim().toLowerCase().replace(/\s+/g, '-').replace(/(\d)\.(\d)/g, '$1-$2')
+  if (s === '' || s === 'default' || s === 'keep') return ''
+  if (/^(opus|sonnet|haiku|fable)$/.test(s) || /^claude-[a-z0-9.-]+(\[1m\])?$/.test(s)) return s
+  if (/^(opus|sonnet|haiku|fable)-\d[\w-]*(\[1m\])?$/.test(s)) return `claude-${s}`
+  return ''
+}

@@ -7,7 +7,7 @@ import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import type { Status, TeamSettings } from './status'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
-import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
 
 const ORCA = 'orca.exe'
@@ -236,8 +236,10 @@ async function orca($: any, ...args: string[]) {
     : { ok: false, out: String(r.stderr || r.stdout) }
 }
 
-const flags = (model?: string, effort?: string) =>
-  `${model && model !== 'default' && model !== 'keep' ? ` --model ${model}` : ''}${effort && effort !== 'default' && effort !== 'keep' ? ` --effort ${effort}` : ''}`
+const flags = (model?: string, effort?: string) => {
+  const m = modelArg(model ?? '')
+  return `${m ? ` --model ${m}` : ''}${effort && effort !== 'default' && effort !== 'keep' ? ` --effort ${effort}` : ''}`
+}
 
 
 // State kept across a hot reload may predate the team field: such members belong to the one team the old version knew.
