@@ -99,7 +99,8 @@ export function judge(args: { me: Member; list: Member[]; tool: string; path: st
 // them. Every other member is refused Write, Edit and NotebookEdit on them, and any Bash or PowerShell command that
 // names them and is not plainly read-only. From 0.5.12 (#59) the same holds for meta.json (the schema stamp) and the
 // change files in changes/, which the top folds into the roster: a forged change file would be a forged roster.
-// roles/ and queue/ stay writable; status files live on each machine, outside the project.
+// From 0.5.17 (#77) also the member requests in requests/, which the top puts to the user: a forged one would ask
+// under a false name. Only member_add writes them. roles/ and queue/ stay writable; status files live on each machine.
 
 export const SHELL_TOOLS = ['Bash', 'PowerShell'] as const
 
@@ -107,10 +108,10 @@ export const SHELL_TOOLS = ['Bash', 'PowerShell'] as const
 const plain = (s: string) => s.replace(/:.*$/, '').replace(/[. ]+$/, '')
 const TEAM_DIR = /^(team-orchestrator|team-o~\d+)$/
 const TEAM_FILE = /^(roster\.json|settings\.json|meta\.json|roster~\d+\.jso|settin~\d+\.jso|meta~\d+\.jso)$/
-const CHANGES_DIR = /^(changes|change~\d+)$/
+const CHANGES_DIR = /^(changes|change~\d+|requests)$/
 
 /**
- * The path is .claude/team-orchestrator/roster.json, settings.json or meta.json, or a file in its changes/ folder (any
+ * The path is .claude/team-orchestrator/roster.json, settings.json or meta.json, or a file in its changes/ or requests/ folder (any
  * root; "." and ".." folded; 8.3 names too).
  */
 export function isTeamFilePath(path: string): boolean {
@@ -134,7 +135,7 @@ export function namesTeamFile(command: string): boolean {
   const c = command.replace(/\\/g, '/').toLowerCase()
   const dir = /team-orchestrator|team-o~\d/.test(c)
   if (/roster(\.json|~\d)/.test(c)) return true
-  if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d)\b/.test(c)) return true
+  if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d|requests)\b/.test(c)) return true
   if (dir && /meta(\.json|~\d)/.test(c)) return true
   if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
   return dir && /[*?[\]{}$`]/.test(c)
@@ -162,7 +163,7 @@ export function notReadOnly(command: string): string {
   return ''
 }
 
-const LOCKED = '.claude/team-orchestrator/roster.json, settings.json, meta.json and changes/'
+const LOCKED = '.claude/team-orchestrator/roster.json, settings.json, meta.json, changes/ and requests/'
 
 /**
  * Judge one call against the team files. `confirmed` is false for a held session, which is locked whatever its boss.

@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Act, Bulk, Form, Member, Settings, Spawn, View } from '../types'
+import { headOf, joinLaunch, newMember, newProblem, purview, requestProblem } from './adding'
+import type { NewSpec } from './adding'
 import { AGENT_TOOL, grantChanges, type GrantMap, grantMap, grantsFrom, judge, judgeTeamFiles, namesTeamFile, NO_GRANTS, pathOf, recordAfterWrite, SHELL_TOOLS, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
@@ -50,6 +52,7 @@ const MOVE = 'mcp__team-orchestrator__member_move'
 const MESSAGE = 'mcp__team-orchestrator__team_message'
 const CLAIM = 'mcp__team-orchestrator__member_claim'
 const TAKE = 'mcp__team-orchestrator__team_take_top'
+const ADD = 'mcp__team-orchestrator__member_add'
 const MODELS = ['default', 'opus', 'sonnet', 'haiku', 'fable']
 const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -132,7 +135,7 @@ const FRAME = 4
 // width allows); stacked keeps one full-width card per row
 const cardsPerRow = (s: Settings, cols: number, _cardW: number, cards: number) =>
   s.layout === 'columns' || s.layout === 'dock' ? sideBySide(cols, cards, FRAME) : 1
-const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
+const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '', name: '', model: 'default', effort: 'default' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
@@ -2011,29 +2014,188 @@ async function addMember($: any, handle: string, title: string, team: string, bo
   return `Added ${name} to team "${team}" under ${added.boss}.`
 }
 
-// Replace one team's members, leaving the other teams of the project alone.
-async function put($: any, team: string | string[], mine: Member[]) {
+// ── New members on a running team (0.5.17, #77), see adding.ts ──
+// A New member is saved not yet, with its role file, and starts fresh and briefed on its boss's first team_message.
+// You add one from the panel or from your own session (not on the roster). A head or lead only asks, within its
+// purview: the request is saved in requests/, the team top is told to ask you with AskUserQuestion, and it applies your
+// answer with member_add { request, approve }. The top itself adds only after asking you in the same turn.
+async function addNew($: any, s: NewSpec): Promise<string> {
+  await pull($)
   const all = await readMembers($)
-  const gone = new Set(Array.isArray(team) ? team : [team])
-  await update($, members, () => [...all.filter(m => !gone.has(m.team)), ...mine])
+  const problem = newProblem(all, s)
+  if (problem) return problem
+  const wt = await currentWorktree($).catch(() => '')
+  const here = await machineOf($)
+  const m = newMember(all, s)
+  const added: Member = { ...m, statusFile: statusFile(m.name), ...(wt ? { worktree: wt } : {}), ...(here ? { machine: here } : {}) }
+  await update($, members, () => [...all.map(x => ({ ...x, sel: false })), added])
+  await share($)
+  return (
+    `Added ${added.name} to team "${added.team}" under ${added.boss}, saved as not yet with its role file. ` +
+    `It starts fresh and briefed on ${added.boss === 'user' ? 'its first message' : `${added.boss}'s first team_message`}.`
+  )
+}
+
+type AddRequest = {
+  v: 1
+  id: string
+  at: number
+  by: { member: string; team: string; session: string }
+  add: NewSpec
+  state: 'asked' | 'approved' | 'declined'
+  decidedAt?: number
+}
+const requestsDir = async ($: any) => `${await teamDir($)}/requests`
+async function readRequest($: any, id: string): Promise<AddRequest | undefined> {
+  if (!/^\d{13}-[a-z0-9]{4,16}$/.test(id)) return undefined
+  const v = await readJson($, `${await requestsDir($)}/${id}.json`)
+  return v && typeof v.add === 'object' && typeof v.state === 'string' ? (v as AddRequest) : undefined
+}
+const writeRequest = async ($: any, r: AddRequest) => $.fs.write(`${await requestsDir($)}/${r.id}.json`, JSON.stringify(r, null, 1))
+
+const specLine = (s: NewSpec, list: Member[]) => {
+  const boss = s.boss || headOf(list, s.team)?.name || 'user'
+  const extra = [s.model && s.model !== 'default' ? `model ${s.model}` : '', s.effort && s.effort !== 'default' ? `effort ${s.effort}` : ''].filter(Boolean)
+  return `${s.name} (${s.role || 'worker'}), reporting to ${boss}${extra.length ? `, ${extra.join(', ')}` : ''}`
+}
+const askText = (r: AddRequest, list: Member[]) =>
+  `MEMBER REQUEST (Team Orchestrator): ${r.by.member} asks to add a new member to team ${r.add.team}: ${specLine(r.add, list)}. ` +
+  'Nothing is added until the user approves. Ask the user AT ONCE with AskUserQuestion whether to add it, with two options: ' +
+  `(1) "Add ${r.add.name}"; (2) "Do not add". Then apply the answer with member_add { request: "${r.id}", approve: true | false }.`
+
+// member_add: a request from a head or lead, the top's own add, your own add, or the top applying your answer.
+async function memberAdd($: any, input: any): Promise<any> {
+  await pull($)
+  const list = await readMembers($)
+  const w = await identity($, list)
+  const id = String(input.request ?? '').trim()
+  if (id) return decideRequest($, list, w, id, input.approve === true)
+  const raw = String(input.team ?? '').trim()
+  const team = list.some(m => m.team === raw) ? raw : clean(raw)
+  const me = w.level === 'full' ? w.me : undefined
+  // a head or lead asking: the boss is the one who asks unless it names another; you (not on the roster): the team's head
+  const boss = String(input.boss ?? '').trim() || (me ? me.name : '')
+  const spec: NewSpec = {
+    team, name: String(input.name ?? '').trim(), role: String(input.role ?? '').trim(), boss, model: String(input.model ?? '').trim(), effort: String(input.effort ?? '').trim(),
+    ...(me ? { by: me.name } : {}),
+  }
+  // your own session, not on the roster: you may always add
+  if (!me) return { result: await addNew($, spec) }
+  const refused = requestProblem(list, me, team, boss)
+  if (refused) return { deny: refused }
+  const problem = newProblem(list, spec)
+  if (problem) return { result: problem }
+  // the team top asks you itself, in this turn, and then adds
+  if (me.boss === 'user') {
+    if (!turnAsk.answered)
+      return { deny: `Ask the user first with AskUserQuestion in this turn whether to add ${specLine(spec, list)} to team ${team}; then call member_add again. Nothing is added without the user's approval.` }
+    return { result: await addNew($, spec) }
+  }
+  // a head or lead below the top: a request, which the top puts to you
+  const sid = String(await $.session.id().catch(() => ''))
+  const r: AddRequest = { v: 1, id: fileName(Date.now(), rand()).replace(/\.json$/, ''), at: Date.now(), by: { member: me.name, team: me.team, session: sid }, add: spec, state: 'asked' }
+  await writeRequest($, r)
+  const top = topOf(list, me)
+  const reach = !!top?.sessionId && top.sessionId !== sid && !isAway(top, await machineOf($))
+  const sent: any = reach ? await $.session.send({ to: { sessionId: top!.sessionId }, text: askText(r, list) }).catch(() => undefined) : undefined
+  if (sent?.isDelivered)
+    return { result: `Asked ${top!.name} to put request ${r.id} to the user: ${specLine(spec, list)} in team ${team}. Nothing is added until the user approves; you hear back when it is decided.` }
+  await $.ui.toast(`Team Orchestrator: ${me.name} asks to add ${spec.name} to team ${team}, and the team top could not be told. Tell the top to apply request ${r.id} with member_add once you approve.`)
+  return {
+    result:
+      `Request ${r.id} is saved, but the team top${top ? ` (${top.name})` : ''} could not be told. Tell your boss: the top applies it with ` +
+      `member_add { request: "${r.id}", approve } once the user approves. Nothing is added until then.`,
+  }
+}
+
+// The team top applies your answer to a request; only an answer you gave in this turn adds anyone.
+async function decideRequest($: any, list: Member[], w: Who, id: string, approve: boolean): Promise<any> {
+  const me = w.me
+  if (w.level !== 'full' || !me || me.boss !== 'user')
+    return { deny: 'member_add with a request is for the team top only (the confirmed member that reports to the user): it applies the user\'s answer.' }
+  const r = await readRequest($, id)
+  if (!r) return { result: `No member request ${id}.` }
+  if (r.state !== 'asked') return { result: `Request ${id} was ${r.state} already.` }
+  if (!purview(list, me).includes(r.add.team)) return { deny: `Request ${id} is for team "${r.add.team}", outside ${me.name}'s purview.` }
+  // the one who asked must still be on the roster and still allowed to ask for this team and this boss (a request
+  // file is written only by member_add, and the guard locks requests/, but the file is checked again here)
+  const by = list.find(m => m.team === r.by?.team && m.name === r.by?.member) ?? list.find(m => m.name === r.by?.member)
+  const still = by
+    ? requestProblem(list, by, r.add.team, String(r.add.boss ?? ''))
+    : `it names ${r.by?.member || 'nobody'} as the one who asked, and no such member is on the roster`
+  if (still) {
+    await writeRequest($, { ...r, state: 'declined', decidedAt: Date.now() })
+    return { deny: `Request ${id} was not applied and is marked declined: ${still}` }
+  }
+  const tell = (text: string) => (r.by.session ? $.session.send({ to: { sessionId: r.by.session }, text }).catch(() => undefined) : undefined)
+  if (!approve) {
+    await writeRequest($, { ...r, state: 'declined', decidedAt: Date.now() })
+    await tell(`TEAM ORCHESTRATOR: the user did not approve adding ${r.add.name} to team ${r.add.team}. Nothing was added.`)
+    return { result: `Declined request ${id}: nothing was added. ${r.by.member} is told.` }
+  }
+  if (!turnAsk.answered) return { deny: 'Ask the user first with AskUserQuestion in this turn; member_add applies the answer.' }
+  const problem = newProblem(list, r.add)
+  if (problem) return { result: `Request ${id} cannot be applied: ${problem}` }
+  const out = await addNew($, r.add)
+  await writeRequest($, { ...r, state: 'approved', decidedAt: Date.now() })
+  await tell(`TEAM ORCHESTRATOR: the user approved it. ${out}`)
+  return { result: out }
+}
+
+// Save members, leaving everyone else on the roster alone: a member already there (same team and name) is updated in
+// place, and nobody is dropped (#77: a launch under a taken team name used to replace that team).
+async function put($: any, mine: Member[]) {
+  const all = await readMembers($)
+  const fresh = new Map(mine.map(m => [keyOf(m), m]))
+  const kept = all.map(m => fresh.get(keyOf(m)) ?? m)
+  const known = new Set(all.map(keyOf))
+  await update($, members, () => [...kept, ...mine.filter(m => !known.has(keyOf(m)))])
   await share($)
 }
 
-async function launch($: any, team: string, input: Spec[]): Promise<string> {
-  // A name is how SendMessage finds a session, so it must be unique across every team of the project.
-  // A name already used by another team (two squads both have a "Head") gets its team in front.
+// Adopt says which running sessions a team is: its members become exactly these, the other teams stay as they are.
+async function replaceTeam($: any, team: string, mine: Member[]) {
+  const all = await readMembers($)
+  await update($, members, () => [...all.filter(m => m.team !== team), ...mine])
+  await share($)
+}
+
+// What a launch under a team name already on the roster gets back: nothing launched, nobody removed, two choices.
+const takenAnswer = (teams: string[], list: Member[]) =>
+  `Refused: ${teams.map(t => `team "${t}" already exists (${list.filter(m => m.team === t).length} members)`).join(', ')}. ` +
+  'Launching under a taken name would replace it, so nothing was launched and nobody was removed. Ask the user which they want, ' +
+  'then call team_launch again with ifExists: "add" (every launched member joins as a new member, saved as not yet and started ' +
+  'on its boss\'s first team_message; a taken name gets a number) or "merge" (the launched team merges into the one there: a ' +
+  'launched member named like a member there is that member, kept as it is, and the rest join under their bosses). Or pick another team name.'
+
+async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'merge'): Promise<string> {
+  const all0 = await readMembers($)
   const launching = new Set(input.map(s => clean(s.team || team)))
-  const taken = new Set((await readMembers($)).filter(m => !launching.has(m.team)).map(m => m.name))
-  const renamed = new Map<string, string>()
-  const named = input.map(s => {
-    const t = clean(s.team || team)
-    const base = clean(s.name)
-    const name = taken.has(base) ? clean(`${t}-${base}`) : base
-    taken.add(name)
-    renamed.set(s.name, name)
-    return { ...s, name, team: t }
-  })
-  const specs = named.map(s => ({ ...s, boss: s.boss === 'user' ? 'user' : (renamed.get(s.boss) ?? clean(s.boss)) }))
+  // a launch never replaces a team on the roster (#77): refused, unless the caller chose to add or merge
+  const there = [...launching].filter(t => all0.some(m => m.team === t))
+  if (there.length > 0 && ifExists !== 'add' && ifExists !== 'merge') return takenAnswer(there, all0)
+  let specs: (Spec & { team: string })[]
+  let merged: string[] = []
+  if (there.length > 0) {
+    const joined = joinLaunch(all0, input.map(s => ({ ...s, team: clean(s.team || team) })), ifExists!)
+    specs = joined.add
+    merged = joined.merged
+  } else {
+    // A name is how SendMessage finds a session, so it must be unique across every team of the project.
+    // A name already used by another team (two squads both have a "Head") gets its team in front.
+    const taken = new Set(all0.filter(m => !launching.has(m.team)).map(m => m.name))
+    const renamed = new Map<string, string>()
+    const named = input.map(s => {
+      const t = clean(s.team || team)
+      const base = clean(s.name)
+      const name = taken.has(base) ? clean(`${t}-${base}`) : base
+      taken.add(name)
+      renamed.set(s.name, name)
+      return { ...s, name, team: t }
+    })
+    specs = named.map(s => ({ ...s, boss: s.boss === 'user' ? 'user' : (renamed.get(s.boss) ?? clean(s.boss)) }))
+  }
+  if (specs.length === 0) return `Nothing to add: every launched member is already in ${there.map(t => `"${t}"`).join(', ')}. Nobody was removed.`
   const wt = await currentWorktree($)
   if (!wt) return 'Cannot find the Orca worktree of this session.'
   const teamsMade = [...new Set(specs.map(s => s.team))]
@@ -2048,14 +2210,16 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
     sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(s.name), pending: true,
     ...(s.short?.trim() ? { short: s.short.trim() } : {}),
   }))
-  await put($, teamsMade, made)
+  await put($, made)
   // then the top and the team heads (or everyone), a few at a time: each batch is started, waited for, briefed, and
   // given 5 s before the next one, so a big team does not start a dozen claude processes at once
   const t = await readTeamSettings($)
-  const now = t.launch === 'all' ? made : made.filter(m => startsAtCreate(m, made))
+  // added to a team already there: saved as not yet, each starts on its boss's first message, like a New member
+  const startable = ifExists === 'add' ? made.filter(m => !there.includes(m.team)) : made
+  const now = t.launch === 'all' ? startable : startable.filter(m => startsAtCreate(m, made))
   const batches = chunk(now, t.batch)
   for (const m of now) (m.state = 'queued'), (m.pending = false)
-  await put($, teamsMade, made)
+  await put($, made)
   for (const [i, group] of batches.entries()) {
     await update($, spawn, () => ({ names: now.map(m => m.name), batch: i + 1, of: batches.length }))
     for (const m of group) {
@@ -2069,7 +2233,7 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
       m.state = m.handle ? 'starting' : 'failed'
       m.note = m.handle ? '' : r.out.slice(0, 80)
       if (!m.handle) m.sessionId = ''
-      await put($, teamsMade, made)
+      await put($, made)
     }
     await Promise.all(
       group
@@ -2083,15 +2247,21 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
           m.briefed = true
         }),
     )
-    await put($, teamsMade, made)
+    await put($, made)
     if (i < batches.length - 1) await $.clock.sleep(5000)
   }
   await update($, spawn, () => SPAWN0)
   await refresh($)
   const later = made.length - now.length
   const failed = now.filter(m => m.state === 'failed').length
+  const into =
+    there.length === 0
+      ? ''
+      : `${ifExists === 'merge' ? 'Merged into' : 'Added to'} ${there.map(x => `"${x}"`).join(', ')}: ${made.filter(m => there.includes(m.team)).map(m => m.name).join(', ')}` +
+        `${merged.length ? ` (${merged.join(', ')} already there, kept as they are)` : ''}; nobody was removed. `
   return (
-    `Created ${teamsMade.length === 1 ? `"${teamsMade[0]}"` : `${teamsMade.length} teams (${teamsMade.join(', ')})`}: ` +
+    into +
+    `${teamsMade.every(x => there.includes(x)) ? 'Saved' : 'Created'} ${teamsMade.length === 1 ? `"${teamsMade[0]}"` : `${teamsMade.length} teams (${teamsMade.join(', ')})`}: ` +
     `started and briefed ${now.length - failed} of ${now.length}${failed ? ` (${failed} failed)` : ''}` +
     (later ? `; ${later} more start on their first message.` : '.')
   )
@@ -2220,7 +2390,8 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'team_launch',
       description:
-        'Launch a team of Claude Code sessions as Orca tabs in the current worktree. members is ordered boss-first; boss is a member name or "user". model/effort optional per member (opus, sonnet, haiku, fable / low, medium, high, xhigh, max).',
+        'Launch a team of Claude Code sessions as Orca tabs in the current worktree. members is ordered boss-first; boss is a member name or "user". model/effort optional per member (opus, sonnet, haiku, fable / low, medium, high, xhigh, max). ' +
+        'A team name already on the roster is never replaced: the launch is refused until the user picks ifExists "add" (every launched member joins that team as a new member, started on its boss\'s first team_message) or "merge" (the launched team merges into it by name; members already there are kept as they are).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2242,6 +2413,7 @@ export const register: Register = (on, options) => {
               required: ['name', 'role', 'level', 'boss'],
             },
           },
+          ifExists: { type: 'string', enum: ['add', 'merge'], description: 'only after the user chose it, for a team name already on the roster' },
         },
         required: ['team', 'members'],
       },
@@ -2309,6 +2481,27 @@ export const register: Register = (on, options) => {
         type: 'object',
         properties: { team: { type: 'string' }, name: { type: 'string' }, toTeam: { type: 'string' }, boss: { type: 'string' } },
         required: ['team', 'name', 'toTeam'],
+      },
+    })
+    await $.tool.register({
+      name: 'member_add',
+      description:
+        'Add a new member to a running team: saved as not yet, with its role file, and started fresh and briefed on its boss\'s first team_message. ' +
+        'From a head or lead this is a REQUEST, only for its own team and the teams below it: the team top asks the user, and nothing is added until the user approves. ' +
+        'boss: a member of that team, or you (empty: you; a boss outside your purview is refused). model and effort optional (opus, sonnet, haiku, fable / low, medium, high, xhigh, max). ' +
+        'Team top only: after asking the user with AskUserQuestion in this turn, apply the answer to a request with { request, approve }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          team: { type: 'string' },
+          name: { type: 'string' },
+          role: { type: 'string' },
+          boss: { type: 'string' },
+          model: { type: 'string' },
+          effort: { type: 'string' },
+          request: { type: 'string', description: 'team top only: the request id it was told about' },
+          approve: { type: 'boolean', description: 'team top only, with request: the user\'s answer' },
+        },
       },
     })
     await $.tool.register({
@@ -2384,7 +2577,7 @@ export const register: Register = (on, options) => {
     })
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
-    await put($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
+    await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
     await update($, view, () => 'roster')
     // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
@@ -2580,10 +2773,22 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: TOOL }, async ($, e) => safely(async () => {
     const held = await onHold($, 'team_launch')
     if (held) return held
-    const input = e as unknown as { team: string; members: Spec[] }
+    const input = e as unknown as { team: string; members: Spec[]; ifExists?: 'add' | 'merge' }
     await update($, view, () => 'roster')
-    return { result: await launch($, input.team, input.members) } as any
+    return { result: await launch($, input.team, input.members, input.ifExists) } as any
   }))
+
+  // a new member: your own add, a head's or lead's request within its purview, or the top applying your answer (#77)
+  on('tool.call', { tool: ADD } as any, async ($, e) => safely(async () => {
+    const held = await onHold($, 'member_add')
+    if (held) return held
+    return (await memberAdd($, e as any)) as any
+  }))
+  on('tool.describe', { tool: ADD } as any, async ($, e, next) => {
+    const r: any = await next(e)
+    const who = await rosterSelf($)
+    return who && (who.me.boss === 'user' || who.list.some(k => k.boss === who.me.name)) ? { ...r, isDeferred: false } : r
+  })
 
   // routine clean-up never waits for the person: a delete of the member's own scratch is approved here (platform.ts).
   // Only an "ask" is lifted to "allow"; a deny from a rule or the organization stands.
@@ -3300,6 +3505,15 @@ async function formView($: any, ui: any) {
   const levels = org ? 3 : Number(f.levels)
   const specs = plan(f)
   const total = specs.length
+  const roster = await readMembers($)
+  const taken = [...new Set(specs.map(s => clean(s.team || f.team)))].filter(x => roster.some(m => m.team === x))
+  const go = (ifExists?: 'add' | 'merge') =>
+    void (async () => {
+      await update($, note, () => '⏳ Launching...')
+      await update($, view, () => 'roster')
+      const msg = await launch($, f.team, plan(f), ifExists)
+      await update($, note, () => `✔ ${msg}`)
+    })()
   const lvRows = Array.from({ length: levels }, (_, i) => i + 1)
   const specOf = new Map(specs.map(s => [s.name, s]))
   const heads = org ? specs.filter(s => s.level === 2).length : 0
@@ -3485,16 +3699,24 @@ async function formView($: any, ui: any) {
           label={`▶ Launch @${f.team} (${total})`}
           variant="primary"
           onPress={() => {
-            void (async () => {
-              await update($, note, () => '⏳ Launching...')
-              await update($, view, () => 'roster')
-              const msg = await launch($, f.team, plan(f))
-              await update($, note, () => `✔ ${msg}`)
-            })()
+            // a team name already on the roster is never replaced (#77): you pick add or merge below
+            if (taken.length > 0)
+              return void update($, note, () => `✗ @${taken.join(', @')} is on the roster already. Launching would replace it, so nothing was launched. Add the new members to it, or merge this team into it.`)
+            go()
           }}
         />
         <Button key="interview" label="Interview me instead" onPress={() => void $.prompt.submit({ text: INTERVIEW })} />
       </Box>
+      {taken.length > 0 && (
+        <Box flexDirection="column">
+          <Text color="yellow">⚠ @{taken.join(', @')} is on the roster already. Launch never replaces a team; nobody is removed either way:</Text>
+          <Box columnGap={1}>
+            <Button key="go-add" label={`Add the new members to @${taken[0]}`} onPress={() => go('add')} />
+            <Button key="go-merge" label={`Merge into @${taken[0]}`} onPress={() => go('merge')} />
+          </Box>
+          <Text dimColor>Add: every member here joins as a new member, started on its boss's first message. Merge: a member named like one there is that member, kept as it is; the rest join.</Text>
+        </Box>
+      )}
       {n !== '' && <Text color="green">{n.startsWith('⏳') ? `${spin}${n.slice(1)}` : n}</Text>}
     </Box>
   )
@@ -3507,7 +3729,7 @@ const TEAM_MENU: { glyph: string; title: string; color: string; items: [string, 
   { glyph: '☐', title: 'Select', color: 'cyan', items: [['selall', 'All'], ['selwork', 'Workers']] },
   {
     glyph: '⇄', title: 'People', color: '#bd93f9',
-    items: [['add', 'Add member…'], ['movehere', 'Move selected here'], ['boss', 'Change boss…']],
+    items: [['new', 'New member…'], ['add', 'Add member…'], ['movehere', 'Move selected here'], ['boss', 'Change boss…']],
   },
   {
     glyph: '✎', title: 'Sessions', color: '#e5c07b',
@@ -3587,6 +3809,8 @@ async function rosterView($: any, ui: any, cols: number) {
         .filter(x => x.handle !== '' && !list.some(m => m.handle === x.handle))
       return void (await setAct({ ...ACT0, kind, to: team, tabs, handle: tabs[0]?.handle ?? '', boss: head?.name ?? 'user' }))
     }
+    // a New member (#77): you add it here, no approval needed; the boss is the team's head unless you pick another
+    if (kind === 'new') return void (await setAct({ ...ACT0, kind, to: team, boss: head?.name ?? '' }))
     await setAct({ ...ACT0, kind, to: team })
   }
   const bulkBox = (
@@ -3711,10 +3935,35 @@ async function rosterView($: any, ui: any, cols: number) {
               />
               {cancel}
             </Box>
-            <Text dimColor>A new session is launched from New team (or team_launch), not from here.</Text>
+            <Text dimColor>A brand-new session is added with New member…, not from here.</Text>
           </Box>
         ),
       )
+    if (a.kind === 'new') {
+      const typed = (patch: Partial<Act>) => {
+        typedAt = Date.now()
+        void setAct(patch)
+      }
+      const add = () => void finish(team, addNew($, { team, name: a.name, role: a.role, boss: a.boss, model: a.model, effort: a.effort }))
+      return box(
+        `New member of @${team}`,
+        <Box flexDirection="column">
+          <Input key={`newname-${ti}`} label="▸ Name " value={a.name} placeholder="unique in the project, e.g. Worker-4" onInput={(v: string) => typed({ name: v })} onSubmit={() => {}} />
+          <Input key={`newrole-${ti}`} label="▸ Role " value={a.role} placeholder="what it does" onInput={(v: string) => typed({ role: v })} onSubmit={() => {}} />
+          <Text bold>Boss</Text>
+          {Seg(ui, `newboss-${ti}`, list.filter(m => m.team === team).map(m => [m.name, m.name] as [string, string]), a.boss, v => void setAct({ boss: v }))}
+          <Text bold>Model</Text>
+          {Seg(ui, `newmodel-${ti}`, MODELS.map(o => [o, nice(o)] as [string, string]), a.model, v => void setAct({ model: v }))}
+          <Text bold>Effort</Text>
+          {Seg(ui, `neweffort-${ti}`, EFFORTS.map(o => [o, nice(o)] as [string, string]), a.effort, v => void setAct({ effort: v }))}
+          <Box>
+            <Button key={`newgo-${ti}`} label="Add" variant="primary" onPress={add} />
+            {cancel}
+          </Box>
+          <Text dimColor>Saved as not yet, with its role file. It starts fresh and briefed on its boss's first team_message.</Text>
+        </Box>,
+      )
+    }
     if (a.kind === 'short') {
       const who = list.find(m => keyOf(m) === a.key)
       if (!who) return box('Short name', <Box flexDirection="column"><Text>That row is gone.</Text>{cancel}</Box>)

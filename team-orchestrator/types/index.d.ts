@@ -73,18 +73,22 @@ export type Bulk = {
 export type Act = {
   /** the team whose Team actions list is open, '' none */
   menu: string
-  /** none | remove | rmteam | boss | bulk | add | short */
+  /** none | remove | rmteam | boss | bulk | add | new | short */
   kind: string
   /** the team card the open action (and its message) belongs to */
   to: string
   /** short: the row being named (team|name), and the text typed so far */
   key: string
   draft: string
-  /** add: the boss; boss: the new boss */
+  /** add and new: the boss; boss: the new boss */
   boss: string
-  /** add: the picked tab's handle, and its role */
+  /** add: the picked tab's handle; add and new: its role */
   handle: string
   role: string
+  /** new: the New member's name, model and effort ('default' leaves them to claude) */
+  name: string
+  model: string
+  effort: string
   /** add: live tabs not on the roster, read when the action was picked */
   tabs: { handle: string; title: string }[]
   msg: string
