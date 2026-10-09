@@ -674,6 +674,7 @@ working folder.
 
 | Version | Change |
 |---|---|
+| 0.5.18 | Groundwork for teams across computers, not yet switched on: bundled encryption (sealed messages, a passphrase-locked join bundle, a strength meter that only warns) and device keys kept in each computer's own vault (DPAPI on Windows, Keychain on macOS, Secret Service on Linux, or an owner-only file outside synced folders). |
 | 0.5.17 | New member… and `member_add`: new members start on their first message. Heads and leads may request members only within their purview, with your approval. Launching under a taken team name is refused and offers add or merge. |
 | 0.5.16 | Sleep-aware clocks. A crash check at send time. Only members proved dead are reopened; hung or doubtful ones are queued. |
 | 0.5.15 | Dock right packs cards like side by side. |
