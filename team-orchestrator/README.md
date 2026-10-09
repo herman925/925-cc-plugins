@@ -349,3 +349,5 @@ Rules: `hooks/status.ts`, `hooks/guard.ts`. Tests: `hooks/route.test.ts`, `hooks
 ## Side by side that actually fits (0.5.14)
 
 In the "Side by side" layout, a card no longer needs room for its widest table before it can share a row. Cards are sized to the medium tier, falling back to the narrow tier to keep two on a row, and each card then shows the widest tier its width allows. On a 1920 x 1080 screen (about 160 to 210 columns), four teams appear as a 2 x 2 grid. Only a terminal under about 72 columns stays stacked.
+
+From 0.5.15, "Dock right" packs cards the same way. "Stacked" still shows one full-width card per row.

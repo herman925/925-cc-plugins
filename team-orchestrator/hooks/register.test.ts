@@ -703,3 +703,18 @@ test('a bulk rename restart keeps the member\'s saved model and effort when they
   expect(cmd).toContain('--model sonnet')
   expect(cmd).toContain('--effort high')
 })
+
+test('dock right packs cards like side by side; stacked keeps one full-width card per row', async ($, on) => {
+  await twoSmallTeams($, on)
+  const band = await bandAt($, 120)
+  await band.press({ key: 'tab-roster' })
+  expect(cardWidths(await band.drawn())).toEqual([120, 120])
+  await band.press({ key: 'tab-settings' })
+  await band.press({ key: 'layout-dock' })
+  const pane = await $.ui.mount({
+    plugin: 'team-orchestrator', surface: 'terminal', component: 'Pane', requestId: 'team-dock',
+    props: { title: 'Team Orchestrator', isFocused: false, bodyColumns: 120, placement: 'side' } as any,
+  })
+  await pane.press({ key: 'tab-roster' })
+  expect(cardWidths(await pane.drawn())).toEqual([60, 60])
+})

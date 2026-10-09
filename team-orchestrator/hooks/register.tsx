@@ -127,9 +127,10 @@ const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF'] as const
 // a card's border and padding, around the cells columnPlan lays out
 const FRAME = 4
 // Team cards per row: side by side only where two fit, so a narrow terminal keeps the stacked look.
-// side by side: as many cards as fit at the narrower tiers (each card then picks the widest tier its width allows)
+// side by side and dock right: as many cards as fit at the narrower tiers (each card then picks the widest tier its
+// width allows); stacked keeps one full-width card per row
 const cardsPerRow = (s: Settings, cols: number, _cardW: number, cards: number) =>
-  s.layout === 'columns' ? sideBySide(cols, cards, FRAME) : 1
+  s.layout === 'columns' || s.layout === 'dock' ? sideBySide(cols, cards, FRAME) : 1
 const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
