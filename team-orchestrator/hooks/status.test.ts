@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
 import type { Status } from './status'
-import { admit, chunk, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, openCount, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, toClose } from './status'
+import { admit, asleepWithin, awakeAge, chunk, heartbeatStale, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, openCount, shownState, startsAtCreate, statusFile, TEAM_SETTINGS0, toClose } from './status'
 
 const m = (name: string, boss: string): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false,
@@ -98,4 +98,57 @@ test('a start or reopen passes a model name the API accepts, never the short nam
   expect(modelArg('keep')).toBe('')
   expect(modelArg('')).toBe('')
   expect(modelArg('gpt-4o')).toBe('gpt-4o')
+})
+
+// ── 0.5.16, #71: sleep-aware clocks ──
+
+test('a tick more than three minutes late is sleep; windows older than a day drop out; ages skip the time asleep', () => {
+  const every = 30_000
+  expect(noteTick(0, NOW, every, [])).toEqual([])
+  expect(noteTick(NOW - every, NOW, every, [])).toEqual([])
+  // three minutes late is still a slow tick, not sleep
+  expect(noteTick(NOW - every - 3 * MIN, NOW, every, [])).toEqual([])
+  const slept = noteTick(NOW - 120 * MIN, NOW, every, [])
+  expect(slept).toEqual([{ from: NOW - 120 * MIN + every, to: NOW }])
+  expect(noteTick(NOW + 25 * 60 * MIN - every, NOW + 25 * 60 * MIN, every, slept)).toEqual([])
+  expect(asleepWithin(slept, NOW - 200 * MIN, NOW)).toBe(120 * MIN - every)
+  // idle 5 minutes before a two-hour sleep: 5 minutes and the one tick, not 125 minutes
+  expect(awakeAge(NOW - 125 * MIN, NOW, slept)).toBe(5 * MIN + every)
+  expect(awakeAge(NOW - 125 * MIN, NOW)).toBe(125 * MIN)
+})
+
+test('waking up closes nothing: idle and silent ages leave the sleep out, so nobody is closed, offline or crash-checked on wake', () => {
+  const slept = noteTick(NOW - 120 * MIN, NOW, 30_000, [])
+  // W1 said clean and went idle 8 minutes before the machine slept; its last heartbeat was just before the sleep
+  const before = NOW - 120 * MIN
+  const s = new Map([['W1', st('W1', 'idle', 120 * MIN, { turnEnd: before - 8 * MIN, lastClean: before - 8 * MIN })]])
+  // the clock without the sleep: offline, and (once it beats again) closed at once
+  expect(shownState(s.get('W1'), NOW)).toBe('offline')
+  expect(heartbeatStale(s.get('W1')!, NOW)).toBe(true)
+  // with it: still idle and fresh
+  expect(shownState(s.get('W1'), NOW, slept)).toBe('idle')
+  expect(heartbeatStale(s.get('W1')!, NOW, slept)).toBe(false)
+  expect(needsTabCheck([s.get('W1')], NOW, slept)).toBe(false)
+  // it beats again on wake: the plain clock would close it now, the sleep-aware one waits for its 10 awake minutes
+  const fresh = new Map([['W1', { ...s.get('W1')!, heartbeat: NOW }]])
+  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW).map(x => x.name)).toEqual(['W1'])
+  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW, slept)).toEqual([])
+  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW + 2 * MIN, slept).map(x => x.name)).toEqual(['W1'])
+  // the members silent through the sleep still count as open at the cap
+  expect(openCount(s, NOW, slept)).toBe(1)
+  expect(openCount(s, NOW)).toBe(0)
+})
+
+test('a hung top only delays auto-close, never brings it forward', () => {
+  // the top hung for 10 minutes while W1 and W2 kept beating
+  const hung = noteTick(NOW - 10 * MIN, NOW, 30_000, [])
+  const s = new Map([
+    ['W1', st('W1', 'idle', 0, { turnEnd: NOW - 12 * MIN, lastClean: NOW - 12 * MIN })],
+    ['W2', st('W2', 'idle', 0, { turnEnd: NOW - 30 * MIN, lastClean: NOW - 30 * MIN })],
+  ])
+  const plain = toClose(list, s, TEAM_SETTINGS0, NOW).map(x => x.name)
+  const aware = toClose(list, s, TEAM_SETTINGS0, NOW, hung).map(x => x.name)
+  expect(plain).toEqual(['W1', 'W2'])
+  expect(aware).toEqual(['W2'])
+  expect(aware.every(n => plain.includes(n))).toBe(true)
 })

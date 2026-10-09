@@ -351,3 +351,37 @@ Rules: `hooks/status.ts`, `hooks/guard.ts`. Tests: `hooks/route.test.ts`, `hooks
 In the "Side by side" layout, a card no longer needs room for its widest table before it can share a row. Cards are sized to the medium tier, falling back to the narrow tier to keep two on a row, and each card then shows the widest tier its width allows. On a 1920 x 1080 screen (about 160 to 210 columns), four teams appear as a 2 x 2 grid. Only a terminal under about 72 columns stays stacked.
 
 From 0.5.15, "Dock right" packs cards the same way. "Stacked" still shows one full-width card per row.
+
+## After sleep, after a crash, and a tab closed by hand (0.5.16)
+
+**Sleep-aware clocks (#71).** Each session's 30-second round notes the time of its tick. A tick more than three minutes
+later than due means the machine slept (or the session hung), and the gap is kept as a sleep window for a day. Idle
+time (for auto-close), silence (for "offline" and the cap) and the 90-second crash-check threshold all leave the time
+asleep out. Waking up therefore closes nothing, and a hung team top only delays auto-close, never brings it forward.
+The 5-minute "offline" rule for the roster display stays.
+
+**A crash check, only when sending (#71).** Before `team_message` or the queue sends to a local member that has
+written no status for over 90 seconds, the mod checks whether its Claude process is alive. The session id is looked
+up in this PC's session registry (`~/.claude/sessions/<pid>.json`), and each process id found there is looked up by
+its id alone: one `Get-CimInstance Win32_Process -Filter 'ProcessId=…'` query on Windows, `ps -o args= -p <pid>` on
+macOS and Linux. The process counts as alive when its command line carries the session id, or when it is a claude
+process the registry file named after that pid still lists. Nothing polls on a timer.
+
+**What happens next (#65).**
+
+- **Dead** (proved): its home is this PC, the registry names no live process for its session id, and every process
+  it names is gone or now another program. The member is marked closed the way auto-close marks it (its leftover tab
+  closed first), reopened with `--resume` through the usual admit-and-reopen path (whatever the team's reopen
+  setting), and then sent the message.
+- **Alive but silent** (hung): the message is queued with reason `hung`, and the sender is told "X looks hung; message
+  queued, it will be delivered when it answers or when its tab is closed." The team top is told once per member per
+  hour (a toast when the sender is the top).
+- **Any doubt** (no home machine on record, this PC has no name, the registry or the process check does not answer):
+  nothing is reopened. The message is queued with reason `unsure`, and the sender is told why.
+
+A queued `hung` or `unsure` message is sent when the member's heartbeat is fresh again. The queue does not check its
+process meanwhile. When the team top's regular tab check finds that member's tab gone (closed by hand), it checks once
+more; proved dead, the member is marked closed, and the next round reopens it and delivers.
+
+Rules: `hooks/status.ts` (sleep windows), `hooks/platform.ts` (the process check). Tests: `hooks/status.test.ts`,
+`hooks/platform.test.ts`, `hooks/crash.test.ts`.

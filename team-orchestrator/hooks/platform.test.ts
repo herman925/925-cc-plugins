@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { workerNote } from './housekeeping'
-import { countFromPs, scratchDeleteAllowed } from './platform'
+import { countFromPs, livenessOf, parseWinProcs, psProc, scratchDeleteAllowed, winProcScript } from './platform'
 import { pointer } from './roles'
 
 const ID = '0638214f-11d8-4d45-be96-9d56f54f30ba'
@@ -66,4 +66,40 @@ test('the start-up pointer is safe for cmd.exe and for sh or zsh', () => {
   const m: any = { team: 'T', name: 'W1', role: 'r', level: 2, boss: 'Head' }
   const p = pointer({ ...m, team: 'T!x', role: 'r' }, [m, { ...m, name: 'Head', boss: 'user$HOME`x`\\y!!' }])
   expect(/["%$`\\!\r\n]/.test(p)).toBe(false)
+})
+
+// ── 0.5.16, #71 and #65: the send-time crash check ──
+
+test('the crash check looks each process up by its id alone: one Get-CimInstance query on Windows, ps -p elsewhere', () => {
+  expect(winProcScript([101])).toContain("Get-CimInstance Win32_Process -Filter 'ProcessId=101'")
+  expect(winProcScript([101, 7])).toContain("-Filter 'ProcessId=101 OR ProcessId=7'")
+  const got = parseWinProcs(`NONE|101\r\nRUN|7|"C:/bin/claude.exe" --resume ${ID}\r\nDONE\r\n`, [101, 7])
+  expect(got?.get(101)).toEqual({ running: false, args: '' })
+  expect(got?.get(7)).toEqual({ running: true, args: `"C:/bin/claude.exe" --resume ${ID}` })
+  // an answer cut short, or one missing an id, is no answer
+  expect(parseWinProcs('NONE|101', [101])).toBeUndefined()
+  expect(parseWinProcs('DONE', [101])).toBeUndefined()
+  expect(psProc({ exitCode: 0, stdout: `claude --resume ${ID}\n` })).toEqual({ running: true, args: `claude --resume ${ID}` })
+  expect(psProc({ exitCode: 1, stdout: '' })).toEqual({ running: false, args: '' })
+  expect(psProc({ exitCode: 2, stdout: '' })).toBeUndefined()
+  expect(psProc(undefined)).toBeUndefined()
+})
+
+test('alive, dead or unsure: only proof of death says dead; a reused pid proves nothing either way', () => {
+  const run = (args: string) => ({ running: true, args })
+  const gone = { running: false, args: '' }
+  // no process named for it, or only ones that are gone: dead
+  expect(livenessOf(ID, [], new Map())).toEqual({ kind: 'dead' })
+  expect(livenessOf(ID, [5], new Map([[5, gone]]))).toEqual({ kind: 'dead' })
+  // the pid now belongs to another program: the registry entry is stale
+  expect(livenessOf(ID, [5], new Map([[5, run('C:/Windows/notepad.exe')]]))).toEqual({ kind: 'dead' })
+  // its command line carries the id: alive
+  expect(livenessOf(ID, [5], new Map([[5, run(`claude --resume ${ID.toUpperCase()}`)]]))).toEqual({ kind: 'alive', pid: 5 })
+  // a claude started without the id on its command line, still in the registry file named after its pid: alive
+  expect(livenessOf(ID, [5], new Map([[5, run('"C:/Users/me/.local/bin/claude.exe"')]]))).toEqual({ kind: 'alive', pid: 5 })
+  // running but unreadable, or no answer for a pid: unsure
+  expect(livenessOf(ID, [5], new Map([[5, run('')]])).kind).toBe('unsure')
+  expect(livenessOf(ID, [5, 6], new Map([[5, gone]])).kind).toBe('unsure')
+  // a live one wins over a doubt about another
+  expect(livenessOf(ID, [5, 6], new Map([[5, run('')], [6, run(`claude --session-id ${ID}`)]]))).toEqual({ kind: 'alive', pid: 6 })
 })

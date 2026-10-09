@@ -68,13 +68,43 @@ export const statusFile = (name: string) => `status/${name.replace(/[^\p{L}\p{N}
 /** A member's role file, beside its status file: roles/<name>.md (read by the member through its start-up pointer). */
 export const roleFile = (name: string) => `roles/${name.replace(/[^\p{L}\p{N}._-]+/gu, '_')}.md`
 
-/** The state to show: a silent member is offline; a closed one stays closed. */
-export const shownState = (s: Status | undefined, now: number) =>
-  !s ? undefined : s.state === 'closed' ? 'closed' : now - s.heartbeat > STALE_MS ? 'offline' : s.state
+// ── Sleep-aware clocks (0.5.16, #71) ──
+// A session's 30 s round notes the time of each tick. A gap more than three minutes beyond the interval is time the
+// machine slept (or the session hung): it is kept as a sleep window for a day, and every age below (silent, idle) skips
+// the time spent asleep. Waking up closes nothing, and a hung top only delays auto-close, never brings it forward.
+
+/** a time the machine slept, from..to (ms) */
+export type Sleep = { from: number; to: number }
+/** a tick this much later than expected counts as sleep */
+export const SLEEP_SLACK_MS = 3 * MIN
+/** sleep windows are kept this long */
+export const SLEEP_KEEP_MS = 24 * 60 * MIN
+/** a member silent for longer than this is checked (is its process alive?) before a message is sent to it */
+export const CRASH_CHECK_MS = 90_000
+
+/** The sleep windows after a tick at now, the previous one at prev (0: none yet), the ticks every ms apart. */
+export function noteTick(prev: number, now: number, every: number, sleeps: readonly Sleep[]): Sleep[] {
+  const kept = sleeps.filter(w => now - w.to <= SLEEP_KEEP_MS)
+  return prev > 0 && now - prev > every + SLEEP_SLACK_MS ? [...kept, { from: prev + every, to: now }] : kept
+}
+
+/** How much of from..to was spent asleep. */
+export const asleepWithin = (sleeps: readonly Sleep[], from: number, to: number) =>
+  sleeps.reduce((n, w) => n + Math.max(0, Math.min(to, w.to) - Math.max(from, w.from)), 0)
+
+/** The age of a time stamp, the time spent asleep since then left out. */
+export const awakeAge = (since: number, now: number, sleeps: readonly Sleep[] = []) => Math.max(0, now - since - asleepWithin(sleeps, since, now))
+
+/** The state to show: a silent member is offline; a closed one stays closed. Time asleep is not silence. */
+export const shownState = (s: Status | undefined, now: number, sleeps: readonly Sleep[] = []) =>
+  !s ? undefined : s.state === 'closed' ? 'closed' : awakeAge(s.heartbeat, now, sleeps) > STALE_MS ? 'offline' : s.state
+
+/** The member has been silent long enough that a message to it first checks whether its session is alive (#71). */
+export const heartbeatStale = (s: Status, now: number, sleeps: readonly Sleep[] = []) => s.state !== 'closed' && awakeAge(s.heartbeat, now, sleeps) > CRASH_CHECK_MS
 
 /** Whether the tab check is worth an Orca call: some open member has been silent for over two minutes. */
-export const needsTabCheck = (statuses: (Status | undefined)[], now: number) =>
-  statuses.some(s => s && s.state !== 'closed' && now - s.heartbeat > CHECK_AFTER_MS)
+export const needsTabCheck = (statuses: (Status | undefined)[], now: number, sleeps: readonly Sleep[] = []) =>
+  statuses.some(s => s && s.state !== 'closed' && awakeAge(s.heartbeat, now, sleeps) > CHECK_AFTER_MS)
 
 /** The next tab-check interval: doubled while Orca answers slowly (over 500 ms), back to the base when it is fast. */
 export const nextCheckInterval = (current: number, tookMs: number, base = 2 * MIN, cap = 10 * MIN) =>
@@ -85,8 +115,8 @@ const hasReports = (m: Member, list: Member[]) => list.some(x => x !== m && x.bo
 /** When a member went idle: after its last turn end or its last "clean", whichever is later. */
 const idleSince = (s: Status) => Math.max(s.turnEnd ?? 0, s.lastClean ?? 0)
 
-/** Workers that may be closed: no reports, not exempt, idle, said "clean", and idle for the set minutes. */
-export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number): Member[] {
+/** Workers that may be closed: no reports, not exempt, idle, said "clean", and idle for the set minutes (awake). */
+export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Member[] {
   if (!t.autoClose) return []
   return list.filter(m => {
     const s = statuses.get(m.name)
@@ -94,16 +124,16 @@ export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSe
       !!s &&
       !hasReports(m, list) &&
       !t.exempt.includes(m.name) &&
-      shownState(s, now) === 'idle' &&
+      shownState(s, now, sleeps) === 'idle' &&
       !!s.lastClean &&
-      now - idleSince(s) >= t.idleMinutes * MIN
+      awakeAge(idleSince(s), now, sleeps) >= t.idleMinutes * MIN
     )
   })
 }
 
 /** How many sessions are open: members whose state is neither offline nor closed. */
-export const openCount = (statuses: Map<string, Status>, now: number) =>
-  [...statuses.values()].filter(s => !['offline', 'closed'].includes(shownState(s, now) ?? 'offline')).length
+export const openCount = (statuses: Map<string, Status>, now: number, sleeps: readonly Sleep[] = []) =>
+  [...statuses.values()].filter(s => !['offline', 'closed'].includes(shownState(s, now, sleeps) ?? 'offline')).length
 
 export type Admit = { kind: 'open' } | { kind: 'evict'; name: string } | { kind: 'queue' }
 
@@ -111,10 +141,10 @@ export type Admit = { kind: 'open' } | { kind: 'evict'; name: string } | { kind:
  * Whether a closed member can reopen now: under the cap it opens; at the cap the longest-idle closable worker makes
  * room; with no worker to close, the message waits in the queue.
  */
-export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number): Admit {
-  if (t.maxOpen <= 0 || openCount(statuses, now) < t.maxOpen) return { kind: 'open' }
+export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Admit {
+  if (t.maxOpen <= 0 || openCount(statuses, now, sleeps) < t.maxOpen) return { kind: 'open' }
   const idle = list
-    .filter(m => !hasReports(m, list) && !t.exempt.includes(m.name) && shownState(statuses.get(m.name), now) === 'idle')
+    .filter(m => !hasReports(m, list) && !t.exempt.includes(m.name) && shownState(statuses.get(m.name), now, sleeps) === 'idle')
     .sort((a, b) => idleSince(statuses.get(a.name)!) - idleSince(statuses.get(b.name)!))
   return idle.length ? { kind: 'evict', name: idle[0]!.name } : { kind: 'queue' }
 }

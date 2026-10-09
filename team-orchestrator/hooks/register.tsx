@@ -7,12 +7,13 @@ import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
 import type { Claim, Level } from './identity'
-import type { Status, TeamSettings } from './status'
-import { countFromPs, linkFree, scratchDeletePlan } from './platform'
+import type { Sleep, Status, TeamSettings } from './status'
+import { countFromPs, linkFree, livenessOf, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
+import type { Liveness, Proc } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
-import { admit, chunk, cliOf, COUNT_EVERY_MS, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
-import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, STRUCT, timeOf, topElsewhere } from './changes'
-import type { Change, Meta, QEntry } from './changes'
+import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
+import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
+import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
@@ -901,25 +902,36 @@ async function requestedModel($: any, m: Member): Promise<string> {
 // The tab, the session id and the name are matched against the roster by identify(); the answer is worked out once
 // per refresh and kept while the session id and the roster's identity fields stay the same, so a tool call does not
 // read the registry or a transcript.
-type Reg = { sessionId: string; cwd: string; name: string }
+type Reg = { sessionId: string; cwd: string; name: string; pid: number }
 // The machine's session registry: <config dir>/sessions/<pid>.json, one per live local session. Only the id, the
-// folder and the name are taken; the .key files beside them are never read.
-async function registry($: any): Promise<Reg[]> {
+// folder, the name and the process id are taken; the .key files beside them are never read. ok: some registry folder
+// could be listed, so an empty answer means "no session", not "unreadable" (the crash check of 0.5.16 needs the difference).
+async function readRegistry($: any): Promise<{ ok: boolean; list: Reg[] }> {
   const out: Reg[] = []
+  let ok = false
   for (const dir of [...new Set(await claudeDirs($))]) {
     const at = `${dir}/sessions`
-    const files = ((await $.fs.list(at).catch(() => [])) as any[]).filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))
+    let listed: any[]
+    try {
+      listed = (await $.fs.list(at)) as any[]
+      ok = true
+    } catch {
+      continue
+    }
+    const files = listed.filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))
     for (const f of files) {
       try {
         const o = JSON.parse(String(await $.fs.read(`${at}/${f.name}`)))
-        if (typeof o?.sessionId === 'string') out.push({ sessionId: o.sessionId, cwd: String(o.cwd ?? ''), name: typeof o.name === 'string' ? o.name : '' })
+        const pid = Number.isInteger(o?.pid) && o.pid > 0 ? (o.pid as number) : Number(String(f.name).replace(/\.json$/, ''))
+        if (typeof o?.sessionId === 'string') out.push({ sessionId: o.sessionId, cwd: String(o.cwd ?? ''), name: typeof o.name === 'string' ? o.name : '', pid })
       } catch {
         // a record being rewritten: skip it this time
       }
     }
   }
-  return out
+  return { ok, list: out }
 }
+const registry = async ($: any): Promise<Reg[]> => (await readRegistry($)).list
 
 type Who = { me?: Member; level: Level; why: string }
 const NOBODY: Who = { level: 'none', why: '' }
@@ -1330,9 +1342,9 @@ async function readQueue($: any): Promise<QFile[]> {
   return out
 }
 const writeQ = async ($: any, f: QFile) => $.fs.write(`${await queueDir($)}/${f.name}`, JSON.stringify(f.q, null, 1))
-async function enqueue($: any, to: string, from: string, message: string): Promise<QFile> {
+async function enqueue($: any, to: string, from: string, message: string, reason?: QReason): Promise<QFile> {
   const created = Date.now()
-  const f: QFile = { name: fileName(created, rand()), q: { to, from, message, created, state: 'pending', tries: 0 } }
+  const f: QFile = { name: fileName(created, rand()), q: { to, from, message, created, state: 'pending', tries: 0, ...(reason ? { reason } : {}) } }
   await writeQ($, f)
   return f
 }
@@ -1379,7 +1391,7 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
   const here = await machineOf($)
   const list = list0.filter(m => !isAway(m, here))
   const statuses = await readStatuses($, list)
-  const a = admit(list, statuses, t, Date.now())
+  const a = admit(list, statuses, t, Date.now(), sleeps())
   if (a.kind === 'queue') return undefined
   if (a.kind === 'evict') {
     const out = list.find(x => x.name === a.name)
@@ -1422,9 +1434,126 @@ async function sendNow($: any, target: Member, message: string): Promise<{ ok: b
     : { ok: false, text: `Not sent to ${target.name}: ${String(r?.reason ?? 'no answer from its session').slice(0, 200)}` }
 }
 
+// ── Is a silent member's session still running? (0.5.16, #71 and #65) ──
+// Asked only when a message is about to go to a local member silent for over 90 s of awake time (deliver, and the
+// queue's delivery), never on a timer. Proof that it is dead needs all three of #65: its home is this PC, this PC's
+// session registry (~/.claude/sessions/<pid>.json) names no live process for its session id, and no process it names
+// still carries that id. Anything short of proof is "unsure", and an unsure member is never reopened.
+async function crashCheck($: any, m: Member, st?: Status): Promise<Liveness> {
+  const unsure = (why: string): Liveness => ({ kind: 'unsure', why })
+  const here = await machineOf($)
+  if (!here) return unsure('this PC does not know its own name, so it cannot be proved to be its home')
+  if (!m.machine || !sameMachine(m.machine, here)) return unsure(`its home is not recorded as this PC (${here})`)
+  // the roster's id and the one its status file last wrote (a /clear changes it): proof must hold for both
+  const ids = [...new Set([m.sessionId, st?.sessionId ?? ''].filter(Boolean))]
+  if (ids.length === 0) return unsure('the roster has no session id for it')
+  const own = String(await $.session.id().catch(() => ''))
+  const reg = await readRegistry($)
+  // a registry that does not list this very session cannot vouch for any other
+  if (!reg.ok || own === '' || !reg.list.some(r => r.sessionId === own)) return unsure("this PC's session registry could not be read")
+  for (const id of ids) {
+    const pids = [...new Set(reg.list.filter(r => r.sessionId === id).map(r => r.pid))]
+    if (pids.some(p => !Number.isInteger(p) || p <= 0)) return unsure('its registry entry names no process id')
+    if (pids.length === 0) continue
+    const procs = await processes($, pids)
+    if (!procs) return unsure('the process check did not answer')
+    const v = livenessOf(id, pids, procs)
+    if (v.kind !== 'dead') return v
+  }
+  return { kind: 'dead' }
+}
+
+// The given process ids, looked up by id alone: one Get-CimInstance query on Windows, `ps -o args= -p` elsewhere.
+// undefined when any lookup fails.
+async function processes($: any, pids: number[]): Promise<Map<number, Proc> | undefined> {
+  if (await isWindows($)) {
+    const r = await $.process.run(['powershell.exe', '-NoProfile', '-Command', winProcScript(pids)], { timeoutMs: 20000 }).catch(() => undefined)
+    return r?.exitCode === 0 ? parseWinProcs(String(r.stdout ?? ''), pids) : undefined
+  }
+  const out = new Map<number, Proc>()
+  for (const pid of pids) {
+    const p = psProc(await $.process.run(['ps', '-o', 'args=', '-p', String(pid)], { timeoutMs: 10000 }).catch(() => undefined))
+    if (!p) return undefined
+    out.set(pid, p)
+  }
+  return out
+}
+
+// A member proved dead (#65), whether it crashed or its tab was closed by hand: marked closed the way auto-close marks
+// it (status file, roster), so the usual reopen-on-message path applies. A leftover tab of its own is closed first;
+// false when that tab will not close (then nothing is marked).
+async function markDead($: any, m: Member): Promise<boolean> {
+  if (await liveHandleOf($, m)) return closeMember($, m)
+  await writeStatusOf($, m, { state: 'closed' })
+  await update($, members, old => old.map(x => (x.name === m.name ? { ...x, state: 'closed', handle: '' } : x)))
+  await share($)
+  return true
+}
+
+const HOUR = 60 * MIN
+// the members this session told the top about, and when (one note per member per hour)
+const hungTold = new Map<string, number>()
+// the members whose tab was found gone while a message waited for them, and when they were last checked
+const goneChecked = new Map<string, number>()
+
+// The team top hears once per member per hour that a member looks hung (its process runs, its status is silent), so
+// it can ask the user. A queue entry records the note, so another session does not repeat it within the hour.
+async function tellTopHung($: any, m: Member, st: Status): Promise<boolean> {
+  const now = Date.now()
+  if (now - (hungTold.get(m.name) ?? 0) < HOUR) return false
+  if ((await readQueue($)).some(f => f.q.to === m.name && !!f.q.told && now - f.q.told < HOUR)) return false
+  hungTold.set(m.name, now)
+  const list = await readMembers($)
+  const top = topOf(list, m) ?? projectTop(list)
+  const mins = Math.max(1, Math.round(awakeAge(st.heartbeat, now, sleeps()) / MIN))
+  const text =
+    `HUNG MEMBER (Team Orchestrator): ${m.name} has written no status for ${mins} min, yet its Claude process is still running, so it was not reopened. ` +
+    'Messages to it wait in the queue and are delivered when it answers, or when its tab is closed (it is then reopened with its conversation). ' +
+    `Ask the user whether to look at ${m.name}'s tab (it may be stuck) or close it.`
+  const own = String(await $.session.id().catch(() => ''))
+  const local = !!top && locationOf(top, await machineOf($)) === 'local'
+  const r: any = top?.sessionId && top.sessionId !== own && local ? await $.session.send({ to: { sessionId: top.sessionId }, text }).catch(() => undefined) : undefined
+  if (!r?.isDelivered) await $.ui.toast(`Team Orchestrator: ${m.name} looks hung (no status for ${mins} min, its process still runs). Messages to it are queued.`)
+  return true
+}
+
+// A message for a member that is silent but not proved dead: queued (state pending, reason hung or unsure), never a
+// reopen. The answer goes back to the sender.
+async function hold($: any, target: Member, message: string, v: Liveness, st: Status): Promise<string> {
+  const me = await rosterSelf($)
+  const f = await enqueue($, target.name, me?.me.name ?? 'someone', message, v.kind === 'alive' ? 'hung' : 'unsure')
+  if (v.kind === 'alive') {
+    if (await tellTopHung($, target, st)) await writeQ($, { name: f.name, q: { ...f.q, told: Date.now() } })
+    return `${target.name} looks hung; message queued, it will be delivered when it answers or when its tab is closed.`
+  }
+  const mins = Math.max(1, Math.round(awakeAge(st.heartbeat, Date.now(), sleeps()) / MIN))
+  return (
+    `${target.name} has written no status for ${mins} min, and whether its session still runs could not be proved (${v.kind === 'unsure' ? v.why : 'no answer'}). ` +
+    'It was not reopened, so no second copy of its conversation starts. Your message is queued and is delivered when it answers.'
+  )
+}
+
+// A member whose message waits because it looked hung or unsure, and whose Orca tab the tab check now finds gone
+// (closed by hand): checked once (at most every 5 minutes) and, proved dead, marked closed; the next round reopens it
+// and delivers (#65). This runs only on that event, after the tab check the refresh makes anyway: no process polling.
+async function closeTheGone($: any, gone: Member[], statuses: Map<string, Status>) {
+  if (gone.length === 0) return
+  const waiting = new Set((await readQueue($)).filter(f => f.q.state === 'pending' && !!f.q.reason).map(f => f.q.to))
+  const here = await machineOf($)
+  for (const m of gone) {
+    if (!waiting.has(m.name) && !(m.address && waiting.has(m.address))) continue
+    if (isAway(m, here) || !isManaged(m) || isClosed(m, statuses.get(m.name))) continue
+    if (Date.now() - (goneChecked.get(keyOf(m)) ?? 0) < 5 * MIN) continue
+    goneChecked.set(keyOf(m), Date.now())
+    if ((await crashCheck($, m, statuses.get(m.name))).kind === 'dead' && (await markDead($, m)))
+      await $.ui.toast(`Team Orchestrator: ${m.name}'s tab is gone and its session has stopped; it is marked closed and reopens for its queued message.`)
+  }
+}
+
 // Send a message to a member, starting or reopening it first. A string result goes back to the sender.
 async function deliver($: any, target: Member, message: string, startHere = false): Promise<string> {
   const here = await machineOf($)
+  let said = ''
   if (!isManaged(target)) return unmanagedAnswer(target)
   if (target.location === 'remote' && !isAway(target, here)) return `${target.name} is on another device. ${NO_MESSENGER}`
   if (isAway(target, here)) {
@@ -1434,21 +1563,38 @@ async function deliver($: any, target: Member, message: string, startHere = fals
     // its Orca workspace id is the other PC's: the copy starts in this session's workspace
     const ok = await reopen($, { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
     if (!ok) return `A fresh copy of ${target.name} could not be started here. Ask the person to open its tab.`
-  } else if (isClosed(target, await readStatus($, target.name))) {
-    const t = await readTeamSettings($)
-    await $.ui.toast(`${target.state === 'unstarted' ? 'Starting' : 'Reopening'} ${target.name}…`)
-    const ok = await admitAndReopen($, target, await readMembers($), t)
-    if (ok === undefined) {
-      const me = await rosterSelf($)
-      const ahead = (await readQueue($)).filter(f => f.q.state === 'pending' || f.q.state === 'sending').length
-      await enqueue($, target.name, me?.me.name ?? 'someone', message)
-      return `${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
+  } else {
+    const st = await readStatus($, target.name)
+    let closed = isClosed(target, st)
+    let resume = false
+    // open, but silent for over 90 s of awake time: is its session still running? (0.5.16, #71 and #65) Only proof that
+    // it is dead reopens it; a live process (hung) or any doubt keeps the message in the queue instead.
+    if (!closed && st && heartbeatStale(st, Date.now(), sleeps())) {
+      const v = await crashCheck($, target, st)
+      if (v.kind !== 'dead') return hold($, target, message, v, st)
+      if (!(await markDead($, target))) return hold($, target, message, { kind: 'unsure', why: 'its old Orca tab could not be closed' }, st)
+      closed = true
+      resume = true
+      said = `${target.name}'s session had stopped (no process holds it any more), so it was marked closed and reopened with its conversation. `
     }
-    if (!ok) return `${target.name} could not be started. Ask the person to open its tab.`
+    if (closed) {
+      const t0 = await readTeamSettings($)
+      // a member proved dead keeps its conversation (#65): --resume whatever the team's reopen setting says
+      const t: TeamSettings = resume ? { ...t0, reopen: 'resume' } : t0
+      await $.ui.toast(`${target.state === 'unstarted' ? 'Starting' : 'Reopening'} ${target.name}${resume ? ' (its session had stopped)' : ''}…`)
+      const ok = await admitAndReopen($, target, await readMembers($), t)
+      if (ok === undefined) {
+        const me = await rosterSelf($)
+        const ahead = (await readQueue($)).filter(f => f.q.state === 'pending' || f.q.state === 'sending').length
+        await enqueue($, target.name, me?.me.name ?? 'someone', message)
+        return `${said}${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
+      }
+      if (!ok) return `${said}${target.name} could not be started. Ask the person to open its tab.`
+    }
   }
   // a reopen may have changed its session id (fresh) and its home (a fresh copy here): send to the member as it is now
   const now = (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target
-  return (await sendNow($, now, message)).text
+  return said + (await sendNow($, now, message)).text
 }
 
 // The team top's round: close workers idle past the set minutes, then work the queue: deliver what has room, mark
@@ -1456,7 +1602,7 @@ async function deliver($: any, target: Member, message: string, startHere = fals
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
   const here = await machineOf($)
   const t = await readTeamSettings($)
-  for (const m of toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now)) await closeMember($, m)
+  for (const m of toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now, sleeps())) await closeMember($, m)
   await migrateQueue($)
   const queue = await readQueue($)
   const prune: string[] = []
@@ -1481,8 +1627,29 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
       await tellSenderHead($, failed)
       continue
     }
+    const st = await readStatus($, target.name)
+    let closed = isClosed(target, st)
+    const quiet = !closed && !!st && heartbeatStale(st, Date.now(), sleeps())
+    // held for a hung or unsure member: it waits until the member answers (a fresh heartbeat) or is proved dead and
+    // closed (its tab gone, see closeTheGone); the round runs no process check for it (#65: no polling)
+    if (f.q.reason && quiet) continue
+    // a member proved dead keeps its conversation: --resume (#65)
+    let resume = !!f.q.reason
+    if (quiet && st) {
+      // a member gone quiet since the message was queued: the send-time crash check (#71)
+      const v = await crashCheck($, target, st)
+      const dead = v.kind === 'dead' && (await markDead($, target))
+      if (!dead) {
+        const held: QEntry = { ...f.q, state: 'pending', reason: v.kind === 'alive' ? 'hung' : 'unsure', updated: Date.now(), ...(v.kind === 'unsure' ? { error: v.why } : {}) }
+        if (v.kind === 'alive' && (await tellTopHung($, target, st))) held.told = Date.now()
+        await writeQ($, { name: f.name, q: held })
+        continue
+      }
+      closed = true
+      resume = true
+    }
     await writeQ($, { name: f.name, q: { ...f.q, state: 'sending', updated: Date.now() } })
-    const open = !isClosed(target, await readStatus($, target.name)) || (await admitAndReopen($, target, all, t))
+    const open = !closed || (await admitAndReopen($, target, all, resume ? { ...t, reopen: 'resume' } : t))
     let next: QEntry
     if (open === undefined) next = afterTry(f.q, undefined, Date.now())
     else if (!open) next = afterTry(f.q, false, Date.now(), `${target.name} could not be started`)
@@ -1496,6 +1663,16 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
     if (next.state === 'failed') await tellSenderHead($, next)
   }
   await markPruned($, prune)
+}
+
+// The sleep windows of this session's clock (0.5.16, #71): each 30 s tick notes its time, and a tick more than three
+// minutes late adds the gap (see noteTick in status.ts). Kept in memory for a day; a reload starts afresh.
+const REFRESH_MS = 30000
+const clockLog = { last: 0, sleeps: [] as Sleep[] }
+const sleeps = (): readonly Sleep[] => clockLog.sleeps
+function tick(now = Date.now()) {
+  clockLog.sleeps = noteTick(clockLog.last, now, REFRESH_MS, clockLog.sleeps)
+  clockLog.last = now
 }
 
 // The gentle tab check (see refresh): its own interval, doubled while Orca is slow.
@@ -1605,7 +1782,7 @@ async function refresh($: any) {
       if (away(m)) return { ...m, state: 'away' }
       if (!isManaged(m)) return { ...m, state: 'unmanaged' }
       const s = statuses.get(m.name)
-      return s ? { ...m, state: shownState(s, now) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
+      return s ? { ...m, state: shownState(s, now, sleeps()) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
   )
   // Only one session polls Orca: the team's top member (boss "user"), or a session not on the roster (the person's
@@ -1620,7 +1797,7 @@ async function refresh($: any) {
   // due (some open member silent for over two minutes, at most once per interval, the interval doubling while Orca is slow).
   // a closed or not-yet-started member has no tab on purpose: it is not missing
   const missing = list.some(m => !skip(m) && !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
-  if (!missing && !(now >= tabCheck.next && needsTabCheck([...statuses.values()], now))) return
+  if (!missing && !(now >= tabCheck.next && needsTabCheck([...statuses.values()], now, sleeps()))) return
   const started = Date.now()
   const ps = await orca($, 'worktree', 'ps')
   const agents: any[] = []
@@ -1687,7 +1864,7 @@ async function refresh($: any) {
       const a = t ? agents.find(x => x.paneKey === `${t.tabId}:${t.leafId}`) : undefined
       const raw = String(a?.state ?? '')
       const fromOrca = /work|run/.test(raw) ? 'working' : /block|wait|ask|input|permission|question/.test(raw) ? 'asking' : raw === '' ? m.state : 'idle'
-      const state = (!t && m.handle && !isClosed(m, s)) || exited ? 'offline' : s ? (shownState(s, now) ?? m.state) : fromOrca
+      const state = (!t && m.handle && !isClosed(m, s)) || exited ? 'offline' : s ? (shownState(s, now, sleeps()) ?? m.state) : fromOrca
       const line = s
         ? { model: s.model || undefined, effort: s.effort || undefined, ctx: s.ctx === undefined ? undefined : String(s.ctx) }
         : {
@@ -1718,6 +1895,8 @@ async function refresh($: any) {
   })
   await update($, members, old => next.map(n => ({ ...n, sel: old.find(o => o.name === n.name && (o.team || n.team) === n.team)?.sel ?? n.sel })))
   await share($)
+  // a member whose message waits (hung or unsure) and whose tab is now gone: proved dead, it is closed (#65)
+  if (writes(role)) await closeTheGone($, firstPass.filter(r => !r.live).map(r => r.m), statuses)
 }
 
 // Take a team, or one member of it, off the roster. Only the roster changes: no terminal is closed.
@@ -2155,7 +2334,10 @@ export const register: Register = (on, options) => {
     if (kept.length > 0) await update($, members, () => kept)
     void orcaSetup($)
     void readVersion($)
-    $.clock.every(30000, () => void refresh($))
+    $.clock.every(REFRESH_MS, () => {
+      tick()
+      void refresh($)
+    })
     // this session's own status: alive now, and a heartbeat every minute (a silent member shows offline after 5 min)
     void writeMine($, { state: 'idle' })
     $.clock.every(60000, () => void writeMine($, {}))

@@ -199,7 +199,14 @@ export function projectKey(root: string): string {
 // ── the queue ──
 
 export type QState = 'pending' | 'sending' | 'delivered' | 'failed'
-export type QEntry = { to: string; from: string; message: string; created: number; state: QState; tries: number; updated?: number; error?: string }
+/**
+ * reason (0.5.16, #65): why a pending entry waits for its member to answer rather than for room. hung: its claude
+ * process runs but it has written no status for a while; unsure: whether it runs could not be proved. Either is tried
+ * when the member's heartbeat is fresh again, or once it is proved dead and closed (then it is reopened first). told:
+ * when the team top was told the member looks hung (once per member per hour, across sessions).
+ */
+export type QReason = 'hung' | 'unsure'
+export type QEntry = { to: string; from: string; message: string; created: number; state: QState; tries: number; updated?: number; error?: string; reason?: QReason; told?: number }
 
 /** What the top's round does with one entry: prune it, keep it as it is, or try to deliver it. */
 export function queueAction(q: QEntry, now: number): 'prune' | 'keep' | 'try' {
