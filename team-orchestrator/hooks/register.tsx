@@ -1628,16 +1628,17 @@ export const register: Register = (on, options) => {
     const t: number = await read($, frame)
     const lit = t % 6 < 3 ? t % 6 : -1
     const go = (to: View) => update($, view, () => to)
+    await readVersion($)
+    // a filled title pill like Clean View's (a Button takes no background), with the open/close button beside it
+    const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
     return (
       <Box flexDirection="column">
         <Box>
-          <Button
-            key="main"
-            label="◆ Team Orchestrator"
-            hotkey="t"
-            variant="primary"
-            onPress={() => void (async () => go(open ? 'closed' : 'roster'))()}
-          />
+          <Text bold inverse={plainLook} backgroundColor={plainLook ? undefined : 'cyan'} color={plainLook ? undefined : 'black'}>
+            {` ◆ Team Orchestrator${cfg.version ? ` v${cfg.version}` : ''} `}
+          </Text>
+          <Text> </Text>
+          <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={() => void (async () => go(open ? 'closed' : 'roster'))()} />
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
             <Text>

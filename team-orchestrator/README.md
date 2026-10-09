@@ -195,3 +195,7 @@ The roster shows a short model name, such as `haiku-5-5`. Before 0.5.05, a start
 ## Version in the panel (0.5.08)
 
 The panel header shows the installed version next to the title (`◆ TEAM ORCHESTRATOR v0.5.08`). The mod reads it once per load from its own `plugin.json`, so it always matches what is installed.
+
+## Band title pill (0.5.09)
+
+The band above the prompt starts with a filled title pill in the same colours as Clean View: cyan background, bold black text. It reads `◆ Team Orchestrator v0.5.09`. With NO_COLOR set, it uses reverse video instead. A Button cannot take a background colour, so the open and close control is the small `▸` / `▾` button beside the pill. The `t` hotkey still opens and closes the panel.
