@@ -10,7 +10,7 @@ import type { Claim, Level } from './identity'
 import type { Status, TeamSettings } from './status'
 import { countFromPs, linkFree, scratchDeletePlan } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
-import { admit, chunk, COUNT_EVERY_MS, localRef, MIN, modelArg, needsTabCheck, nextCheckInterval, roleFile, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose } from './status'
+import { admit, chunk, cliOf, COUNT_EVERY_MS, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten } from './layout'
@@ -250,6 +250,7 @@ const look = (s: string): [string, string, string] =>
   : s === 'unstarted' ? ['·', 'not yet', 'gray']
   : s === 'queued' ? ['○', 'queued', 'gray']
   : s === 'away' ? ['◌', 'away', 'gray']
+  : s === 'unmanaged' ? ['◇', 'external', 'gray']
   : ['?', s.slice(0, 8), 'magenta']
 
 // `cells` wide bar and the percent on one line; 0 cells is the percent alone
@@ -271,7 +272,8 @@ async function orca($: any, ...args: string[]) {
 
 const flags = (model?: string, effort?: string) => {
   const m = modelArg(model ?? '')
-  return `${m ? ` --model ${m}` : ''}${effort && effort !== 'default' && effort !== 'keep' ? ` --effort ${effort}` : ''}`
+  // "[1m]" is a pattern to zsh: a name carrying it goes in double quotes (cmd.exe and bash take those too)
+  return `${m ? ` --model ${/[[\]]/.test(m) ? `"${m}"` : m}` : ''}${effort && effort !== 'default' && effort !== 'keep' ? ` --effort ${effort}` : ''}`
 }
 
 
@@ -292,14 +294,42 @@ const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
 
-// The Orca workspace (worktree id) this session runs in, from `orca worktree current` run in the session's own folder.
+// An Orca workspace as Orca knows it now: whether it still exists, and its folder ('' when Orca gives none).
+async function worktreeInfo($: any, id: string): Promise<{ exists: boolean; path: string }> {
+  const r = await orca($, 'worktree', 'show', '--worktree', `id:${id}`)
+  if (!r.ok) return { exists: false, path: '' }
+  try {
+    return { exists: true, path: String(JSON.parse(r.out).result?.worktree?.path ?? '') || pathInWorktreeId(id) }
+  } catch {
+    return { exists: true, path: pathInWorktreeId(id) }
+  }
+}
+
+// The Orca workspace (worktree id) this session runs in (#68). The tab's own ORCA_WORKTREE_ID counts only while that
+// workspace's folder contains the project root: after a /cd or a moved project it names the old one. Otherwise
+// `orca worktree current`, run in the session's own folder, answers.
 async function currentWorktree($: any): Promise<string> {
   // Orca names the workspace of the tab this session runs in; asking Orca by folder picks the wrong one when two
   // workspaces share a folder
   const own = String((await $.env.get('ORCA_WORKTREE_ID').catch(() => undefined)) ?? '').trim()
-  if (own) return own
+  if (own) {
+    const root = await rootOf($)
+    const inId = pathInWorktreeId(own)
+    if (worktreeHolds(inId !== '' ? inId : (await worktreeInfo($, own)).path, root)) return own
+  }
   const cur = await orca($, 'worktree', 'current')
   return cur.ok ? (cur.out.match(/"worktree":\s*\{\s*"id":\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? '').replace(/\\\\/g, '\\') : ''
+}
+
+// The workspace a member starts in (#68): its saved one while Orca still has it and it holds the project root; else the
+// one this session finds, which the caller records on the member (from a session that is not the team top, through a
+// change file, like every roster change). '' when neither is known.
+async function memberWorktree($: any, m: Member): Promise<string> {
+  if (m.worktree) {
+    const i = await worktreeInfo($, m.worktree)
+    if (i.exists && worktreeHolds(i.path, await rootOf($))) return m.worktree
+  }
+  return (await currentWorktree($)) || m.worktree || ''
 }
 
 // Before 0.5.0 the roster was one file, .claude/team-orchestrator.json. Its content moves into the folder once (a copy
@@ -435,7 +465,7 @@ type Writer = { role: Role; meta: Meta; here: string; me: string }
 const writes = (r: Writer) => r.role === 'top' || r.role === 'standin' || r.role === 'boot'
 // what this session has been told (once each); reset at each load
 const told = { old: false, away: '', asked: false, declined: false }
-// an AskUserQuestion was answered in the turn that is running: team_take_top needs Herman's answer first
+// an AskUserQuestion was answered in the turn that is running: team_take_top needs the user's answer first
 const turnAsk = { answered: false }
 
 async function writerRole($: any, who?: Who): Promise<Writer> {
@@ -487,18 +517,18 @@ async function topLive($: any, list: Member[], here: string): Promise<boolean> {
 
 const takeAsk = (there: string, here: string) =>
   `TEAM ORCHESTRATOR, act now: the team top is recorded on ${there}, not on this PC (${here}). Until that changes this session ` +
-  'writes no team file, closes no idle worker and delivers no queued message. Ask Herman AT ONCE with AskUserQuestion whether this PC ' +
+  'writes no team file, closes no idle worker and delivers no queued message. Ask the user AT ONCE with AskUserQuestion whether this PC ' +
   `takes over as the team top, with two options: (1) "Take over on ${here}": the roster records this PC as the top's, and ${there} becomes read-only; ` +
-  `(2) "Keep ${there}". Then apply his answer with team_take_top { take: true | false }.`
+  `(2) "Keep ${there}". Then apply the answer with team_take_top { take: true | false }.`
 
-// The top machine is another PC: said once per session, and a top session's model is asked to check with Herman.
+// The top machine is another PC: said once per session, and a top session's model is asked to check with the user.
 async function topAway($: any, meta: Meta, here: string, isTop: boolean) {
   if (told.away !== meta.topMachine) {
     told.away = meta.topMachine
     await $.ui.toast(
       `Team Orchestrator: the team top runs on ${meta.topMachine}, not this PC (${here}). Here the team files are read-only: ` +
         `changes wait in changes/ for ${meta.topMachine}, and auto-close and the queue run there.` +
-        (isTop ? ' Herman is asked whether this PC takes over.' : ' team_take_top moves the top here, with Herman\'s yes.'),
+        (isTop ? ' You are asked whether this PC takes over.' : ' team_take_top moves the top here, once you say yes.'),
     )
   }
   if (isTop && !told.asked && !told.declined) {
@@ -700,7 +730,7 @@ const briefText = (m: Member, list: Member[], team: string): string => {
     `TEAM BRIEFING (one-time, from the Team Orchestrator). You are ${m.name} in team "${m.team}". Role: ${m.role}. ${rules} ` +
     `Team structure: ${roster}. ` +
     `TEAM FILES: the team lives in .claude/team-orchestrator/ in the project. roster.json is the structure (teams, bosses, roles) and settings.json the team's worker settings; only the team top's session writes them, and a change made in any other session waits in changes/ until the top applies it. Never edit roster.json, settings.json, meta.json or changes/ by hand. Each member's live status (state, task, model, context, last "clean") is written by the Team Orchestrator for its own session, on its own PC under ~/.claude/team-orchestrator/; never edit another member's status file. ` +
-    `To message a teammate use the SendMessage tool (Claude Code's native agent messaging), e.g. SendMessage({ to: "<their name>", message: "..." }), where the name is the quoted name shown above or in the structure list. If SendMessage says the name is ambiguous or unknown and the person is on the team, use team_message with the plain name instead (it picks the session on this machine, never a Remote Control copy). Do NOT use orca terminal send or the terminal for messages to teammates. ` +
+    `To message a teammate use the SendMessage tool (Claude Code's native agent messaging), e.g. SendMessage({ to: "<their name>", message: "..." }), where the name is the quoted name shown above or in the structure list. If SendMessage says the name is ambiguous or unknown and the person is on the team, use team_message with the plain name instead (it addresses that member's own session by its id: never a same-named session of another project, never a Remote Control copy). Do NOT use orca terminal send or the terminal for messages to teammates. ` +
     `Now reply with exactly "Noted" plus one short line restating your role and reporting line, then wait for instructions.`
   )
 }
@@ -715,7 +745,7 @@ async function briefTeam($: any, team: string, only?: Set<string>) {
   const here = await machineOf($)
   await Promise.all(
     mine
-      .filter(m => m.handle && !isAway(m, here) && (!only || only.has(keyOf(m))))
+      .filter(m => m.handle && !isAway(m, here) && isManaged(m) && (!only || only.has(keyOf(m))))
       .map(async m => {
         const r = await orca($, 'terminal', 'send', '--terminal', m.handle, '--text', briefText(m, list, team), '--enter')
         if (r.ok) sent.add(m.name)
@@ -726,10 +756,12 @@ async function briefTeam($: any, team: string, only?: Set<string>) {
 }
 
 // ── Transcripts: <config dir>/projects/<project>/<session id>.jsonl ──────────────────────────────────────────
-// Only three things are taken from a transcript: its last customTitle, and the last assistant message's model,
-// usage (as a context percent), effort and cwd. Nothing else is kept or shown: a transcript can hold secrets.
+// Only these things are taken from a transcript: its last customTitle, its last requestedModel, and the last assistant
+// message's model, usage (as a context percent), effort and cwd. Nothing else is kept or shown: a transcript can hold
+// secrets.
 type Transcript = { id: string; path: string; mtimeMs: number }
-type Stats = { model: string; ctx: number; effort: string; cwd: string }
+/** requested: the last model asked for, as typed ('' unknown); used: the tokens the last answer was given over */
+type Stats = { model: string; requested: string; used: number; ctx: number; effort: string; cwd: string }
 
 // Every transcript, newest first.
 async function transcripts($: any): Promise<Transcript[]> {
@@ -778,9 +810,28 @@ const lastTitle = (text: string): string | undefined => {
   }
 }
 
-// The window is 200k unless the id says [1m]; a session already past 200k must be on the 1M window.
+// The model the member asked for (#63): the last requestedModel of its own loop, as typed ([1m] and a gateway's name
+// kept, /model switches followed); message.model drops [1m] and may be a gateway's own id. '' when the tail has none.
+const lastRequested = (text: string): string => {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i] as string
+    if (!l.includes('"requestedModel"')) continue
+    try {
+      const d = JSON.parse(l)
+      if (!d?.isSidechain && typeof d?.requestedModel === 'string' && d.requestedModel.trim() !== '') return d.requestedModel.trim()
+    } catch {
+      // a line cut by the tail
+    }
+  }
+  return ''
+}
+
+// The model is the one asked for (else the one that answered), kept as typed. The context percent counts against
+// windowFor's guess (200k unless [1m] or past 200k); the roster uses the member's own reported window when it has one.
 const lastStats = (text: string): Stats | undefined => {
   const lines = text.split('\n')
+  const requested = lastRequested(text)
   for (let i = lines.length - 1; i >= 0; i--) {
     const l = lines[i] as string
     if (!l.includes('"type":"assistant"')) continue
@@ -794,10 +845,11 @@ const lastStats = (text: string): Stats | undefined => {
     const model = String(d?.message?.model ?? '')
     if (d?.type !== 'assistant' || d.isSidechain || !u || model === '' || model === '<synthetic>') continue
     const used = Number(u.input_tokens ?? 0) + Number(u.cache_read_input_tokens ?? 0) + Number(u.cache_creation_input_tokens ?? 0)
-    const window = /\[1m\]$/.test(model) || used > 200000 ? 1000000 : 200000
     return {
-      model: model.replace(/^claude-/, ''),
-      ctx: Math.round((used * 100) / window),
+      model: requested || model,
+      requested,
+      used,
+      ctx: Math.round((used * 100) / windowFor(requested || model, used)),
       effort: typeof d.effort === 'string' ? d.effort : '',
       cwd: typeof d.cwd === 'string' ? d.cwd : '',
     }
@@ -834,6 +886,13 @@ async function statsOf($: any, all: Transcript[], ids: string[]): Promise<Map<st
   const files = all.filter(t => ids.includes(t.id))
   const got = await peek($, files)
   return new Map(files.map((f, i) => [f.id, got[i]?.stats]))
+}
+
+// The model a member last asked for in its own transcript, as typed ([1m] kept); '' when there is none (#63).
+async function requestedModel($: any, m: Member): Promise<string> {
+  if (!m.sessionId) return ''
+  const st = (await statsOf($, await transcripts($), [m.sessionId]).catch(() => undefined))?.get(m.sessionId)
+  return st?.requested ?? ''
 }
 
 // ── Who this session is (identity.ts) ──
@@ -943,7 +1002,7 @@ async function moveFiles($: any, from: string, to: string) {
   }
 }
 
-// Held sessions waiting for Herman's decision, one per session id: <team folder>/claims.json.
+// Held sessions waiting for the user's decision, one per session id: <team folder>/claims.json.
 const claimsFile = async ($: any) => `${await teamDir($)}/claims.json`
 async function readClaims($: any): Promise<Claim[]> {
   const p = await claimsFile($)
@@ -957,7 +1016,7 @@ async function readClaims($: any): Promise<Claim[]> {
 }
 const writeClaims = async ($: any, c: Claim[]) => $.fs.write(await claimsFile($), JSON.stringify(c, null, 1))
 
-// Once per session id: record the claim, warn the member's head, and tell the team top to ask Herman at once.
+// Once per session id: record the claim, warn the member's head, and tell the team top to ask the user at once.
 async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string; machine: string }) {
   const claims = await readClaims($)
   if (claims.some(c => c.sessionId === f.sessionId)) return
@@ -982,11 +1041,11 @@ async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; 
   }
   await $.ui.toast(
     `Team Orchestrator: this session is on hold; it looks like ${x.name} but is not confirmed. ` +
-      (told.length > 0 ? `Told ${told.join(' and ')}.` : 'Nobody on the team could be told: ask Herman.'),
+      (told.length > 0 ? `Told ${told.join(' and ')}.` : 'Nobody on the team could be told: tell the team top yourself.'),
   )
 }
 
-// The team top applies Herman's answer to a held session (member_claim).
+// The team top applies the user's answer to a held session (member_claim).
 async function settleClaim($: any, input: { sessionId?: string; decision?: string; member?: string }): Promise<string> {
   const claims = await readClaims($)
   const c = claims.find(x => x.sessionId === String(input.sessionId ?? '').trim())
@@ -1002,7 +1061,7 @@ async function settleClaim($: any, input: { sessionId?: string; decision?: strin
   const letGo = (m: Member) => ({ ...m, ...(m.sessionId === c.sessionId ? { sessionId: '' } : {}), ...(c.tab && m.handle === c.tab ? { handle: '' } : {}) })
   let out = `Rejected: session ${c.sessionId} stays on hold and off the team.`
   if (decision === 'reject' || !x) {
-    await tell('TEAM ORCHESTRATOR: Herman did not take this session onto the team. It stays on hold: no writes, no subagents, no team tools.')
+    await tell('TEAM ORCHESTRATOR: the user did not take this session onto the team. It stays on hold: no writes, no subagents, no team tools.')
   } else if (decision === 'is') {
     let next = list.map(m => (m === x ? { ...m, sessionId: c.sessionId, ...(c.tab ? { handle: c.tab } : {}), ...(c.machine ? { machine: c.machine } : {}) } : letGo(m)))
     let name = x.name
@@ -1013,18 +1072,18 @@ async function settleClaim($: any, input: { sessionId?: string; decision?: strin
     }
     await update($, members, () => next)
     out = `Session ${c.sessionId} is ${name} of team ${x.team}: the roster took its id${c.tab ? ', tab' : ''} and name.`
-    await tell(`TEAM ORCHESTRATOR: Herman confirmed it. ${roleNote({ ...x, name })}`)
+    await tell(`TEAM ORCHESTRATOR: the user confirmed it. ${roleNote({ ...x, name })}`)
   } else {
     const boss = x.boss === 'user' ? x : (list.find(m => m.team === x.team && m.name === x.boss) ?? x)
     const name = freshName(list, c.name, x.name)
     const added: Member = {
       team: x.team, name, address: name, role: 'worker', level: boss.level + 1, boss: boss.name, handle: c.tab, sessionId: c.sessionId,
-      state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(name),
+      state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(name), location: 'local',
       ...(c.machine ? { machine: c.machine } : {}),
     }
     await update($, members, () => [...list.map(letGo), added])
     out = `Added ${name} to team ${x.team} as a worker under ${boss.name}, with its own role file.`
-    await tell(`TEAM ORCHESTRATOR: Herman added this session to the team as a new member. ${roleNote(added)}${name !== c.name ? ` Run /rename ${name} so teammates reach you by that name.` : ''}`)
+    await tell(`TEAM ORCHESTRATOR: the user added this session to the team as a new member. ${roleNote(added)}${name !== c.name ? ` Run /rename ${name} so teammates reach you by that name.` : ''}`)
   }
   await writeClaims($, claims.map(x => (x.sessionId === c.sessionId ? { ...x, decision: decision as Claim['decision'] } : x)))
   await share($)
@@ -1048,7 +1107,7 @@ async function claudeDirs($: any): Promise<string[]> {
 }
 
 // Whether this session is the one that polls Orca for the roster (see refresh).
-// A held session never polls: it does no roster work until Herman decides.
+// A held session never polls: it does no roster work until the user decides.
 async function pollsOrca($: any, list: Member[]): Promise<boolean> {
   const w = await identity($, list)
   return w.level !== 'restricted' && shouldPoll(w.level === 'full' ? w.me : undefined)
@@ -1187,8 +1246,8 @@ async function writeTeamSettings($: any, patch: Partial<TeamSettings>) {
 // The member's live Orca tab: its recorded handle if that tab still exists, else the one live tab with its name (a
 // relaunch gives a member a new tab, so a recorded handle can be stale). '' when there is none, or more than one.
 async function liveHandleOf($: any, m: Member): Promise<string> {
-  // a member from another PC has no tab here, whatever this PC's tabs are called
-  if (isAway(m, await machineOf($))) return ''
+  // a member from another PC has no tab here, whatever this PC's tabs are called; one of another CLI is never polled
+  if (isAway(m, await machineOf($)) || !isManaged(m)) return ''
   if (m.handle && (await showTab($, m.handle))) return m.handle
   // only tabs in this project's folder: another project may have a member of the same name
   const root = await rootOf($)
@@ -1199,6 +1258,8 @@ async function liveHandleOf($: any, m: Member): Promise<string> {
 // Close a member's tab and only then mark it closed: a close sent to a stale handle must not leave a live session
 // marked "closed" (a later message would then start a second copy of the same conversation).
 async function closeMember($: any, m: Member): Promise<boolean> {
+  // a member of another CLI is never closed by the mod (#69)
+  if (!isManaged(m)) return false
   const handle = await liveHandleOf($, m)
   if (!handle) return false
   await orca($, 'terminal', 'close', '--terminal', handle)
@@ -1212,19 +1273,27 @@ async function closeMember($: any, m: Member): Promise<boolean> {
 // Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session. Either way it
 // starts with its role pointer (roles.ts), so a fresh session needs no typed briefing. Its home is this machine from now.
 async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
+  // a member of another CLI is not managed (#69): never started from here
+  if (!isManaged(m)) return false
   const resume = t.reopen === 'resume' && !!m.sessionId
   const sessionId = resume ? m.sessionId : uuid()
   // back in the member's own workspace (recorded at launch), never Orca's "active" one, which is whatever the person
-  // is looking at; a member launched before that was recorded goes to this session's workspace, the project's own
-  const wt = m.worktree || (await currentWorktree($))
+  // is looking at; one that is gone or no longer holds the project (#68), or a member launched before it was recorded,
+  // goes to this session's workspace, and the roster records it
+  const wt = await memberWorktree($, m)
   if (!wt) return false
-  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume))
+  // the model it last asked for, as typed (#63), else the roster's (which holds what it ran once it has run)
+  const model = await requestedModel($, m) || m.model
+  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume, m.name, model))
   const handle = r.ok ? handleOf(r.out) : ''
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out)
   const here = await machineOf($)
-  const back = { ...m, handle, sessionId, worktree: wt, state: ready ? 'idle' : 'starting', briefed: true, pending: false, ...(here ? { machine: here } : {}) }
+  const back = {
+    ...m, handle, sessionId, worktree: wt, model, location: 'local' as const, state: ready ? 'idle' : 'starting', briefed: true, pending: false,
+    ...(here ? { machine: here } : {}),
+  }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
   await share($)
@@ -1294,6 +1363,8 @@ async function tellSenderHead($: any, q: QEntry) {
 
 // Make room for, and reopen, a closed member; undefined when it must wait in the queue.
 async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings): Promise<boolean | undefined> {
+  // a member of another CLI is never reopened (#69)
+  if (!isManaged(target)) return false
   // still running after all (its tab is live): never start a second copy of the same conversation
   const live = await liveHandleOf($, target)
   if (live) {
@@ -1318,26 +1389,42 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
 // "unstarted": on the roster since Create but never launched; it starts, fresh and briefed, on its first message
 const isClosed = (m: Member, s: Status | undefined) => !!m.pending || m.state === 'closed' || m.state === 'unstarted' || s?.state === 'closed'
 
+// The messenger role that carries messages between devices is not built yet (#72).
+const NO_MESSENGER = 'Messages to a member on another device go through the messenger role, which is not built yet (#72).'
+
 // What a message to a member on another PC gets back: its conversation is there, so only a fresh copy can start here.
 const awayAnswer = (m: Member, here: string) =>
-  `${m.name} runs on ${m.machine}, not on this PC${here ? ` (${here})` : ''}. Its conversation lives in that PC's ~/.claude, so it cannot be ` +
-  `resumed or messaged from here. Ask Herman whether to start a fresh copy of ${m.name} on this PC. If he says yes, call team_message ` +
+  `${m.name} runs on ${m.machine}, not on this PC${here ? ` (${here})` : ''}. ${NO_MESSENGER} Its conversation lives in that PC's ~/.claude, so it cannot be ` +
+  `resumed or messaged from here. Ask the user whether to start a fresh copy of ${m.name} on this PC. If the user says yes, call team_message ` +
   'again with the same message and startHere: true: the copy starts fresh from its role file, and this PC becomes its home.'
 
-// Send a message to a member that is running. The local session's "name [ref]" is used when Remote Control mirrors
-// share the name.
-async function sendNow($: any, target: Member, message: string, summary: string): Promise<{ ok: boolean; text: string }> {
-  const name = target.address || target.name
-  const listing: any = await $.tool.call({ tool: 'ListAgents' } as any).catch(() => undefined)
-  const to = localRef(String(listing?.text ?? ''), name) || name
-  const r: any = await $.tool.call({ tool: 'SendMessage', to, message, summary } as any)
-  const ok = !r?.isError && r?.deny === undefined
-  return { ok, text: `${ok ? 'Sent' : 'Not sent'} to ${to}: ${String(r?.text ?? r?.deny ?? '').slice(0, 200)}` }
+// What a message to a member of another CLI gets back (#69): the mod does not manage it.
+const unmanagedAnswer = (m: Member) =>
+  `${m.name} is a ${m.cli} session, not a Claude Code one: the Team Orchestrator does not manage it, so it does not message, start or close it. ` +
+  'Ask the user to pass the message on in its own tab.'
+
+// Send a message to a member that is running (#67). A local member is addressed by its session id, which reaches only
+// that session on this machine: never a same-named member of another project, never a Remote Control copy. A member on
+// another device, or of another CLI, is not messaged from here.
+async function sendNow($: any, target: Member, message: string): Promise<{ ok: boolean; text: string }> {
+  const here = await machineOf($)
+  const where = locationOf(target, here)
+  if (where === 'other-cli') return { ok: false, text: unmanagedAnswer(target) }
+  if (where === 'remote') return { ok: false, text: isAway(target, here) ? awayAnswer(target, here) : `${target.name} is on another device. ${NO_MESSENGER}` }
+  if (!target.sessionId)
+    return { ok: false, text: `Not sent to ${target.name}: the roster has no session id for it yet, so it cannot be addressed safely. The next refresh finds it from its transcript; try again then.` }
+  // a failed send resolves with a reason; a refused one (the caller's own id, say) may reject instead
+  const r: any = await $.session.send({ to: { sessionId: target.sessionId }, text: message }).catch((err: unknown) => ({ isDelivered: false, reason: String(err) }))
+  return r?.isDelivered
+    ? { ok: true, text: `Sent to ${target.name}.` }
+    : { ok: false, text: `Not sent to ${target.name}: ${String(r?.reason ?? 'no answer from its session').slice(0, 200)}` }
 }
 
 // Send a message to a member, starting or reopening it first. A string result goes back to the sender.
-async function deliver($: any, target: Member, message: string, summary: string, startHere = false): Promise<string> {
+async function deliver($: any, target: Member, message: string, startHere = false): Promise<string> {
   const here = await machineOf($)
+  if (!isManaged(target)) return unmanagedAnswer(target)
+  if (target.location === 'remote' && !isAway(target, here)) return `${target.name} is on another device. ${NO_MESSENGER}`
   if (isAway(target, here)) {
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
@@ -1357,7 +1444,9 @@ async function deliver($: any, target: Member, message: string, summary: string,
     }
     if (!ok) return `${target.name} could not be started. Ask the person to open its tab.`
   }
-  return (await sendNow($, target, message, summary)).text
+  // a reopen may have changed its session id (fresh) and its home (a fresh copy here): send to the member as it is now
+  const now = (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target
+  return (await sendNow($, now, message)).text
 }
 
 // The team top's round: close workers idle past the set minutes, then work the queue: deliver what has room, mark
@@ -1365,7 +1454,7 @@ async function deliver($: any, target: Member, message: string, summary: string,
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
   const here = await machineOf($)
   const t = await readTeamSettings($)
-  for (const m of toClose(list.filter(x => !isAway(x, here)), statuses, t, now)) await closeMember($, m)
+  for (const m of toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now)) await closeMember($, m)
   await migrateQueue($)
   const queue = await readQueue($)
   const prune: string[] = []
@@ -1376,7 +1465,14 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
     const all = await readMembers($)
     const target = all.find(x => x.name === f.q.to || x.address === f.q.to)
     // nobody to deliver to here: failed at once (a member from another PC is never messaged from this one)
-    const gone = !target ? `no member ${f.q.to} on the roster` : isAway(target, here) ? `${target.name} runs on ${target.machine}` : ''
+    const where = target ? locationOf(target, here) : 'local'
+    const gone = !target
+      ? `no member ${f.q.to} on the roster`
+      : where === 'other-cli'
+        ? `${target.name} is a ${target.cli} session, not managed`
+        : where === 'remote'
+          ? `${target.name} is on ${target.machine || 'another device'}; the messenger route (#72) is not built yet`
+          : ''
     if (gone || !target) {
       const failed: QEntry = { ...f.q, state: 'failed', updated: Date.now(), error: gone }
       await writeQ($, { name: f.name, q: failed })
@@ -1389,7 +1485,9 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
     if (open === undefined) next = afterTry(f.q, undefined, Date.now())
     else if (!open) next = afterTry(f.q, false, Date.now(), `${target.name} could not be started`)
     else {
-      const s = await sendNow($, target, `[queued message from ${f.q.from}] ${f.q.message}`, `queued message for ${target.name}`)
+      // as the roster has it now: a fresh reopen gave it a new session id
+      const cur = (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target
+      const s = await sendNow($, cur, `[queued message from ${f.q.from}] ${f.q.message}`)
       next = afterTry(f.q, s.ok, Date.now(), s.ok ? '' : s.text.slice(0, 160))
     }
     await writeQ($, { name: f.name, q: next })
@@ -1427,7 +1525,7 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
     // a held session gets the strictest guard: only the person's one-turn word lets a write or a subagent through
     (w.level === 'restricted'
       ? judgeHeld({ me: w.me, why: w.why, tool, grants: turn })
-      : judge({ me: w.me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($) }))
+      : judge({ me: w.me, list, tool, path: pathOf(e), grants: turn, claudeDirs: await claudeDirs($), subagentType: String(e.subagent_type ?? '') }))
   if (!v) return undefined
   // a block toasts every time; an allow toasts once per session and reason, not on every write
   if (v.kind === 'deny' || !toasted.has(v.line)) {
@@ -1495,12 +1593,15 @@ async function refresh($: any) {
   const here = role.here
   // a member whose home is another PC: never asked about here, shown as "on <that PC>"
   const away = (m: Member) => isAway(m, here)
+  // and one adopted from another CLI (#69): never polled, read or reopened
+  const skip = (m: Member) => away(m) || !isManaged(m)
   // Live status comes from each member's own status file, not from its screen: merge those into the roster's columns.
   const now = Date.now()
   const statuses = await readStatuses($, list)
   await update($, members, old =>
     old.map(m => {
       if (away(m)) return { ...m, state: 'away' }
+      if (!isManaged(m)) return { ...m, state: 'unmanaged' }
       const s = statuses.get(m.name)
       return s ? { ...m, state: shownState(s, now) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
@@ -1516,7 +1617,7 @@ async function refresh($: any) {
   // Orca is asked only when it must be: a member lacks its tab, session id or status file, or the gentle tab check is
   // due (some open member silent for over two minutes, at most once per interval, the interval doubling while Orca is slow).
   // a closed or not-yet-started member has no tab on purpose: it is not missing
-  const missing = list.some(m => !away(m) && !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
+  const missing = list.some(m => !skip(m) && !isClosed(m, statuses.get(m.name)) && (!m.handle || !m.sessionId || !statuses.has(m.name)))
   if (!missing && !(now >= tabCheck.next && needsTabCheck([...statuses.values()], now))) return
   const started = Date.now()
   const ps = await orca($, 'worktree', 'ps')
@@ -1528,28 +1629,30 @@ async function refresh($: any) {
   }
   // one Orca call at a time, never a burst
   const shown: any[] = []
-  for (const m of list) shown.push(m.handle && !away(m) && !isClosed(m, statuses.get(m.name)) ? await showTab($, m.handle) : undefined)
+  for (const m of list) shown.push(m.handle && !skip(m) && !isClosed(m, statuses.get(m.name)) ? await showTab($, m.handle) : undefined)
   tabCheck.every = nextCheckInterval(tabCheck.every, (Date.now() - started) / Math.max(1, list.length + 1))
   tabCheck.next = Date.now() + tabCheck.every
   const all = await transcripts($)
   const root = String(await $.session.root())
   // Where a member's session runs: the folder its transcript last ran in, else the project's own folder. A tab in
   // another worktree is never this member's, whatever its title says (two teams may both have a "Head").
-  const ran = await statsOf($, all, list.filter(m => !away(m)).map(m => m.sessionId).filter(Boolean))
+  const ran = await statsOf($, all, list.filter(m => !skip(m)).map(m => m.sessionId).filter(Boolean))
   const whereOf = (sessionId: string) => ran.get(sessionId)?.cwd || root
   const fits = (tab: any, where: string) => {
     const wt = String(tab?.worktreePath ?? '')
     return wt === '' || under(where, wt)
   }
   // one list of tabs and one transcript scan per refresh, not one per member
-  const tabs = shown.some((t, i) => !away(list[i] as Member) && (!t || !fits(t, whereOf((list[i] as Member).sessionId)))) ? await liveTabs($) : []
-  const nameless = list.filter(m => !away(m) && !m.sessionId)
+  const tabs = shown.some((t, i) => !skip(list[i] as Member) && (!t || !fits(t, whereOf((list[i] as Member).sessionId)))) ? await liveTabs($) : []
+  const nameless = list.filter(m => !skip(m) && !m.sessionId)
   const ids = nameless.length > 0 ? await sessionsNamed($, all, nameless.flatMap(namesOf), root) : new Map<string, string>()
   const firstPass = await Promise.all(
     list.map(async (m0, i) => {
       const notes: string[] = []
       // a member from another PC keeps what the roster says; its tab and transcript are on that PC
       if (away(m0)) return { m: { ...m0, state: 'away' }, line: { model: m0.model, effort: m0.effort, ctx: String(m0.ctx) }, live: false, notes }
+      // a member of another CLI is not managed (#69): its tab is never read or polled, the roster keeps what it says
+      if (!isManaged(m0)) return { m: { ...m0, state: 'unmanaged' }, line: { model: m0.model, effort: m0.effort, ctx: String(m0.ctx) }, live: false, notes }
       const sessionId = m0.sessionId || namesOf(m0).map(n => ids.get(n)).find(Boolean) || ''
       let m: Member = { ...m0, sessionId }
       const where = whereOf(sessionId)
@@ -1600,11 +1703,14 @@ async function refresh($: any) {
   const next = firstPass.map(({ m, line, live, notes }) => {
     const tr = line.model === undefined || line.ctx === undefined ? stats.get(m.sessionId) : undefined
     if (live && line.model === undefined && line.ctx === undefined && !tr) notes.push('status line not readable')
+    // the member's own reported window, when its status file has one, in place of the guess (#63)
+    const window = statuses.get(m.name)?.window
+    const trCtx = tr ? (window ? Math.round((tr.used * 100) / windowFor(tr.model, tr.used, window)) : tr.ctx) : undefined
     return {
       ...m,
       model: line.model ?? tr?.model ?? m.model,
       effort: line.effort ?? (tr?.effort || m.effort),
-      ctx: Number(line.ctx ?? tr?.ctx ?? m.ctx),
+      ctx: Number(line.ctx ?? trCtx ?? m.ctx),
       note: withNotes(m.note, notes),
     }
   })
@@ -1755,7 +1861,7 @@ async function launch($: any, team: string, input: Spec[]): Promise<string> {
   // the whole roster is written first; nobody is launched yet
   const made: Member[] = specs.map(s => ({
     team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle: '', sessionId: '', worktree: wt,
-    ...(here ? { machine: here } : {}),
+    ...(here ? { machine: here } : {}), location: 'local',
     state: 'unstarted', ctx: -1,
     model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
     sel: false, note: '', briefed: false, noted: false, statusFile: statusFile(s.name), pending: true,
@@ -1838,19 +1944,26 @@ async function applyBulk($: any) {
     const wantModel = b.model !== 'keep' && !m.model.toLowerCase().includes(b.model)
     const wantEffort = b.effort !== 'keep' && b.effort !== m.effort
     if (newName === m.name && !wantModel && !wantEffort) continue
+    // a member of another CLI is not managed (#69): its tab is neither restarted nor renamed
+    if (!isManaged(m)) {
+      report.push(`${m.team}/${m.name}: skipped (not managed, ${m.cli})`)
+      continue
+    }
     const canRestart = m.sessionId !== '' && m.handle !== '' && m.state === 'idle'
     if (canRestart) {
+      // kept on "keep": the model it last asked for (#63), else the roster's; its workspace checked first (#68)
+      const model = wantModel ? b.model : (await requestedModel($, m)) || m.model
+      const wt = await memberWorktree($, m)
       await orca($, 'terminal', 'close', '--terminal', m.handle)
-      const wt = m.worktree || (await currentWorktree($))
       const r = await orca(
         $,
         'terminal', 'create', '--worktree', wt ? `id:${wt}` : 'active', '--title', newName,
-        '--command', startCmd(m, list, m.sessionId, true, newName, wantModel ? b.model : m.model, wantEffort ? b.effort : m.effort),
+        '--command', startCmd(m, list, m.sessionId, true, newName, model, wantEffort ? b.effort : m.effort),
       )
       const handle = r.ok ? handleOf(r.out) : ''
       done.set(key(m), {
         name: newName, handle, state: handle ? 'starting' : 'failed', note: handle ? '' : r.out.slice(0, 60),
-        model: wantModel ? b.model : m.model, effort: wantEffort ? b.effort : m.effort, sel: false,
+        model, effort: wantEffort ? b.effort : m.effort, sel: false, ...(wt ? { worktree: wt } : {}),
       })
       if (newName !== m.name) renames.set(key(m), newName)
       report.push(`${m.team}/${m.name}: restarted`)
@@ -1984,7 +2097,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'team_message',
       description:
-        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name. startHere: only after Herman said yes, for a member whose home is another PC: start a fresh copy of it on this PC.',
+        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name. startHere: only after the user said yes, for a member whose home is another PC: start a fresh copy of it on this PC.',
       inputSchema: {
         type: 'object',
         properties: { to: { type: 'string' }, message: { type: 'string' }, summary: { type: 'string' }, startHere: { type: 'boolean' } },
@@ -1994,7 +2107,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'team_take_top',
       description:
-        'Apply Herman\'s answer about moving the team top to this PC, after asking him with AskUserQuestion in this turn. take true: the roster records this PC as the team top\'s machine, and the PC that had it becomes read-only for the team files; take false: nothing changes and he is not asked again in this session.',
+        'Apply the user\'s answer about moving the team top to this PC, after asking with AskUserQuestion in this turn. take true: the roster records this PC as the team top\'s machine, and the PC that had it becomes read-only for the team files; take false: nothing changes and the user is not asked again in this session.',
       inputSchema: { type: 'object', properties: { take: { type: 'boolean' } }, required: ['take'] },
     })
     await $.tool.register({
@@ -2020,7 +2133,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'member_claim',
       description:
-        'Team top only: apply Herman\'s answer about a session on hold that looks like a team member. decision "is": the roster takes its id, tab and name as that member; "new": it joins as a worker under that member\'s boss, with its own role file; "reject": it stays on hold, off the team. sessionId is the held session\'s id; member is the member it looks like.',
+        'Team top only: apply the user\'s answer about a session on hold that looks like a team member. decision "is": the roster takes its id, tab and name as that member; "new": it joins as a worker under that member\'s boss, with its own role file; "reject": it stays on hold, off the team. sessionId is the held session\'s id; member is the member it looks like.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2066,11 +2179,25 @@ export const register: Register = (on, options) => {
     const team = clean(input.team || '') || 'team'
     // the tabs adopted run on this machine
     const here = await machineOf($)
-    const adopted: Member[] = input.members.map(m => ({
-      team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss, handle: m.handle ?? '',
-      sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
-      ...(here ? { machine: here } : {}),
-    }))
+    // which CLI each tab runs (#69), from Orca's terminal list: by handle, else the one tab of that name in this project
+    const root = await rootOf($)
+    const tabs = await liveTabs($)
+    const tabOf = (m: { name: string; handle?: string; address?: string }) => {
+      const h = String(m.handle ?? '').trim()
+      if (h) return tabs.find(t => String(t.handle ?? '') === h || handleOf(String(t.handle ?? '')) === h)
+      const hits = tabs.filter(t => [m.address, m.name].includes(bare(String(t.title ?? ''))) && (!t.worktreePath || under(root, String(t.worktreePath))))
+      return hits.length === 1 ? hits[0] : undefined
+    }
+    const adopted: Member[] = input.members.map(m => {
+      const cli = cliOf(tabOf(m as any))
+      return {
+        team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss, handle: m.handle ?? '',
+        sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
+        ...(here ? { machine: here } : {}),
+        ...(cli ? { cli } : {}),
+        location: cli && cli !== 'claude' ? 'other-cli' : 'local',
+      }
+    })
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
     await put($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
@@ -2078,7 +2205,12 @@ export const register: Register = (on, options) => {
     // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
     const notes = (await readMembers($)).filter(m => m.team === team && m.note !== '').map(m => `${m.name}: ${m.note}`)
-    return { result: `Roster now shows ${adopted.length} adopted sessions.${notes.length ? ` Notes: ${notes.join('; ')}.` : ''}` } as any
+    const external = adopted.filter(a => !isManaged(a)).map(a => `${a.name} (${a.cli})`)
+    return {
+      result:
+        `Roster now shows ${adopted.length} adopted sessions.${notes.length ? ` Notes: ${notes.join('; ')}.` : ''}` +
+        (external.length ? ` Not managed, as they run another CLI (never reopened, closed, briefed or messaged by the Team Orchestrator): ${external.join(', ')}.` : ''),
+    } as any
   }))
 
   on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => safely(async () => {
@@ -2119,9 +2251,9 @@ export const register: Register = (on, options) => {
     // only when the name resolved (SendMessage checks names before any hook); team_message covers the other cases.
     const list0 = to ? await readMembers($) : []
     const target = list0.find(m => m.name === to || m.address === to)
-    // a member from another PC is never reopened from here: SendMessage answers for it as it can
-    if (target && message && !isAway(target, await machineOf($)) && isClosed(target, await readStatus($, target.name))) {
-      return { result: await deliver($, target, message, String((e as any).summary ?? `message for ${target.name}`)) } as any
+    // a member from another PC, or of another CLI, is never reopened from here: SendMessage answers for it as it can
+    if (target && message && isManaged(target) && !isAway(target, await machineOf($)) && isClosed(target, await readStatus($, target.name))) {
+      return { result: await deliver($, target, message) } as any
     }
     const r: any = await next(e)
     if (r?.deny !== undefined) return r
@@ -2142,12 +2274,19 @@ export const register: Register = (on, options) => {
       const id = String(await $.session.id().catch(() => '')) || who.me.sessionId
       const st = id ? (await statsOf($, await transcripts($), [id])).get(id) : undefined
       const leftover = await countLeftovers($, id)
+      // the session's own window and fill, as its status line has them (#63): no guessing from the model's name
+      const usage: any = await $.session.usage().catch(() => undefined)
+      const window = Number(usage?.context?.window)
+      const live = Number.isFinite(window) && window > 0
+      const pct = Number(usage?.context?.percent)
+      const ctx = live && Number.isFinite(pct) ? Math.round(pct) : st ? (live ? Math.round((st.used * 100) / window) : st.ctx) : undefined
       await writeMine($, {
         state: 'idle',
         turnEnd: Date.now(),
         ...(st?.model ? { model: st.model } : {}),
         ...(st?.effort ? { effort: st.effort } : {}),
-        ...(st?.ctx !== undefined && st?.ctx !== null ? { ctx: Number(st.ctx) } : {}),
+        ...(live ? { window } : {}),
+        ...(ctx !== undefined && Number.isFinite(ctx) ? { ctx } : {}),
         ...(leftover !== undefined ? { leftover, countedAt: Date.now() } : {}),
       })
     })()
@@ -2165,7 +2304,7 @@ export const register: Register = (on, options) => {
     if (tool === 'AskUserQuestion') {
       void writeMine($, { state: 'asking' })
       const r: any = await next(e)
-      // Herman answered a question in this turn: what team_take_top needs before it moves the team top
+      // the user answered a question in this turn: what team_take_top needs before it moves the team top
       if (r && r.deny === undefined && !r.isError) turnAsk.answered = true
       void writeMine($, { state: 'working' })
       return r
@@ -2202,10 +2341,10 @@ export const register: Register = (on, options) => {
     const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
     if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
-    return { result: await deliver($, target, String(input.message ?? ''), input.summary || `message for ${target.name}`, input.startHere === true) } as any
+    return { result: await deliver($, target, String(input.message ?? ''), input.startHere === true) } as any
   }))
 
-  // Herman's answer about moving the team top to this PC (#64): only the team top's session or his own (not on the
+  // the user's answer about moving the team top to this PC (#64): only the team top's session or the user's own (not on the
   // roster), and only after an AskUserQuestion answered in this same turn
   on('tool.call', { tool: TAKE } as any, async ($, e) => safely(async () => {
     await pull($)
@@ -2214,14 +2353,14 @@ export const register: Register = (on, options) => {
     const top = projectTop(list)
     const isTop = w.level === 'full' && !!w.me && !!top && keyOf(w.me) === keyOf(top)
     if (!isTop && w.level !== 'none')
-      return { deny: 'team_take_top is for the team top\'s own session, or Herman\'s session that is not on the roster.' } as any
+      return { deny: 'team_take_top is for the team top\'s own session, or the user\'s own session that is not on the roster.' } as any
     const meta = await readMeta($)
     const here = await machineOf($)
     if (!(e as any).take) {
       told.declined = true
       return { result: `Kept ${meta.topMachine || 'the recorded PC'} as the team top's machine. This session stays read-only for the team files and is not asked again.` } as any
     }
-    if (!turnAsk.answered) return { deny: 'Ask Herman first with AskUserQuestion in this turn; team_take_top applies his answer.' } as any
+    if (!turnAsk.answered) return { deny: 'Ask the user first with AskUserQuestion in this turn; team_take_top applies the answer.' } as any
     if (!here) return { result: 'This PC gives no computer name (COMPUTERNAME or HOSTNAME), so it cannot be recorded as the team top\'s machine.' } as any
     const was = meta.topMachine
     await serial(async () => $.fs.write(await metaFile($), JSON.stringify({ ...metaAfter(meta, cfg.version, here), topMachine: here }, null, 1)))
@@ -2240,12 +2379,12 @@ export const register: Register = (on, options) => {
     return told.asked && !told.declined ? { ...r, isDeferred: false } : r
   })
 
-  // the team top settles a held session with Herman's answer; nobody else may
+  // the team top settles a held session with the user's answer; nobody else may
   on('tool.call', { tool: CLAIM } as any, async ($, e) => safely(async () => {
     await pull($)
     const w = await identity($)
     if (w.level !== 'full' || !w.me || w.me.boss !== 'user')
-      return { deny: 'member_claim is for the team top only (the confirmed member that reports to the user). Ask the team top to apply Herman\'s answer.' } as any
+      return { deny: 'member_claim is for the team top only (the confirmed member that reports to the user). Ask the team top to apply the user\'s answer.' } as any
     return { result: await settleClaim($, e as any) } as any
   }))
   on('tool.describe', { tool: CLAIM } as any, async ($, e, next) => {
@@ -2352,12 +2491,25 @@ export const register: Register = (on, options) => {
       if (!head) return next(e)
       const rest = e.text.replace(mention, ' ').trim()
       const body = `[user -> team @${team}] ${rest}`
+      // a head of another CLI is not messaged (#69); the prompt goes nowhere, with the reason
+      if (!isManaged(head)) {
+        if (once) pendingNote = { id: sid, text: once }
+        return { drop: unmanagedAnswer(head) }
+      }
       let ok = false
       let why = ''
       try {
-        const r: any = await $.tool.call({ tool: 'SendMessage', to: head.address || head.name, message: body, summary: `message for team @${team}` } as any)
-        ok = !r?.isError
-        why = String(r?.text ?? '')
+        // a head on this machine with a known session id is addressed by that id (#67): never a same-named session of
+        // another project; without an id, SendMessage by name is all there is
+        if (head.sessionId && locationOf(head, await machineOf($)) === 'local') {
+          const r: any = await $.session.send({ to: { sessionId: head.sessionId }, text: body })
+          ok = !!r?.isDelivered
+          why = String(r?.reason ?? '')
+        } else {
+          const r: any = await $.tool.call({ tool: 'SendMessage', to: head.address || head.name, message: body, summary: `message for team @${team}` } as any)
+          ok = !r?.isError
+          why = String(r?.text ?? '')
+        }
       } catch (err) {
         why = String(err)
       }
@@ -2751,6 +2903,7 @@ const statusGlyph = (state: string, t: number, blink: boolean): [string, string]
   : state === 'asking' ? [t % 2 === 0 ? '◆' : '◇', 'magenta']
   : state === 'starting' ? [['◜', '◝', '◞', '◟'][t % 4] as string, 'cyan']
   : state === 'offline' || state === 'away' ? [state === 'away' ? '◌' : '○', 'gray']
+  : state === 'unmanaged' ? ['◇', 'gray']
   : state === 'failed' ? ['✗', 'red']
   : state === 'closed' || state === 'unstarted' || state === 'queued' ? [state === 'closed' ? '–' : '·', 'gray']
   : [blink ? '◉' : '●', 'green']
@@ -2812,7 +2965,7 @@ function chartGrid(list: Member[], t: number, cols: number): Cell[][] {
     const row = grid[r]
     if (row && x >= 0 && x < row.length) row[x] = cell
   }
-  const dead = (m: Member) => m.state === 'offline' || m.state === 'failed' || m.state === 'away'
+  const dead = (m: Member) => m.state === 'offline' || m.state === 'failed' || m.state === 'away' || m.state === 'unmanaged'
 
   const draw = (n: TNode) => {
     const row = n.depth * 2
@@ -3204,7 +3357,7 @@ async function rosterView($: any, ui: any, cols: number) {
   const away = (m: Member) => isAway(m, here)
   // a derived note: never stored, so it goes the moment the second short name changes
   const noteOf = (m: Member) =>
-    [away(m) ? `on ${m.machine}` : '', m.note, labelInfo.get(keyOf(m))?.dup ? 'short name used twice' : ''].filter(x => x !== '').join(', ')
+    [away(m) ? `on ${m.machine}` : '', isManaged(m) ? '' : `not managed (${m.cli})`, m.note, labelInfo.get(keyOf(m))?.dup ? 'short name used twice' : ''].filter(x => x !== '').join(', ')
   // a card's widest wish is its wide plan with whole names; side by side fits as many of those as the width holds
   const widest = Math.max(1, ...teams.map(team => columnPlan(treeLines(list.filter(m => m.team === team)), 1000, s.hide).total + FRAME))
   const perRow = cardsPerRow(s, cols, widest, teams.length)
@@ -3458,7 +3611,7 @@ async function rosterView($: any, ui: any, cols: number) {
               const value: Record<string, [string, string | undefined]> = {
                 STATUS: [p.tier === 'narrow' ? glyph : `${glyph} ${label}`, color],
                 CONTEXT: [ctxText.trim(), ctxColor],
-                MODEL: [(p.tier === 'wide' ? m.model : family(m.model)) || '-', undefined],
+                MODEL: [(p.tier === 'wide' ? shownModel(m.model) : family(shownModel(m.model))) || '-', undefined],
                 EFFORT: [(p.tier === 'narrow' ? EFFORT_SHORT[effort] : m.effort) || '-', SHADE[effort]],
                 BRIEF: [bt, bc],
               }

@@ -19,7 +19,7 @@
 // alone, and never while the member it points at is live somewhere else (that would be a second copy).
 //
 // A member whose home is another PC (0.5.12, #64) is never matched by tab or registry here: handles and the registry
-// are valid only on their own machine. An id and a name alone then hold the session for Herman, like any other doubt.
+// are valid only on their own machine. An id and a name alone then hold the session for the user to decide, like any other doubt.
 // A session confirmed as a member with no machine recorded takes this one.
 
 import type { Member } from '../types'
@@ -157,14 +157,14 @@ export const roleNote = (m: Member) =>
 /** The one-time note a held session gets on its next prompt. */
 export const holdNote = (m: Member, why: string) =>
   `TEAM ORCHESTRATOR: this session is ON HOLD. It looks like ${m.name} of team ${m.team}, but that is not confirmed (${why}). ` +
-  'Until Herman decides, it may not write files, use subagents or use any team tool. The team top has been asked to check with him. ' +
+  'Until the user decides, it may not write files, use subagents or use any team tool. The team top has been asked to check with the user. ' +
   `Do not act as ${m.name} meanwhile.`
 
 const tag = (m: Member, why: string) => `${m.name} of team ${m.team} (${why})`
 
 /** The sentence a team tool answers a held session with. */
 export const holdTool = (tool: string, m: Member, why: string) =>
-  `${tool} is on hold: this session looks like ${tag(m, why)} but is not confirmed. Team tools stay off until Herman decides whether it is ${m.name}; the team top has been asked.`
+  `${tool} is on hold: this session looks like ${tag(m, why)} but is not confirmed. Team tools stay off until the user decides whether it is ${m.name}; the team top has been asked.`
 
 /** The strictest guard, for a held session: Agent, Write, Edit and NotebookEdit only with the person's one-turn word. */
 export function judgeHeld(args: { me: Member; why: string; tool: string; grants: Grants }): Verdict {
@@ -177,7 +177,7 @@ export function judgeHeld(args: { me: Member; why: string; tool: string; grants:
     kind: 'deny',
     reason:
       `Blocked ${tool}: this session is on hold. It looks like ${tag(me, why)} but is not confirmed, so it may not ` +
-      `${isAgent ? 'use subagents' : 'write files'} until Herman decides (${word} in his next message allows one turn).`,
+      `${isAgent ? 'use subagents' : 'write files'} until the user decides (${word} in the user's next message allows one turn).`,
     line: `blocked ${tool}: session on hold (looks like ${me.name})`,
   }
 }
@@ -200,16 +200,16 @@ export type Claim = { sessionId: string; member: string; team: string; tab: stri
 /** The warning X's head gets once. */
 export const headWarning = (c: Claim) =>
   `IDENTITY WARNING (Team Orchestrator): a session (id ${c.sessionId}, name "${c.name || 'none'}", tab ${c.tab || 'none'}) looks like your report ${c.member} ` +
-  `of team ${c.team}, but it is not confirmed (${c.why}). It is on hold: no writes, no subagents, no team tools. Do not give it work until Herman decides.`
+  `of team ${c.team}, but it is not confirmed (${c.why}). It is on hold: no writes, no subagents, no team tools. Do not give it work until the user decides.`
 
-/** What the team top is told: ask Herman at once, then apply his answer with member_claim. */
+/** What the team top is told: ask the user at once, then apply the answer with member_claim. */
 export const topAsk = (c: Claim, boss: string) =>
   `IDENTITY CHECK (Team Orchestrator), act now: a session (id ${c.sessionId}, name "${c.name || 'none'}", tab ${c.tab || 'none'}) looks like ${c.member} ` +
-  `of team ${c.team}, but it is not confirmed (${c.why}). It is on hold. Ask Herman AT ONCE with AskUserQuestion, with these three options: ` +
+  `of team ${c.team}, but it is not confirmed (${c.why}). It is on hold. Ask the user AT ONCE with AskUserQuestion, with these three options: ` +
   `(1) "This is ${c.member}": the roster takes its id, tab and name. ` +
   `(2) "New member under ${boss}": it joins as a worker with its own role file. ` +
   '(3) "Reject": it stays on hold, off the team. ' +
-  `Then apply his answer with member_claim { sessionId: "${c.sessionId}", decision: "is" | "new" | "reject", member: "${c.member}" }.`
+  `Then apply the answer with member_claim { sessionId: "${c.sessionId}", decision: "is" | "new" | "reject", member: "${c.member}" }.`
 
 /** A name for a new member that nobody on the roster goes by: the wanted one, else the base with a number. */
 export function freshName(list: Member[], wanted: string, base: string): string {

@@ -6,6 +6,7 @@
 // worker can reopen it now or must wait (the session cap). Pure rules from data (no $), so a test can call them.
 
 import type { Member } from '../types'
+import { isAway } from './changes'
 
 export type Status = {
   name: string
@@ -19,6 +20,8 @@ export type Status = {
   effort?: string
   /** context used, percent */
   ctx?: number
+  /** the session's live context window in tokens, from $.session.usage().context.window (0.5.13, #63) */
+  window?: number
   /** what the member is on now: the Clean View step, else the first line of the last order from its boss */
   task?: string
   /** when it last told its boss "clean" */
@@ -147,15 +150,70 @@ export const localRef = (listing: string, name: string) => {
 }
 
 /**
- * A model name as claude --model accepts it. The roster keeps the short name shown on screen ("haiku-5-5", from
- * "claude-haiku-5-5" with the prefix cut, or "Haiku 5.5" from a status line), which the API rejects, so every start and
- * reopen passes it through here. Aliases and full ids stay; short and display names get the "claude-" id back; anything
- * else is left out, so the session falls back to its default model rather than a broken one.
+ * A model name as claude --model accepts it (0.5.13, #63). The roster may keep the old short name shown on screen
+ * ("haiku-5-5", or "Haiku 5.5" from a status line), which the API rejects: only that form (opus, sonnet, haiku or fable
+ * followed by digits) gets the "claude-" prefix back. The aliases stay. Any other name (a full id with or without [1m],
+ * a gateway's model) goes through as typed, so a wrong one fails visibly at start. "default", "keep" and "" give no
+ * --model, and so does a name a shell would read as more than one word.
  */
 export function modelArg(model: string): string {
-  const s = model.trim().toLowerCase().replace(/\s+/g, '-').replace(/(\d)\.(\d)/g, '$1-$2')
+  const raw = model.trim()
+  const s = raw.toLowerCase().replace(/\s+/g, '-').replace(/(\d)\.(\d)/g, '$1-$2')
   if (s === '' || s === 'default' || s === 'keep') return ''
-  if (/^(opus|sonnet|haiku|fable)$/.test(s) || /^claude-[a-z0-9.-]+(\[1m\])?$/.test(s)) return s
-  if (/^(opus|sonnet|haiku|fable)-\d[\w-]*(\[1m\])?$/.test(s)) return `claude-${s}`
-  return ''
+  if (/^(opus|sonnet|haiku|fable)-\d[\w.-]*(\[1m\])?$/.test(s)) return `claude-${s}`
+  if (/^(opus|sonnet|haiku|fable|best|opusplan)(\[1m\])?$/.test(s)) return s
+  return /^[A-Za-z0-9._:/@+-]+(\[1m\])?$/i.test(raw) ? raw : ''
 }
+
+/** A model id as the roster shows it: the "claude-" prefix cut, the rest as typed. */
+export const shownModel = (model: string) => model.replace(/^claude-/i, '')
+
+/**
+ * The context window to count a transcript's tokens against when the member has not reported its own (#63): the
+ * window its status file records, else 1M for an id with [1m] or a session already past 200k, else 200k.
+ */
+export const windowFor = (model: string, used: number, reported?: number) =>
+  reported && reported > 0 ? reported : /\[1m\]$/i.test(model) || used > 200000 ? 1000000 : 200000
+
+// ── Where a member runs, and which CLI (0.5.13, #67 and #69) ──
+
+/** The CLIs a tab can run; anything else is "other". */
+export const CLIS = ['claude', 'codex', 'hermes', 'gemini', 'opencode', 'qwen'] as const
+
+/**
+ * The CLI an Orca tab runs: Orca's own agentIdentity when it gives one, else the one CLI its command line or screen
+ * names. '' when unknown (several CLIs named, or none): the member is then treated as Claude, as before.
+ */
+export function cliOf(tab: { agentIdentity?: unknown; command?: unknown; preview?: unknown } | undefined): string {
+  if (!tab) return ''
+  const id = typeof tab.agentIdentity === 'string' ? tab.agentIdentity.trim().toLowerCase() : ''
+  if (id !== '') return CLIS.find(c => id.includes(c)) ?? 'other'
+  const text = [tab.command, tab.preview].filter((x): x is string => typeof x === 'string').join('\n').toLowerCase()
+  const named = new Set([...text.matchAll(/(?:^|[\s>"'\\/])(claude|codex|hermes|gemini|opencode|qwen)(?:\.exe|\.cmd|\.ps1)?(?=["'\s]|$)/gm)].map(x => x[1] as string))
+  return named.size === 1 ? ([...named][0] as string) : ''
+}
+
+/** A member the mod runs: a Claude Code session. One adopted from another CLI is "not managed" (#69). */
+export const isManaged = (m: Pick<Member, 'cli'>) => !m.cli || m.cli === 'claude'
+
+export type Location = 'local' | 'remote' | 'other-cli'
+
+/**
+ * How a message reaches a member from this machine (#67): local (send by session id), remote (another PC, or recorded
+ * remote: the messenger route of #72) or other-cli (not messaged).
+ */
+export const locationOf = (m: Member, here: string): Location =>
+  !isManaged(m) ? 'other-cli' : isAway(m, here) || m.location === 'remote' ? 'remote' : 'local'
+
+// ── Orca workspaces (0.5.13, #68) ──
+
+/** The folder in an Orca worktree id ("<repo>::<folder>"), '' when the id carries none. */
+export const pathInWorktreeId = (id: string) => {
+  const cut = id.indexOf('::')
+  return cut < 0 ? '' : id.slice(cut + 2).trim()
+}
+
+const slashed = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+
+/** The workspace folder contains the project root (or is it). */
+export const worktreeHolds = (folder: string, root: string) => folder.trim() !== '' && `${slashed(root)}/`.startsWith(`${slashed(folder)}/`)

@@ -47,8 +47,14 @@ export function isMemoryPath(path: string, claudeDirs: string[]): boolean {
   })
 }
 
-const SEND = 'Hand the work to your worker with SendMessage, or ask Herman to authorize it.'
-const SEND_ZH = '把工作用 SendMessage 交給你的 worker，或者請 Herman 授權。'
+const SEND = 'Hand the work to your worker with SendMessage, or allow it yourself'
+const SEND_ZH = '把工作用 SendMessage 交給你的 worker，或自行授權'
+
+/**
+ * Claude Code's own helper agents that a slash command starts (/statusline, the Claude Code guide): they only change
+ * the person's settings or answer questions about Claude Code, so they pass the Agent guard (0.5.13, #76).
+ */
+export const HELPER_AGENTS = ['statusline-setup', 'claude-code-guide'] as const
 
 export type Verdict =
   | { kind: 'deny'; reason: string; line: string }
@@ -58,15 +64,20 @@ export type Verdict =
 /** The pathOf of a call: where a Write, Edit or NotebookEdit goes. */
 export const pathOf = (e: Record<string, unknown>): string => String(e.file_path ?? e.notebook_path ?? '')
 
-/** Judge one tool call of the session `me` (a roster member). undefined: nothing to say, let it through. */
-export function judge(args: { me: Member; list: Member[]; tool: string; path: string; grants: Grants; claudeDirs: string[] }): Verdict {
+/**
+ * Judge one tool call of the session `me` (a roster member). undefined: nothing to say, let it through. subagentType is
+ * the Agent call's subagent_type.
+ */
+export function judge(args: { me: Member; list: Member[]; tool: string; path: string; grants: Grants; claudeDirs: string[]; subagentType?: string }): Verdict {
   const { me, list, tool, path, grants, claudeDirs } = args
   if (tool === AGENT_TOOL) {
+    const kind = String(args.subagentType ?? '').trim()
+    if ((HELPER_AGENTS as readonly string[]).includes(kind)) return { kind: 'allow', line: `allowed Agent: ${me.name} (${kind}, a built-in Claude Code helper)` }
     if (me.allowAgent) return { kind: 'allow', line: `allowed Agent: ${me.name} (Allow subagents is on)` }
     if (grants.agent) return { kind: 'allow', line: `allowed Agent: ${me.name} (${KEYWORDS.agent}, this turn only)` }
     return {
       kind: 'deny',
-      reason: `Blocked Agent: ${me.name} has no subagent permission. ${SEND} (Settings → Allow subagents, or ${KEYWORDS.agent} in his next message.) ${SEND_ZH}`,
+      reason: `Blocked Agent: ${me.name} has no subagent permission. ${SEND} (Settings → Allow subagents, or type ${KEYWORDS.agent} in your next message). ${SEND_ZH}（設定 → Allow subagents，或在下一則訊息輸入 ${KEYWORDS.agent}）。`,
       line: `blocked Agent: ${me.name} has no subagent permission`,
     }
   }
@@ -76,7 +87,7 @@ export function judge(args: { me: Member; list: Member[]; tool: string; path: st
   if (grants.write) return { kind: 'allow', line: `allowed ${tool}: ${me.name} (${KEYWORDS.write}, this turn only)` }
   return {
     kind: 'deny',
-    reason: `Blocked ${tool}: ${me.name} has reports, so it does not write files itself (its own memory folder is open). ${SEND} (Settings → Allow writes, or ${KEYWORDS.write} in his next message.) ${SEND_ZH}`,
+    reason: `Blocked ${tool}: ${me.name} has reports, so it does not write files itself (its own memory folder is open). ${SEND} (Settings → Allow writes, or type ${KEYWORDS.write} in your next message). ${SEND_ZH}（設定 → Allow writes，或在下一則訊息輸入 ${KEYWORDS.write}）。`,
     line: `blocked ${tool}: ${me.name} has reports and no write permission`,
   }
 }
@@ -161,7 +172,7 @@ export function judgeTeamFiles(args: { me: Member; confirmed: boolean; tool: str
   const { me, confirmed, tool, path, command } = args
   if (confirmed && me.boss === 'user') return undefined
   const who = `${me.name}${confirmed ? '' : ' (on hold)'}`
-  const tail = `Only the team top and the Team Orchestrator itself change ${LOCKED}; ask the team top or Herman (Settings in the Team Orchestrator panel).`
+  const tail = `Only the team top and the Team Orchestrator itself change ${LOCKED}; ask the team top, or the user (Settings in the Team Orchestrator panel).`
   if ((WRITE_TOOLS as readonly string[]).includes(tool)) {
     if (!isTeamFilePath(path)) return undefined
     return { kind: 'deny', reason: `Blocked ${tool}: ${who} may not change the team file ${path}. ${tail}`, line: `blocked ${tool}: ${me.name} on a team file` }

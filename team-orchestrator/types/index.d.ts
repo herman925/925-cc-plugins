@@ -52,6 +52,13 @@ export type Member = {
   statusFile?: string
   /** on the roster since Create but never started: it starts, fresh and briefed, on its first message (team_message) */
   pending?: boolean
+  /**
+   * how a message reaches it (0.5.13, #67): local (this machine, by session id), remote (another device, the messenger
+   * route of #72) or other-cli (not a Claude session: never messaged). Recorded at launch, adopt and reopen.
+   */
+  location?: 'local' | 'remote' | 'other-cli'
+  /** the CLI its tab runs, detected at adopt (claude, codex, hermes, gemini, opencode, qwen, other); empty: claude (#69) */
+  cli?: string
 }
 export type Bulk = {
   prefix: string

@@ -28,7 +28,7 @@ export const SENDING_MS = 5 * MIN_MS
 export const MAX_TRIES = 3
 
 /** The member fields kept in the roster file. */
-export const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'machine', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort'] as const
+export const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'machine', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort', 'location', 'cli'] as const
 
 export const keyOf = (m: Partial<Member>) => `${m.team ?? ''}|${m.name ?? ''}`
 

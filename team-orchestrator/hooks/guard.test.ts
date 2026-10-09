@@ -49,7 +49,9 @@ test('judge: Agent is refused for every member; a Write is refused for a boss on
   const agent = judge({ me: w1, list, tool: 'Agent', path: '', grants: g, claudeDirs: DIRS })
   expect(agent?.kind).toBe('deny')
   expect((agent as any).reason).toContain('SendMessage')
-  expect((agent as any).reason).toContain('Herman')
+  expect((agent as any).reason).toContain('allow it yourself')
+  expect((agent as any).reason).toContain('或自行授權')
+  expect((agent as any).reason).not.toContain('Herman')
   expect((agent as any).line).toBe('blocked Agent: W1 has no subagent permission')
   for (const tool of ['Write', 'Edit', 'NotebookEdit']) {
     expect(judge({ me: head, list, tool, path: 'C:/proj/a.ts', grants: g, claudeDirs: DIRS })?.kind).toBe('deny')
@@ -59,6 +61,17 @@ test('judge: Agent is refused for every member; a Write is refused for a boss on
   // other tools are not judged
   expect(judge({ me: head, list, tool: 'Bash', path: '', grants: g, claudeDirs: DIRS })).toBeUndefined()
   expect(judge({ me: head, list, tool: 'Read', path: 'C:/proj/a.ts', grants: g, claudeDirs: DIRS })).toBeUndefined()
+})
+
+// #76: Claude Code's own helpers that a slash command starts pass; every other subagent type stays blocked
+test('judge: the built-in helpers statusline-setup and claude-code-guide pass; general-purpose stays blocked without Allow subagents', () => {
+  const w1 = list[1]!
+  for (const kind of ['statusline-setup', 'claude-code-guide']) {
+    const v = judge({ me: w1, list, tool: 'Agent', path: '', grants: NO_GRANTS, claudeDirs: DIRS, subagentType: kind })
+    expect(v).toEqual({ kind: 'allow', line: `allowed Agent: W1 (${kind}, a built-in Claude Code helper)` })
+  }
+  for (const kind of ['general-purpose', 'Explore', '', 'statusline-setup-x'])
+    expect(judge({ me: w1, list, tool: 'Agent', path: '', grants: NO_GRANTS, claudeDirs: DIRS, subagentType: kind })?.kind).toBe('deny')
 })
 
 test('judge: a standing switch or a one-turn grant lets it through, and says which', () => {
@@ -99,13 +112,26 @@ test('a member with reports cannot use Agent by default, nor Write, Edit or Note
   expect(allowed(r)).toBe(false)
   expect(r.deny).toContain('Blocked Agent: Hualong Workers has no subagent permission')
   expect(r.deny).toContain('SendMessage')
-  expect(r.deny).toContain('Herman')
+  expect(r.deny).toContain('allow it yourself')
+  expect(r.deny).not.toContain('Herman')
   expect(toasts).toContain('blocked Agent: Hualong Workers has no subagent permission')
   for (const tool of ['Write', 'Edit', 'NotebookEdit']) {
     const w: any = await use($, tool)
     expect(allowed(w)).toBe(false)
     expect(w.deny).toContain(`Blocked ${tool}: Hualong Workers has reports`)
   }
+})
+
+test('in the engine: a member without Allow subagents may start statusline-setup, not general-purpose', async ($, on) => {
+  const toasts: string[] = []
+  world(on)
+  calls(on, toasts, ID2)
+  await adopt($, withIds(HUALONG))
+  const helper: any = await $.tool.call({ tool: 'Agent', description: 'status line', prompt: 'set it up', subagent_type: 'statusline-setup' } as any)
+  expect(allowed(helper)).toBe(true)
+  const other: any = await $.tool.call({ tool: 'Agent', description: 'look', prompt: 'look around', subagent_type: 'general-purpose' } as any)
+  expect(allowed(other)).toBe(false)
+  expect(other.deny).toContain('Blocked Agent: Hualong Workers has no subagent permission')
 })
 
 test('a roster member with nobody under it may Write and Edit, but not use Agent', async ($, on) => {

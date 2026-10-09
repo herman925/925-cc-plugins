@@ -57,6 +57,9 @@ test('a launch of two teams under a CEO keeps names unique and @team reaches the
   })
   on('prompt.submit', async (_$, e: any) => ({ text: e.text }) as any)
   on('tool.call', { tool: 'SendMessage' }, async (_$, e: any) => (sent.push(e), { result: 'ok' }) as any)
+  // 0.5.13 (#67): a head with a session id is addressed by that id, never by name
+  const byId: any[] = []
+  on('session.send', async (_$: any, e: any) => (byId.push(e), { isDelivered: true }) as any)
   await $.tool.call({
     tool: 'mcp__team-orchestrator__team_launch',
     team: 'Org',
@@ -71,6 +74,8 @@ test('a launch of two teams under a CEO keeps names unique and @team reaches the
   expect(saved.map((m: any) => m.team)).toEqual(['Org', 'Alpha', 'Beta'])
   expect(saved[2].boss).toBe('CEO')
   await $.prompt.submit({ text: '@Beta ship it', asUser: true })
-  expect(sent.length).toBe(1)
-  expect(sent[0].to).toBe('Beta-Head')
+  expect(sent.length).toBe(0)
+  expect(byId.length).toBe(1)
+  expect(JSON.stringify(byId[0].to)).toContain(saved[2].sessionId)
+  expect(byId[0].text).toContain('ship it')
 })

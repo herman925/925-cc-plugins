@@ -109,10 +109,14 @@ const ROSTER = `${TEAM}/roster.json`
 const ids = (rows: typeof HUALONG) =>
   rows.map(r => ({ ...r, handle: '', sessionId: r.name === 'Hualong CEO' ? ID1 : r.name === 'Hualong Workers' ? ID2 : r.name === 'Hualong Worker 5' ? ID3 : '' }))
 type Seen = { toasts: string[]; sends: any[]; contexts: (readonly string[] | undefined)[]; messages: any[] }
+// failTo: the session id whose sends fail (0.5.13, #67: members are messaged by session id)
 const engine = (on: any, sid: { id: string }, failTo = '') => {
   const seen: Seen = { toasts: [], sends: [], contexts: [], messages: [] }
   on('session.id', async () => ({ value: sid.id }) as any)
-  on('session.send', async (_$: any, e: any) => (seen.sends.push(e), { isDelivered: true }) as any)
+  on('session.send', async (_$: any, e: any) => {
+    seen.sends.push(e)
+    return (failTo && JSON.stringify(e.to).includes(failTo) ? { isDelivered: false, reason: 'no live session on this machine has id' } : { isDelivered: true }) as any
+  })
   on('ui.toast', async (_$: any, e: any) => (seen.toasts.push(String(e.text)), { value: undefined }) as any)
   on('prompt.submit', async (_$: any, e: any) => (seen.contexts.push(e.context), { text: e.text }) as any)
   on('turn.complete', async (_$: any, e: any) => ({ text: e.answer }) as any)
@@ -120,7 +124,7 @@ const engine = (on: any, sid: { id: string }, failTo = '') => {
   on('tool.call', { tool: 'AskUserQuestion' } as any, async () => ({ result: 'Take over' }) as any)
   on('tool.call', { tool: 'SendMessage' } as any, async (_$: any, e: any) => {
     seen.messages.push(e)
-    return (e.to === failTo ? { result: 'no', text: 'no such agent', isError: true } : { result: 'sent', text: 'sent' }) as any
+    return { result: 'sent', text: 'sent' } as any
   })
   return seen
 }
@@ -222,7 +226,7 @@ test('a session whose mod is older than the roster\'s writer writes no team file
 test('the queue: one file per message; the top delivers, retries, marks failed after three tries and tells the head, and prunes', async ($, on) => {
   const files = world(on)
   const sid = { id: ID1 }
-  const seen = engine(on, sid, 'Hualong Worker 5')
+  const seen = engine(on, sid, ID3)
   await adopt($, ids(HUALONG))
   const now = Date.now()
   const q = (at: number, tag: string, e: Partial<QEntry>) =>
@@ -236,13 +240,15 @@ test('the queue: one file per message; the top delivers, retries, marks failed a
   const band = await mountBand($, 300)
   await refresh(band)
   expect(JSON.parse(files.get(`${TEAM}/queue/${fileName(now - 5000, 'aaaa0001')}`)!).state).toBe('delivered')
-  expect(seen.messages.some(x => x.to === 'Hualong Workers' && x.message === '[queued message from Hualong CEO] plan')).toBe(true)
-  expect(seen.messages.some(x => x.message === '[queued message from Hualong CEO] from the old file')).toBe(true)
+  // by session id, never by name (#67): no SendMessage at all
+  expect(seen.sends.some(x => JSON.stringify(x.to).includes(ID2) && x.text === '[queued message from Hualong CEO] plan')).toBe(true)
+  expect(seen.sends.some(x => x.text === '[queued message from Hualong CEO] from the old file')).toBe(true)
+  expect(seen.messages.length).toBe(0)
   expect(files.get(`${TEAM}/queue.json`)).toBe('[]')
   expect(JSON.parse(files.get(`${TEAM}/queue/${fileName(now - 4000, 'aaaa0002')}`)!)).toMatchObject({ state: 'pending', tries: 1 })
   // delivered two days ago: pruned; older than a week: never even read
   expect(JSON.parse(files.get(`${TEAM}/queue/pruned.json`)!).names).toEqual([fileName(now - 2 * DAY, 'aaaa0003')])
-  expect(seen.messages.some(x => String(x.message).includes('ancient'))).toBe(false)
+  expect(seen.sends.some(x => String(x.text).includes('ancient'))).toBe(false)
   await refresh(band)
   await refresh(band)
   const failed = JSON.parse(files.get(`${TEAM}/queue/${fileName(now - 4000, 'aaaa0002')}`)!)
@@ -254,7 +260,7 @@ test('the queue: one file per message; the top delivers, retries, marks failed a
   expect(told[0].text).toContain('build')
   // nothing is tried again
   await refresh(band)
-  expect(seen.messages.filter(x => x.to === 'Hualong Worker 5').length).toBe(3)
+  expect(seen.sends.filter(x => JSON.stringify(x.to).includes(ID3)).length).toBe(3)
 })
 
 test('status files live on the machine; an older version\'s file in the project is read once and moved', async ($, on) => {
@@ -327,7 +333,7 @@ test('the top machine is another PC: the top here writes change files, says whic
   expect(JSON.stringify(seen.contexts)).toContain('AskUserQuestion')
   // not without his answer in this turn
   const early: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_take_top', take: true } as any)
-  expect(String(early.deny)).toContain('Ask Herman first')
+  expect(String(early.deny)).toContain('Ask the user first')
   await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as any)
   const ok: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_take_top', take: true } as any)
   expect(String(ok.result)).toContain('PC-B) now holds the team top')

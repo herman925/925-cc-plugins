@@ -1,7 +1,7 @@
 # team-orchestrator
 
 Builds and manages a team of Claude Code sessions as Orca tabs: a form to start a team, a live roster, an org chart, and a
-guard that keeps the heads from writing files themselves and everybody from starting subagents unless Herman says so.
+guard that keeps the heads from writing files themselves and everybody from starting subagents unless you say so.
 
 This page explains the two rules that people ask about. Everything else is on the screen.
 
@@ -89,13 +89,13 @@ The plugin knows which member a session is from its Orca tab, its **session id**
 | `Agent` (a subagent) | every roster member | allowed (below) |
 | `Write`, `Edit`, `NotebookEdit` | a member with reports (somebody has it as boss), the CEO included | allowed (below), or the file is in its own memory folder `~/.claude/projects/<project>/memory/…` |
 
-The refusal says who is refused and tells the model to hand the work to a worker with `SendMessage`, or to ask Herman.
+The refusal says who is refused and tells the model to hand the work to a worker with `SendMessage`, or to ask you to allow it ("allow it yourself"; in Chinese "或自行授權"). From 0.5.13 the built-in helpers `statusline-setup` and `claude-code-guide` always pass.
 Each refusal, and each time a permission lets a call through, leaves one line in a toast, for example
 `blocked Agent: Hualong CEO has no subagent permission`.
 
 A subagent runs inside its session, so a refusal for the session covers its subagents too.
 
-### How Herman allows something
+### How you allow something
 
 1. **Standing:** Settings → Permissions. Each member has **Allow subagents** and **Allow writes**, both off. They are kept
    in the roster file, which the guard reads again on every call, so a change counts at once in every session of the project.
@@ -177,7 +177,7 @@ The roster shows a short model name, such as `haiku-5-5`. Before 0.5.05, a start
 - Aliases (`opus`, `sonnet`, `haiku`, `fable`) pass as they are.
 - Full `claude-...` ids pass as they are.
 - Short names (`haiku-5-5`) and display names (`Haiku 5.5`) become `claude-haiku-5-5`.
-- Anything else is left out, so the session uses its default model.
+- Anything else is left out, so the session uses its default model. (From 0.5.13 any other name passes as typed; see [0.5.13](#model-messages-workspaces-and-other-clis-0513).)
 
 ## Windows, macOS and Linux (0.5.06)
 
@@ -222,10 +222,10 @@ in `hooks/identity.ts`; the answer is worked out once per refresh, not on every 
   while the member is not running elsewhere. No record (another device) means on hold.
 - **A `/rename` to another member's name is not followed**: the session stays who its tab and id say, with that
   member's rights, never the other's.
-- **On hold** means the strictest guard (Write, Edit, NotebookEdit and Agent refused unless Herman types
+- **On hold** means the strictest guard (Write, Edit, NotebookEdit and Agent refused unless you type
   `#allow-write` or `#allow-subagent` for that turn), every team tool refused with a sentence saying why, and no status
   written under the member's name. Once per session id the mod records the case in `claims.json`, warns the member's
-  head, and tells the team top (by session id, `$.session.send`) to ask Herman at once with AskUserQuestion: **this is
+  head, and tells the team top (by session id, `$.session.send`) to ask you at once with AskUserQuestion: **this is
   X**, **new member under X's boss**, or **reject**. The top applies the answer with the `member_claim` tool
   (`{ sessionId, decision: "is" | "new" | "reject", member }`), which only the confirmed team top may call.
 - **#61:** the roster's bulk rename and restart keeps each member's saved model and effort when they are left on "keep".
@@ -265,7 +265,7 @@ in `hooks/identity.ts`; the answer is worked out once per refresh, not on every 
 - The top's refresh (every 30 s) folds the change files into the files. The mod cannot delete a file, so applied
   change files stay where they are and `changes/applied.json` lists them. A change file older than 7 days is ignored by
   its name alone.
-- Until a team has a running top on this machine, a session that is not on the roster (Herman's own) writes in its
+- Until a team has a running top on this machine, a session that is not on the roster (your own) writes in its
   place. The first write of a new team is always direct.
 - A change of Allow writes or Allow subagents that arrives in a change file is toasted to the top, with who made it.
   Members may not write `changes/` or `meta.json` with tools, so a change file cannot be forged by hand.
@@ -290,16 +290,58 @@ version left in the project is read once per member and moved.
 
 - Every member records its home machine (`machine`, the computer name) at launch, adopt, reopen and identity re-attach.
 - A member whose home is another PC is never matched by tab or registry here. With only its id and name it is held for
-  Herman.
+  you to decide.
 - Reopen, auto-close, the tab check and messaging skip it. The roster shows it dimmed, "on PC-X".
 - `team_message` to it answers that its conversation lives on that PC, and asks whether to start a fresh copy here.
-  With Herman's yes, `startHere: true` starts one, and this PC becomes its home.
+  With your yes, `startHere: true` starts one, and this PC becomes its home.
 - When `meta.json` records another PC as the top's, team-top actions here are off: writing the team files, auto-close
   and the queue. A toast names the PC that holds the top.
-- The top's session here is told to ask Herman with AskUserQuestion. `team_take_top { take: true }` moves the top to
+- The top's session here is told to ask you with AskUserQuestion. `team_take_top { take: true }` moves the top to
   this PC, and only after an AskUserQuestion answered in the same turn. The old PC's sessions then write change files.
 
 **Updating a running team.** Reload every session (`/reload-plugins`), the top first. Until a session reloads, it still
 writes `roster.json` itself and its status in the project, and the updated top shows it offline.
 
 Rules: `hooks/changes.ts`. Tests: `hooks/writers.test.ts`.
+
+## Model, messages, workspaces and other CLIs (0.5.13)
+
+**Model and effort: chosen vs running (#63).**
+
+- A reopen (and a bulk restart left on "keep") passes the member's own last `requestedModel` from its transcript, as
+  typed: `[1m]`, `/model` switches and gateway names are kept. Without one, the roster's model is used.
+- A member started on "default" keeps what it actually ran after its first run: the roster records the model it used,
+  so a later change to the account default does not move it.
+- `--model` gets the `claude-` prefix back only for the old short form (`opus|sonnet|haiku|fable` followed by digits,
+  such as `haiku-5-5`). Any other name goes through unchanged, so a wrong one fails visibly at start. `default`, `keep`
+  and an empty name give no `--model`; so does a name a shell would read as more than one word. A name with `[1m]` is
+  quoted.
+- Each member writes its live context window (`$.session.usage().context.window`) and fill into its status file at the
+  end of each turn. The roster's context percent uses that window instead of the "200k unless [1m]" guess.
+
+**Messages reach this project's member, by session id (#67).** `team_message`, a message to a closed member and the
+queue send with `$.session.send({ to: { sessionId } })`. That reaches only the live local session with that id: never a
+same-named member of another project, never a Remote Control copy. The ListAgents lookup is gone. Each member records
+`location`: `local`, `remote` or `other-cli`.
+
+- A failed send says why (the engine's reason).
+- A local member with no session id yet is not messaged by name; the next refresh finds the id.
+- A member on another device gets a sentence: the messenger route (#72) is not built yet. The fresh-copy offer of 0.5.12
+  stays.
+- `@team` messages go to the head by session id as well, when its id is known.
+
+**Workspace after /cd or a moved project (#68).** `ORCA_WORKTREE_ID` counts only while that workspace's folder contains
+the project root (the folder after `::` in the id, else Orca's `worktree show`). Otherwise `orca worktree current`
+answers. A member's saved workspace that Orca no longer has, or that no longer holds the project, is replaced the same
+way at reopen or restart, and recorded (a session that is not the team top records it through a change file).
+
+**Members of other CLIs (#69).** `team_adopt` reads which CLI each tab runs, from Orca's terminal list (`agentIdentity`,
+else the one CLI its command line names), and records `cli`. A member that is not Claude is **not managed**: it is
+never reopened, auto-closed, briefed, messaged or tab-polled, and the roster shows it as "not managed (codex)". A tab
+whose CLI cannot be told is treated as Claude, as before.
+
+**"You", not a name, and built-in helpers (#76).** Messages to the person say "you" ("allow it yourself", "或自行授權");
+messages to the model say "the user". The Agent guard lets Claude Code's own helpers `statusline-setup` and
+`claude-code-guide` through; every other subagent type stays blocked without Allow subagents or `#allow-subagent`.
+
+Rules: `hooks/status.ts`, `hooks/guard.ts`. Tests: `hooks/route.test.ts`, `hooks/guard.test.ts`.

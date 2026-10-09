@@ -97,5 +97,5 @@ test('a start or reopen passes a model name the API accepts, never the short nam
   expect(modelArg('default')).toBe('')
   expect(modelArg('keep')).toBe('')
   expect(modelArg('')).toBe('')
-  expect(modelArg('gpt-4o')).toBe('')
+  expect(modelArg('gpt-4o')).toBe('gpt-4o')
 })
