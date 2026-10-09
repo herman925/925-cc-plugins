@@ -352,8 +352,9 @@ async function writeRoles($: any, list: Member[]) {
   }
 }
 
-// The command that starts a member: its role pointer in the system prompt, and an optional first prompt. cmd.exe types
-// it, so the texts go in double quotes and carry none themselves (pointer() and WELCOME see to that).
+// The command that starts a member: its role pointer in the system prompt, and an optional first prompt. A shell types
+// it (cmd.exe on Windows, bash or zsh elsewhere), so the texts go in double quotes and carry nothing a shell would
+// expand (pointer() and WELCOME see to that).
 const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean, name = m.name, model = m.model, effort = m.effort, first = '') =>
   `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name ${name}${flags(model, effort)}` +
   ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
@@ -617,8 +618,8 @@ async function writeMine($: any, patch: Partial<Status>) {
   await writeStatusOf($, who.me, { ...revive, ...patch, sessionId, heartbeat: Date.now() })
 }
 
-// Count this session's own leftover shells and runtimes, found under the claude.exe whose command line carries the
-// session id. At most once per five minutes; -1 when the session cannot be found.
+// Count this session's own leftover shells and runtimes, found under the claude process whose command line carries the
+// session id (PowerShell on Windows, ps elsewhere). At most once per five minutes; -1 when the session cannot be found.
 const counted = { at: 0 }
 async function countLeftovers($: any, sessionId: string): Promise<number | undefined> {
   if (!sessionId || Date.now() - counted.at < COUNT_EVERY_MS) return undefined

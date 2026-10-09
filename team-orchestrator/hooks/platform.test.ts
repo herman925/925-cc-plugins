@@ -64,6 +64,6 @@ test('the housekeeping note names each platform\'s own processes', () => {
 
 test('the start-up pointer is safe for cmd.exe and for sh or zsh', () => {
   const m: any = { team: 'T', name: 'W1', role: 'r', level: 2, boss: 'Head' }
-  const p = pointer({ ...m, role: 'r' }, [m, { ...m, name: 'Head', boss: 'user$HOME`x`\\y' }])
-  expect(/["%$`\\\r\n]/.test(p)).toBe(false)
+  const p = pointer({ ...m, team: 'T!x', role: 'r' }, [m, { ...m, name: 'Head', boss: 'user$HOME`x`\\y!!' }])
+  expect(/["%$`\\!\r\n]/.test(p)).toBe(false)
 })

@@ -188,6 +188,6 @@ The roster shows a short model name, such as `haiku-5-5`. Before 0.5.05, a start
   - Transcript tails are read with `tail`.
   - The leftover count uses `ps`, counting shells and runtimes under the member's own `claude` process. It shows "unknown", not zero, when that process cannot be found.
   - Housekeeping notes give each platform's own process names.
-  - The start text also removes `$`, the backtick and the backslash.
+  - The start text also removes `$`, the backtick, the backslash and (0.5.07) `!`, which an interactive bash or zsh would expand.
 - **Scratch clean-up without asking.** This is in Settings → Workers and is on by default. A worker may delete inside its own session's temporary folder without a prompt. Heads and leads may also delete in the system temp folder and in the project scratch folder (`.claude/scratch` by default). The mod approves only a single plain delete command, lifting an "ask" to "allow"; it never overrides a deny. Everything else still asks. The cross-CLI design (Codex, Hermes and others) is tracked in #51 and #55.
 - **Model and effort saved in the roster.** Before this release, `roster.json` did not keep them. A member started on demand from another session (for example, a lead's first `team_message`) then came up on the CLI defaults instead of the values chosen at Create.
