@@ -180,6 +180,7 @@ function engineIo($: Hooked): EnhancerIo {
     cacheGet: async k => (await $.store.get(k)) as { mtimeMs: number; text: string } | undefined,
     cacheSet: (k, v) => $.store.set(k, v),
     gh: async () => await $.process.run(['gh', 'issue', 'list', '--limit', '10']),
+    messages: async () => (await $.session.messages()).map(m => ({ role: m.role, text: m.text })),
     fork: async prompt => (await $.model.fork({ prompt })) as Awaited<ReturnType<EnhancerIo['fork']>>,
     complete: async (model, prompt) => (await $.model.complete({ model, prompt })) as Awaited<ReturnType<EnhancerIo['complete']>>,
     askUser: (question, options) => $.ui.ask(question, options),
@@ -211,7 +212,8 @@ async function runSetup($: Hooked) {
     : srcAns.startsWith('Instructions')
       ? { instructions: true, skills: true, docs: false, github: false }
       : { instructions: false, skills: false, docs: false, github: false }
-  await setPrefs($, { enhancerOn: on, model, sources })
+  const chat = (await $.ui.ask('How much chat should the enhancer read?', ['Haiku + recent (Recommended)', 'Full chat (session model)'])).startsWith('Full') ? 'full' : 'recent'
+  await setPrefs($, { enhancerOn: on, model, chat, sources })
   await setStyle($, view)
   await $.store.set('setupDone', true)
 }
@@ -677,6 +679,19 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           { value: 'opus', label: 'Opus' },
         ],
         set: v => void setPrefs($, { model: v }),
+      },
+      {
+        id: 'chat',
+        group: 'enhancer',
+        label: 'Chat context',
+        hint: 'Haiku + recent reads the last six turns. Full chat forks the session.',
+        kind: 'choice',
+        value: prefs.chat,
+        options: [
+          { value: 'recent', label: 'Haiku + recent' },
+          { value: 'full', label: 'Full chat (session model)' },
+        ],
+        set: v => void setPrefs($, { chat: v === 'full' ? 'full' : 'recent' }),
       },
       ...(['instructions', 'skills', 'docs', 'github'] as const).map(src => ({
         id: `src-${src}`,

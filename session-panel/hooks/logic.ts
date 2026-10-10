@@ -400,7 +400,7 @@ export const SOURCE_LABELS: Record<SourceId, string> = {
 export const SOURCE_CAP = 4000
 
 /** Instructions for the model: rewrite the draft and return JSON only. */
-export function enhancePrompt(draft: string, context: string, answers: string[]): string {
+export function enhancePrompt(draft: string, context: string, answers: string[], chat = ''): string {
   const answered = answers.length ? `The person answered these questions:\n${answers.join('\n')}\n` : ''
   return [
     'Rewrite the draft prompt below so the assistant can act on it, using the project context.',
@@ -411,6 +411,7 @@ export function enhancePrompt(draft: string, context: string, answers: string[])
     answered,
     'Project context:',
     context || '(none)',
+    chat ? `Recent conversation:\n${chat}` : '',
     '',
     'Draft:',
     draft,
@@ -438,4 +439,18 @@ export function parseEnhanced(text: string): Enhanced | null {
   } catch {
     return null
   }
+}
+
+/** The last six user and assistant turns, text only, each capped; the whole excerpt keeps its newest end. */
+export const EXCERPT_TURNS = 6
+export const EXCERPT_MESSAGE_CAP = 1500
+export const EXCERPT_CAP = 6000
+
+export function recentExcerpt(rows: Array<{ role: string; text: string }>): string {
+  const joined = rows
+    .filter(r => (r.role === 'user' || r.role === 'assistant') && r.text.trim() !== '')
+    .slice(-EXCERPT_TURNS)
+    .map(r => `${r.role}: ${r.text.trim().slice(0, EXCERPT_MESSAGE_CAP)}`)
+    .join('\n\n')
+  return joined.length > EXCERPT_CAP ? joined.slice(-EXCERPT_CAP) : joined
 }

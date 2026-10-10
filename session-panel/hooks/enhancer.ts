@@ -1,5 +1,5 @@
 import type { EnhancerState, Prefs } from '../types'
-import { SOURCE_CAP, enhancePrompt, parseEnhanced } from './logic'
+import { SOURCE_CAP, enhancePrompt, parseEnhanced, recentExcerpt } from './logic'
 
 /**
  * What the enhancer needs from the engine. The band builds this from `$` in session-panel.tsx: `$` itself cannot be
@@ -15,6 +15,7 @@ export type EnhancerIo = {
   cacheGet: (key: string) => Promise<{ mtimeMs: number; text: string } | undefined>
   cacheSet: (key: string, value: { mtimeMs: number; text: string }) => Promise<void>
   gh: () => Promise<{ exitCode: number; stdout: string } | undefined>
+  messages: () => Promise<Array<{ role: string; text: string }>>
   fork: (prompt: string) => Promise<{ isAnswered: true; text: string } | { isAnswered: false; reason: string }>
   complete: (model: string, prompt: string) => Promise<{ isAnswered: true; text: string } | { isAnswered: false }>
   askUser: (question: string, options: string[]) => Promise<string>
@@ -24,7 +25,7 @@ export type Outcome =
   | { kind: 'off' }
   | { kind: 'empty' }
   | { kind: 'failed'; reason: string }
-  | { kind: 'filled'; prompt: string; notes: string[] }
+  | { kind: 'filled'; prompt: string; notes: string[]; via: string }
 
 /** A digest of one file, reused while its mtime is unchanged. */
 async function cached(io: EnhancerIo, path: string, load: () => Promise<string>): Promise<string> {
@@ -108,13 +109,31 @@ export async function buildContext(io: EnhancerIo, sources: Prefs['sources']): P
   return { text: parts.join('\n\n'), used }
 }
 
-/** Fork first, so the model sees the conversation. Fall back to a plain completion with the chosen model. */
-async function ask(io: EnhancerIo, prefs: Prefs, prompt: string): Promise<string | null> {
+/** Reads the recent turns, or nothing when the chat route is the full chat. A failed read is no excerpt. */
+async function messagesOrEmpty(io: EnhancerIo): Promise<Array<{ role: string; text: string }>> {
+  try {
+    return await io.messages()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * One model answer. "recent" sends the docs and the last turns to complete() on the chosen model. "full" forks the
+ * session (its own model and transcript), and falls back to complete() only when there is nothing to fork yet.
+ */
+async function answer(io: EnhancerIo, prefs: Prefs, draft: string, context: string, answers: string[]): Promise<{ text: string; via: string } | null> {
+  if (prefs.chat === 'recent') {
+    const prompt = enhancePrompt(draft, context, answers, recentExcerpt(await messagesOrEmpty(io)))
+    const r = await io.complete(prefs.model, prompt)
+    return r.isAnswered ? { text: r.text, via: `complete:${prefs.model}` } : null
+  }
+  const prompt = enhancePrompt(draft, context, answers)
   const fork = await io.fork(prompt)
-  if (fork.isAnswered) return fork.text
+  if (fork.isAnswered) return { text: fork.text, via: 'fork' }
   if (fork.reason !== 'nothing-to-fork') return null
   const plain = await io.complete(prefs.model, prompt)
-  return plain.isAnswered ? plain.text : null
+  return plain.isAnswered ? { text: plain.text, via: `complete:${prefs.model}` } : null
 }
 
 /** Enhances a draft. Asks up to three questions first when the draft is vague. */
@@ -122,24 +141,26 @@ export async function enhance(io: EnhancerIo, draft: string, prefs: Prefs): Prom
   if (!prefs.enhancerOn) return { kind: 'off' }
   if (draft.trim() === '') return { kind: 'empty' }
   const context = await buildContext(io, prefs.sources)
-  const first = await ask(io, prefs, enhancePrompt(draft, context.text, []))
-  let parsed = first === null ? null : parseEnhanced(first)
+  const first = await answer(io, prefs, draft, context.text, [])
+  let parsed = first === null ? null : parseEnhanced(first.text)
   if (!parsed) return { kind: 'failed', reason: 'the model gave no usable reply' }
+  let via = first!.via
 
   const answers: string[] = []
   for (const q of parsed.questions) {
     answers.push(`${q.question} ${await io.askUser(q.question, q.options)}`)
   }
   if (answers.length > 0) {
-    const second = await ask(io, prefs, enhancePrompt(draft, context.text, answers))
-    parsed = second === null ? null : parseEnhanced(second)
+    const second = await answer(io, prefs, draft, context.text, answers)
+    parsed = second === null ? null : parseEnhanced(second.text)
     if (!parsed) return { kind: 'failed', reason: 'the model gave no usable reply after the questions' }
+    via = second!.via
   }
   if (parsed.prompt === '') return { kind: 'failed', reason: 'the model returned no prompt' }
 
   const notes = [...parsed.notes]
   if (context.used.length > 0 && notes.length < 4) notes.push(`Sources: ${context.used.join(', ')}`)
-  return { kind: 'filled', prompt: parsed.prompt, notes }
+  return { kind: 'filled', prompt: parsed.prompt, notes, via }
 }
 
 /** The defaults before the first-run setup has saved anything. */
@@ -147,6 +168,7 @@ export const DEFAULT_PREFS: Prefs = {
   enhancerOn: true,
   autoEnhance: false,
   model: 'haiku',
+  chat: 'recent',
   sources: { instructions: true, skills: true, docs: true, github: false },
 }
 

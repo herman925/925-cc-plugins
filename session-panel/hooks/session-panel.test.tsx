@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { DEFAULT_PREFS, buildContext, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
-import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, reportProgress, newChecklist, planSteps } from './logic'
+import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -862,6 +862,7 @@ function fakeDeps(replies: string[], answers: string[] = []) {
     mtime: async () => 1,
     list: async () => [],
     ancestors: async () => [],
+    messages: async () => [],
     cacheGet: async k => store.get(k),
     cacheSet: async (k, v) => void store.set(k, v),
     gh: async () => undefined,
@@ -874,7 +875,7 @@ function fakeDeps(replies: string[], answers: string[] = []) {
       asked.push(q)
       return answers.shift() ?? options[0]
     },
-    prefs: async () => ({ ...DEFAULT_PREFS }),
+    prefs: async () => ({ ...DEFAULT_PREFS, chat: 'full' as const }),
     state: async () => state,
     setState: async patch => void (state = { ...state, ...patch }),
     readBox: async () => box.text,
@@ -927,7 +928,7 @@ test('enhancer: a vague draft asks one question per call, then enhances with the
     ],
     ['A bakery'],
   )
-  const outcome = await enhance(f.deps, 'do the thing', DEFAULT_PREFS)
+  const outcome = await enhance(f.deps, 'do the thing', { ...DEFAULT_PREFS, chat: 'full' })
   expect(f.asked).toEqual(['What is it for?'])
   expect(f.forks.length).toBe(2)
   expect(f.forks[1]).toContain('What is it for? A bakery')
@@ -972,6 +973,7 @@ function fakeIo(files: Record<string, string>, log: string[]): EnhancerIo {
       throw new Error('ENOENT')
     },
     ancestors: async () => [],
+    messages: async () => [],
     cacheGet: async k => store.get(k),
     cacheSet: async (k, v) => void store.set(k, v),
     gh: async () => undefined,
@@ -998,4 +1000,63 @@ test('enhancer: a missing project skills folder counts as zero, not an error', a
   const io = fakeIo({}, [])
   const ctx = await buildContext(io, { instructions: false, skills: true, docs: false, github: false })
   expect(ctx.used).toEqual(['Skills'])
+})
+
+// 7. chat route: recent mode reads the last turns and calls complete(); full mode forks the session
+test('chat: the excerpt keeps six text turns, caps each at 1500 and the whole at 6000', () => {
+  const short = Array.from({ length: 10 }, (_, i) => ({ role: 'user', text: `m${i}` }))
+  const kept = recentExcerpt([...short, { role: 'tool', text: 'ignored' }])
+  expect(kept).toContain('m4')
+  expect(kept).toContain('m9')
+  expect(kept).not.toContain('m3')
+  expect(kept).not.toContain('ignored')
+  const long = Array.from({ length: 6 }, () => ({ role: 'assistant', text: 'z'.repeat(3000) }))
+  const capped = recentExcerpt(long)
+  expect(capped.length).toBeLessThanOrEqual(6000)
+})
+
+test('chat: recent mode sends the docs and a trimmed excerpt to complete() on the haiku model, never forks', async () => {
+  const f = fakeDeps([])
+  const rows = Array.from({ length: 8 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: i === 7 ? `turn ${i} ${'x'.repeat(3000)}` : `turn ${i}` }))
+  const calls: Array<{ model: string; prompt: string }> = []
+  const prefs = { ...DEFAULT_PREFS, chat: 'recent' as const, model: 'haiku' }
+  const deps = {
+    ...f.deps,
+    prefs: async () => prefs,
+    messages: async () => rows,
+    complete: async (model: string, prompt: string) => {
+      calls.push({ model, prompt })
+      return { isAnswered: true as const, text: JSON.stringify({ prompt: 'Enhanced page', notes: [], questions: [] }) }
+    },
+  }
+  const outcome = await enhance(deps, 'make a page', prefs)
+  expect(outcome.kind === 'filled' && outcome.via).toBe('complete:haiku')
+  expect(calls.length).toBe(1)
+  expect(calls[0].model).toBe('haiku')
+  expect(calls[0].prompt).toContain('Recent conversation:')
+  expect(calls[0].prompt).toContain('turn 2')
+  expect(calls[0].prompt).not.toContain('turn 0')
+  expect(calls[0].prompt).not.toContain('x'.repeat(1501))
+  expect(f.forks.length).toBe(0)
+})
+
+test('chat: full mode forks the session, and calls complete() only on nothing-to-fork', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: 'Forked page', notes: [], questions: [] })])
+  const forked = await enhance(f.deps, 'make a page', { ...DEFAULT_PREFS, chat: 'full' })
+  expect(f.forks.length).toBe(1)
+  expect(forked.kind === 'filled' && forked.via).toBe('fork')
+
+  const g = fakeDeps([])
+  const calls: string[] = []
+  const deps = {
+    ...g.deps,
+    fork: async () => ({ isAnswered: false as const, reason: 'nothing-to-fork' }),
+    complete: async (model: string) => {
+      calls.push(model)
+      return { isAnswered: true as const, text: JSON.stringify({ prompt: 'Plain page', notes: [], questions: [] }) }
+    },
+  }
+  const plain = await enhance(deps, 'make a page', { ...DEFAULT_PREFS, chat: 'full' })
+  expect(calls).toEqual(['haiku'])
+  expect(plain.kind === 'filled' && plain.via).toBe('complete:haiku')
 })

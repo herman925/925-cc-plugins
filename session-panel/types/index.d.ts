@@ -48,6 +48,7 @@ export type Prefs = {
   enhancerOn: boolean
   autoEnhance: boolean
   model: string
+  chat: 'recent' | 'full'
   sources: { instructions: boolean; skills: boolean; docs: boolean; github: boolean }
 }
 
