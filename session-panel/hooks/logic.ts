@@ -1,6 +1,6 @@
 import type { CleanChecklist, CleanTask } from '../types'
 
-// Pure helpers for Clean View: no engine calls here, so tests can use them directly.
+// Pure helpers for Session Panel: no engine calls here, so tests can use them directly.
 
 export const MAX_NAME = 40
 export const MAX_STEPS = 8
@@ -339,9 +339,9 @@ const EXEMPT = new Set([
   'TaskCreate',
   'TaskUpdate',
   'AskUserQuestion',
-  'mcp__clean-view__plan_steps',
-  'mcp__clean-view__report_progress',
-  'mcp__clean-view__ask_choices',
+  'mcp__session-panel__plan_steps',
+  'mcp__session-panel__report_progress',
+  'mcp__session-panel__ask_choices',
 ])
 
 export function isGateExempt(tool: string): boolean {
@@ -349,16 +349,38 @@ export function isGateExempt(tool: string): boolean {
 }
 
 export const GATE_MESSAGE =
-  'Clean View is on. Before any other tool, call plan_steps with 1 to 8 short plain-English step names (use ToolSearch to load plan_steps if it is not listed). Then continue.'
+  'Session Panel is on. Before any other tool, call plan_steps with 1 to 8 short plain-English step names (use ToolSearch to load plan_steps if it is not listed). Then continue.'
 
 export function looksLikeUserDenial(text: string): boolean {
   return /doesn.?t want to proceed|rejected|permission (to use|for) .* (was )?denied|user denied|declined to/i.test(text)
 }
 
-export const SECTION_TEXT = `Clean View is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
+export const SECTION_TEXT = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
 - For EVERY request, even a quick question, call plan_steps first (load it with ToolSearch if it is deferred). Use 1 step for a quick question, 2 to 8 for bigger work.
 - Step names are plain English, under 40 characters, and start with a verb, for example "Build the pricing section". Never put file paths, file names, commands, code or tool names in a step name.
 - Then call report_progress as real progress happens, with the same step name, and call it with percent 100 the moment a step finishes.
 - If you have TodoWrite or TaskCreate you may use that to-do list as the plan instead.
 - Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply.
 - Keep written replies short, warm and free of jargon.`
+
+/**
+ * The values to copy from the old clean-view settings row into this plugin's store. The row keyed with the
+ * marketplace suffix wins, then the plain key. A store key that already holds a value is left alone.
+ */
+export function migratedValues(
+  rows: Record<string, { options?: Record<string, unknown> }> | undefined,
+  stored: { sessionPanelEnabled?: unknown; sessionPanelStyle?: unknown; askChoicesEnabled?: unknown },
+): Record<string, unknown> {
+  const old = rows?.['clean-view@herman-mods']?.options ?? rows?.['clean-view']?.options ?? {}
+  const out: Record<string, unknown> = {}
+  if (stored.sessionPanelEnabled === undefined && (old.cleanView === 'on' || old.cleanView === 'off')) {
+    out.sessionPanelEnabled = old.cleanView === 'on'
+  }
+  if (stored.sessionPanelStyle === undefined && (old.view === 'bars' || old.view === 'list')) {
+    out.sessionPanelStyle = old.view === 'bars' ? 'bars' : 'checklist'
+  }
+  if (stored.askChoicesEnabled === undefined && (old.askChoices === 'on' || old.askChoices === 'off')) {
+    out.askChoicesEnabled = old.askChoices === 'on'
+  }
+  return out
+}

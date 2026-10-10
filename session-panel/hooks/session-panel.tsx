@@ -21,6 +21,7 @@ import {
   isGateExempt,
   looksLikeUserDenial,
   meter,
+  migratedValues,
   newChecklist,
   planSteps,
   reportProgress,
@@ -34,17 +35,17 @@ import {
 
 type Hooked = EngineInterface
 
-const enabledA = atom({ plugin: 'clean-view', key: 'cleanViewEnabled' } as const, true)
-const askEnabledA = atom({ plugin: 'clean-view', key: 'askChoicesEnabled' } as const, false)
-const settingsOpenA = atom({ plugin: 'clean-view', key: 'settingsOpen' } as const, false)
-const checklistA = atom({ plugin: 'clean-view', key: 'checklist' } as const, newChecklist())
-const tickA = atom({ plugin: 'clean-view', key: 'tick' } as const, 0)
-const styleA = atom({ plugin: 'clean-view', key: 'viewStyle' } as const, 'checklist' as CleanStyle)
-const finishedA = atom({ plugin: 'clean-view', key: 'finished' } as const, [] as CleanFinished[])
+const enabledA = atom({ plugin: 'session-panel', key: 'sessionPanelEnabled' } as const, true)
+const askEnabledA = atom({ plugin: 'session-panel', key: 'askChoicesEnabled' } as const, false)
+const settingsOpenA = atom({ plugin: 'session-panel', key: 'settingsOpen' } as const, false)
+const checklistA = atom({ plugin: 'session-panel', key: 'checklist' } as const, newChecklist())
+const tickA = atom({ plugin: 'session-panel', key: 'tick' } as const, 0)
+const styleA = atom({ plugin: 'session-panel', key: 'viewStyle' } as const, 'checklist' as CleanStyle)
+const finishedA = atom({ plugin: 'session-panel', key: 'finished' } as const, [] as CleanFinished[])
 
-const PLAN = 'mcp__clean-view__plan_steps'
-const REPORT = 'mcp__clean-view__report_progress'
-const ASK = 'mcp__clean-view__ask_choices'
+const PLAN = 'mcp__session-panel__plan_steps'
+const REPORT = 'mcp__session-panel__report_progress'
+const ASK = 'mcp__session-panel__ask_choices'
 
 let timer: Timer | undefined
 let doneTimer: Timer | undefined
@@ -109,21 +110,21 @@ function resume($: Hooked) {
 
 /** Keeps the /config row in step with a button or slash command; a session without the row ignores the call. */
 async function syncRow($: Hooked, field: string, value: string) {
-  await $.config.set({ key: `clean-view.${field}`, value }).catch(() => undefined)
+  await $.config.set({ key: `session-panel.${field}`, value }).catch(() => undefined)
 }
 
 async function setStyle($: Hooked, value: CleanStyle) {
   await update($, styleA, () => value)
-  await $.store.set('cleanViewStyle', value)
+  await $.store.set('sessionPanelStyle', value)
   $.ui.toast(value === 'bars' ? 'Bar view' : 'List view')
   await syncRow($, 'view', value === 'bars' ? 'bars' : 'list')
 }
 
 async function setEnabled($: Hooked, value: boolean) {
   await update($, enabledA, () => value)
-  await $.store.set('cleanViewEnabled', value)
-  $.ui.toast(value ? 'Clean View is on: details are hidden.' : 'Clean View is off: details are showing.')
-  await syncRow($, 'cleanView', value ? 'on' : 'off')
+  await $.store.set('sessionPanelEnabled', value)
+  $.ui.toast(value ? 'Session Panel is on: details are hidden.' : 'Session Panel is off: details are showing.')
+  await syncRow($, 'sessionPanel', value ? 'on' : 'off')
 }
 
 async function setAskEnabled($: Hooked, value: boolean) {
@@ -133,24 +134,41 @@ async function setAskEnabled($: Hooked, value: boolean) {
   await syncRow($, 'askChoices', value ? 'on' : 'off')
 }
 
+// One-time copy of the choices the old clean-view plugin saved in its settings row, into this plugin's store.
+// Only keys with no value yet are copied, and the flag keeps it from running twice.
+async function migrateFromCleanView($: Hooked) {
+  if ((await $.store.get('sessionPanelMigrated')) === true) return
+  const user = (await $.settings.read({ source: 'user' }).catch(() => ({}))) as {
+    pluginConfigs?: Record<string, { options?: Record<string, unknown> }>
+  }
+  const stored = {
+    sessionPanelEnabled: await $.store.get('sessionPanelEnabled'),
+    sessionPanelStyle: await $.store.get('sessionPanelStyle'),
+    askChoicesEnabled: await $.store.get('askChoicesEnabled'),
+  }
+  for (const [key, value] of Object.entries(migratedValues(user.pluginConfigs, stored))) await $.store.set(key, value)
+  await $.store.set('sessionPanelMigrated', true)
+}
+
 function title0(cl: CleanChecklist): string {
   return cl.title === '' ? 'Working on it' : cl.title
 }
 
-export function registerCleanView(on: On, options: Record<string, unknown> = {}) {
+export function registerSessionPanel(on: On, options: Record<string, unknown> = {}) {
   // ---------- session start: tools, command, saved setting ----------
   // The /config menu rows (options) win; where a row is unset, the setting kept by a button or command applies.
   on('session.start', async ($, e, next) => {
-    const saved = options.cleanView === 'on' ? true : options.cleanView === 'off' ? false : await $.store.get('cleanViewEnabled')
+    await migrateFromCleanView($)
+    const saved = options.sessionPanel === 'on' ? true : options.sessionPanel === 'off' ? false : await $.store.get('sessionPanelEnabled')
     if (typeof saved === 'boolean') await update($, enabledA, () => saved)
-    const savedStyle = options.view === 'bars' ? 'bars' : options.view === 'list' ? 'checklist' : await $.store.get('cleanViewStyle')
+    const savedStyle = options.view === 'bars' ? 'bars' : options.view === 'list' ? 'checklist' : await $.store.get('sessionPanelStyle')
     if (savedStyle === 'bars' || savedStyle === 'checklist') await update($, styleA, () => savedStyle)
     const savedAsk = options.askChoices === 'on' ? true : options.askChoices === 'off' ? false : await $.store.get('askChoicesEnabled')
     if (typeof savedAsk === 'boolean') await update($, askEnabledA, () => savedAsk)
     await $.tool.register({
       name: 'plan_steps',
       description:
-        'Clean View: list the steps of the job in order, 1 to 8 short plain-English names starting with a verb (no paths, file names, commands or code). The first step starts at once. Call this first for every request.',
+        'Session Panel: list the steps of the job in order, 1 to 8 short plain-English names starting with a verb (no paths, file names, commands or code). The first step starts at once. Call this first for every request.',
       inputSchema: {
         type: 'object',
         properties: { steps: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 } },
@@ -160,7 +178,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     await $.tool.register({
       name: 'report_progress',
       description:
-        'Clean View: report progress on a planned step by its name and a percent from 0 to 100. Use 100 the moment the step is finished.',
+        'Session Panel: report progress on a planned step by its name and a percent from 0 to 100. Use 100 the moment the step is finished.',
       inputSchema: {
         type: 'object',
         properties: { task: { type: 'string' }, percent: { type: 'number' } },
@@ -187,7 +205,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     })
     await $.command.register({
       name: 'simple',
-      description: 'Turn Clean View on or off (no argument flips it), or pick the look: bars or list.',
+      description: 'Turn Session Panel on or off (no argument flips it), or pick the look: bars or list.',
       argumentHint: 'on|off|bars|list',
     })
     await $.command.register({ name: 'progress', description: 'Flip between the bar view and the list view.' })
@@ -207,7 +225,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     const current = await read($, enabledA)
     const value = arg === 'on' ? true : arg === 'off' ? false : !current
     await setEnabled($, value)
-    return { text: value ? 'Clean View is on.' : 'Clean View is off.' }
+    return { text: value ? 'Session Panel is on.' : 'Session Panel is off.' }
   })
 
   on('command.run', { command: 'askchoices' }, async ($, e) => {
@@ -235,7 +253,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     const text = (await read($, askEnabledA))
       ? SECTION_TEXT
       : SECTION_TEXT.split('\n').filter(l => !l.includes('ask_choices')).join('\n')
-    return { sections: [...result.sections, { id: 'clean-view:rules', text, scope: 'session' as const }] }
+    return { sections: [...result.sections, { id: 'session-panel:rules', text, scope: 'session' as const }] }
   })
 
   // ---------- a prompt starts a job ----------
@@ -286,8 +304,8 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
   })
 
   // ---------- serve our tools ----------
-  on('tool.call', { tool: 'mcp__clean-view__plan_steps' }, async ($, e) => {
-    if (!(await read($, enabledA))) return { result: 'Clean View is off. No plan needed. Continue the work.' }
+  on('tool.call', { tool: 'mcp__session-panel__plan_steps' }, async ($, e) => {
+    if (!(await read($, enabledA))) return { result: 'Session Panel is off. No plan needed. Continue the work.' }
     const steps = (e as { steps?: unknown }).steps
     // A subagent's plan is its own business: answer it, leave the member's checklist alone.
     if (e.agentId !== undefined) {
@@ -302,8 +320,8 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     return { result: `Planned ${planned.tasks.length} steps. The first one has started.` }
   })
 
-  on('tool.call', { tool: 'mcp__clean-view__report_progress' }, async ($, e) => {
-    if (!(await read($, enabledA))) return { result: 'Clean View is off. No progress report needed. Continue the work.' }
+  on('tool.call', { tool: 'mcp__session-panel__report_progress' }, async ($, e) => {
+    if (!(await read($, enabledA))) return { result: 'Session Panel is off. No progress report needed. Continue the work.' }
     const args = e as { task?: unknown; percent?: unknown }
     // A subagent's report never touches the member's checklist (the dock may read it per agent).
     if (e.agentId !== undefined) return { result: `Progress noted: ${clampPercent(args.percent)}%.` }
@@ -317,7 +335,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
     return { result: `Progress noted: ${pct}%.` }
   })
 
-  on('tool.call', { tool: 'mcp__clean-view__ask_choices' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__session-panel__ask_choices' }, async ($, e) => {
     if (!(await read($, enabledA)) || !(await read($, askEnabledA))) return { result: 'ask_choices is off. Ask this question with AskUserQuestion instead.' }
     const args = e as { question?: unknown; options?: unknown }
     // A helper cannot put a question on the person's screen: no Needs you, no bell, no picker.
@@ -582,7 +600,7 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
         <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer}>
           <Box flexDirection="row" justifyContent="space-between" width={width}>
             <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
-              {enabled ? ' Clean View ' : ' Clean View · off '}
+              {enabled ? ' Session Panel ' : ' Session Panel · off '}
             </Text>
             {settingsButton}
           </Box>
@@ -871,8 +889,8 @@ export function registerCleanView(on: On, options: Record<string, unknown> = {})
       const why = err instanceof Error ? err.message : String(err)
       return stack(
         <Box flexDirection="column">
-          <Text color="red" wrap="truncate">{`Clean View hit a problem: ${why.slice(0, 80)}`}</Text>
-          <Text dimColor>Type /simple off to hide Clean View, or /simple bars or /simple list to try the other look.</Text>
+          <Text color="red" wrap="truncate">{`Session Panel hit a problem: ${why.slice(0, 80)}`}</Text>
+          <Text dimColor>Type /simple off to hide Session Panel, or /simple bars or /simple list to try the other look.</Text>
         </Box>,
       )
     }

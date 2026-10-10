@@ -22,7 +22,7 @@ export type Status = {
   ctx?: number
   /** the session's live context window in tokens, from $.session.usage().context.window (0.5.13, #63) */
   window?: number
-  /** what the member is on now: the Clean View step, else the first line of the last order from its boss */
+  /** what the member is on now: the Session Panel step, else the first line of the last order from its boss */
   task?: string
   /** when it last told its boss "clean" */
   lastClean?: number

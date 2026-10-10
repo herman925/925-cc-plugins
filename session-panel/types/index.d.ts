@@ -50,8 +50,8 @@ export type CleanFinished = { id: string; title: string; seconds: number; steps:
 
 declare module 'claude-code' {
   interface PluginState {
-    'clean-view': {
-      cleanViewEnabled: boolean
+    'session-panel': {
+      sessionPanelEnabled: boolean
       askChoicesEnabled: boolean
       settingsOpen: boolean
       checklist: CleanChecklist

@@ -2675,7 +2675,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // asking the person a question shows as "asking"; a Clean View step becomes this member's task line
+  // asking the person a question shows as "asking"; a Session Panel step becomes this member's task line
   on('tool.call', async ($, e, next) => {
     const tool = String((e as any).tool ?? '')
     if (tool === 'AskUserQuestion') {
@@ -2862,7 +2862,7 @@ export const register: Register = (on, options) => {
     if (o?.kind === 'peer' || o?.kind === 'peer-send-message') {
       const who = await rosterSelf($)
       const note = who && onReceive(who.me, who.list, e.text, await isWindows($))
-      // an order from this member's own boss becomes its task line (when Clean View gives none)
+      // an order from this member's own boss becomes its task line (when Session Panel gives none)
       const from = senderOf(e.text)
       const boss = who && who.list.find(m => m.name === who.me.boss)
       if (boss && from && [boss.name, boss.address].includes(from)) {
@@ -2936,7 +2936,7 @@ export const register: Register = (on, options) => {
     const lit = t % 6 < 3 ? t % 6 : -1
     const go = (to: View) => update($, view, () => to)
     await readVersion($)
-    // a filled title pill like Clean View's (a Button takes no background), with the open/close button beside it
+    // a filled title pill like Session Panel's (a Button takes no background), with the open/close button beside it
     const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
     return (
       <Box flexDirection="column">

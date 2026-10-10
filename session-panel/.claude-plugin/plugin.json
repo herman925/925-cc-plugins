@@ -1,12 +1,12 @@
 {
-  "name": "clean-view",
+  "name": "session-panel",
   "version": "0.1.0",
-  "description": "Clean View: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button.",
+  "description": "Session Panel: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button.",
   "types": "./types/index.d.ts",
   "userConfig": {
-    "cleanView": {
+    "sessionPanel": {
       "type": "string",
-      "title": "Clean View",
+      "title": "Session Panel",
       "description": "on: hide tool calls and show the step checklist. off: show every tool call.",
       "options": ["on", "off"],
       "default": "on"

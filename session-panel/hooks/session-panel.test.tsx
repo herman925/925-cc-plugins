@@ -1,11 +1,11 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, reportProgress, newChecklist, planSteps } from './logic'
+import { actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
 const BAND = {
-  plugin: 'clean-view',
+  plugin: 'session-panel',
   component: 'AbovePrompt',
   props: {
     hasSurvey: false,
@@ -17,9 +17,9 @@ const BAND = {
   },
 } as const
 
-const PLAN = 'mcp__clean-view__plan_steps'
-const REPORT = 'mcp__clean-view__report_progress'
-const ASK = 'mcp__clean-view__ask_choices'
+const PLAN = 'mcp__session-panel__plan_steps'
+const REPORT = 'mcp__session-panel__report_progress'
+const ASK = 'mcp__session-panel__ask_choices'
 
 // The world beneath the plugin: a clock, a store, an env and a tool bottom that says ok.
 function world(on: any, env: Record<string, string> = {}, hasOwnBand = false) {
@@ -133,7 +133,7 @@ test('/simple off hides the band and only the button remains', async ($, on) => 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ type: 'Text', text: /Up next|Next|Step /i })).toBeUndefined()
-    expect(await texts(ui)).toContain('Clean View · off')
+    expect(await texts(ui)).toContain('Session Panel · off')
     await ui.unmount()
   }
   await $.command.run({ command: 'simple', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
@@ -253,10 +253,10 @@ test('the button flips between Hide details and Show details', async ($, on) => 
   await ui.press({ key: 'settings' })
   expect((await ui.find({ key: 'settings' }))?.props.label).toBe('⚙ Settings ▴')
   await ui.press({ key: 'set-details' })
-  expect(await texts(ui)).toContain('Clean View · off')
+  expect(await texts(ui)).toContain('Session Panel · off')
   expect(await texts(ui)).toContain(' OFF')
   await ui.press({ key: 'set-details' })
-  expect(await texts(ui)).not.toContain('Clean View · off')
+  expect(await texts(ui)).not.toContain('Session Panel · off')
   expect(await texts(ui)).toContain(' ON ')
   await ui.unmount()
 })
@@ -402,7 +402,7 @@ test('ask_choices shows numbered choices and a press sends the answer', async ($
   await ui.unmount()
 })
 
-test('hidden rows: tool rows draw nothing while Clean View is on', async ($, on) => {
+test('hidden rows: tool rows draw nothing while Session Panel is on', async ($, on) => {
   world(on)
   await begin($)
   for (const component of ['ToolUse', 'ToolResult', 'ToolGroup'] as const) {
@@ -410,7 +410,7 @@ test('hidden rows: tool rows draw nothing while Clean View is on', async ($, on)
       component === 'ToolGroup'
         ? { calls: [], isActive: false, isExpanded: false }
         : { tool_use_id: 'u1', tool: 'Bash', input: {}, isRunning: false, isErrored: false, isInterrupted: false, output: {} }
-    const ui = await $.ui.mount({ plugin: 'clean-view', surface: 'terminal', component, props })
+    const ui = await $.ui.mount({ plugin: 'session-panel', surface: 'terminal', component, props })
     expect(((await ui.drawn()) as any).props.display).toBe('none')
     await ui.unmount()
   }
@@ -468,7 +468,7 @@ test('with two AbovePrompt handlers registered, both bands render', async ($, on
   }
 })
 
-test('with Clean View off, the other band still shows', async ($, on) => {
+test('with Session Panel off, the other band still shows', async ($, on) => {
   world(on, {}, true)
   on('ui.render', { component: 'AbovePrompt' }, ($: any, e: any) => {
     const { Box, Text } = $.ui.resolve(e)
@@ -482,7 +482,7 @@ test('with Clean View off, the other band still shows', async ($, on) => {
   await $.command.run({ command: 'simple', args: 'off', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await texts(ui)).toContain('OTHER MOD BAND')
-  expect(await texts(ui)).toContain('Clean View · off')
+  expect(await texts(ui)).toContain('Session Panel · off')
   await ui.unmount()
 })
 
@@ -600,14 +600,14 @@ test('the style flips with the button, /progress and /simple list, and /progress
   await ui.unmount()
 })
 
-test('with Clean View off, the bar style shows only the button', async ($, on) => {
+test('with Session Panel off, the bar style shows only the button', async ($, on) => {
   world(on)
   await begin($)
   await $.command.run(RUN('bars'))
   await $.command.run(RUN('off'))
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ key: 'set-look-bars' })).toBeUndefined()
-  expect(await texts(ui)).toContain('Clean View · off')
+  expect(await texts(ui)).toContain('Session Panel · off')
   await ui.unmount()
 })
 
@@ -810,4 +810,24 @@ test('a subagent ask_choices stays out of the band; the member own ask_choices s
   expect(t).toContain('Which style?')
   expect((await ui.find({ key: 'choice1' }))?.props.label).toBe('Light')
   await ui.unmount()
+})
+
+// 4. one-time migration: the old settings row maps onto the store keys
+test('migration: the old clean-view@herman-mods row maps onto the store keys', () => {
+  const rows = { 'clean-view@herman-mods': { options: { cleanView: 'off', view: 'bars', askChoices: 'on' } } }
+  expect(migratedValues(rows, {})).toEqual({ sessionPanelEnabled: false, sessionPanelStyle: 'bars', askChoicesEnabled: true })
+})
+
+test('migration: the plain clean-view key is read when the suffixed row is missing', () => {
+  expect(migratedValues({ 'clean-view': { options: { view: 'list' } } }, {})).toEqual({ sessionPanelStyle: 'checklist' })
+})
+
+test('migration: a value already in the store is never overwritten', () => {
+  const rows = { 'clean-view@herman-mods': { options: { cleanView: 'off', view: 'bars' } } }
+  expect(migratedValues(rows, { sessionPanelEnabled: true })).toEqual({ sessionPanelStyle: 'bars' })
+})
+
+test('migration: no old row copies nothing', () => {
+  expect(migratedValues(undefined, {})).toEqual({})
+  expect(migratedValues({}, {})).toEqual({})
 })
