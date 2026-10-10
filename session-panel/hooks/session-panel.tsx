@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
 import type { CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
-import { DEFAULT_PREFS, enhance, type EnhancerIo } from './enhancer'
+import { DEFAULT_PREFS, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
 import {
   GATE_MESSAGE,
   SECTION_TEXT,
@@ -168,7 +168,7 @@ async function setEnhancer($: Hooked, patch: Partial<EnhancerState>) {
 const NO_DRAFT: Partial<EnhancerState> = { original: null, passText: null, notes: [] }
 
 /** Reads the box, enhances it and fills the box with the result. Returns the line to show the person. */
-/** The engine calls the enhancer makes, as plain functions. `$` cannot cross the import, so it is adapted here. */
+/** The band's engine calls and state as plain functions. `$` cannot cross the import into enhancer.ts. */
 function engineIo($: Hooked): EnhancerIo {
   return {
     home: async () => (await $.env.get('USERPROFILE')) ?? '',
@@ -186,40 +186,17 @@ function engineIo($: Hooked): EnhancerIo {
   }
 }
 
-async function runEnhance($: Hooked): Promise<string> {
-  const prefs = await read($, prefsA)
-  if (!prefs.enhancerOn) return 'The enhancer is off. Open Settings to turn it on.'
-  const { text } = await $.prompt.read()
-  if (text.trim() === '') return 'The box is empty. Type a draft first.'
-  await setEnhancer($, { busy: true })
-  try {
-    const r = await enhance(engineIo($), text, prefs)
-    if (r.kind !== 'filled') return r.kind === 'failed' ? `Enhancer: ${r.reason}.` : 'Nothing to enhance.'
-    await setEnhancer($, { original: text, passText: r.prompt, notes: r.notes })
-    await $.prompt.fill({ text: r.prompt, mode: 'replace' })
-    return 'Enhanced. Check the box, then Send.'
-  } catch {
-    return 'Enhancer: something went wrong. The box is unchanged.'
-  } finally {
-    await setEnhancer($, { busy: false })
+function deps($: Hooked): EnhancerDeps {
+  return {
+    ...engineIo($),
+    prefs: () => read($, prefsA),
+    state: () => read($, enhancerA),
+    setState: patch => setEnhancer($, patch),
+    readBox: async () => (await $.prompt.read()).text,
+    fillBox: async text => void (await $.prompt.fill({ text, mode: 'replace' })),
+    submitBox: async text => void (await $.prompt.submit({ text, asUser: true })),
+    toast: text => $.ui.toast(text),
   }
-}
-
-async function undoEnhance($: Hooked) {
-  const st = await read($, enhancerA)
-  if (st.original === null) return
-  await $.prompt.fill({ text: st.original, mode: 'replace' })
-  await setEnhancer($, NO_DRAFT)
-}
-
-async function sendBox($: Hooked) {
-  const { text } = await $.prompt.read()
-  if (text.trim() === '') {
-    $.ui.toast('The box is empty.')
-    return
-  }
-  await $.prompt.submit({ text, asUser: true })
-  await setEnhancer($, NO_DRAFT)
 }
 
 /** First run: four questions, the answers saved. Runs once, or again from Settings. */
@@ -341,7 +318,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await setStyle($, now === 'bars' ? 'checklist' : 'bars')
     return { text: now === 'bars' ? 'List view.' : 'Bar view.' }
   })
-  on('command.run', { command: 'enhance' }, async $ => ({ text: await runEnhance($) }))
+  on('command.run', { command: 'enhance' }, async $ => ({ text: await runEnhance(deps($)) }))
   on('command.run', { command: 'progress-clear' }, async ($) => {
     await update($, finishedA, () => [])
     return { text: 'Finished bars removed.' }
@@ -367,7 +344,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       return next(e)
     }
     if (prefs.enhancerOn && prefs.autoEnhance && !e.text.startsWith('/') && e.text.trim() !== '') {
-      const line = await runEnhance($)
+      const line = await runEnhance(deps($))
       return { drop: line }
     }
     if ((await read($, enabledA)) && (await read($, checklistA)).phase === 'needs-you') await resume($)
@@ -785,9 +762,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const enhancerBar = (
       <Box flexDirection="column">
         <Box flexDirection="row">
-          <Button key="enhance" variant="primary" label={enh.busy ? 'Enhancing…' : 'Enhance'} onPress={() => void runEnhance($).then(line => $.ui.toast(line))} />
-          <Button key="undo" label="Undo" onPress={() => void undoEnhance($)} />
-          <Button key="send" label="Send" onPress={() => void sendBox($)} />
+          <Button key="enhance" variant="primary" label={enh.busy ? 'Enhancing…' : 'Enhance'} onPress={() => void runEnhance(deps($)).then(line => $.ui.toast(line))} />
+          <Button key="undo" label="Undo" onPress={() => void undoEnhance(deps($))} />
+          <Button key="send" label="Send" onPress={() => void sendBox(deps($))} />
         </Box>
         {enh.notes.map((n, i) => (
           <Text key={`note-${i}`} dimColor wrap="truncate">{`· ${n}`}</Text>

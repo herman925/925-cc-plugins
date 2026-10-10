@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, reportProgress, newChecklist, planSteps } from './logic'
+import { DEFAULT_PREFS, buildContext, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
+import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -840,4 +841,161 @@ test('migration: a value already in the store is never overwritten', () => {
 test('migration: no old row copies nothing', () => {
   expect(migratedValues(undefined, {})).toEqual({})
   expect(migratedValues({}, {})).toEqual({})
+})
+
+// 5. enhancer: the band's actions, run against a fake box and fake engine calls
+type Reply = { isAnswered: true; text: string } | { isAnswered: false; reason: string }
+
+function fakeDeps(replies: string[], answers: string[] = []) {
+  const box = { text: 'make a page' }
+  const fills: string[] = []
+  const submits: string[] = []
+  const asked: string[] = []
+  const toasts: string[] = []
+  let state = { original: null as string | null, passText: null as string | null, notes: [] as string[], busy: false }
+  const store = new Map<string, any>()
+  const forks: string[] = []
+  const deps: EnhancerDeps = {
+    home: async () => 'C:\\Users\\Herman',
+    exists: async () => false,
+    read: async () => '',
+    mtime: async () => 1,
+    list: async () => [],
+    ancestors: async () => [],
+    cacheGet: async k => store.get(k),
+    cacheSet: async (k, v) => void store.set(k, v),
+    gh: async () => undefined,
+    fork: async (prompt): Promise<Reply> => {
+      forks.push(prompt)
+      return { isAnswered: true, text: replies.shift() ?? '' }
+    },
+    complete: async () => ({ isAnswered: false }),
+    askUser: async (q, options) => {
+      asked.push(q)
+      return answers.shift() ?? options[0]
+    },
+    prefs: async () => ({ ...DEFAULT_PREFS }),
+    state: async () => state,
+    setState: async patch => void (state = { ...state, ...patch }),
+    readBox: async () => box.text,
+    fillBox: async text => void (box.text = text, fills.push(text)),
+    submitBox: async text => void submits.push(text),
+    toast: text => void toasts.push(text),
+  }
+  return { deps, box, fills, submits, asked, toasts, forks, getState: () => state }
+}
+
+test('enhancer: Enhance fills the box with the enhanced text and shows the notes', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: 'Build a landing page for a bakery', notes: ['Added the audience'], questions: [] })])
+  const line = await runEnhance(f.deps)
+  expect(line).toBe('Enhanced. Check the box, then Send.')
+  expect(f.fills).toEqual(['Build a landing page for a bakery'])
+  expect(f.getState().notes).toEqual(['Added the audience'])
+  expect(f.getState().original).toBe('make a page')
+})
+
+test('enhancer: Undo restores the original text and clears the notes', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: 'Build a page', notes: ['x'], questions: [] })])
+  await runEnhance(f.deps)
+  await undoEnhance(f.deps)
+  expect(f.box.text).toBe('make a page')
+  expect(f.getState().original).toBeNull()
+  expect(f.getState().notes).toEqual([])
+})
+
+test('enhancer: Send submits the box as it stands, then clears the draft', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: 'Build a page', notes: [], questions: [] })])
+  await runEnhance(f.deps)
+  await sendBox(f.deps)
+  expect(f.submits).toEqual(['Build a page'])
+  expect(f.getState().original).toBeNull()
+})
+
+test('enhancer: an empty box is not sent and says so', async () => {
+  const f = fakeDeps([])
+  f.box.text = '   '
+  await sendBox(f.deps)
+  expect(f.submits).toEqual([])
+  expect(f.toasts).toEqual(['The box is empty.'])
+})
+
+test('enhancer: a vague draft asks one question per call, then enhances with the answer', async () => {
+  const f = fakeDeps(
+    [
+      JSON.stringify({ prompt: '', notes: [], questions: [{ question: 'What is it for?', options: ['A bakery', 'A school'] }] }),
+      JSON.stringify({ prompt: 'Build a landing page for the bakery site', notes: ['Used the answer'], questions: [] }),
+    ],
+    ['A bakery'],
+  )
+  const outcome = await enhance(f.deps, 'do the thing', DEFAULT_PREFS)
+  expect(f.asked).toEqual(['What is it for?'])
+  expect(f.forks.length).toBe(2)
+  expect(f.forks[1]).toContain('What is it for? A bakery')
+  expect(outcome.kind).toBe('filled')
+  expect(outcome.kind === 'filled' && outcome.prompt).toBe('Build a landing page for the bakery site')
+})
+
+test('enhancer: a model reply with no usable prompt fails and leaves the box alone', async () => {
+  const f = fakeDeps(['not json at all'])
+  expect(await runEnhance(f.deps)).toBe('Enhancer: the model gave no usable reply.')
+  expect(f.fills).toEqual([])
+})
+
+// 6. enhancer helpers: parsing, prompt shape, context caching
+test('enhancer: a reply wrapped in prose still parses; bad questions are dropped', () => {
+  const reply = 'Here you go: {"prompt":"Do X","notes":["a","b"],"questions":[{"question":"Q?","options":["1"]},{"question":"Q2?","options":["A","B"]}]} thanks'
+  const parsed = parseEnhanced(reply)!
+  expect(parsed.prompt).toBe('Do X')
+  expect(parsed.questions).toEqual([{ question: 'Q2?', options: ['A', 'B'] }])
+  expect(parseEnhanced('no json here')).toBeNull()
+})
+
+test('enhancer: the prompt carries the draft and the context', () => {
+  const text = enhancePrompt('make a page', '## CLAUDE.md\nUse Tailwind', [])
+  expect(text).toContain('make a page')
+  expect(text).toContain('Use Tailwind')
+  expect(text).toContain('Reply with JSON only')
+})
+
+function fakeIo(files: Record<string, string>, log: string[]): EnhancerIo {
+  const store = new Map<string, any>()
+  return {
+    home: async () => 'C:\\Users\\Herman',
+    exists: async p => p in files,
+    read: async p => {
+      log.push('read ' + p)
+      return files[p]
+    },
+    mtime: async () => 1000,
+    list: async p => {
+      if (p === 'C:/Users/Herman/.claude/skills') return [{ name: 'pdf', kind: 'dir' }]
+      throw new Error('ENOENT')
+    },
+    ancestors: async () => [],
+    cacheGet: async k => store.get(k),
+    cacheSet: async (k, v) => void store.set(k, v),
+    gh: async () => undefined,
+    fork: async () => ({ isAnswered: false, reason: 'nothing-to-fork' }),
+    complete: async () => ({ isAnswered: false }),
+    askUser: async () => '',
+  }
+}
+
+test('enhancer: context reads the global CLAUDE.md with forward slashes and reuses the cached digest', async () => {
+  const log: string[] = []
+  const io = fakeIo({ 'C:/Users/Herman/.claude/CLAUDE.md': 'Global rule' }, log)
+  const sources = { instructions: true, skills: true, docs: false, github: false }
+  const first = await buildContext(io, sources)
+  expect(first.text).toContain('Global rule')
+  expect(first.used).toContain('Global CLAUDE.md')
+  expect(first.text).toContain('pdf')
+  const second = await buildContext(io, sources)
+  expect(second.text).toBe(first.text)
+  expect(log.filter(l => l.includes('CLAUDE.md')).length).toBe(1)
+})
+
+test('enhancer: a missing project skills folder counts as zero, not an error', async () => {
+  const io = fakeIo({}, [])
+  const ctx = await buildContext(io, { instructions: false, skills: true, docs: false, github: false })
+  expect(ctx.used).toEqual(['Skills'])
 })

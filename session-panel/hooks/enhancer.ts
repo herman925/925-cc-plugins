@@ -1,4 +1,4 @@
-import type { Prefs } from '../types'
+import type { EnhancerState, Prefs } from '../types'
 import { SOURCE_CAP, enhancePrompt, parseEnhanced } from './logic'
 
 /**
@@ -148,4 +148,55 @@ export const DEFAULT_PREFS: Prefs = {
   autoEnhance: false,
   model: 'haiku',
   sources: { instructions: true, skills: true, docs: true, github: false },
+}
+
+/** The enhancer's engine calls plus the band's box and state, as plain functions, so the actions can be tested. */
+export type EnhancerDeps = EnhancerIo & {
+  prefs: () => Promise<Prefs>
+  state: () => Promise<EnhancerState>
+  setState: (patch: Partial<EnhancerState>) => Promise<void>
+  readBox: () => Promise<string>
+  fillBox: (text: string) => Promise<void>
+  submitBox: (text: string) => Promise<void>
+  toast: (text: string) => void
+}
+
+const NO_DRAFT: Partial<EnhancerState> = { original: null, passText: null, notes: [] }
+
+/** Reads the box, enhances it and fills the box with the result. Returns the line to show the person. */
+export async function runEnhance(d: EnhancerDeps): Promise<string> {
+  const prefs = await d.prefs()
+  if (!prefs.enhancerOn) return 'The enhancer is off. Open Settings to turn it on.'
+  const text = await d.readBox()
+  if (text.trim() === '') return 'The box is empty. Type a draft first.'
+  await d.setState({ busy: true })
+  try {
+    const r = await enhance(d, text, prefs)
+    if (r.kind !== 'filled') return r.kind === 'failed' ? `Enhancer: ${r.reason}.` : 'Nothing to enhance.'
+    await d.setState({ original: text, passText: r.prompt, notes: r.notes })
+    await d.fillBox(r.prompt)
+    return 'Enhanced. Check the box, then Send.'
+  } catch {
+    return 'Enhancer: something went wrong. The box is unchanged.'
+  } finally {
+    await d.setState({ busy: false })
+  }
+}
+
+export async function undoEnhance(d: EnhancerDeps): Promise<void> {
+  const st = await d.state()
+  if (st.original === null) return
+  await d.fillBox(st.original)
+  await d.setState(NO_DRAFT)
+}
+
+/** Sends the box as the person's own words. The enhanced text passes the submit hook once, so the draft is cleared after. */
+export async function sendBox(d: EnhancerDeps): Promise<void> {
+  const text = await d.readBox()
+  if (text.trim() === '') {
+    d.toast('The box is empty.')
+    return
+  }
+  await d.submitBox(text)
+  await d.setState(NO_DRAFT)
 }
