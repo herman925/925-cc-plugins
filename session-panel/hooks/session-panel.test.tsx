@@ -1070,3 +1070,11 @@ test('enhancer: with no picker open, a vague draft fails calmly and the box is n
   expect(outcome).toEqual({ kind: 'failed', reason: 'it needs answers, and no picker is open in this session' })
   expect(f.fills).toEqual([])
 })
+
+test('enhancer: an explicit draft is enhanced even when the box is empty (auto-enhance path)', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: 'Build a bakery page', notes: [], questions: [] })])
+  f.box.text = ''
+  const line = await runEnhance(f.deps, 'make a bakery page')
+  expect(line).toBe('Enhanced. Check the box, then Send.')
+  expect(f.fills).toEqual(['Build a bakery page'])
+})

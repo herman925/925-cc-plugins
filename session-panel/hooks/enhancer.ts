@@ -190,11 +190,14 @@ export type EnhancerDeps = EnhancerIo & {
 
 const NO_DRAFT: Partial<EnhancerState> = { original: null, passText: null, notes: [] }
 
-/** Reads the box, enhances it and fills the box with the result. Returns the line to show the person. */
-export async function runEnhance(d: EnhancerDeps): Promise<string> {
+/**
+ * Enhances a draft and fills the box with the result. The draft is the box, unless the caller passes one: the
+ * auto-enhance hook passes the prompt being submitted, because that prompt is not in the box at that point.
+ */
+export async function runEnhance(d: EnhancerDeps, draft?: string): Promise<string> {
   const prefs = await d.prefs()
   if (!prefs.enhancerOn) return 'The enhancer is off. Open Settings to turn it on.'
-  const text = await d.readBox()
+  const text = draft ?? (await d.readBox())
   if (text.trim() === '') return 'The box is empty. Type a draft first.'
   await d.setState({ busy: true })
   try {

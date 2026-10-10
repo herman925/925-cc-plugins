@@ -362,7 +362,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       return next(e)
     }
     if (prefs.enhancerOn && prefs.autoEnhance && !e.text.startsWith('/') && e.text.trim() !== '') {
-      const line = await runEnhance(deps($))
+      const line = await runEnhance(deps($), e.text)
       return { drop: line }
     }
     if ((await read($, enabledA)) && (await read($, checklistA)).phase === 'needs-you') await resume($)
