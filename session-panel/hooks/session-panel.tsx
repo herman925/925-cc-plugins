@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
 import type { CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
-import { DEFAULT_PREFS, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
+import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo, type Outcome } from './enhancer'
 import {
   GATE_MESSAGE,
   SECTION_TEXT,
@@ -168,6 +168,14 @@ async function setEnhancer($: Hooked, patch: Partial<EnhancerState>) {
 const NO_DRAFT: Partial<EnhancerState> = { original: null, passText: null, notes: [] }
 
 /** Reads the box, enhances it and fills the box with the result. Returns the line to show the person. */
+/** The text `/enhance <draft>` shows: the enhanced prompt, the model that answered, and the notes. */
+function formatOutcome(r: Outcome): string {
+  if (r.kind === 'off') return 'The enhancer is off. Open Settings to turn it on.'
+  if (r.kind === 'empty') return 'Give a draft after /enhance, or type one in the box first.'
+  if (r.kind === 'failed') return `Enhancer: ${r.reason}.`
+  return [`Enhanced (via ${r.via}):`, r.prompt, '', ...r.notes.map(n => `· ${n}`)].join('\n')
+}
+
 /** The band's engine calls and state as plain functions. `$` cannot cross the import into enhancer.ts. */
 function engineIo($: Hooked): EnhancerIo {
   return {
@@ -288,7 +296,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     })
     await $.command.register({ name: 'progress', description: 'Flip between the bar view and the list view.' })
     await $.command.register({ name: 'progress-clear', description: 'Remove the finished bars.' })
-    await $.command.register({ name: 'enhance', description: 'Rewrite the prompt box with project context. Then send it.' })
+    await $.command.register({ name: 'enhance', description: 'Rewrite the prompt box, or /enhance <draft> to rewrite a draft given here.', argumentHint: '[draft]' })
     const c = await read($, checklistA)
     if (c.phase === 'working' || c.phase === 'needs-you') runClock($)
     return next(e)
@@ -320,7 +328,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await setStyle($, now === 'bars' ? 'checklist' : 'bars')
     return { text: now === 'bars' ? 'List view.' : 'Bar view.' }
   })
-  on('command.run', { command: 'enhance' }, async $ => ({ text: await runEnhance(deps($)) }))
+  on('command.run', { command: 'enhance' }, async ($, e) => {
+    const draft = e.args.trim()
+    if (draft === '') return { text: await runEnhance(deps($)) }
+    return { text: formatOutcome(await enhance(engineIo($), draft, await read($, prefsA))) }
+  })
   on('command.run', { command: 'progress-clear' }, async ($) => {
     await update($, finishedA, () => [])
     return { text: 'Finished bars removed.' }
