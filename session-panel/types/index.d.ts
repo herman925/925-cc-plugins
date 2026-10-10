@@ -43,6 +43,17 @@ export type CleanChecklist = {
   bar: number
 }
 
+/** Enhancer choices, saved in the store and changed in Settings. */
+export type Prefs = {
+  enhancerOn: boolean
+  autoEnhance: boolean
+  model: string
+  sources: { instructions: boolean; skills: boolean; docs: boolean; github: boolean }
+}
+
+/** What the band's enhancer holds for the draft: the text before it was enhanced, and the notes. */
+export type EnhancerState = { original: string | null; passText: string | null; notes: string[]; busy: boolean }
+
 export type CleanStyle = 'checklist' | 'bars'
 
 /** A finished job kept as a dismissible bar. */
@@ -58,6 +69,9 @@ declare module 'claude-code' {
       tick: number
       viewStyle: CleanStyle
       finished: CleanFinished[]
+      prefs: Prefs
+      enhancer: EnhancerState
+      openGroups: string[]
     }
   }
 }

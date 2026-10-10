@@ -384,3 +384,58 @@ export function migratedValues(
   }
   return out
 }
+
+/** Context sources the enhancer may read. Each one has its own toggle in Settings. */
+export const SOURCE_IDS = ['instructions', 'skills', 'docs', 'github'] as const
+export type SourceId = (typeof SOURCE_IDS)[number]
+
+export const SOURCE_LABELS: Record<SourceId, string> = {
+  instructions: 'CLAUDE.md and AGENTS.md (project and global)',
+  skills: 'Project skills list',
+  docs: 'CONTEXT.md, PRD, ADRs and glossary',
+  github: 'GitHub wayfinder (via gh)',
+}
+
+/** Characters kept from each source, so one source cannot crowd out the rest. */
+export const SOURCE_CAP = 4000
+
+/** Instructions for the model: rewrite the draft and return JSON only. */
+export function enhancePrompt(draft: string, context: string, answers: string[]): string {
+  const answered = answers.length ? `The person answered these questions:\n${answers.join('\n')}\n` : ''
+  return [
+    'Rewrite the draft prompt below so the assistant can act on it, using the project context.',
+    'Reply with JSON only, no prose: {"prompt": string, "notes": string[], "questions": [{"question": string, "options": string[]}]}.',
+    '"notes": 2 to 4 short lines: what you added, and which context you used.',
+    '"questions": up to 3, only when the draft is too vague to act on. Each has 2 to 4 options. Otherwise [].',
+    'If you ask questions, "prompt" is "".',
+    answered,
+    'Project context:',
+    context || '(none)',
+    '',
+    'Draft:',
+    draft,
+  ].join('\n')
+}
+
+export type Enhanced = { prompt: string; notes: string[]; questions: Array<{ question: string; options: string[] }> }
+
+/** Reads the model's JSON reply. Returns null when no usable object is in it. */
+export function parseEnhanced(text: string): Enhanced | null {
+  const found = text.match(/\{[\s\S]*\}/)
+  if (!found) return null
+  try {
+    const j = JSON.parse(found[0])
+    return {
+      prompt: typeof j.prompt === 'string' ? j.prompt.trim() : '',
+      notes: Array.isArray(j.notes) ? j.notes.filter((s: unknown) => typeof s === 'string').slice(0, 4) : [],
+      questions: Array.isArray(j.questions)
+        ? j.questions
+            .filter((q: any) => q && typeof q.question === 'string' && Array.isArray(q.options) && q.options.length >= 2)
+            .slice(0, 3)
+            .map((q: any) => ({ question: q.question, options: q.options.slice(0, 4).map(String) }))
+        : [],
+    }
+  } catch {
+    return null
+  }
+}
