@@ -1060,3 +1060,13 @@ test('chat: full mode forks the session, and calls complete() only on nothing-to
   expect(calls).toEqual(['haiku'])
   expect(plain.kind === 'filled' && plain.via).toBe('complete:haiku')
 })
+
+test('enhancer: with no picker open, a vague draft fails calmly and the box is not touched', async () => {
+  const f = fakeDeps([JSON.stringify({ prompt: '', notes: [], questions: [{ question: 'What for?', options: ['A', 'B'] }] })])
+  f.deps.askUser = async () => {
+    throw new Error('no tool named AskUserQuestion in this session')
+  }
+  const outcome = await enhance(f.deps, 'make a page', { ...DEFAULT_PREFS, chat: 'full' })
+  expect(outcome).toEqual({ kind: 'failed', reason: 'it needs answers, and no picker is open in this session' })
+  expect(f.fills).toEqual([])
+})

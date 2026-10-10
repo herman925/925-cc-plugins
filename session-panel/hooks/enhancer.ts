@@ -147,8 +147,13 @@ export async function enhance(io: EnhancerIo, draft: string, prefs: Prefs): Prom
   let via = first!.via
 
   const answers: string[] = []
-  for (const q of parsed.questions) {
-    answers.push(`${q.question} ${await io.askUser(q.question, q.options)}`)
+  try {
+    for (const q of parsed.questions) {
+      answers.push(`${q.question} ${await io.askUser(q.question, q.options)}`)
+    }
+  } catch {
+    // no picker in this session (for example `claude -p`): stop rather than guess the answers
+    return { kind: 'failed', reason: 'it needs answers, and no picker is open in this session' }
   }
   if (answers.length > 0) {
     const second = await answer(io, prefs, draft, context.text, answers)

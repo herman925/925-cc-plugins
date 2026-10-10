@@ -331,7 +331,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   on('command.run', { command: 'enhance' }, async ($, e) => {
     const draft = e.args.trim()
     if (draft === '') return { text: await runEnhance(deps($)) }
-    return { text: formatOutcome(await enhance(engineIo($), draft, await read($, prefsA))) }
+    try {
+      return { text: formatOutcome(await enhance(engineIo($), draft, await read($, prefsA))) }
+    } catch (err) {
+      return { text: `Enhancer: ${String((err as any)?.message ?? err).slice(0, 160)}` }
+    }
   })
   on('command.run', { command: 'progress-clear' }, async ($) => {
     await update($, finishedA, () => [])
