@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
-import type { CleanChecklist, CleanFinished, CleanStyle } from '../types'
+import type { CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
+import { DEFAULT_PREFS, enhance, type EnhancerIo } from './enhancer'
 import {
   GATE_MESSAGE,
   SECTION_TEXT,
@@ -20,6 +21,7 @@ import {
   friendlyError,
   isGateExempt,
   looksLikeUserDenial,
+  SOURCE_LABELS,
   meter,
   migratedValues,
   newChecklist,
@@ -42,6 +44,9 @@ const checklistA = atom({ plugin: 'session-panel', key: 'checklist' } as const, 
 const tickA = atom({ plugin: 'session-panel', key: 'tick' } as const, 0)
 const styleA = atom({ plugin: 'session-panel', key: 'viewStyle' } as const, 'checklist' as CleanStyle)
 const finishedA = atom({ plugin: 'session-panel', key: 'finished' } as const, [] as CleanFinished[])
+const prefsA = atom({ plugin: 'session-panel', key: 'prefs' } as const, DEFAULT_PREFS as Prefs)
+const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { original: null, passText: null, notes: [], busy: false } as EnhancerState)
+const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
 
 const PLAN = 'mcp__session-panel__plan_steps'
 const REPORT = 'mcp__session-panel__report_progress'
@@ -150,6 +155,90 @@ async function migrateFromCleanView($: Hooked) {
   await $.store.set('sessionPanelMigrated', true)
 }
 
+async function setPrefs($: Hooked, patch: Partial<Prefs>) {
+  const next = { ...(await read($, prefsA)), ...patch }
+  await update($, prefsA, () => next)
+  await $.store.set('prefs', next)
+}
+
+async function setEnhancer($: Hooked, patch: Partial<EnhancerState>) {
+  await update($, enhancerA, s => ({ ...s, ...patch }))
+}
+
+const NO_DRAFT: Partial<EnhancerState> = { original: null, passText: null, notes: [] }
+
+/** Reads the box, enhances it and fills the box with the result. Returns the line to show the person. */
+/** The engine calls the enhancer makes, as plain functions. `$` cannot cross the import, so it is adapted here. */
+function engineIo($: Hooked): EnhancerIo {
+  return {
+    home: async () => (await $.env.get('USERPROFILE')) ?? '',
+    exists: p => $.fs.exists(p),
+    read: p => $.fs.read(p),
+    mtime: async p => (await $.fs.stat(p)).mtimeMs,
+    list: p => $.fs.list(p),
+    ancestors: async names => await $.fs.ancestors({ names }),
+    cacheGet: async k => (await $.store.get(k)) as { mtimeMs: number; text: string } | undefined,
+    cacheSet: (k, v) => $.store.set(k, v),
+    gh: async () => await $.process.run(['gh', 'issue', 'list', '--limit', '10']),
+    fork: async prompt => (await $.model.fork({ prompt })) as Awaited<ReturnType<EnhancerIo['fork']>>,
+    complete: async (model, prompt) => (await $.model.complete({ model, prompt })) as Awaited<ReturnType<EnhancerIo['complete']>>,
+    askUser: (question, options) => $.ui.ask(question, options),
+  }
+}
+
+async function runEnhance($: Hooked): Promise<string> {
+  const prefs = await read($, prefsA)
+  if (!prefs.enhancerOn) return 'The enhancer is off. Open Settings to turn it on.'
+  const { text } = await $.prompt.read()
+  if (text.trim() === '') return 'The box is empty. Type a draft first.'
+  await setEnhancer($, { busy: true })
+  try {
+    const r = await enhance(engineIo($), text, prefs)
+    if (r.kind !== 'filled') return r.kind === 'failed' ? `Enhancer: ${r.reason}.` : 'Nothing to enhance.'
+    await setEnhancer($, { original: text, passText: r.prompt, notes: r.notes })
+    await $.prompt.fill({ text: r.prompt, mode: 'replace' })
+    return 'Enhanced. Check the box, then Send.'
+  } catch {
+    return 'Enhancer: something went wrong. The box is unchanged.'
+  } finally {
+    await setEnhancer($, { busy: false })
+  }
+}
+
+async function undoEnhance($: Hooked) {
+  const st = await read($, enhancerA)
+  if (st.original === null) return
+  await $.prompt.fill({ text: st.original, mode: 'replace' })
+  await setEnhancer($, NO_DRAFT)
+}
+
+async function sendBox($: Hooked) {
+  const { text } = await $.prompt.read()
+  if (text.trim() === '') {
+    $.ui.toast('The box is empty.')
+    return
+  }
+  await $.prompt.submit({ text, asUser: true })
+  await setEnhancer($, NO_DRAFT)
+}
+
+/** First run: four questions, the answers saved. Runs once, or again from Settings. */
+async function runSetup($: Hooked) {
+  const on = (await $.ui.ask('Turn the enhancer on?', ['On (Recommended)', 'Off'])).startsWith('On')
+  const modelAns = await $.ui.ask('Which model should the enhancer use?', ['Haiku (Recommended)', 'Sonnet', 'Opus'])
+  const model = modelAns.startsWith('Sonnet') ? 'sonnet' : modelAns.startsWith('Opus') ? 'opus' : 'haiku'
+  const view = (await $.ui.ask('Which band view by default?', ['List (Recommended)', 'Bars'])).startsWith('Bars') ? 'bars' : 'checklist'
+  const srcAns = await $.ui.ask('Which context sources should the enhancer read?', ['All (Recommended)', 'Instructions and skills only', 'None'])
+  const sources = srcAns.startsWith('All')
+    ? { instructions: true, skills: true, docs: true, github: false }
+    : srcAns.startsWith('Instructions')
+      ? { instructions: true, skills: true, docs: false, github: false }
+      : { instructions: false, skills: false, docs: false, github: false }
+  await setPrefs($, { enhancerOn: on, model, sources })
+  await setStyle($, view)
+  await $.store.set('setupDone', true)
+}
+
 function title0(cl: CleanChecklist): string {
   return cl.title === '' ? 'Working on it' : cl.title
 }
@@ -159,6 +248,16 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   // The /config menu rows (options) win; where a row is unset, the setting kept by a button or command applies.
   on('session.start', async ($, e, next) => {
     await migrateFromCleanView($)
+    const storedPrefs = (await $.store.get('prefs')) as Partial<Prefs> | undefined
+    if (storedPrefs) await update($, prefsA, p => ({ ...p, ...storedPrefs, sources: { ...p.sources, ...storedPrefs.sources } }))
+    const hasSetup = (await $.store.get('setupDone')) === true || (await $.store.get('sessionPanelEnabled')) !== undefined
+    if (e.isInteractive && !hasSetup) {
+      try {
+        await runSetup($)
+      } catch {
+        // the questions could not be asked; the defaults stay and setup runs again next session
+      }
+    }
     const saved = options.sessionPanel === 'on' ? true : options.sessionPanel === 'off' ? false : await $.store.get('sessionPanelEnabled')
     if (typeof saved === 'boolean') await update($, enabledA, () => saved)
     const savedStyle = options.view === 'bars' ? 'bars' : options.view === 'list' ? 'checklist' : await $.store.get('sessionPanelStyle')
@@ -210,6 +309,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     })
     await $.command.register({ name: 'progress', description: 'Flip between the bar view and the list view.' })
     await $.command.register({ name: 'progress-clear', description: 'Remove the finished bars.' })
+    await $.command.register({ name: 'enhance', description: 'Rewrite the prompt box with project context. Then send it.' })
     const c = await read($, checklistA)
     if (c.phase === 'working' || c.phase === 'needs-you') runClock($)
     return next(e)
@@ -241,6 +341,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await setStyle($, now === 'bars' ? 'checklist' : 'bars')
     return { text: now === 'bars' ? 'List view.' : 'Bar view.' }
   })
+  on('command.run', { command: 'enhance' }, async $ => ({ text: await runEnhance($) }))
   on('command.run', { command: 'progress-clear' }, async ($) => {
     await update($, finishedA, () => [])
     return { text: 'Finished bars removed.' }
@@ -259,6 +360,16 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   // ---------- a prompt starts a job ----------
   on('prompt.submit', async ($, e, next) => {
     lastInputAt = await $.clock.now()
+    const enh = await read($, enhancerA)
+    const prefs = await read($, prefsA)
+    if (enh.passText !== null && e.text === enh.passText) {
+      await setEnhancer($, { passText: null })
+      return next(e)
+    }
+    if (prefs.enhancerOn && prefs.autoEnhance && !e.text.startsWith('/') && e.text.trim() !== '') {
+      const line = await runEnhance($)
+      return { drop: line }
+    }
     if ((await read($, enabledA)) && (await read($, checklistA)).phase === 'needs-you') await resume($)
     return next(e)
   })
@@ -510,6 +621,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const finished = await read($, finishedA)
     const askOn = await read($, askEnabledA)
     const settingsOpen = await read($, settingsOpenA)
+    const prefs = await read($, prefsA)
+    const enh = await read($, enhancerA)
+    const openGroups = await read($, openGroupsA)
 
     // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
     const pillOf = (label: string, bg: string) => (
@@ -520,11 +634,13 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
     // Settings are data: add an entry here and it shows in the dropdown. A toggle is on or off; a choice picks one value.
     type Setting =
-      | { id: string; label: string; hint: string; kind: 'toggle'; isOn: boolean; set: (v: boolean) => void }
-      | { id: string; label: string; hint: string; kind: 'choice'; value: string; options: Array<{ value: string; label: string }>; set: (v: string) => void }
+      | { id: string; group: string; label: string; hint: string; kind: 'toggle'; isOn: boolean; set: (v: boolean) => void }
+      | { id: string; group: string; label: string; hint: string; kind: 'button'; press: () => void }
+      | { id: string; group: string; label: string; hint: string; kind: 'choice'; value: string; options: Array<{ value: string; label: string }>; set: (v: string) => void }
     const settings: Setting[] = [
       {
         id: 'details',
+        group: 'band',
         label: 'Hide tool details',
         hint: 'Show a step checklist instead of every tool call',
         kind: 'toggle',
@@ -533,6 +649,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       },
       {
         id: 'ask',
+        group: 'band',
         label: 'Ask choices',
         hint: 'Let Claude ask with the picker in this box',
         kind: 'toggle',
@@ -541,6 +658,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       },
       {
         id: 'look',
+        group: 'band',
         label: 'Progress look',
         hint: 'A checklist or one bar for each job',
         kind: 'choice',
@@ -551,9 +669,66 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         ],
         set: v => void setStyle($, v === 'bars' ? 'bars' : 'checklist'),
       },
+      {
+        id: 'enhancer',
+        group: 'enhancer',
+        label: 'Enhancer',
+        hint: 'Show Enhance, Undo and Send above the prompt',
+        kind: 'toggle',
+        isOn: prefs.enhancerOn,
+        set: v => void setPrefs($, { enhancerOn: v }),
+      },
+      {
+        id: 'auto',
+        group: 'enhancer',
+        label: 'Auto-enhance on Enter',
+        hint: 'Enhance first and fill the box. Enter again sends.',
+        kind: 'toggle',
+        isOn: prefs.autoEnhance,
+        set: v => void setPrefs($, { autoEnhance: v }),
+      },
+      {
+        id: 'model',
+        group: 'enhancer',
+        label: 'Model',
+        hint: 'Used when the conversation has no reply to fork yet',
+        kind: 'choice',
+        value: prefs.model,
+        options: [
+          { value: 'haiku', label: 'Haiku' },
+          { value: 'sonnet', label: 'Sonnet' },
+          { value: 'opus', label: 'Opus' },
+        ],
+        set: v => void setPrefs($, { model: v }),
+      },
+      ...(['instructions', 'skills', 'docs', 'github'] as const).map(src => ({
+        id: `src-${src}`,
+        group: 'enhancer',
+        label: SOURCE_LABELS[src],
+        hint: src === 'github' ? 'Off by default. Uses gh.' : 'Capped at 4000 characters',
+        kind: 'toggle' as const,
+        isOn: prefs.sources[src],
+        set: (v: boolean) => void setPrefs($, { sources: { ...prefs.sources, [src]: v } }),
+      })),
+      {
+        id: 'again',
+        group: 'setup',
+        label: 'Run setup again',
+        hint: 'Ask the first-run questions again',
+        kind: 'button',
+        press: () => void runSetup($),
+      },
     ]
     const labelW = Math.max(...settings.map(s => s.label.length))
-    const settingRows = settings.map(s => {
+    const settingRow = (s: Setting) => {
+      if (s.kind === 'button') {
+        return (
+          <Box key={`row-${s.id}`} flexDirection="row">
+            <Button key={`set-${s.id}`} plain label={s.label} onPress={s.press} />
+            <Text dimColor>{`  ${s.hint}`}</Text>
+          </Box>
+        )
+      }
       const name = <Text bold>{s.label.padEnd(labelW, ' ')}</Text>
       if (s.kind === 'toggle') {
         return (
@@ -585,7 +760,40 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           <Text dimColor>{`  ${s.hint}`}</Text>
         </Box>
       )
+    }
+    const GROUPS: Array<{ id: string; title: string; note?: string }> = [
+      { id: 'band', title: 'Band' },
+      { id: 'enhancer', title: 'Enhancer' },
+      { id: 'assumptions', title: 'Assumptions', note: 'Coming in a later stage.' },
+      { id: 'shelf', title: 'Shelf', note: 'Coming in a later stage.' },
+      { id: 'setup', title: 'Setup' },
+    ]
+    const settingGroups = GROUPS.map(g => {
+      const isOpen = openGroups.includes(g.id)
+      return (
+        <Box key={`group-${g.id}`} flexDirection="column">
+          <Button
+            key={`toggle-${g.id}`}
+            plain
+            label={`${isOpen ? '▾' : '▸'} ${g.title}`}
+            onPress={() => void update($, openGroupsA, o => (o.includes(g.id) ? o.filter(x => x !== g.id) : [...o, g.id]))}
+          />
+          {isOpen ? (g.note ? <Text dimColor>{`  ${g.note}`}</Text> : settings.filter(s => s.group === g.id).map(settingRow)) : null}
+        </Box>
+      )
     })
+    const enhancerBar = (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Button key="enhance" variant="primary" label={enh.busy ? 'Enhancing…' : 'Enhance'} onPress={() => void runEnhance($).then(line => $.ui.toast(line))} />
+          <Button key="undo" label="Undo" onPress={() => void undoEnhance($)} />
+          <Button key="send" label="Send" onPress={() => void sendBox($)} />
+        </Box>
+        {enh.notes.map((n, i) => (
+          <Text key={`note-${i}`} dimColor wrap="truncate">{`· ${n}`}</Text>
+        ))}
+      </Box>
+    )
     const settingsButton = (
       <Button
         key="settings"
@@ -608,10 +816,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             <Box flexDirection="row" justifyContent="flex-end" width={width}>
               <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1}>
                 <Text bold>Settings</Text>
-                {settingRows}
+                {settingGroups}
               </Box>
             </Box>
           ) : null}
+          {enhancerBar}
           {body}
         </Box>,
       )

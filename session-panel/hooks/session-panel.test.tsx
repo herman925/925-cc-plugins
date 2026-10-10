@@ -45,6 +45,13 @@ async function begin($: any, text = 'Build my landing page') {
   await $.turn.start({ text, turnId: 't1' })
 }
 
+// Settings groups start closed except Enhancer, so the Band rows are opened first.
+async function openBand(ui: any) {
+  if (!(await ui.find({ key: 'toggle-band' }))) return
+  if (await ui.find({ key: 'set-details' })) return
+  await ui.press({ key: 'toggle-band' })
+}
+
 async function texts(ui: any): Promise<string> {
   const all = await ui.findAll({ type: 'Text' })
   return all.map((t: any) => t.text).join('\n')
@@ -251,6 +258,7 @@ test('the button flips between Hide details and Show details', async ($, on) => 
   expect((await ui.find({ key: 'settings' }))?.props.label).toBe('⚙ Settings ▾')
   expect(await ui.find({ key: 'set-details' })).toBeUndefined()
   await ui.press({ key: 'settings' })
+  await openBand(ui)
   expect((await ui.find({ key: 'settings' }))?.props.label).toBe('⚙ Settings ▴')
   await ui.press({ key: 'set-details' })
   expect(await texts(ui)).toContain('Session Panel · off')
@@ -364,6 +372,7 @@ test('the Ask choices row in Settings flips the setting', async ($, on) => {
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
+  await openBand(ui)
   expect(await ui.find({ key: 'set-ask' })).toBeDefined()
   await ui.press({ key: 'set-ask' })
   const on1 = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
@@ -573,6 +582,7 @@ test('the style flips with the button, /progress and /simple list, and /progress
   await begin($)
   let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
+  await openBand(ui)
   expect(await ui.find({ key: 'set-look-bars' })).toBeDefined()
   expect(await ui.find({ key: 'set-look-list' })).toBeUndefined()
   await ui.press({ key: 'set-look-bars' })
