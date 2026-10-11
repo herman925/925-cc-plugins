@@ -1,6 +1,6 @@
 {
   "name": "team-orchestrator",
-  "version": "0.5.22",
+  "version": "0.5.23",
   "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs.",
   "types": "./types/index.d.ts",
   "userConfig": {

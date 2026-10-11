@@ -56,6 +56,25 @@ test('a command names a team file by its name, or by the team folder with a wild
   expect(namesTeamFile('npm test')).toBe(false)
 })
 
+test('a command that only mentions the words, or the folder with a wildcard in another word, names no team file', () => {
+  expect(namesTeamFile('echo roster')).toBe(false)
+  expect(namesTeamFile('git -C C:/proj/repo log --oneline')).toBe(false)
+  expect(namesTeamFile('cd C:/proj && claude plugin test team-orchestrator')).toBe(false)
+  expect(namesTeamFile("claude plugin test team-orchestrator 2>&1 | grep -E 'fail|[0-9]+ *pass'")).toBe(false)
+  expect(namesTeamFile('gh issue comment 85 --body "the roster in team-orchestrator is *fine*"')).toBe(false)
+  expect(judgeTeamFiles({ me: m('W1', 'Head'), confirmed: true, tool: 'Bash', path: '', command: "claude plugin test team-orchestrator 2>&1 | grep -E 'fail|[0-9]+ *pass'" })).toBeUndefined()
+})
+
+test('real edits to the team files stay blocked: Write, Edit, Set-Content, a redirect, rm of the changes folder', () => {
+  const w1 = m('W1', 'Head')
+  const deny = (tool: string, path: string, command: string) => judgeTeamFiles({ me: w1, confirmed: true, tool, path, command })?.kind
+  expect(deny('Write', ROSTER, '')).toBe('deny')
+  expect(deny('Edit', ROSTER, '')).toBe('deny')
+  expect(deny('PowerShell', '', 'Set-Content .claude/team-orchestrator/settings.json x')).toBe('deny')
+  expect(deny('Bash', '', 'echo x > .claude/team-orchestrator/roster.json')).toBe('deny')
+  expect(deny('Bash', '', 'rm -r .claude/team-orchestrator/changes')).toBe('deny')
+})
+
 test('plainly read-only means cat, type, Get-Content, ls, dir, grep, Select-String or jq without -i', () => {
   for (const c of [
     'cat .claude/team-orchestrator/roster.json',

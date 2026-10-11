@@ -128,8 +128,8 @@ export function isTeamFilePath(path: string): boolean {
 
 /**
  * The command names a team file: roster.json anywhere; settings.json beside the team folder's name or bare (the shell
- * may stand in the team folder); or the team folder with a wildcard, a variable or a substitution (the target is
- * then unknowable). Best effort: a name built at run time is not seen.
+ * may stand in the team folder); or the team folder in one word with a wildcard, a variable or a substitution (the
+ * target is then unknowable). Best effort: a name built at run time is not seen.
  */
 export function namesTeamFile(command: string): boolean {
   const c = command.replace(/\\/g, '/').toLowerCase()
@@ -138,7 +138,7 @@ export function namesTeamFile(command: string): boolean {
   if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d|requests)\b/.test(c)) return true
   if (dir && /meta(\.json|~\d)/.test(c)) return true
   if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
-  return dir && /[*?[\]{}$`]/.test(c)
+  return [...c.matchAll(/\S*(team-orchestrator|team-o~\d)\S*/g)].some(w => /[*?[\]{}$`]/.test(w[0]))
 }
 
 const READERS = /^(cat|type|get-content|gc|ls|dir|get-childitem|gci|grep|select-string|sls|jq)$/
