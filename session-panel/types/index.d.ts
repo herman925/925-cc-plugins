@@ -88,6 +88,8 @@ export type AssumptionTrack = {
   member: string
   /** the project root, forward slashes, '' until located */
   root: string
+  /** the old id files already merged into this file, by file name */
+  merged: string[]
   /** the OS, for case rules; '' until located */
   os: 'windows' | 'macos' | 'linux' | ''
   /** true once the 'another session' toast has shown for this session */

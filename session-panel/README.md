@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.37. The version is shown dim beside the band title, as ` v0.3.37`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.38. The version is shown dim beside the band title, as ` v0.3.38`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -131,7 +131,8 @@ Each session keeps its list in one file, written on every change and read back w
 - The folder `.claude/session-panel/` has a `.gitignore` with `*`, so git ignores the whole folder. The project's own `.gitignore` is not changed.
 - Shape: `{ "version": 1, "member": "<name>", "sessionId": "<owner session id>", "entries": [...] }`. `member` is the session's name, or its session id when it has no name.
 - Each entry: `{ id, text, turn, kind: "declared" | "flagged", path?, paths?, status: "open" | "confirmed" | "wrong", at, resolvedAt?, sessionId }`. `path` and `paths` are on flagged entries only: `path` is the first file, `paths` all of them, both relative to the project root.
-- Files from before 0.3.34 (named by session id) are left as they are. A session with no name still reads and writes its own id file. Nothing is merged or moved.
+- Files from before 0.3.34 (named by session id) are left as they are. A session with no name still reads and writes its own id file.
+- Merge: when a named session loads, its own old `<session id>.json` (only if its top-level sessionId is this session's) is merged into the named file, once. Statuses are kept, each entry gets this session's id, and ids follow on from the named file's highest id. The merged file name is recorded in the named file's `merged` list, so a reload does not merge it again. The old file is left untouched. Another session's id file is never merged.
 - An unreadable file is never overwritten.
 - Failures show a toast: `Assumptions not loaded: <reason>.` on a bad file, and `Assumptions file not written: <message>` if a write fails. A failed write never stops the turn.
 

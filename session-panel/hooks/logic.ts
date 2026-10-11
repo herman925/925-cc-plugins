@@ -470,7 +470,7 @@ export const ASSUMPTION_TEXT_CAP = 200
 /** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
 export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. The line must start with plain ASSUMPTION: at the start of the line, with no bold, no bullet and no heading. Do not put ASSUMPTION lines inside code blocks.`
 
-const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '', member: '', warned: false, root: '', os: '' }
+const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '', member: '', warned: false, root: '', os: '', merged: [] }
 export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
 
 /** The texts of the ASSUMPTION lines in a reply, in order. Lines inside a code fence are ignored. */
@@ -595,13 +595,16 @@ const isEntry = (e: any) =>
   (e.kind === 'declared' || e.kind === 'flagged') &&
   (e.status === 'open' || e.status === 'confirmed' || e.status === 'wrong')
 
-export function storedJson(member: string, sessionId: string, entries: Assumption[]): string {
-  return JSON.stringify({ version: STORE_VERSION, member, sessionId, entries }, null, 2) + '\n'
+export function storedJson(member: string, sessionId: string, entries: Assumption[], merged: string[] = []): string {
+  return JSON.stringify({ version: STORE_VERSION, member, sessionId, entries, merged }, null, 2) + '\n'
 }
 
-/** The entries a stored file holds, or why it cannot be read. A file this code cannot read is never overwritten. */
-export function parseStored(text: string | undefined): { ok: true; entries: Assumption[] } | { ok: false; reason: string } {
-  if (text === undefined) return { ok: true, entries: [] }
+/** A registry record: <pid>.json. The pattern is pinned by a test, since its backslashes were lost twice in editing. */
+export const REGISTRY_RECORD = /^\d+\.json$/
+
+/** The entries a stored file holds, and the old id files already merged into it, or why it cannot be read. A file this code cannot read is never overwritten. */
+export function parseStored(text: string | undefined): { ok: true; entries: Assumption[]; merged: string[] } | { ok: false; reason: string } {
+  if (text === undefined) return { ok: true, entries: [], merged: [] }
   let j: any
   try {
     j = JSON.parse(text)
@@ -610,7 +613,9 @@ export function parseStored(text: string | undefined): { ok: true; entries: Assu
   }
   if (!j || j.version !== STORE_VERSION || !Array.isArray(j.entries)) return { ok: false, reason: 'the file is not a version 1 assumptions file' }
   // an entry written before 0.3.34 has no sessionId: it belongs to the file's owner
-  return { ok: true, entries: j.entries.filter(isEntry).map((e: any) => ({ ...e, sessionId: typeof e.sessionId === 'string' ? e.sessionId : String(j.sessionId ?? '') })) as Assumption[] }
+  const entries = j.entries.filter(isEntry).map((e: any) => ({ ...e, sessionId: typeof e.sessionId === 'string' ? e.sessionId : String(j.sessionId ?? '') })) as Assumption[]
+  const merged = Array.isArray(j.merged) ? j.merged.filter((x: unknown): x is string => typeof x === 'string') : []
+  return { ok: true, entries, merged }
 }
 
 /** The track after a load: the stored entries, with the counters moved past them so new entries do not clash. */
@@ -621,6 +626,17 @@ export function loadTrack(t: AssumptionTrack, entries: Assumption[]): Assumption
   return { ...t, entries: entries.slice(0, ASSUMPTION_CAP), seq, turnNo }
 }
 
+/**
+ * Merges one old id file (this session's own, named `<session id>.json`) into the named file's track. Its entries keep
+ * their status and get this session's id from the old file; their ids follow the named file's highest id. Each old file
+ * is merged once: its name is recorded in `merged`, and a file already listed there is not merged again.
+ */
+export function mergeOld(t: AssumptionTrack, old: { fileName: string; sessionId: string; entries: Assumption[] }): AssumptionTrack {
+  if (t.merged.includes(old.fileName)) return t
+  let seq = t.seq
+  const added = old.entries.map(e => ({ ...e, id: ++seq, sessionId: old.sessionId }))
+  return { ...t, seq, merged: [...t.merged, old.fileName], entries: [...t.entries, ...added].slice(0, ASSUMPTION_CAP) }
+}
 /** The text of the text blocks in a row's content. Anything else (no content, not a list, a null block) is no text. */
 export function responseText(content: unknown): string {
   if (!Array.isArray(content)) return ''

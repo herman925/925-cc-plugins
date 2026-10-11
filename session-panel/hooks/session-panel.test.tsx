@@ -1268,7 +1268,7 @@ test('reload: a stored list reads back with its statuses, and the counters move 
 test('reload: a file this code cannot read is reported, not used', () => {
   expect(parseStored('{"version":2,"entries":[]}').ok).toBe(false)
   expect(parseStored('not json').ok).toBe(false)
-  expect(parseStored(undefined)).toEqual({ ok: true, entries: [] })
+  expect(parseStored(undefined)).toEqual({ ok: true, entries: [], merged: [] })
 })
 
 test('confirm and wrong: a resolved entry does not change again; the count and the order follow the status', () => {
@@ -1941,4 +1941,80 @@ test('registry: a record caught mid-rewrite is read again after the pause, so th
   await settle(clock, flaggedEdit($))
   expect(w.writes.at(-1)!.path).toBe(MODB)
   expect(w.last().sessionId).toBe('new-id-5678')
+})
+
+// 18. the old id file is merged into the named file once; another session's id file never is; the registry pattern is pinned (0.3.38)
+import { mergeOld, REGISTRY_RECORD } from './logic'
+
+const OLD_ID = 'assumptions/new-id-5678.json'
+
+test('merge: this session\'s old id file is merged once: statuses kept, ids renumbered, and the merge is recorded', async ($, on) => {
+  world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+    { id: 2, text: 'old done', turn: 1, kind: 'declared', status: 'confirmed', at: 2, resolvedAt: 3, sessionId: 'new-id-5678' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  const named = w.writes.find(x => x.path === MODB)!
+  const saved = JSON.parse(named.text)
+  expect(saved.merged).toEqual(['new-id-5678.json'])
+  const old = saved.entries.filter((e: any) => e.text.startsWith('old'))
+  expect(old.map((e: any) => [e.text, e.status, e.sessionId])).toEqual([
+    ['old open', 'open', 'new-id-5678'],
+    ['old done', 'confirmed', 'new-id-5678'],
+  ])
+  expect(old.map((e: any) => e.id)).toEqual([1, 2])
+})
+
+test('merge: a second load does not merge the same old file again', async ($, on) => {
+  world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ])
+  // the named file already records the merge, and holds the merged entry
+  const named = storedJson('Mod Builder', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ], ['new-id-5678.json'])
+  const w = storeWorld(on, {
+    id: 'new-id-5678',
+    files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile },
+    sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }],
+  })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await flaggedEdit($)
+  const saved = w.last()
+  expect(saved.entries.filter((e: any) => e.text === 'old open').length).toBe(1)
+})
+
+test('merge: another session\'s id file is never merged, even when it shares the name', async ($, on) => {
+  world(on, WIN_ENV)
+  const theirs = storedJson('other-9999', 'other-9999', [
+    { id: 1, text: 'their open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'other-9999' } as any,
+  ])
+  // this session's own id file path holds another session's content: it is not this session's file, so it is not merged
+  const w = storeWorld(on, {
+    id: 'new-id-5678',
+    files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: theirs },
+    sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }],
+  })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  const texts = w.writes.flatMap(x => (x.path.endsWith('.json') ? [x.text] : []))
+  expect(texts.some(t => t.includes('their open'))).toBe(false)
+})
+
+test('merge: the merged list is recorded in the named file, and mergeOld is idempotent', () => {
+  const base = { ...newTrack(), seq: 4, merged: [] as string[] }
+  const once = mergeOld(base, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: [{ id: 1, text: 'x', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' }] })
+  expect(once.merged).toEqual(['new-id-5678.json'])
+  expect(once.entries[0]).toMatchObject({ id: 5, text: 'x' })
+  const twice = mergeOld(once, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: [{ id: 1, text: 'x', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' }] })
+  expect(twice).toBe(once)
+})
+
+test('registry: the record pattern matches <pid>.json and nothing else', () => {
+  expect(REGISTRY_RECORD.test('123.json')).toBe(true)
+  expect(REGISTRY_RECORD.test('d+.json')).toBe(false)
+  expect(REGISTRY_RECORD.test('12a.json')).toBe(false)
+  expect(REGISTRY_RECORD.test('123.json.bak')).toBe(false)
 })

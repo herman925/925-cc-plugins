@@ -53,6 +53,10 @@ import {
   homeOf,
   nameFile,
   normPath,
+  mergeOld,
+  ownerOf,
+  REGISTRY_RECORD,
+  safeName,
   relativeTo,
   osFrom,
   tableColumns,
@@ -326,7 +330,7 @@ async function readRegistry($: Hooked): Promise<{ live: Array<{ sessionId: strin
       complete = false
       continue
     }
-    for (const f of listed.filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))) {
+    for (const f of listed.filter(f => f.kind === 'file' && REGISTRY_RECORD.test(String(f.name)))) {
       try {
         const o = JSON.parse(String(await $.fs.read(`${at}/${f.name}`)))
         if (typeof o?.sessionId !== 'string') throw new Error('no session id')
@@ -382,9 +386,20 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
     if (!t.warned) $.ui.toast(`Assumptions not loaded: ${stored.reason}. This session will not write its file.`)
     return { ...t, file: '', sessionId, member: name ?? sessionId, root, os, warned: true }
   }
-  const loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os }, stored.entries)
-  // a takeover is written at once, so the file's top-level sessionId is this session's even with no new entries
-  if (r.takeover) await saveTrack($, loaded).catch(() => undefined)
+  let loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os, merged: stored.merged }, stored.entries)
+  // this session's own old id file (<session id>.json) is merged into the named file, once; another session's is never read
+  const oldPath = plainPath(root, sessionId)
+  let merged = false
+  if (name !== undefined && !r.tagged && oldPath !== r.file && !loaded.merged.includes(`${safeName(sessionId)}.json`)) {
+    const oldText = await readText($, oldPath)
+    const old = oldText === undefined ? undefined : parseStored(oldText)
+    if (old?.ok && ownerOf(oldText as string) === sessionId) {
+      loaded = mergeOld(loaded, { fileName: `${safeName(sessionId)}.json`, sessionId, entries: old.entries })
+      merged = true
+    }
+  }
+  // a takeover, or a merge, is written at once: the file's owner is this session, and the merge is recorded
+  if (r.takeover || merged) await saveTrack($, loaded).catch(() => undefined)
   if (r.tagged && !t.warned) {
     $.ui.toast(`Assumptions: this session writes ${r.file.split('/').pop()}, because the usual file belongs to another session.`)
   }
@@ -397,7 +412,7 @@ async function saveTrack($: Hooked, t: AssumptionTrack) {
   if (!parseStored(await readText($, t.file)).ok) return
   const ignore = t.file.replace(/\/assumptions\/[^/]+$/, '/.gitignore')
   if (!(await $.fs.exists(ignore))) await $.fs.write(ignore, STORE_IGNORE)
-  await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries))
+  await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries, t.merged))
 }
 
 /** Changes the track. The file is found first, so new entries carry this session's id. When the list changed, the file is written at once. */
