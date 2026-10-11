@@ -1309,7 +1309,7 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
 })
 
 // The engine's file and session calls, as the test kit answers them. `files` is what the disk holds, by path.
-function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }>; unlistable?: boolean; broken?: boolean; flaky?: boolean; noSessions?: boolean; unlistablePath?: string } = {}) {
+function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }>; unlistable?: boolean; broken?: boolean; flaky?: boolean; noSessions?: boolean; unlistablePath?: string; failWrite?: string; staleAfterFirst?: string } = {}) {
   const writes: Array<{ path: string; text: string }> = []
   const fill: string[] = []
   const reached: string[] = []
@@ -1319,13 +1319,17 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
   const slash = (q: string) => q.replace(/\\/g, '/')
   // the session registry (~/.claude/sessions/<pid>.json) under the test's home, one file per live session
   const sessionsDir = 'C:/home/.claude/sessions'
-  const registry = Object.fromEntries((opts.sessions ?? []).map((x, i) => [`${sessionsDir}/${100 + i}.json`, JSON.stringify({ sessionId: x.sessionId, name: x.name, pid: 100 + i, cwd: opts.root ?? 'C:/proj' })]))
+  // read on each use, so a test can change opts.sessions between calls (a /clear gives a new id and a new registry record)
+  const registryOf = (): Record<string, string> => {
+    const r: Record<string, string> = Object.fromEntries((opts.sessions ?? []).map((x, i) => [`${sessionsDir}/${100 + i}.json`, JSON.stringify({ sessionId: x.sessionId, name: x.name, pid: 100 + i, cwd: opts.root ?? 'C:/proj' })]))
+    if (opts.broken || opts.flaky) r[`${sessionsDir}/199.json`] = '{ not json'
+    return r
+  }
   on('fs.list', (_$: any, e: any) => {
     if (opts.unlistable && slash(e.path) === sessionsDir) throw new Error('the registry folder cannot be listed')
     if (opts.unlistablePath !== undefined && slash(e.path) === opts.unlistablePath) throw new Error('the folder cannot be listed')
-    return { value: slash(e.path) === sessionsDir ? Object.keys(registry).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [] }
+    return { value: slash(e.path) === sessionsDir ? Object.keys(registryOf()).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [] }
   })
-  if (opts.broken || opts.flaky) registry[`${sessionsDir}/199.json`] = '{ not json'
   let flakyReads = 0
   on('fs.read', (_$: any, e: any) => {
     const p = slash(e.path)
@@ -1334,14 +1338,21 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
       flakyReads++
       return { value: flakyReads === 1 ? '{ not json' : JSON.stringify({ sessionId: 'gone-0000', name: '', pid: 199 }) }
     }
-    return { value: registry[p] ?? opts.files?.[p] }
+    // a file that reads whole once, then is caught mid-rewrite by the next read
+    if (opts.staleAfterFirst !== undefined && p === slash(opts.staleAfterFirst)) {
+      staleReads++
+      return { value: staleReads === 1 ? opts.files?.[p] : '{ not json' }
+    }
+    return { value: registryOf()[p] ?? opts.files?.[p] }
   })
+  let staleReads = 0
   on('fs.exists', (_$: any, e: any) => {
     const p = slash(e.path)
     if (p === sessionsDir) return { value: !opts.noSessions }
     return { value: p === opts.unlistablePath }
   })
   on('fs.write', (_$: any, e: any) => {
+    if (opts.failWrite !== undefined && slash(e.path) === slash(opts.failWrite)) throw new Error('disk full')
     writes.push({ path: slash(e.path), text: e.text })
     return { value: undefined }
   })
@@ -2225,4 +2236,62 @@ test('merge: after a collision, a head line names the current id: confirm 1 is t
   expect(saved.entries.find((e: any) => e.text === 'old two')).toMatchObject({ id: 2, status: 'open' })
   // idMap is a record of the renumbering, not a lookup
   expect(saved.idMap).toEqual({ '1': 3 })
+})
+
+// 22. a failed save never retires the old id file, a missed retire is done on the next load, and a new session id locates again (0.3.43)
+test('data loss: when the named file no longer parses at save time, nothing is written and the old file keeps its entries', async ($, on) => {
+  world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ])
+  const named = storedJson('Mod Builder', 'new-id-5678', [])
+  // the named file reads whole on the first read, and is caught mid-rewrite on the save's read
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }], staleAfterFirst: MODB })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  expect(w.writes.filter(x => x.path.endsWith(OLD_ID))).toEqual([])
+  expect(w.writes.filter(x => x.path === MODB)).toEqual([])
+})
+
+test('data loss: a failed write of the named file never retires the old id file', async ($, on) => {
+  world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }], failWrite: MODB })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  expect(w.writes.filter(x => x.path.endsWith(OLD_ID))).toEqual([])
+})
+
+test('retire: a file merged on an earlier load, whose retire failed, is retired on the next load without merging again', async ($, on) => {
+  world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ])
+  const named = storedJson('Mod Builder', 'new-id-5678', [
+    { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ], ['new-id-5678.json'])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  const retired = JSON.parse(w.writes.filter(x => x.path.endsWith(OLD_ID)).at(-1)!.text)
+  expect(retired).toEqual({ version: 1, member: 'new-id-5678', sessionId: 'new-id-5678', entries: [], mergedInto: 'Mod_Builder.json' })
+  expect(w.writes.filter(x => x.path === MODB)).toEqual([])
+})
+
+test('new id: after /clear the same name locates again, takes the file over, and never writes the old session\'s id file', async ($, on) => {
+  world(on, WIN_ENV)
+  // one session, then /clear: the same plugin state, a new session id, and a registry record for the new id
+  const opts: any = { id: 'old-id-1234', sessions: [{ sessionId: 'old-id-1234', name: 'Mod Builder' }] }
+  const w = storeWorld(on, opts)
+  await flaggedEdit($)
+  const before = w.last()
+  expect(before.sessionId).toBe('old-id-1234')
+  opts.files = { [MODB]: JSON.stringify(before) }
+  opts.id = 'new-id-5678'
+  opts.sessions = [{ sessionId: 'new-id-5678', name: 'Mod Builder' }]
+  const mark = w.writes.length
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  expect(w.writes.slice(mark).filter(x => x.path.endsWith('old-id-1234.json'))).toEqual([])
+  const saved = JSON.parse(w.writes.slice(mark).filter(x => x.path === MODB).at(-1)!.text)
+  expect(saved.sessionId).toBe('new-id-5678')
+  expect(saved.entries.map((e: any) => e.sessionId)).toEqual(['old-id-1234'])
 })

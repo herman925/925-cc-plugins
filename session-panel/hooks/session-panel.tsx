@@ -372,10 +372,10 @@ async function osOf($: Hooked): Promise<Os> {
 /**
  * Finds this session's file and loads what it holds. The name (from the registry) decides the file name; a file that
  * belongs to a closed session is taken over with its entries. Runs the first time a file is needed, so every path
- * that writes has the entries already.
+ * that writes has the entries already. A track from an older load, or from a session that has since changed its id
+ * (after /clear), is located again; a track already located for this session and file is returned as it is.
  */
 async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
-  if (t.file !== '') return t
   const root = normPath(await $.session.root())
   const sessionId = await $.session.id()
   const os = await osOf($)
@@ -384,6 +384,9 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
   const probe = name !== undefined ? `${assumptionsDir(root)}/${nameFile(name)}.json` : plainPath(root, sessionId)
   const baseText = await readText($, probe)
   const r = chooseFile({ root, sessionId, name, os, baseText, live, complete })
+  if (t.file === r.file && t.sessionId === sessionId && t.member === (name ?? sessionId)) return t
+  // a track located for another session id (before /clear) starts with no running turn; its entries come from the file
+  if (t.sessionId !== '' && t.sessionId !== sessionId) t = { ...t, runningTurnId: '', turnDeclared: false, turnEdits: [], turnNo: 0, seq: 0 }
   const text = r.file === probe ? baseText : await readText($, r.file)
   const stored = parseStored(text)
   if (!stored.ok) {
@@ -393,21 +396,28 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
   }
   let loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os, merged: stored.merged, idMap: stored.idMap }, stored.entries)
   // this session's own old id file (<session id>.json) is merged into the named file, once; another session's is never read
+  const oldName = `${safeName(sessionId)}.json`
   const oldPath = plainPath(root, sessionId)
   let merged = false
-  if (name !== undefined && !r.tagged && oldPath !== r.file && !loaded.merged.includes(`${safeName(sessionId)}.json`)) {
-    const oldText = await readText($, oldPath)
-    const old = oldText === undefined ? undefined : parseStored(oldText)
-    if (old?.ok && ownerOf(oldText as string) === sessionId) {
-      loaded = mergeOld(loaded, { fileName: `${safeName(sessionId)}.json`, sessionId, entries: old.entries })
+  let old: ReturnType<typeof parseStored> | undefined
+  let oldText: string | undefined
+  if (name !== undefined && !r.tagged && oldPath !== r.file) {
+    oldText = await readText($, oldPath)
+    old = oldText === undefined ? undefined : parseStored(oldText)
+    if (old?.ok && ownerOf(oldText as string) === sessionId && !loaded.merged.includes(oldName)) {
+      loaded = mergeOld(loaded, { fileName: oldName, sessionId, entries: old.entries })
       merged = true
     }
   }
   // a takeover, or a merge, is written at once: the file's owner is this session, and the merge is recorded
   let saved = true
-  if (r.takeover || merged) saved = await saveTrack($, loaded).then(() => true, () => false)
-  // the old id file is retired only after the named file holds its entries, so no assumption is counted twice
-  if (merged && saved) await $.fs.write(oldPath, retiredJson(sessionId, sessionId, r.file.split('/').pop() as string)).catch(() => undefined)
+  if (r.takeover || merged) saved = await saveTrack($, loaded).then(wrote => wrote, () => false)
+  // the old id file is retired only once the named file on disk holds its entries, so no assumption is counted twice.
+  // A file merged on an earlier load is retired here if its retire write failed then.
+  const holds = !merged || saved
+  if (holds && old?.ok && ownerOf(oldText as string) === sessionId && old.entries.length > 0 && loaded.merged.includes(oldName)) {
+    await $.fs.write(oldPath, retiredJson(sessionId, sessionId, r.file.split('/').pop() as string)).catch(() => undefined)
+  }
   if (r.tagged && !t.warned) {
     $.ui.toast(`Assumptions: this session writes ${r.file.split('/').pop()}, because the usual file belongs to another session.`)
   }
@@ -415,12 +425,13 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
 }
 
 /** Writes the list to this session's file, and takes the file over when its owner has closed. A file this code cannot read is left alone. */
-async function saveTrack($: Hooked, t: AssumptionTrack) {
-  if (t.file === '') return
-  if (!parseStored(await readText($, t.file)).ok) return
+async function saveTrack($: Hooked, t: AssumptionTrack): Promise<boolean> {
+  if (t.file === '') return false
+  if (!parseStored(await readText($, t.file)).ok) return false
   const ignore = t.file.replace(/\/assumptions\/[^/]+$/, '/.gitignore')
   if (!(await $.fs.exists(ignore))) await $.fs.write(ignore, STORE_IGNORE)
   await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries, t.merged, t.idMap))
+  return true
 }
 
 /** Changes the track. The file is found first, so new entries carry this session's id. When the list changed, the file is written at once. */
