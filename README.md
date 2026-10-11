@@ -6,7 +6,7 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod.
 |---|---|---|
 | `speaker-colours` | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
 | `team-orchestrator` | Runs a team of Claude Code sessions as Orca tabs, managed from a panel above the prompt: quick starts, a team form, a live roster (stacked, side by side or docked) and an org chart. Members start on their first message, close when idle and reopen when a message arrives; each has a role file. A guard keeps members from starting subagents, and members with reports from writing files, unless you allow it. Shows each member's open assumptions (from Session Panel) and lets its boss or team top confirm or mark them wrong. The assumptions view is opt-in: "Settings → Assumptions → Show" (key `assumptions`), off by default; it needs Session Panel. Works on Windows, macOS and Linux (see the mod's README). | 0.5.28 |
-| `session-panel` | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). Adds an Enhancer for your prompt (`/enhance`, or auto-enhance on Enter), an Assumptions list that Claude fills as it works, with Confirm, Wrong, Stop and Redirect, and its version in the band. | 0.3.46 |
+| `session-panel` | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). Adds an Enhancer for your prompt (`/enhance`, or auto-enhance on Enter), an Assumptions list that Claude fills as it works, with Confirm, Wrong, Stop and Redirect, and its version in the band. | 0.3.48 |
 
 ## Install
 
