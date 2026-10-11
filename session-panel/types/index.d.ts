@@ -73,6 +73,7 @@ declare module 'claude-code' {
       prefs: Prefs
       enhancer: EnhancerState
       openGroups: string[]
+      gateDenied: number
     }
   }
 }

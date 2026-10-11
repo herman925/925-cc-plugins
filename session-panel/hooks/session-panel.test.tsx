@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { DEFAULT_PREFS, buildContext, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
-import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, reportProgress, newChecklist, planSteps } from './logic'
+import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -1077,4 +1077,23 @@ test('enhancer: an explicit draft is enhanced even when the box is empty (auto-e
   const line = await runEnhance(f.deps, 'make a bakery page')
   expect(line).toBe('Enhanced. Check the box, then Send.')
   expect(f.fills).toEqual(['Build a bakery page'])
+})
+
+// 8. the gate: factual deny text, a system-section rule, and an escape after GATE_LIMIT denials
+test('gate: the deny text is a fact, not an order, and the rule sits in the system section', () => {
+  expect(GATE_MESSAGE).toContain('mcp__session-panel__plan_steps')
+  expect(GATE_MESSAGE).not.toMatch(/before any other tool/i)
+  expect(PLAN_SECTION).toContain('mcp__session-panel__plan_steps')
+  expect(GATE_LIMIT).toBe(3)
+})
+
+test('gate: after three denials in a row with no plan, tools go through', async ($, on) => {
+  world(on)
+  await begin($)
+  for (let i = 0; i < GATE_LIMIT; i++) {
+    const denied = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+    expect((denied as any).deny).toBe(GATE_MESSAGE)
+  }
+  const escaped = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  expect((escaped as any).deny).toBeUndefined()
 })

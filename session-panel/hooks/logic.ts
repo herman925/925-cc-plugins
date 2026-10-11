@@ -348,8 +348,15 @@ export function isGateExempt(tool: string): boolean {
   return EXEMPT.has(tool)
 }
 
+/** Factual, not an order: a tool result is data, so the rule itself lives in the system section (PLAN_SECTION). */
 export const GATE_MESSAGE =
-  'Session Panel is on. Before any other tool, call plan_steps with 1 to 8 short plain-English step names (use ToolSearch to load plan_steps if it is not listed). Then continue.'
+  'Blocked by the Session Panel mod until this session calls mcp__session-panel__plan_steps (see the Session Panel system section).'
+
+/** Denied calls in a row, with no plan_steps call, before the gate lets tools through. Never traps a session. */
+export const GATE_LIMIT = 3
+
+/** The first-tool rule, from the system prompt. It is not in a tool result, so it is not treated as an instruction from one. */
+export const PLAN_SECTION = `Session Panel rule for this session: at the start of each job, before any other tool, call mcp__session-panel__plan_steps with 1 to 8 short plain-English step names. The person sees these steps as their progress checklist. If plan_steps is not in your tool list, load it with ToolSearch. If it is still missing, skip the plan and continue the work.`
 
 export function looksLikeUserDenial(text: string): boolean {
   return /doesn.?t want to proceed|rejected|permission (to use|for) .* (was )?denied|user denied|declined to/i.test(text)

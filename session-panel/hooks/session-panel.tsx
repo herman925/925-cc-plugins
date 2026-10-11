@@ -5,7 +5,9 @@ import type { CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } 
 import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo, type Outcome } from './enhancer'
 import {
   GATE_MESSAGE,
+  PLAN_SECTION,
   SECTION_TEXT,
+  GATE_LIMIT,
   actionLabel,
   applyTaskCreate,
   applyTaskUpdate,
@@ -46,6 +48,7 @@ const styleA = atom({ plugin: 'session-panel', key: 'viewStyle' } as const, 'che
 const finishedA = atom({ plugin: 'session-panel', key: 'finished' } as const, [] as CleanFinished[])
 const prefsA = atom({ plugin: 'session-panel', key: 'prefs' } as const, DEFAULT_PREFS as Prefs)
 const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { original: null, passText: null, notes: [], busy: false } as EnhancerState)
+const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const, 0)
 const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
 
 const PLAN = 'mcp__session-panel__plan_steps'
@@ -349,7 +352,13 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const text = (await read($, askEnabledA))
       ? SECTION_TEXT
       : SECTION_TEXT.split('\n').filter(l => !l.includes('ask_choices')).join('\n')
-    return { sections: [...result.sections, { id: 'session-panel:rules', text, scope: 'session' as const }] }
+    return {
+      sections: [
+        ...result.sections,
+        { id: 'session-panel:plan', text: PLAN_SECTION, scope: 'session' as const },
+        { id: 'session-panel:rules', text, scope: 'session' as const },
+      ],
+    }
   })
 
   // ---------- a prompt starts a job ----------
@@ -462,7 +471,15 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const tool = String(e.tool)
     const c = await read($, checklistA)
     const isInJob = c.phase === 'working' || c.phase === 'needs-you' || c.phase === 'stuck'
-    if (isInJob && !c.hasPlan && !isGateExempt(tool)) return { deny: GATE_MESSAGE }
+    // The gate counts its denials. A plan, or the end of the job, resets the count. After GATE_LIMIT denials in a row the
+    // tool goes through, so a session that cannot see plan_steps is never trapped.
+    if (!isInJob || c.hasPlan) await update($, gateDeniedA, () => 0)
+    if (isInJob && !c.hasPlan && !isGateExempt(tool)) {
+      const denied = (await read($, gateDeniedA)) + 1
+      await update($, gateDeniedA, () => denied)
+      if (denied <= GATE_LIMIT) return { deny: GATE_MESSAGE }
+      if (denied === GATE_LIMIT + 1) $.ui.toast('Session Panel: no plan_steps call after 3 tries, so tools are open.')
+    }
 
     const isOurs = tool === PLAN || tool === REPORT || tool === ASK
     if (!isOurs) {
