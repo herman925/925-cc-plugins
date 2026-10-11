@@ -1768,13 +1768,32 @@ test('paths: the chosen file on each OS: owner live, owner closed, unreadable, a
   expect(chooseFile({ root: 'C:/proj', sessionId: 'me-1111', name: undefined, os: 'linux', baseText: undefined, live: [] }).file).toBe('C:/proj/.claude/session-panel/assumptions/me-1111.json')
 })
 
-test('table: the columns and their order; at drops first, then path, on narrow bands', () => {
-  const keys = (w: number) => tableColumns(w).map(c => c.key)
-  expect(keys(100)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
-  expect(keys(80)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
-  expect(keys(60)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
-  const narrow = tableColumns(60)
-  expect(narrow.find(c => c.key === 'text')!.width).toBeGreaterThanOrEqual(10)
+test('table: columns drop in the order at, path, turn, id; kind and status shrink first', () => {
+  const layout = (w: number) => tableColumns(w)
+  const keys = (w: number) => layout(w).map(c => c.key)
+  const shortOf = (w: number) => layout(w).filter(c => c.key === 'kind' || c.key === 'status').map(c => c.short)
+  // wide: every column, kind and status as words
+  expect(keys(120)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
+  expect(shortOf(120)).toEqual([false, false])
+  // 90: every column still shows; kind and status shrink to one letter to make room
+  expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
+  expect(shortOf(90)).toEqual([true, true])
+  // 76: at has dropped; path, turn and id stay
+  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
+  expect(shortOf(76)).toEqual([true, true])
+  // 60: path, turn and id have dropped too; text and the buttons stay
+  expect(keys(60)).toEqual(['kind', 'status', 'text', 'actions'])
+  expect(shortOf(60)).toEqual([true, true])
+})
+
+test('table: text keeps at least 30 cells while any optional column shows, across widths', () => {
+  for (let w = 40; w <= 160; w++) {
+    const cols = tableColumns(w)
+    const optional = cols.some(c => c.key === 'at' || c.key === 'path' || c.key === 'turn' || c.key === 'id')
+    const text = cols.find(c => c.key === 'text')!.width
+    expect(cols.some(c => c.key === 'actions')).toBe(true)
+    if (optional) expect(text).toBeGreaterThanOrEqual(30)
+  }
 })
 
 test('table: the cells are short: text cut with an ellipsis, times as HH:MM', () => {
@@ -1790,7 +1809,8 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
   const labels = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
-  for (const h of ['id', 'kind', 'status', 'turn', 'text', 'path']) expect(labels).toContain(h)
+  // at 76 cells kind and status are one letter, so their headers are k and s
+  for (const h of ['id', 'k', 's', 'turn', 'text', 'path']) expect(labels).toContain(h)
   // at 76 cells the text column is narrow, so the sentence is cut with an ellipsis; its start is shown
   expect(labels.some((l: string) => l.startsWith('notes.md, no'))).toBe(true)
   const confirm = await ui.find({ key: 'confirm-1' })

@@ -1103,7 +1103,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       if (c.key === 'at') return hhmm(a.at)
       if (c.key === 'turn') return String(a.turn)
       if (c.key === 'id') return String(a.id)
-      return a[c.key as 'kind' | 'status']
+      // one letter when the column is shortened: d or f for kind, o, c or w for status
+      if (c.key === 'kind') return c.short ? a.kind[0]! : a.kind
+      return c.short ? a.status[0]! : a.status
     }
     const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
       <Box flexDirection="column">

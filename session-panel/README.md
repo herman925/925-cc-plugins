@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.34. The version is shown dim beside the band title, as ` v0.3.34`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.35. The version is shown dim beside the band title, as ` v0.3.35`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -115,7 +115,7 @@ The rule is a system-prompt section, `session-panel:assume`, on when Track assum
   - A declared entry gives `Assumption '<text>' is wrong. Instead: `
   - A flagged entry gives `About the edits in turn <n> (<first file> and <N-1> more): `, or `About the edits in turn <n> (<file>): ` for one file.
 - Confirm and Wrong appear only on open entries. They are two separate buttons, `[Confirm] [Wrong]`.
-- **Table:** one row per entry, one column per field: id, kind, status, turn, text, path, at, actions. On narrow bands `at` drops first (below 90 cells), then `path` (below 70). Text is cut with an ellipsis. Times show as HH:MM.
+- **Table:** one row per entry, one column per field: id, kind, status, turn, text, path, at, actions. Text and the `[Confirm] [Wrong]` buttons always stay, and text keeps at least 30 cells while an optional column shows. As the band narrows, kind and status first shrink to one letter (`d` or `f` for kind; `o`, `c` or `w` for status, headed `k` and `s`). Then the optional columns drop, in this order: `at`, `path`, `turn`, `id`. Text is cut with an ellipsis. Times show as HH:MM.
 - **Hidden:** the panel is not shown at all when there are no assumptions.
 
 ### The shared file

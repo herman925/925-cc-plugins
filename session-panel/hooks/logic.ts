@@ -826,7 +826,7 @@ export function chooseFile(p: { root: string; sessionId: string; name: string | 
   return { file: `${dir}/${nameFile(p.name)}.json`, tagged: false, takeover: owner !== undefined && owner !== p.sessionId }
 }
 
-// ---------- the table (0.3.34) ----------
+// ---------- the table (0.3.34; column rules 0.3.35) ----------
 
 /** The text cut to `n` cells, with "…" as its last cell when it is cut. */
 export const clip = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : n <= 1 ? '…' : `${s.slice(0, n - 1)}…`)
@@ -837,34 +837,58 @@ export const hhmm = (ms: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-export type Col = { key: 'id' | 'kind' | 'status' | 'turn' | 'text' | 'path' | 'at' | 'actions'; header: string; width: number }
+export type Col = { key: 'id' | 'kind' | 'status' | 'turn' | 'text' | 'path' | 'at' | 'actions'; header: string; width: number; short?: boolean }
+
+/** The text column keeps at least this many cells while any optional column is shown. */
+export const TEXT_MIN = 30
+/** A path column narrower than this is not worth showing: it is dropped instead. */
+const PATH_MIN = 8
+/** The optional columns, in the order they drop as the band narrows. Text and the actions always stay. */
+const DROP_ORDER = ['at', 'path', 'turn', 'id'] as const
+const ACTIONS = 20
 
 /**
- * The table's columns for a band of `width` cells. Narrow bands drop the lowest-value columns first: `at` below 90 cells,
- * then `path` below 70. `text` and `path` share the room left over: text gets 60%, path the rest.
+ * One layout: the columns in `present` (plus kind, status, text and actions), with kind and status as full words or as
+ * one letter. Undefined when the text would fall below TEXT_MIN, or the path below PATH_MIN, while an optional column shows.
+ */
+function build(width: number, present: ReadonlySet<string>, short: boolean): { cols: Col[]; ok: boolean } {
+  const cols: Array<{ key: Col['key']; width: number }> = []
+  if (present.has('id')) cols.push({ key: 'id', width: 4 })
+  cols.push({ key: 'kind', width: short ? 1 : 8 })
+  cols.push({ key: 'status', width: short ? 1 : 9 })
+  if (present.has('turn')) cols.push({ key: 'turn', width: 4 })
+  cols.push({ key: 'text', width: 0 })
+  if (present.has('path')) cols.push({ key: 'path', width: 0 })
+  if (present.has('at')) cols.push({ key: 'at', width: 5 })
+  cols.push({ key: 'actions', width: ACTIONS })
+  const room = width - cols.reduce((n, c) => n + c.width, 0) - cols.length
+  const pathOn = present.has('path')
+  const text = pathOn ? Math.max(TEXT_MIN, Math.floor(room * 0.6)) : room
+  const path = pathOn ? room - text : 0
+  const ok = text >= TEXT_MIN && (!pathOn || path >= PATH_MIN)
+  // the header is the full word, or its letter when that column is shortened
+  const letter: Partial<Record<Col['key'], string>> = { kind: 'k', status: 's' }
+  const laid = cols.map(c => ({
+    key: c.key,
+    header: c.key === 'actions' ? '' : short && letter[c.key] !== undefined ? (letter[c.key] as string) : c.key,
+    width: c.key === 'text' ? Math.max(text, 1) : c.key === 'path' ? path : c.width,
+    ...(c.key === 'kind' || c.key === 'status' ? { short } : {}),
+  })) as Col[]
+  return { cols: laid, ok }
+}
+
+/**
+ * The table's columns for a band of `width` cells. As the band narrows, the optional columns drop in the order at, path,
+ * turn, id. At each count of columns, kind and status shrink to one letter before a column is dropped. Text never falls
+ * below TEXT_MIN while an optional column shows.
  */
 export function tableColumns(width: number): Col[] {
-  const showAt = width >= 90
-  const showPath = width >= 70
-  const fixed: Array<{ key: Col['key']; width: number }> = [
-    { key: 'id', width: 4 },
-    { key: 'kind', width: 8 },
-    { key: 'status', width: 9 },
-    { key: 'turn', width: 4 },
-  ]
-  if (showAt) fixed.push({ key: 'at', width: 5 })
-  fixed.push({ key: 'actions', width: 20 })
-  const flex = ['text', ...(showPath ? ['path'] : [])] as const
-  const used = fixed.reduce((n, c) => n + c.width, 0) + flex.length + fixed.length
-  const room = Math.max(flex.length * 10, width - used)
-  const textW = showPath ? Math.floor(room * 0.6) : room
-  const pathW = showPath ? room - textW : 0
-  const cols: Col[] = []
-  const add = (key: Col['key'], w: number) => cols.push({ key, header: key, width: w })
-  for (const c of fixed.slice(0, 4)) add(c.key, c.width)
-  add('text', textW)
-  if (showPath) add('path', pathW)
-  if (showAt) add('at', 5)
-  add('actions', 20)
-  return cols
+  for (let dropped = 0; dropped <= DROP_ORDER.length; dropped++) {
+    const present = new Set<string>(DROP_ORDER.slice(dropped))
+    for (const short of [false, true]) {
+      const laid = build(width, present, short)
+      if (laid.ok) return laid.cols
+    }
+  }
+  return build(width, new Set(), true).cols
 }
