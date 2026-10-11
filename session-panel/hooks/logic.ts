@@ -663,30 +663,47 @@ export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wron
 
 // ---------- status lines inside cross-session envelopes (0.3.3) ----------
 
-/** A message from another session arrives wrapped in this envelope; `from-name` says who sent it. */
-const ENVELOPE = /<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/g
+/**
+ * A message from another session arrives in this envelope. Only unescaped tags are envelope tags: the harness writes a tag
+ * that appears inside a body with a backslash (`<\cross-session-message`, `<\/cross-session-message>`), which is plain text.
+ */
+const OPEN = /<cross-session-message\b([^>]*)>/g
+const CLOSE = /<\/cross-session-message>/g
 const PREAMBLE = /^\s*Another Claude session sent a message:\s*$/gm
 
 /**
  * Splits a prompt into the status lines it carries and the other text. A status line typed by the user has sender
- * `user`; one inside an envelope has the envelope's `from-name`. The preamble line is framing, not text.
+ * `user`; one inside the envelope has the envelope's `from-name`. A prompt with more than one envelope, or a broken one,
+ * is refused as a whole: its status lines are not applied, and `refusal` says why.
  */
-export function sortPrompt(text: string): { statuses: Array<{ line: string; sender: string }>; other: string } {
+export function sortPrompt(text: string): { statuses: Array<{ line: string; sender: string }>; other: string; refusal?: string } {
+  const opens = [...text.matchAll(OPEN)]
+  const closes = [...text.matchAll(CLOSE)]
+  const lines = (t: string) => t.split('\n').map(l => l.trim()).filter(l => l !== '')
+  const refuse = (why: string) => ({
+    statuses: lines(text).filter(l => parseIncoming(l) !== null).map(line => ({ line, sender: '' })),
+    other: '',
+    refusal: why,
+  })
+  if (opens.length > 1 || closes.length > 1) return refuse('Refused: more than one message envelope.')
+  if (opens.length !== closes.length) return refuse('Refused: the message envelope is malformed.')
   const statuses: Array<{ line: string; sender: string }> = []
   const other: string[] = []
   const take = (body: string, sender: string) => {
-    for (const raw of body.split('\n')) {
-      const line = raw.trim()
-      if (line === '') continue
+    for (const line of lines(body)) {
       if (parseIncoming(line) !== null) statuses.push({ line, sender })
       else other.push(line)
     }
   }
-  for (const m of text.matchAll(ENVELOPE)) {
-    const fromName = m[1].match(/from-name="([^"]*)"/)?.[1] ?? ''
-    take(m[2], fromName)
+  let rest = text
+  const open = opens[0]
+  const close = closes[0]
+  if (open !== undefined && close !== undefined) {
+    if (close.index! < open.index! + open[0].length) return refuse('Refused: the message envelope is malformed.')
+    take(text.slice(open.index! + open[0].length, close.index), open[1].match(/from-name="([^"]*)"/)?.[1] ?? '')
+    rest = text.slice(0, open.index) + text.slice(close.index! + close[0].length)
   }
-  take(text.replace(ENVELOPE, '').replace(PREAMBLE, ''), 'user')
+  take(rest.replace(PREAMBLE, ''), 'user')
   return { statuses, other: other.join('\n') }
 }
 

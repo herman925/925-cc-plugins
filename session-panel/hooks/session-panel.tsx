@@ -337,6 +337,11 @@ async function headsOfRoster($: Hooked): Promise<Set<string> | undefined> {
 /** Applies the status lines in a prompt. Returns the drop for a message that is only status lines, or null to let it go on. */
 async function applyStatusLines($: Hooked, text: string): Promise<{ drop: string } | null> {
   const parts = sortPrompt(text)
+  if (parts.refusal !== undefined) {
+    // a prompt that is not exactly one envelope applies no status; it is dropped only if it carries status lines
+    $.ui.toast(parts.refusal)
+    return parts.statuses.length > 0 ? { drop: parts.refusal } : null
+  }
   if (parts.statuses.length === 0) return null
   const heads = parts.statuses.some(s => s.sender !== 'user') ? await headsOfRoster($) : undefined
   const items = parts.statuses.map(s => {
