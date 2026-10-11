@@ -699,7 +699,7 @@ test('a bulk rename restart keeps the member\'s saved model and effort when they
   for (let i = 0; i < 50 && !create(); i++) await band.drawn()
   const cmd = String(create()?.[create()!.indexOf('--command') + 1] ?? '')
   expect(cmd).toContain(`--resume ${ID1}`)
-  expect(cmd).toContain('--name W9')
+  expect(cmd).toContain('--name "W9"')
   expect(cmd).toContain('--model sonnet')
   expect(cmd).toContain('--effort high')
 })

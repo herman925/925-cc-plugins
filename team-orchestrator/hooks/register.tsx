@@ -690,9 +690,10 @@ async function writeRoles($: any, list: Member[]) {
 
 // The command that starts a member: its role pointer in the system prompt, and an optional first prompt. A shell types
 // it (cmd.exe on Windows, bash or zsh elsewhere), so the texts go in double quotes and carry nothing a shell would
-// expand (pointer() and WELCOME see to that).
+// expand (pointer() and WELCOME see to that). The name is quoted too: unquoted, "Mod Builder 2" splits into --name Mod
+// and a first prompt "Builder".
 const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean, name = m.name, model = m.model, effort = m.effort, first = '') =>
-  `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name ${name}${flags(model, effort)}` +
+  `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name "${name}"${flags(model, effort)}` +
   ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
 
 // The roster as every session sees it: the file plus the change files not yet applied (see share).
