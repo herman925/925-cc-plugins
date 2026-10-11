@@ -49,7 +49,6 @@ import {
   chooseFile,
   clip,
   headsFor,
-  resolveId,
   retiredJson,
   hhmm,
   homeOf,
@@ -477,7 +476,7 @@ async function applyStatusLines($: Hooked, text: string): Promise<{ drop: string
   if (applied.changed) await changeTrack($, () => applied.track)
   // a head's wrong does what the local Wrong button does: the box gets the Redirect text, and nothing is submitted
   for (const it of items) {
-    const rid = resolveId(before, it.id)
+    const rid = it.id
     const was = before.entries.find(e => e.id === rid)
     const now2 = applied.track.entries.find(e => e.id === rid)
     if (it.allowed && it.verb === 'wrong' && was?.status === 'open' && now2?.status === 'wrong') await redirectTo($, now2)

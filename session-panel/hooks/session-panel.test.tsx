@@ -2161,7 +2161,7 @@ test('alignment: the pieces of every line are plain text the same width, with th
 })
 
 // 21. the merge keeps old ids, renumbers on collision (recorded in idMap), retires the old file, and head lines go through idMap (0.3.41)
-import { resolveId, retiredJson } from './logic'
+import { retiredJson } from './logic'
 
 test('merge: an old id that does not collide is kept', () => {
   const base = { ...newTrack(), seq: 0, merged: [] as string[] }
@@ -2179,8 +2179,7 @@ test('merge: a colliding old id is renumbered, and the new id is recorded in idM
   const merged = mergeOld(base, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: old })
   expect(merged.entries.map(e => [e.text, e.id])).toEqual([['named', 1], ['old one', 3], ['old two', 2]])
   expect(merged.idMap).toEqual({ '1': 3 })
-  expect(resolveId(merged, 1)).toBe(3)
-  expect(resolveId(merged, 2)).toBe(2)
+  expect(merged.idMap['1']).toBe(3)
 })
 
 test('merge: the file retires to no entries, naming the named file it went into', () => {
@@ -2204,20 +2203,26 @@ test('merge: after a merge, the named file holds each assumption once, and the o
   expect(named.merged).toEqual(['new-id-5678.json'])
 })
 
-test('merge: a head line naming an old id that was renumbered finds the merged entry, through idMap', async ($, on) => {
+test('merge: after a collision, a head line names the current id: confirm 1 is the named entry, confirm 3 the merged one', async ($, on) => {
   const clock = world(on, WIN_ENV)
   const named = storedJson('Mod Builder', 'new-id-5678', [
     { id: 1, text: 'named one', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
   ])
+  // old 1 collides with the named 1 and becomes 3; old 2 does not collide and is kept as 2
   const oldFile = storedJson('new-id-5678', 'new-id-5678', [
     { id: 1, text: 'old one', turn: 1, kind: 'declared', status: 'open', at: 2, sessionId: 'new-id-5678' } as any,
+    { id: 2, text: 'old two', turn: 1, kind: 'declared', status: 'open', at: 3, sessionId: 'new-id-5678' } as any,
   ])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
   await settle(clock, $.tool.call({ tool: 'Read', file_path: 'a.md' }))
-  const result: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
-  expect(result.drop).toBe('Assumption 1 marked confirmed.')
+  const first: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  expect(first.drop).toBe('Assumption 1 marked confirmed.')
+  const second: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 3', asUser: true })
+  expect(second.drop).toBe('Assumption 3 marked confirmed.')
   const saved = JSON.parse(w.writes.filter(x => x.path === MODB).at(-1)!.text)
-  expect(saved.entries.find((e: any) => e.text === 'old one')).toMatchObject({ id: 2, status: 'confirmed' })
-  expect(saved.entries.find((e: any) => e.text === 'named one')).toMatchObject({ id: 1, status: 'open' })
-  expect(saved.idMap).toEqual({ '1': 2 })
+  expect(saved.entries.find((e: any) => e.text === 'named one')).toMatchObject({ id: 1, status: 'confirmed' })
+  expect(saved.entries.find((e: any) => e.text === 'old one')).toMatchObject({ id: 3, status: 'confirmed' })
+  expect(saved.entries.find((e: any) => e.text === 'old two')).toMatchObject({ id: 2, status: 'open' })
+  // idMap is a record of the renumbering, not a lookup
+  expect(saved.idMap).toEqual({ '1': 3 })
 })

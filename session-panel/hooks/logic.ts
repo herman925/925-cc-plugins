@@ -706,11 +706,9 @@ export function parseIncoming(text: string): { verb: 'confirm' | 'wrong'; id: nu
 }
 
 /** Applies a head's message to this session's list. An unknown id, or an entry already resolved, changes nothing and says why. */
-/** The entry an id names: the id's merged entry when an old id was renumbered, else the entry with that id. */
-export const resolveId = (t: AssumptionTrack, id: number): number => t.idMap[String(id)] ?? id
-
 export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wrong'; id: number }, now: number): { track: AssumptionTrack; note: string; changed: boolean } {
-  const id = resolveId(t, cmd.id)
+  // a head line names the current id: the roster reads the ids of the named file. idMap is a record only
+  const id = cmd.id
   const entry = t.entries.find(e => e.id === id)
   if (!entry) return { track: t, note: `No assumption ${cmd.id} in this session.`, changed: false }
   if (entry.status !== 'open') return { track: t, note: `Assumption ${cmd.id} is already ${entry.status}.`, changed: false }
