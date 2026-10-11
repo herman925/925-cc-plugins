@@ -31,6 +31,7 @@ nobody starts subagents unless you allow it.
   - [Model, effort and reopening](#model-effort-and-reopening)
   - [Auto-close, the session cap and the queue](#auto-close-the-session-cap-and-the-queue)
   - [Assumptions from Session Panel](#assumptions-from-session-panel)
+  - [Hermes members: the guard and the re-check](#hermes-members-the-guard-and-the-re-check-0529)
   - [Crashes and sleep](#crashes-and-sleep)
   - [Files and folders](#files-and-folders)
   - [Troubleshooting](#troubleshooting)
@@ -650,6 +651,34 @@ Limits:
 - The mod sends `SESSION-PANEL: confirm <id>` for the id in each entry as the file gives it. Session Panel accepts only
   numeric ids.
 
+### Hermes members: the guard and the re-check (0.5.29)
+
+A Hermes member is guarded by `team-orchestrator/hermes/guard.py`, a Hermes `pre_tool_call` shell hook. It applies the
+team rules to `write_file`, `patch`, `terminal` and `delegate_task`, for the members the roster lists. It reads only the
+roster, and never what the person typed: `#allow-write` and `#allow-subagent` in a Hermes tab do nothing.
+
+Wire it in the Hermes config (`C:\Users\<you>\AppData\Local\hermes\config.yaml`):
+
+```yaml
+hooks:
+  pre_tool_call:
+    - command: '"<Hermes venv python>" -I "<path to>/team-orchestrator/hermes/guard.py"'
+      matcher: "write_file|patch|terminal|delegate_task"
+      fail_closed: true
+```
+
+- **guard.py must stay at this path.** The config above points at the marketplace clone. With `fail_closed` on, a missing
+  file blocks Hermes tool calls. A marketplace update re-clones `main`, so the file is there only after a release to `main`.
+- Hermes asks once, at a terminal, whether to allow the hook. Until you allow it, Hermes skips it and nothing is guarded.
+  `hermes hooks list` shows `not allowlisted` until then.
+- A Hermes session that is not on the roster is never judged.
+
+`team-orchestrator/hermes/patch_check.py` is a read-only check to run after `hermes update`. It looks for the team patch
+in the five changed Hermes files (10 markers, +32 −5 lines). Exit 0: the patch is present. Exit 1: it is gone or partial,
+and it says which file. It never applies a patch; re-applying needs your yes.
+
+Not ported: the memory-folder exception of the Claude guard, and the held-session guard, since Hermes has no hold.
+
 ### Crashes and sleep
 
 #### Sleep-aware clocks
@@ -755,6 +784,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.29 | Hermes members: `hermes/guard.py` (a `pre_tool_call` shell hook, `fail_closed` on) and `hermes/patch_check.py` (a read-only re-check after `hermes update`). Documented, with the rule that `guard.py` must stay at its path. |
 | 0.5.28 | Delete an open assumption: the head is asked once, then `SESSION-PANEL: delete <id>` is sent to the member. Only the member's boss and the team top see it. |
 | 0.5.27 | Assumptions are opt-in: Settings → Assumptions → Show, off by default. The files are read only when it is on and Session Panel is enabled in this session, checked on each refresh. A toast says what it needs. |
 | 0.5.26 | Confirm and Wrong show only to the member's boss and the team top. Other sessions see the count and the list. |
