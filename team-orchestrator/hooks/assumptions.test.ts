@@ -3,9 +3,28 @@
 import { expect, test } from 'claude-code/testing'
 
 import { collectOpen, confirmLine, openFrom, wrongLine } from './assumptions'
-import { adopt, HUALONG, ID1, ID2, ID3, mountBand, world } from './test-world'
+import { adopt, HUALONG, ID1, ID2, ID3, mountBand, TEAM, world } from './test-world'
 
 const DIR = 'C:/proj/.claude/session-panel/assumptions'
+const USER_SETTINGS = 'C:/home/.claude/settings.json'
+// the team switch on, and Session Panel enabled in this session's own settings (the two things that let it read)
+const assumptionsOn = (files: Map<string, string>) => {
+  files.set(`${TEAM}/settings.json`, JSON.stringify({ assumptions: true }))
+  files.set(USER_SETTINGS, JSON.stringify({ enabledPlugins: { 'session-panel@herman-mods': true } }))
+}
+// every read of a file, by path: the files are read through fs.read, which goes to the map's get
+const spyReads = (files: Map<string, string>) => {
+  const reads: string[] = []
+  const get = files.get.bind(files)
+  // defineProperty, not assignment: the inherited get is read-only in the test runtime
+  Object.defineProperty(files, 'get', { value: (k: string) => (reads.push(k), get(k)), configurable: true })
+  return reads
+}
+const panelToasts = (on: any) => {
+  const toasts: string[] = []
+  on('ui.toast', async (_$: any, e: any) => (toasts.push(String(e.text)), { value: undefined }) as any)
+  return toasts
+}
 const file = (sessionId: string, entries: unknown[], version = 1) => JSON.stringify({ version, member: 'x', sessionId, entries })
 const entry = (id: string, status: string, extra: Record<string, unknown> = {}) => ({ id, text: `text of ${id}`, turn: 3, kind: 'declared', at: 1, status, ...extra })
 const withIds = (rows: typeof HUALONG) =>
@@ -43,6 +62,7 @@ test('the two one-line messages are exact', () => {
 
 test('the row says "N open" for a member, found by its session id; confirmed and wrong entries do not count', async ($, on) => {
   const files = world(on)
+  assumptionsOn(files)
   files.set(`${DIR}/tagged-9f2c.json`, file(ID2, [entry('a1', 'open'), entry('a2', 'open'), entry('a3', 'confirmed')]))
   files.set(`${DIR}/broken.json`, 'not json')
   files.set(`${DIR}/${ID1}.json`, file(ID1, [entry('c1', 'wrong')]))
@@ -57,6 +77,7 @@ test('the row says "N open" for a member, found by its session id; confirmed and
 
 test('the open list shows each open entry; Confirm and Wrong send one line to the member and write no file', async ($, on) => {
   const files = world(on)
+  assumptionsOn(files)
   const sends: any[] = []
   on('session.send', async (_$: any, e: any) => (sends.push(e), { isDelivered: true }) as any)
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open', { text: 'the API takes a path', kind: 'flagged', turn: 7 }), entry('a2', 'confirmed')]))
@@ -81,6 +102,7 @@ test('the open list shows each open entry; Confirm and Wrong send one line to th
 
 test('a session that is neither the member\'s boss nor the team top sees the count and the list, but no Confirm or Wrong', async ($, on) => {
   const files = world(on)
+  assumptionsOn(files)
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open', { text: 'the API takes a path' })]))
   sessionAs(on, ID3) // Hualong Worker 5 reports to Hualong Workers, so it is neither
   await adopt($, withIds(HUALONG))
@@ -94,6 +116,7 @@ test('a session that is neither the member\'s boss nor the team top sees the cou
 
 test('the boss of the member sees Confirm and Wrong, and the answer goes to the member', async ($, on) => {
   const files = world(on)
+  assumptionsOn(files)
   const sends: any[] = []
   on('session.send', async (_$: any, e: any) => (sends.push(e), { isDelivered: true }) as any)
   files.set(`${DIR}/${ID3}.json`, file(ID3, [entry('w1', 'open', { text: 'the worker reads the file first' })]))
@@ -107,8 +130,59 @@ test('the boss of the member sees Confirm and Wrong, and the answer goes to the 
   expect(sends.find(s => String(s.text).startsWith('SESSION-PANEL')).to).toBe(ID3)
 })
 
+test('the setting is off by default: no file is read, and no count, button, list or note shows', async ($, on) => {
+  const files = world(on)
+  files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open')]))
+  files.set(USER_SETTINGS, JSON.stringify({ enabledPlugins: { 'session-panel@herman-mods': true } }))
+  const reads = spyReads(files)
+  sessionAs(on, ID1)
+  await adopt($, withIds(HUALONG))
+  const band = await mountBand($)
+  expect(JSON.stringify(await band.drawn())).not.toContain('1 open')
+  expect(await band.find({ key: 'assume-Hualong|Hualong Workers' })).toBeUndefined()
+  expect(reads.filter(k => k.startsWith(DIR) || k === USER_SETTINGS)).toEqual([])
+})
+
+test('on with Session Panel enabled here: the files are read on refresh and the count shows; enabling says it needs Session Panel', async ($, on) => {
+  const toasts = panelToasts(on)
+  const files = world(on)
+  files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open')]))
+  files.set(USER_SETTINGS, JSON.stringify({ enabledPlugins: { 'session-panel@herman-mods': true } }))
+  sessionAs(on, ID1)
+  await adopt($, withIds(HUALONG))
+  const reads = spyReads(files)
+  const band = await mountBand($)
+  await band.press({ key: 'settings' })
+  await band.press({ key: 'ts-assume-1' })
+  expect(toasts.at(-1)).toContain('needs Session Panel, which is on in this session')
+  await band.press({ key: 'tab-roster' })
+  await band.press({ key: 'refresh' })
+  expect(JSON.stringify(await band.drawn())).toContain('1 open')
+  expect(reads.some(k => k.startsWith(DIR))).toBe(true)
+})
+
+test('on without Session Panel: nothing is read and no assumption UI shows; enabling says it stays inactive until Session Panel is installed and enabled', async ($, on) => {
+  const toasts = panelToasts(on)
+  const files = world(on)
+  files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open')]))
+  sessionAs(on, ID1)
+  await adopt($, withIds(HUALONG))
+  const reads = spyReads(files)
+  const band = await mountBand($)
+  await band.press({ key: 'settings' })
+  await band.press({ key: 'ts-assume-1' })
+  expect(toasts.at(-1)).toContain('needs Session Panel')
+  expect(toasts.at(-1)).toContain('stays inactive until Session Panel is installed and enabled')
+  await band.press({ key: 'tab-roster' })
+  await band.press({ key: 'refresh' })
+  expect(JSON.stringify(await band.drawn())).not.toContain('1 open')
+  expect(await band.find({ key: 'assume-Hualong|Hualong Workers' })).toBeUndefined()
+  expect(reads.filter(k => k.startsWith(DIR))).toEqual([])
+})
+
 test('the files are read on a roster refresh, not on a redraw', async ($, on) => {
   const files = world(on)
+  assumptionsOn(files)
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open')]))
   await adopt($, withIds(HUALONG))
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open'), entry('a2', 'open')]))

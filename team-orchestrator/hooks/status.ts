@@ -48,11 +48,13 @@ export type TeamSettings = {
   batch: number
   /** deletes of a member's own scratch are approved without asking (platform.ts) */
   autoScratch: boolean
+  /** show each member's open assumptions from Session Panel (#89); reads its files only when Session Panel is on here */
+  assumptions: boolean
   /** the project's scratch folder, relative to the project; heads and leads may clean it without asking */
   scratchDir: string
 }
 
-export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8, launch: 'demand', batch: 3, autoScratch: true, scratchDir: '.claude/scratch' }
+export const TEAM_SETTINGS0: TeamSettings = { autoClose: true, idleMinutes: 10, exempt: [], reopen: 'resume', maxOpen: 8, launch: 'demand', batch: 3, autoScratch: true, assumptions: false, scratchDir: '.claude/scratch' }
 
 export const MIN = 60_000
 /** a member with no write for this long shows as offline */

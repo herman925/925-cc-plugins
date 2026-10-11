@@ -121,6 +121,8 @@ declare module 'claude-code' {
       spawn: Spawn
       /** the open assumptions of each session, by session id (#89) */
       assumptions: Record<string, { id: string; text: string; kind: string; turn: number }[]>
+      /** the assumptions view is on here: the team's switch is on and Session Panel is on in this session (#89) */
+      assumptionsOn: boolean
     }
   }
 }

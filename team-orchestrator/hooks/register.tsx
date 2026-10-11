@@ -142,6 +142,8 @@ const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: ''
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
 // the open assumptions of each session, by session id; read on each roster refresh only (see readAssumptions)
 const assumptions = atom({ plugin: 'team-orchestrator', key: 'assumptions' } as const, {} as Record<string, OpenAssumption[]>)
+// whether the assumptions view is on here: the team's switch is on and Session Panel is on in this session (see refresh)
+const assumptionsOn = atom({ plugin: 'team-orchestrator', key: 'assumptionsOn' } as const, false)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
 const DOCK = 'team-dock'
@@ -1777,6 +1779,20 @@ const under = (cwd: string, wt: string) => wt !== '' && `${slash(cwd)}/`.startsW
 const DERIVED = /^(no Orca tab|no transcript|several tabs named .*|status line not readable)$/
 const withNotes = (old: string, add: string[]) => [...old.split(', ').filter(p => p !== '' && !DERIVED.test(p)), ...add].join(', ')
 
+// Session Panel is on here when the settings that apply to this session enable it. Claude Code writes enabledPlugins
+// when a plugin is turned on or off, and layers the files the way it does: this project's local file, then the project's,
+// then the user's (CLAUDE_CONFIG_DIR or ~/.claude); the first that names it decides. Nothing else of another plugin is read.
+const SESSION_PANEL = 'session-panel@herman-mods'
+async function sessionPanelOn($: any): Promise<boolean> {
+  const root = await rootOf($)
+  const [user] = await claudeDirs($)
+  for (const f of [`${root}/.claude/settings.local.json`, `${root}/.claude/settings.json`, ...(user ? [`${user}/settings.json`] : [])]) {
+    const on = (await readJson($, f))?.enabledPlugins?.[SESSION_PANEL]
+    if (typeof on === 'boolean') return on
+  }
+  return false
+}
+
 // The open assumptions of every session in the project (#89), read in one pass per roster refresh. Read only: a file that
 // is missing or does not parse counts for nothing, and no file is ever written here.
 async function readAssumptions($: any) {
@@ -1818,7 +1834,11 @@ async function refresh($: any) {
       return s ? { ...m, state: shownState(s, now, sleeps()) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
   )
-  await readAssumptions($)
+  // the assumptions are read only when the team's switch is on and Session Panel is on in this session; otherwise no file is read
+  const assumingOn = (await readTeamSettings($)).assumptions && (await sessionPanelOn($))
+  await update($, assumptionsOn, () => assumingOn)
+  if (assumingOn) await readAssumptions($)
+  else await update($, assumptions, () => ({}))
   // Only one session polls Orca: the team's top member (boss "user"), or a session not on the roster (the person's
   // own). Every other member just pulls the roster file that session shares. Fourteen sessions each reading fourteen
   // terminals every refresh queued ~200 orca calls at once and made Orca's own typing and scrolling lag.
@@ -3112,6 +3132,19 @@ async function settingsView($: any, ui: any) {
     await writeTeamSettings($, patch)
     await update($, frame, x => x + 1)
   }
+  // the switch is a team setting like the rest: the top writes it, any other session's change waits for the top. Turning it
+  // on tells the person what it needs; without Session Panel here the view stays inactive until it is installed and enabled.
+  const setAssumptions = async (on: boolean) => {
+    await setTeam({ assumptions: on })
+    const panel = await sessionPanelOn($)
+    await update($, assumptionsOn, () => on && panel)
+    if (!on) return void (await update($, assumptions, () => ({})))
+    await $.ui.toast(
+      panel
+        ? 'Team Orchestrator: the assumptions view needs Session Panel, which is on in this session. Counts show after the next refresh.'
+        : 'Team Orchestrator: the assumptions view needs Session Panel. Session Panel is not on in this session, so the view stays inactive until Session Panel is installed and enabled.',
+    )
+  }
   const layout = async (to: string) => {
     await set({ layout: to as Settings['layout'] })
     if (to === 'dock') await $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
@@ -3185,6 +3218,14 @@ async function settingsView($: any, ui: any) {
       <Text dimColor>
         {' '.repeat(13)}Workers may delete inside their own session's temporary folder without asking; heads and leads may also clean the system temp folder and this project folder. Any other delete still asks.
       </Text>
+      <Text bold>Assumptions</Text>
+      <Text dimColor>
+        {' '.repeat(13)}Each member's open assumptions from Session Panel: the count on its row, and Confirm or Wrong for its boss and the team top. Needs Session Panel installed and enabled in this session.
+      </Text>
+      <Box>
+        <Text bold>{'Show'.padEnd(13)}</Text>
+        {Seg(ui, 'ts-assume', [['1', 'On'], ['0', 'Off']], ts.assumptions ? '1' : '0', v => void setAssumptions(v === '1'))}
+      </Box>
       {workers.length > 0 && (
         <Box>
           <Text bold>{'Never close'.padEnd(13)}</Text>
@@ -3806,10 +3847,12 @@ async function rosterView($: any, ui: any, cols: number) {
   const setAct = (patch: Partial<Act>) => update($, act, old => ({ ...ACT0, ...old, ...patch }))
   const ticked = new Set(list.filter(m => m.sel).map(keyOf))
   // each member's open assumptions, by session id: as the last roster refresh read them (see readAssumptions)
-  const assumed: Record<string, OpenAssumption[]> = await read($, assumptions)
+  // off (the team's switch, or Session Panel here): no count, button, list or note, and no identity check either
+  const assumingOn = await read($, assumptionsOn)
+  const assumed: Record<string, OpenAssumption[]> = assumingOn ? await read($, assumptions) : {}
   const assumedOf = (m: Member): OpenAssumption[] => assumed[m.sessionId] ?? []
   // Confirm and Wrong are for the member's boss and the team top: every other session sees the count and the list only
-  const viewer = await identity($, list)
+  const viewer = assumingOn ? await identity($, list) : NOBODY
   const top = projectTop(list)
   const mayAnswer = (target: Member) =>
     viewer.level === 'full' && !!viewer.me && (viewer.me.name === target.boss || (!!top && keyOf(viewer.me) === keyOf(top)))
@@ -4033,6 +4076,7 @@ async function rosterView($: any, ui: any, cols: number) {
       )
     }
     if (a.kind === 'assume') {
+      if (!assumingOn) return null
       const who = list.find(m => keyOf(m) === a.key)
       if (!who) return box('Open assumptions', <Box flexDirection="column"><Text>That row is gone.</Text>{cancel}</Box>)
       // the answer goes to the member as an ordinary team message; its Session Panel changes its own file
@@ -4135,7 +4179,7 @@ async function rosterView($: any, ui: any, cols: number) {
                     {p.cols.map(c => (
                       <Text color={value[c.id]?.[1]} dimColor={away(m)}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
                     ))}
-                    {assumedOf(m).length > 0 && (
+                    {assumingOn && assumedOf(m).length > 0 && (
                       <Button
                         key={`assume-${keyOf(m)}`}
                         label={`${assumedOf(m).length} open`}

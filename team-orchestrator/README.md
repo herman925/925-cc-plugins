@@ -30,10 +30,12 @@ nobody starts subagents unless you allow it.
   - [Tools the sessions can call](#tools-the-sessions-can-call)
   - [Model, effort and reopening](#model-effort-and-reopening)
   - [Auto-close, the session cap and the queue](#auto-close-the-session-cap-and-the-queue)
+  - [Assumptions from Session Panel](#assumptions-from-session-panel)
   - [Crashes and sleep](#crashes-and-sleep)
   - [Files and folders](#files-and-folders)
   - [Troubleshooting](#troubleshooting)
   - [Planned](#planned)
+  - [Cross-mod functions](#cross-mod-functions)
   - [Changelog (0.5.x)](#changelog-05x)
 
 ## Features
@@ -49,6 +51,7 @@ nobody starts subagents unless you allow it.
 | Team messaging | `team_message` starts or reopens a member, then delivers. `@team` sends your message to a team's head. |
 | Adding members | New members on a running team, within a lead's purview and with your approval (0.5.17) |
 | Auto-close and reopen | Idle workers close; a message reopens them with their conversation |
+| Assumptions (opt-in, 0.5.25) | Each member's open assumptions from Session Panel: "N open" on its row, and Confirm or Wrong for its boss and the team top. Off by default; needs Session Panel. |
 | Session cap and queue | A limit on open sessions; messages wait until there is room |
 | Permission guard | No subagents for members, and no file writes for members with reports, unless you allow it |
 | Locked team files | Only the team top changes the roster and the team settings |
@@ -119,11 +122,19 @@ never judged. A subagent runs inside its session, so a rule for the session cove
 | `Agent` (subagents) | Every roster member | **Allow subagents** is on, or `#allow-subagent` this turn. Claude Code's own helpers `statusline-setup` and `claude-code-guide` always pass. |
 | `Write`, `Edit`, `NotebookEdit` | Members with reports (the top, heads and leads) | **Allow writes** is on, or `#allow-write` this turn. The member's own memory folder (`~/.claude/projects/<project>/memory/`) is always open. |
 | `Write`, `Edit`, `NotebookEdit` on the team files | Every member except the team top | No switch or keyword opens them. |
-| `Bash`, `PowerShell` commands that name the team files | Every member except the team top | Plain reads pass: `cat`, `type`, `Get-Content`, `ls`, `dir`, `grep`, `Select-String`, `jq` without `-i`. |
+| `Bash`, `PowerShell` commands that name the team files | Every member except the team top | Plain reads of the named file pass: `cat`, `type`, `Get-Content`, `ls`, `dir`, `grep`, `Select-String`, `jq` without `-i`. |
+| `Bash`, `PowerShell` commands that change into the team folder (`cd`, `chdir`, `pushd`, `sl`, `Set-Location`) | Every member except the team top | Always refused, even a read. A `cd` is not a plain read, so the whole command counts as a team-file command. |
 
 The team files are `roster.json`, `settings.json`, `meta.json`, the `changes/` folder and, from 0.5.17, the
 `requests/` folder. Request files are written only through `member_add`, never by hand. `roles/` and `queue/` stay
 writable. Bash and PowerShell are otherwise not guarded.
+
+A command names the team files when it names `roster.json` (anywhere), names `settings.json` or `meta.json` with the
+team folder, names `changes/` or `requests/` inside the team folder, or puts the team folder and a wildcard, a variable
+or a substitution in one word
+(`rm .claude/team-orchestrator/*.json`, `$D/team-orchestrator/a`). From 0.5.23 the folder and the wildcard must share
+a word, so `claude plugin test team-orchestrator | grep -E "[0-9]+ *pass"` passes. From 0.5.24 a change into the team
+folder counts as naming it, so `cd .claude/team-orchestrator && rm *.json` is refused.
 
 Each refusal says who was refused and why, and tells the model to hand the work to a worker or to ask you. It also
 shows a toast. A permission that lets a call through shows a toast only once per session and reason.
@@ -228,6 +239,12 @@ Limits:
 | Scratch | Auto-approve clean-up, or Ask each time. See [Scratch clean-up](#scratch-clean-up-without-asking). | Auto-approve |
 | Scratch dir | The project's scratch folder that heads and leads may clean without asking | `.claude/scratch` |
 | Never close | A tick box per worker; a ticked worker is never auto-closed | None ticked |
+
+**Team-wide (Settings → Assumptions, 0.5.27).** Shared by every session, in `.claude/team-orchestrator/settings.json`.
+
+| Setting | What it does | Default |
+|---|---|---|
+| Show | Shows each member's open assumptions from Session Panel. The files are read only when this is On and Session Panel is enabled in this session. See [Assumptions from Session Panel](#assumptions-from-session-panel). | Off |
 
 **Per member, team-wide (Settings → Permissions).** Stored in the roster.
 
@@ -406,7 +423,8 @@ has one top. Nobody already on the roster is changed or removed. You can also pi
 Before 0.5.17, launching under an existing team name replaced that team's members on the roster.
 
 `team_adopt` still works by team: adopting into a team name makes that team's members exactly the adopted sessions.
-Other teams stay as they are.
+Other teams stay as they are. A session adopted again keeps what the roster already knows about it: its briefing, its
+model and its effort (0.5.22), and its session id.
 
 ### The panel
 
@@ -545,6 +563,9 @@ A team tool never crashes. If something fails, it answers with a sentence that s
   high and Max. `team_launch` accepts any model name.
 - An old short name such as `haiku-5-5` gets `claude-` back (`claude-haiku-5-5`). Aliases (`opus`, `sonnet`, `haiku`,
   `fable`) and every other name pass as typed, so a wrong name fails visibly at start. A name with `[1m]` is quoted.
+- With `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` or
+  `ANTHROPIC_DEFAULT_FABLE_MODEL` set (0.5.21), the mod reads them before each start. A family's alias and short
+  names (`sonnet`, `sonnet-4-6`) start with that family's value. A name equal to a set value passes as typed.
 - `default`, `keep` and an empty name pass no `--model`.
 - A member started on Default keeps what it actually ran: after its first run, the roster records that model.
 - The CONTEXT column uses the context window the member reports for itself.
@@ -560,6 +581,9 @@ A closed member reopens when a message arrives for it.
 - It reopens with the model it last asked for in its transcript, as typed (including `[1m]` and gateway names). If
   there is none, it uses the roster's model.
 - A member proved to have crashed always reopens with Resume.
+- The session name is quoted when the member starts (0.5.19): `--name "Mod Builder 2"` reaches Claude Code as one name,
+  so a name with spaces is not split into two arguments.
+- A worker that has just reopened is not closed again straight away (0.5.20).
 - **Rename / model / effort…** restarts idle members with `--resume`. Model and effort left on "keep" stay as saved.
 
 Members that run another CLI (Codex, Hermes and others) can be adopted. They show as **not managed**. The mod never
@@ -582,6 +606,49 @@ When a worker reports to its boss, it is reminded to close the processes its own
 browser-automation servers, delete its scratch files and tell its boss "clean". When a head or lead hears from one of
 its reports, it is reminded to check that report's leftovers. A plain "clean" reply does not trigger the reminder
 again.
+
+### Assumptions from Session Panel
+
+Session Panel is a separate mod. It writes each session's open assumptions to
+`<project>/.claude/session-panel/assumptions/<session id>.json`. This mod reads those files and never writes them
+(0.5.25). It needs Session Panel to do anything.
+
+**Off by default.** Turn it on in **Settings → Assumptions → Show → On** (0.5.27). It is a team setting, kept in
+`settings.json`: the team top writes it, and a change made in another session waits for the team top, like the other
+team settings.
+
+**It shows only when both are true in this session:**
+
+- the **Show** setting is On, and
+- Session Panel is enabled here. The mod looks for `"session-panel@herman-mods": true` under `enabledPlugins` in
+  `.claude/settings.local.json`, then `.claude/settings.json`, then the user's `settings.json` (`CLAUDE_CONFIG_DIR`
+  or `~/.claude`). The first file that names the plugin decides.
+
+The check runs on every roster refresh (every 30 seconds), so turning Session Panel on or off shows on the next one.
+While either condition is false, the mod reads no assumption file and shows nothing from them.
+
+| What you see | When |
+|---|---|
+| `N open` on a member's row | The file holds N entries with status `open`. Confirmed and wrong entries are not counted. Missing or unreadable files show nothing. |
+| **Open assumptions of <name> (N)** | You press the row's `N open` button. Each open entry shows its text, its kind and its turn. |
+| **Confirm** and **Wrong** | Only the member's boss and the team top see them. Any other session sees a note: "Only the member's boss or the team top can confirm or mark these wrong." |
+
+Confirm and Wrong send one line to the member as an ordinary team message, through the same route `team_message`
+uses: `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>`. A closed member reopens, or the message queues,
+as it would for any message. Session Panel on the member's side applies the line to its own file. The mod does not
+change the file.
+
+When you turn **Show** on, a toast says what it needs:
+
+- With Session Panel on here: `Team Orchestrator: the assumptions view needs Session Panel, which is on in this session. Counts show after the next refresh.`
+- Without it: `Team Orchestrator: the assumptions view needs Session Panel. Session Panel is not on in this session, so the view stays inactive until Session Panel is installed and enabled.`
+
+Limits:
+
+- Session Panel's `enabledPlugins` entry is read from the settings files. It does not show that the plugin has loaded
+  in this session. A session that enabled Session Panel after it started needs `/reload-plugins`.
+- The mod sends `SESSION-PANEL: confirm <id>` for the id in each entry as the file gives it. Session Panel accepts only
+  numeric ids.
 
 ### Crashes and sleep
 
@@ -663,6 +730,9 @@ working folder.
 | A toast: roster.json changed outside the mod | Someone edited the switches by hand. Check **Settings → Permissions**. |
 | Dock right still sits above the prompt | Use the fullscreen layout and a window of at least 110 columns. |
 | A removed member's tab is still open | Removing changes only the roster. Close the tab yourself. |
+| No `N open` on a row, though Session Panel shows open assumptions | Turn **Settings → Assumptions → Show** On, check that Session Panel is enabled in this session, then press **Refresh**. |
+| A toast: "the assumptions view needs Session Panel. … stays inactive until Session Panel is installed and enabled" | Install Session Panel and enable it, then run `/reload-plugins` in this session. |
+| Confirm or Wrong is missing on an assumption | Only the member's boss and the team top see them. Ask the boss or the team top to answer. |
 
 ### Planned
 
@@ -670,10 +740,30 @@ working folder.
 - Approving new members through approved meeting minutes or plans, besides AskUserQuestion (map #2).
 - Teams that mix Claude Code with other CLIs (#48 to #55).
 
+### Cross-mod functions
+
+These texts are shared with Session Panel's README, so both mods describe the same thing in the same words.
+
+- Session Panel band: the title " Session Panel " with its version (" v0.3.32") when known, read from the plugin's own manifest.
+- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
+- Toasts (Session Panel side): "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
+- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm and Wrong, which send the status line as a team message. Others see the count and list only. Team-orchestrator never writes an assumptions file.
+- Shared files: `<project root>/.claude/session-panel/assumptions/<session id>.json` with version, member (the session id for now), sessionId, and entries (id, text, status, kind, turn). `.claude/session-panel/` has a `.gitignore` with `*`.
+- What needs what: Confirm and Wrong need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
+
 ### Changelog (0.5.x)
 
 | Version | Change |
 |---|---|
+| 0.5.27 | Assumptions are opt-in: Settings → Assumptions → Show, off by default. The files are read only when it is on and Session Panel is enabled in this session, checked on each refresh. A toast says what it needs. |
+| 0.5.26 | Confirm and Wrong show only to the member's boss and the team top. Other sessions see the count and the list. |
+| 0.5.25 | Each member's open assumptions from Session Panel: "N open" on its row, and a list with Confirm and Wrong. Read only. |
+| 0.5.24 | A change into the team folder (`cd`, `chdir`, `pushd`, `sl`, `Set-Location`) makes the whole command a team-file command. |
+| 0.5.23 | The team-file guard counts a wildcard only when it shares a word with the team folder, so `grep -E "[0-9]+ *pass"` is no longer refused. |
+| 0.5.22 | Adopting a session again keeps its model and effort. |
+| 0.5.21 | Model names: `ANTHROPIC_DEFAULT_*_MODEL` values are used for the family aliases; old short names get `claude-` back. |
+| 0.5.20 | A worker that has just reopened is not closed again straight away. |
+| 0.5.19 | The session name is quoted at start, so a name with spaces stays one `--name`. |
 | 0.5.18 | Groundwork for teams across computers, not yet switched on: bundled encryption (sealed messages, a passphrase-locked join bundle, a strength meter that only warns) and device keys kept in each computer's own vault (DPAPI on Windows, Keychain on macOS, Secret Service on Linux, or an owner-only file outside synced folders). |
 | 0.5.17 | New member… and `member_add`: new members start on their first message. Heads and leads may request members only within their purview, with your approval. Launching under a taken team name is refused and offers add or merge. |
 | 0.5.16 | Sleep-aware clocks. A crash check at send time. Only members proved dead are reopened; hung or doubtful ones are queued. |
