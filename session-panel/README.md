@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.36. The version is shown dim beside the band title, as ` v0.3.36`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.37. The version is shown dim beside the band title, as ` v0.3.37`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -127,7 +127,7 @@ Each session keeps its list in one file, written on every change and read back w
 - The file name is the session's name, with the team-orchestrator rule: any run of characters that is not a letter, a digit, `.`, `_` or `-` becomes `_` (so `Mod Builder 2` is `Mod_Builder_2.json`). The name comes from the session registry (`<config dir>/sessions/<pid>.json`, field `name`), matched by this session's id. With no name, the file is the session id's file, as before.
 - Takeover: when a session closes and a new one starts with the same name, the new session takes over the same file. It keeps the old entries (each still tagged with its old `sessionId`) and sets the file's top-level `sessionId` to itself.
 - A live owner: if the file's owner is still in the registry, or another live session has the same name, this session writes `<name>-<first 8 of the session id>.json` instead, and shows one toast.
-- Fail safe: if the registry folder cannot be listed, or a record in it cannot be read, the owner is unknown. The session then uses the tagged file and never takes a file over. A takeover is written at once, so the file names the new session even with no new entries.
+- Fail safe: if a registry folder that exists cannot be listed, or a record in it cannot be read, the owner is unknown. The session then uses the tagged file and never takes a file over. A folder that does not exist has no sessions. The registry is read again once after 200 ms before that decision, so a record caught mid-rewrite does not tag the session for good. A takeover is written at once, so the file names the new session even with no new entries.
 - The folder `.claude/session-panel/` has a `.gitignore` with `*`, so git ignores the whole folder. The project's own `.gitignore` is not changed.
 - Shape: `{ "version": 1, "member": "<name>", "sessionId": "<owner session id>", "entries": [...] }`. `member` is the session's name, or its session id when it has no name.
 - Each entry: `{ id, text, turn, kind: "declared" | "flagged", path?, paths?, status: "open" | "confirmed" | "wrong", at, resolvedAt?, sessionId }`. `path` and `paths` are on flagged entries only: `path` is the first file, `paths` all of them, both relative to the project root.

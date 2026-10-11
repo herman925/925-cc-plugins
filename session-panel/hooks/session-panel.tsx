@@ -299,11 +299,11 @@ async function readText($: Hooked, path: string): Promise<string | undefined> {
 }
 
 /**
- * The sessions the registry lists (~/.claude/sessions/<pid>.json), as team-orchestrator reads them. `complete` is false
- * when a folder could not be listed or a record could not be read: the list is then not the whole truth, so no owner
- * can be ruled out.
+ * The sessions the registry lists (~/.claude/sessions/<pid>.json), read once. `complete` is false when a folder that is
+ * there cannot be listed, or a record cannot be read: then no owner can be ruled out. A folder that is not there has no
+ * sessions in it, so it is not a reason for `complete` to be false.
  */
-async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: string; name: string }>; complete: boolean }> {
+async function readRegistry($: Hooked): Promise<{ live: Array<{ sessionId: string; name: string }>; complete: boolean }> {
   const none = () => undefined
   const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
   const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
@@ -312,6 +312,12 @@ async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: strin
   let complete = true
   for (const dir of dirs) {
     const at = `${dir}/sessions`
+    const there = await $.fs.exists(at).catch(() => undefined)
+    if (there === undefined) {
+      complete = false
+      continue
+    }
+    if (!there) continue
     let listed: any[]
     try {
       listed = (await $.fs.list(at)) as any[]
@@ -332,6 +338,17 @@ async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: strin
     }
   }
   return { live, complete }
+}
+
+/**
+ * The registry, read again once after 200 ms when the first read was not whole: a record caught mid-rewrite is then read
+ * cleanly, instead of tagging the session for its whole life.
+ */
+async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: string; name: string }>; complete: boolean }> {
+  const first = await readRegistry($)
+  if (first.complete) return first
+  await $.clock.sleep(200)
+  return readRegistry($)
 }
 
 /** The OS as team-orchestrator reads it: the OS variable, then uname -s. */

@@ -24,7 +24,7 @@ const ASK = 'mcp__session-panel__ask_choices'
 
 // The world beneath the plugin: a clock, a store, an env and a tool bottom that says ok.
 function world(on: any, env: Record<string, string> = {}, hasOwnBand = false) {
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.store(on)
   mock.env(on, env)
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
@@ -40,6 +40,7 @@ function world(on: any, env: Record<string, string> = {}, hasOwnBand = false) {
   on('tool.call', (_$: any, e: any) =>
     e.tool === 'Bash' ? { result: 'failed', text: 'failed', isError: true } : { result: 'ok', text: 'ok' },
   )
+  return clock
 }
 
 async function begin($: any, text = 'Build my landing page') {
@@ -1308,7 +1309,7 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
 })
 
 // The engine's file and session calls, as the test kit answers them. `files` is what the disk holds, by path.
-function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }>; unlistable?: boolean; broken?: boolean } = {}) {
+function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }>; unlistable?: boolean; broken?: boolean; flaky?: boolean; noSessions?: boolean; unlistablePath?: string } = {}) {
   const writes: Array<{ path: string; text: string }> = []
   const fill: string[] = []
   const reached: string[] = []
@@ -1321,11 +1322,25 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
   const registry = Object.fromEntries((opts.sessions ?? []).map((x, i) => [`${sessionsDir}/${100 + i}.json`, JSON.stringify({ sessionId: x.sessionId, name: x.name, pid: 100 + i, cwd: opts.root ?? 'C:/proj' })]))
   on('fs.list', (_$: any, e: any) => {
     if (opts.unlistable && slash(e.path) === sessionsDir) throw new Error('the registry folder cannot be listed')
+    if (opts.unlistablePath !== undefined && slash(e.path) === opts.unlistablePath) throw new Error('the folder cannot be listed')
     return { value: slash(e.path) === sessionsDir ? Object.keys(registry).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [] }
   })
-  if (opts.broken) registry[`${sessionsDir}/199.json`] = '{ not json'
-  on('fs.read', (_$: any, e: any) => ({ value: registry[slash(e.path)] ?? opts.files?.[slash(e.path)] }))
-  on('fs.exists', () => ({ value: false }))
+  if (opts.broken || opts.flaky) registry[`${sessionsDir}/199.json`] = '{ not json'
+  let flakyReads = 0
+  on('fs.read', (_$: any, e: any) => {
+    const p = slash(e.path)
+    if (opts.flaky && p === `${sessionsDir}/199.json`) {
+      // the first read catches the record mid-rewrite; the next read finds it whole
+      flakyReads++
+      return { value: flakyReads === 1 ? '{ not json' : JSON.stringify({ sessionId: 'gone-0000', name: '', pid: 199 }) }
+    }
+    return { value: registry[p] ?? opts.files?.[p] }
+  })
+  on('fs.exists', (_$: any, e: any) => {
+    const p = slash(e.path)
+    if (p === sessionsDir) return { value: !opts.noSessions }
+    return { value: p === opts.unlistablePath }
+  })
   on('fs.write', (_$: any, e: any) => {
     writes.push({ path: slash(e.path), text: e.text })
     return { value: undefined }
@@ -1824,6 +1839,20 @@ test('table: the headers, the rows and the two action buttons render, with spaci
 })
 
 
+// Runs an operation while advancing the mock clock, so a sleep inside it (the registry retry) resolves.
+async function settle<T>(clock: any, op: Promise<T>): Promise<T> {
+  let done = false
+  op.then(
+    () => (done = true),
+    () => (done = true),
+  )
+  while (!done) {
+    await clock.advance(200)
+    await new Promise(r => setTimeout(r, 0))
+  }
+  return op
+}
+
 // 16. takeover writes at once; an unreadable or broken registry never gives a takeover (0.3.36)
 test('takeover: after a takeover with no new entries, the file names the new session as owner', async ($, on) => {
   world(on, WIN_ENV)
@@ -1840,20 +1869,20 @@ test('takeover: after a takeover with no new entries, the file names the new ses
 })
 
 test('fail safe: a registry folder that cannot be listed never gives a takeover of the name file', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   const old = storedJson('Mod Builder', 'old-id-1234', [])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, unlistable: true })
-  await flaggedEdit($)
+  await settle(clock, flaggedEdit($))
   // with no registry the name is unknown, so the session writes its own id file, and the name file is left alone
   expect(w.writes.some(x => x.path === MODB)).toBe(false)
   expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/new-id-5678.json')
 })
 
 test('fail safe: a registry record that cannot be read gives the tagged file, never a takeover', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   const old = storedJson('Mod Builder', 'old-id-1234', [])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }], broken: true })
-  await flaggedEdit($)
+  await settle(clock, flaggedEdit($))
   expect(w.writes.some(x => x.path === MODB)).toBe(false)
   expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/Mod_Builder-new-id-5.json')
 })
@@ -1879,4 +1908,37 @@ test('pure: an incomplete registry is never a takeover, even with no live owner'
   })
   expect(r.takeover).toBe(false)
   expect(r.tagged).toBe(true)
+})
+
+// 17. the registry: a missing folder is empty; an unlistable one is not; a record caught mid-rewrite is read again (0.3.37)
+test('registry: a CLAUDE_CONFIG_DIR with no sessions folder is empty, so a clean home registry still allows takeover', async ($, on) => {
+  world(on, { ...WIN_ENV, CLAUDE_CONFIG_DIR: 'C:/other' })
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await flaggedEdit($)
+  expect(w.writes.at(-1)!.path).toBe(MODB)
+  expect(w.last().sessionId).toBe('new-id-5678')
+})
+
+test('registry: a folder that exists but cannot be listed still gives the tagged file, never a takeover', async ($, on) => {
+  const clock = world(on, { ...WIN_ENV, CLAUDE_CONFIG_DIR: 'C:/other' })
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, {
+    id: 'new-id-5678',
+    files: { [MODB]: old },
+    sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }],
+    unlistablePath: 'C:/other/sessions',
+  })
+  await settle(clock, flaggedEdit($))
+  expect(w.writes.some(x => x.path === MODB)).toBe(false)
+  expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/Mod_Builder-new-id-5.json')
+})
+
+test('registry: a record caught mid-rewrite is read again after the pause, so the takeover happens', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }], flaky: true })
+  await settle(clock, flaggedEdit($))
+  expect(w.writes.at(-1)!.path).toBe(MODB)
+  expect(w.last().sessionId).toBe('new-id-5678')
 })
