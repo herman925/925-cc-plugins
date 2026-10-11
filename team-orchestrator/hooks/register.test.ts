@@ -197,6 +197,14 @@ test('several tabs of one name: the one in the worktree the transcript last ran 
   expect(saved(files)[0].handle).toBe('term_ee3')
 })
 
+test('adopt again keeps the saved model and effort of a member', async ($, on) => {
+  const files = world(on, [{ handle: 'term_ff2', title: '✳ Hualong Workers' }], [{ id: ID1, title: 'Hualong Workers' }])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([{ ...W, team: 'Hualong', handle: 'term_ff2', sessionId: ID1, model: 'sonnet', effort: 'high' }]))
+  await adopt($, [{ ...W, handle: 'term_ff2', sessionId: ID1 }])
+  expect(saved(files)[0].model).toBe('sonnet')
+  expect(saved(files)[0].effort).toBe('high')
+})
+
 // two teams on one machine can both have a "Head": a tab is only ever this member's if it sits in the member's worktree
 test('the only tab of that name sits in another worktree: it is not adopted', async ($, on) => {
   const files = world(

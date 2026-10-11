@@ -2596,7 +2596,7 @@ export const register: Register = (on, options) => {
     })
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
-    await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
+    await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, model: known.find(k => k.name === a.name)?.model ?? a.model, effort: known.find(k => k.name === a.name)?.effort ?? a.effort, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
     await update($, view, () => 'roster')
     // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
