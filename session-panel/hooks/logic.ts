@@ -539,6 +539,36 @@ export function setStatus(t: AssumptionTrack, id: number, status: 'confirmed' | 
 
 export const openCount = (t: AssumptionTrack) => t.entries.filter(e => e.status === 'open').length
 
+/** The question asked before an open entry is deleted, and its two answers. */
+export const deleteQuestion = (a: Assumption) => `Delete open assumption ${a.id}? Nobody has decided on it yet.`
+export const DELETE_OPTIONS = ['Delete', 'Keep']
+
+/** Removes one entry, whatever its status. */
+export function removeEntry(t: AssumptionTrack, id: number): AssumptionTrack {
+  return { ...t, entries: t.entries.filter(e => e.id !== id) }
+}
+
+/** Removes every confirmed and wrong entry. Returns how many went. */
+export function dropResolved(t: AssumptionTrack): { track: AssumptionTrack; count: number } {
+  const keep = t.entries.filter(e => e.status === 'open')
+  return { track: { ...t, entries: keep }, count: t.entries.length - keep.length }
+}
+
+export const DAY = 24 * 60 * 60 * 1000
+/** An open entry older than this shows as stale. Display only: the stored status stays open. */
+export const STALE_OPEN_MS = 3 * DAY
+/** A resolved entry older than this (by resolvedAt) is removed when the list is tidied. */
+export const TIDY_RESOLVED_MS = 7 * DAY
+
+/** An open entry added more than three days ago. */
+export const isStale = (a: Assumption, now: number = Date.now()) => a.status === 'open' && now - a.at > STALE_OPEN_MS
+
+/** Removes the resolved entries older than seven days. Open entries stay, whatever their age. Returns the same track when nothing goes. */
+export function tidy(t: AssumptionTrack, now: number): AssumptionTrack {
+  const keep = t.entries.filter(e => e.status === 'open' || e.resolvedAt === undefined || now - e.resolvedAt <= TIDY_RESOLVED_MS)
+  return keep.length === t.entries.length ? t : { ...t, entries: keep }
+}
+
 /** The panel's order: open entries first, then the resolved ones. Each group keeps its newest-first order. */
 export const panelOrder = (entries: Assumption[]) => [...entries.filter(e => e.status === 'open'), ...entries.filter(e => e.status !== 'open')]
 
@@ -699,18 +729,22 @@ export function editTargets(tool: string, input: Record<string, unknown>): strin
 
 // ---------- messages from the team head (0.3.2) ----------
 
-/** The line the team head sends to set an assumption's status: `SESSION-PANEL: confirm 3` or `SESSION-PANEL: wrong 3`. */
-export function parseIncoming(text: string): { verb: 'confirm' | 'wrong'; id: number } | null {
-  const m = text.trim().match(/^SESSION-PANEL: (confirm|wrong) (\d+)$/)
-  return m ? { verb: m[1] as 'confirm' | 'wrong', id: Number(m[2]) } : null
+/** The head's verbs: confirm and wrong set a status; delete removes the entry. */
+export type Verb = 'confirm' | 'wrong' | 'delete'
+
+/** The line the team head sends: `SESSION-PANEL: confirm 3`, `SESSION-PANEL: wrong 3` or `SESSION-PANEL: delete 3`. */
+export function parseIncoming(text: string): { verb: Verb; id: number } | null {
+  const m = text.trim().match(/^SESSION-PANEL: (confirm|wrong|delete) (\d+)$/)
+  return m ? { verb: m[1] as Verb, id: Number(m[2]) } : null
 }
 
 /** Applies a head's message to this session's list. An unknown id, or an entry already resolved, changes nothing and says why. */
-export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wrong'; id: number }, now: number): { track: AssumptionTrack; note: string; changed: boolean } {
+export function applyIncoming(t: AssumptionTrack, cmd: { verb: Verb; id: number }, now: number): { track: AssumptionTrack; note: string; changed: boolean } {
   // a head line names the current id: the roster reads the ids of the named file. idMap is a record only
   const id = cmd.id
   const entry = t.entries.find(e => e.id === id)
   if (!entry) return { track: t, note: `No assumption ${cmd.id} in this session.`, changed: false }
+  if (cmd.verb === 'delete') return { track: removeEntry(t, id), note: `Assumption ${id} deleted.`, changed: true }
   if (entry.status !== 'open') return { track: t, note: `Assumption ${cmd.id} is already ${entry.status}.`, changed: false }
   const status = cmd.verb === 'confirm' ? 'confirmed' : 'wrong'
   return { track: setStatus(t, id, status, now), note: `Assumption ${cmd.id} marked ${status}.`, changed: true }
@@ -782,7 +816,7 @@ export function headsFor(rosterText: string, sessionId: string): Set<string> | u
 /** Applies status lines in order. A refused line changes nothing and its refusal is the note. */
 export function applyStatuses(
   t: AssumptionTrack,
-  items: Array<{ verb: 'confirm' | 'wrong'; id: number; allowed: boolean; refusal: string }>,
+  items: Array<{ verb: Verb; id: number; allowed: boolean; refusal: string }>,
   now: number,
 ): { track: AssumptionTrack; notes: string[]; changed: boolean } {
   let track = t
@@ -883,7 +917,8 @@ export const TEXT_MIN = 30
 const PATH_MIN = 8
 /** The optional columns, in the order they drop as the band narrows. Text and the actions always stay. */
 const DROP_ORDER = ['at', 'path', 'turn', 'id'] as const
-const ACTIONS = 20
+/** The actions column: [Confirm] [Wrong] [Delete] on an open row, [Delete] on a resolved one. */
+const ACTIONS = 26
 /** The bar between two columns, with a space either side. It is three cells wide. */
 export const SEP = ' │ '
 /** The rule's crossing under each bar. */
@@ -953,8 +988,11 @@ export function tableColumns(width: number, entries: readonly Assumption[] = [])
   return build(width, new Set(), true, sizes).cols
 }
 
+/** The one-letter status when shortened: o, c, w, and t for a stale open entry. */
+const STATUS_LETTER: Record<string, string> = { open: 'o', confirmed: 'c', wrong: 'w', stale: 't' }
+
 /** The text of one cell, cut to its column. */
-export function cellText(c: Col, a: Assumption): string {
+export function cellText(c: Col, a: Assumption, now: number = Date.now()): string {
   if (c.key === 'text') return clip(a.text, c.width)
   if (c.key === 'path') {
     // the first file, and how many more the turn wrote
@@ -964,9 +1002,12 @@ export function cellText(c: Col, a: Assumption): string {
   if (c.key === 'at') return hhmm(a.at)
   if (c.key === 'turn') return String(a.turn)
   if (c.key === 'id') return String(a.id)
-  // one letter when shortened: d or f for kind, o, c or w for status
+  // one letter when shortened: d or f for kind, o, c, w or t for status
   if (c.key === 'kind') return c.short ? a.kind[0]! : a.kind
-  if (c.key === 'status') return c.short ? a.status[0]! : a.status
+  if (c.key === 'status') {
+    const s = isStale(a, now) ? 'stale' : a.status
+    return c.short ? STATUS_LETTER[s]! : s
+  }
   return ''
 }
 
@@ -997,9 +1038,9 @@ export function rulePieces(cols: Col[]): Piece[] {
  * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
  * the actions column, which is the last column's width.
  */
-export function rowPieces(cols: Col[], a: Assumption): Piece[] {
+export function rowPieces(cols: Col[], a: Assumption, now: number = Date.now()): Piece[] {
   const shown = cols.filter(c => c.key !== 'actions')
-  return shown.flatMap((c, i) => [...(i > 0 ? [{ key: 'bar' as const, text: SEP }] : []), { key: c.key, text: fit(cellText(c, a), c.width) }]).concat([{ key: 'bar', text: SEP }])
+  return shown.flatMap((c, i) => [...(i > 0 ? [{ key: 'bar' as const, text: SEP }] : []), { key: c.key, text: fit(cellText(c, a, now), c.width) }]).concat([{ key: 'bar', text: SEP }])
 }
 
 const joined = (ps: Piece[]) => ps.map(p => p.text).join('')

@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.43. The version is shown dim beside the band title, as ` v0.3.43`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.45. The version is shown dim beside the band title, as ` v0.3.45`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -112,9 +112,16 @@ The rule is a system-prompt section, `session-panel:assume`, on when Track assum
 - **Title:** `Assumptions (N open)`, with the count of open entries. Click it to expand.
 - **Confirm** sets an entry to `confirmed`.
 - **Wrong** sets it to `wrong`, then puts the correction prefix in the box for you to finish. Nothing is sent.
+- **Delete** removes the entry from the list and the file. There is no undo.
+  - A confirmed or wrong entry is deleted at once.
+  - An open entry asks first, with the question `Delete open assumption <id>? Nobody has decided on it yet.` and the answers `Delete` and `Keep`. `Keep` leaves it. With no picker in the session, the entry is kept.
+- **Clear resolved**, in the title line, removes every confirmed and wrong entry and keeps the open ones. It asks nothing. The toast is `Cleared <N> resolved assumptions.` The button shows only when a resolved entry exists.
+- **Stale:** an open entry added three or more days ago shows `stale` in the Status cell, in dim yellow (one letter, `t`, when shrunk). Its stored status stays `open`, so Confirm, Wrong and Delete still work on it, and it still counts in `Assumptions (N open)`.
+- **Auto-tidy:** when the list loads and at each turn end, a confirmed or wrong entry whose `resolvedAt` is more than seven days old is removed from the list and the file. Open entries are never tidied, whatever their age.
   - A declared entry gives `Assumption '<text>' is wrong. Instead: `
   - A flagged entry gives `About the edits in turn <n> (<first file> and <N-1> more): `, or `About the edits in turn <n> (<file>): ` for one file.
-- Confirm and Wrong appear only on open entries. They are two separate buttons, `[Confirm] [Wrong]`.
+- Confirm and Wrong appear only on open entries. They are two separate buttons, `[Confirm] [Wrong]`. Delete is a third button, `[Delete]`, on every row. The actions cell is 26 cells wide.
+- **Table widths:** at 120 cells every column shows (Text keeps 30). At 90, Time drops. At 76, Path and Turn drop too, so the columns are ID, Cat, Status, Text and the buttons. At 60 no optional column fits: ID drops, Cat and Status are one letter, and Text is 23 cells.
 - **Table:** one row per entry, one column per field: ID, Cat (kind), Status, Turn, Text, Path, Time (at), and actions. Headers are Title Case: `ID`, `Cat`, `Status`, `Turn`, `Text`, `Path`, `Time`, and an empty column for the buttons. The field names in the data are unchanged. At 90 cells Path shows and Time does not; at 76 cells neither shows. Each fixed column is as wide as its header or its longest cell, and no wider. Spare width goes to Text, and to Path when it shows. Columns are separated by ` │ `, with a rule under the header (`─┼─`) and a light rule between entries. The panel takes 2N+1 lines for N entries. Colours: the header is bold; Status is yellow (open), green (confirmed) or red (wrong); Cat is cyan (declared) or magenta (flagged); ID, Turn, Time and Path are dim; bars and rules are dim; resolved rows dim their text, but keep the Status colour. Text and the `[Confirm] [Wrong]` buttons always stay, and Text keeps at least 30 cells while an optional column shows. As the band narrows, Cat and Status first shrink to one letter (`C` and `S` in the headers; `d` or `f`, and `o`, `c` or `w`, in the cells). Then the optional columns drop, in this order: Time, Path, Turn, ID. Text is cut with an ellipsis. Times show as HH:MM.
 - **Hidden:** the panel is not shown at all when there are no assumptions.
 
@@ -127,6 +134,7 @@ Each session keeps its list in one file, written on every change and read back w
 - The file name is the session's name, with the team-orchestrator rule: any run of characters that is not a letter, a digit, `.`, `_` or `-` becomes `_` (so `Mod Builder 2` is `Mod_Builder_2.json`). The name comes from the session registry (`<config dir>/sessions/<pid>.json`, field `name`), matched by this session's id. With no name, the file is the session id's file, as before.
 - Takeover: when a session closes and a new one starts with the same name, the new session takes over the same file. It keeps the old entries (each still tagged with its old `sessionId`) and sets the file's top-level `sessionId` to itself.
 - A new id after `/clear`: a session that already holds a file for another session id, or a track saved by an older version, finds its file again. It takes over the named file the same way; it never writes into the old session's id file. Its running turn state is reset; its entries come from the file.
+- When the registry is read: only when the session first finds its file, when its id has changed, or for a track saved by an older version. Ordinary tool calls, and status lines, read no registry. A plain tool call that edits no file does nothing for the assumptions. A `/rename` during a session is picked up at the next `/clear` or restart.
 - A live owner: if the file's owner is still in the registry, or another live session has the same name, this session writes `<name>-<first 8 of the session id>.json` instead, and shows one toast. The same tagged file is used when the registry cannot be read in full (see Fail safe).
 - Fail safe: if a registry folder that exists cannot be listed, or a record in it cannot be read, the owner is unknown. The session then uses the tagged file and never takes a file over. A folder that does not exist has no sessions. The registry is read again once after 200 ms before that decision, so a record caught mid-rewrite does not tag the session for good. A takeover is written at once, so the file names the new session even with no new entries.
 - The folder `.claude/session-panel/` has a `.gitignore` with `*`, so git ignores the whole folder. The project's own `.gitignore` is not changed.
@@ -143,6 +151,7 @@ A status line changes an entry's status without a model turn. It is one line, al
 
 - `SESSION-PANEL: confirm <id>`
 - `SESSION-PANEL: wrong <id>`
+- `SESSION-PANEL: delete <id>`
 
 **Where it is accepted:**
 
@@ -163,6 +172,7 @@ A status line changes an entry's status without a model turn. It is one line, al
 - If it holds other text too, the status is applied and the whole message goes on to the model.
 - An unknown id, or an entry already resolved, changes nothing and says why: `No assumption <id> in this session.` or `Assumption <id> is already <status>.`
 - An applied line says `Assumption <id> marked confirmed.` or `Assumption <id> marked wrong.`
+- `SESSION-PANEL: delete <id>` removes the entry, open or resolved, with no question. The same envelope and head-only rules apply. An applied line says `Assumption <id> deleted.` An unknown id says `No assumption <id> in this session.`
 
 **Known limit:** the sender is matched by `from-name`, not by session id.
 

@@ -1447,7 +1447,8 @@ test('incoming: only the exact form is read; anything else is an ordinary prompt
   expect(parseIncoming('SESSION-PANEL: confirm x')).toBeNull()
   expect(parseIncoming('SESSION-PANEL: confirm 3 please')).toBeNull()
   expect(parseIncoming('confirm 3')).toBeNull()
-  expect(parseIncoming('SESSION-PANEL: delete 3')).toBeNull()
+  expect(parseIncoming('SESSION-PANEL: drop 3')).toBeNull()
+  expect(parseIncoming('SESSION-PANEL: delete 3')).toEqual({ verb: 'delete', id: 3 })
 })
 
 test('incoming: a known open entry is set; an unknown id or a resolved entry changes nothing and says why', () => {
@@ -1816,8 +1817,8 @@ test('table: columns drop in the order at, path, turn, id; kind and status shrin
   // 90: kind and status shrink to one letter; the three-cell bars leave no room for at, which drops
   expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
   expect(shortOf(90)).toEqual([true, true])
-  // 76: path has dropped too; id, turn and text stay
-  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
+  // 76: path and turn have dropped (the three buttons take 26 cells); id, kind, status and text stay
+  expect(keys(76)).toEqual(['id', 'kind', 'status', 'text', 'actions'])
   expect(shortOf(76)).toEqual([true, true])
   // 60: turn and id have dropped too; text and the buttons stay
   expect(keys(60)).toEqual(['kind', 'status', 'text', 'actions'])
@@ -1850,7 +1851,7 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   // at 76 cells kind and status are one letter, so their headers are k and s
   // the header is one line of text, each header padded above its column
   const shown = labels.map((l: string) => l.trim())
-  for (const h of ['ID', 'C', 'S', 'Turn', 'Text']) expect(shown).toContain(h)
+  for (const h of ['ID', 'C', 'S', 'Text']) expect(shown).toContain(h)
   // at 76 cells the text column is narrow, so the sentence is cut with an ellipsis; its start is shown
   expect(labels.some((l: string) => l.includes('notes.md, no'))).toBe(true)
   const confirm = await ui.find({ key: 'confirm-1' })
@@ -2106,12 +2107,12 @@ test('fitted: each fixed column is as wide as its header or its longest cell, an
   expect(sizesOf(short).at).toBe(5)
 })
 
-test('fitted: at 120 with short ids, the text column is wider than 30 and id is no wider than max(2, the longest id)', () => {
+test('fitted: at 120 with short ids, the text column keeps at least 30 and id is no wider than max(2, the longest id)', () => {
   const short = [{ ...SAMPLE_DECLARED, id: 1 }, { ...SAMPLE_FLAGGED, id: 2 }] as any[]
   const cols = tableColumns(120, short)
   const text = cols.find(c => c.key === 'text')!.width
   const id = cols.find(c => c.key === 'id')!.width
-  expect(text).toBeGreaterThan(30)
+  expect(text).toBeGreaterThanOrEqual(30)
   expect(id).toBeLessThanOrEqual(Math.max(2, ...short.map(a => String(a.id).length)))
 })
 
@@ -2119,7 +2120,7 @@ test('fitted: at 90 and 76, path comes back at 90 and does not at 76; at does no
   const samples = [SAMPLE_DECLARED, SAMPLE_FLAGGED]
   const keys = (w: number) => tableColumns(w, samples).map(c => c.key)
   expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
-  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
+  expect(keys(76)).toEqual(['id', 'kind', 'status', 'text', 'actions'])
 })
 
 test('headers: Title Case display labels, and C and S when shortened', () => {
@@ -2150,7 +2151,8 @@ test('colours: the rendered status and cat cells carry their colour, and a resol
   const nodes = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
   const cell = (text: string) => nodes.find((n: any) => n.text.trim() === text)
   expect(cell('flagged')?.props.color).toBe('magenta')
-  expect(cell('open')?.props.color).toBe('yellow')
+  // the samples are dated 2026, more than three days ago, so the open cell shows stale; its colour is still the open colour
+  expect(cell('stale')?.props.color).toBe('yellow')
   await ui.press({ key: 'confirm-1' })
   const after = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
   const status = after.find((n: any) => n.text.trim() === 'confirmed')
@@ -2339,4 +2341,130 @@ test('registry reads: after a session id change the registry is read again', asy
   opts.sessions = [{ sessionId: 'new-id-5678', name: 'Mod Builder' }]
   await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
   expect(w.lists()).toBeGreaterThan(mark)
+})
+
+// 24. delete, clear resolved, the head's delete line, auto-tidy, the stale display, and the three-button table (0.3.45)
+import { DAY, DELETE_OPTIONS, STALE_OPEN_MS, TIDY_RESOLVED_MS, deleteQuestion, dropResolved, isStale, removeEntry, tidy } from './logic'
+
+test('delete: a resolved entry is removed at once', async ($, on) => {
+  world(on, WIN_ENV)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await ui.press({ key: 'delete-1' })
+  expect(w.last().entries).toEqual([])
+  await ui.unmount()
+})
+
+test('delete: an open entry is kept when its question gets no Delete answer (no picker, or Keep)', async ($, on) => {
+  world(on, WIN_ENV)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await ui.press({ key: 'delete-1' })
+  expect(w.last().entries.length).toBe(1)
+  await ui.unmount()
+})
+
+test('delete: the open-entry question and its two answers are fixed', () => {
+  expect(deleteQuestion({ id: 4 } as any)).toBe('Delete open assumption 4? Nobody has decided on it yet.')
+  expect(DELETE_OPTIONS).toEqual(['Delete', 'Keep'])
+})
+
+test('clear resolved: every confirmed and wrong entry goes, the open ones stay, and the count is said', async ($, on) => {
+  world(on, WIN_ENV)
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => {
+    toasts.push(e.text ?? e.message ?? String(e))
+    return { value: undefined }
+  })
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  await flaggedEdit($)
+  await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await ui.press({ key: 'clear-resolved' })
+  expect(w.last().entries.map((e: any) => e.id)).toEqual([2])
+  expect(toasts).toContain('Cleared 1 resolved assumptions.')
+  await ui.unmount()
+})
+
+test('head delete: the head removes an entry with no question; a member who is not the head is refused', async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const refused: any = await $.prompt.submit({ text: wrap('Mod Builder 2', 'SESSION-PANEL: delete 1'), asUser: true })
+  expect(refused.drop).toBe("Refused: Mod Builder 2 is not this session's team head.")
+  expect(w.last().entries.length).toBe(1)
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: delete 1'), asUser: true })
+  expect(result.drop).toBe('Assumption 1 deleted.')
+  expect(w.last().entries).toEqual([])
+  expect(w.reached).toEqual([])
+})
+
+test('head delete: an unknown id says so and changes nothing', async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const writes = w.writes.length
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: delete 9'), asUser: true })
+  expect(result.drop).toBe('No assumption 9 in this session.')
+  expect(w.writes.length).toBe(writes)
+})
+
+test('delete and clear resolved: the pure helpers keep the open entries and report the count', () => {
+  const now = Date.now()
+  const t = { ...newTrack(), entries: [
+    { id: 1, text: 'a', turn: 1, kind: 'declared', status: 'open', at: now, sessionId: 's' },
+    { id: 2, text: 'b', turn: 1, kind: 'declared', status: 'confirmed', at: now, resolvedAt: now, sessionId: 's' },
+    { id: 3, text: 'c', turn: 1, kind: 'declared', status: 'wrong', at: now, resolvedAt: now, sessionId: 's' },
+  ] } as any
+  expect(removeEntry(t, 2).entries.map((e: any) => e.id)).toEqual([1, 3])
+  const dropped = dropResolved(t)
+  expect(dropped.count).toBe(2)
+  expect(dropped.track.entries.map((e: any) => e.id)).toEqual([1])
+})
+
+test('tidy: a resolved entry older than seven days goes; a newer one and every open entry stay', () => {
+  const now = 100 * DAY
+  const e = (id: number, status: string, resolvedAt?: number, at = now) => ({ id, text: 'x', turn: 1, kind: 'declared', status, at, resolvedAt, sessionId: 's' }) as any
+  const t = { ...newTrack(), entries: [e(1, 'confirmed', now - TIDY_RESOLVED_MS - 1), e(2, 'wrong', now - 6 * DAY), e(3, 'open', undefined, now - 30 * DAY)] } as any
+  const tidied = tidy(t, now)
+  expect(tidied.entries.map((x: any) => x.id)).toEqual([2, 3])
+  // nothing to remove: the same track comes back, so no file is written for it
+  expect(tidy(tidied, now)).toBe(tidied)
+})
+
+test('stale: an open entry of three days or more shows stale; its stored status stays open', () => {
+  const now = 100 * DAY
+  const old = { id: 1, text: 'x', turn: 1, kind: 'declared', status: 'open', at: now - STALE_OPEN_MS - 1, sessionId: 's' } as any
+  const fresh = { ...old, id: 2, at: now - 2 * DAY } as any
+  const done = { ...old, id: 3, status: 'confirmed', resolvedAt: now, at: now - 10 * DAY } as any
+  expect(isStale(old, now)).toBe(true)
+  expect(isStale(fresh, now)).toBe(false)
+  expect(isStale(done, now)).toBe(false)
+  const status = tableColumns(120, [old])
+  const col = status.find(c => c.key === 'status')!
+  expect(cellText(col, old, now)).toBe('stale')
+  expect(cellText({ ...col, short: true }, old, now)).toBe('t')
+  expect(cellText(col, fresh, now)).toBe('open')
+  expect(old.status).toBe('open')
+})
+
+test('table: with three buttons, every header and row line is the same length at 120, 90, 76 and 60, and the actions cell is 26 wide', () => {
+  const samples = [SAMPLE_DECLARED, SAMPLE_FLAGGED] as any[]
+  for (const w of [120, 90, 76, 60]) {
+    const cols = tableColumns(w, samples)
+    const actions = cols.find(c => c.key === 'actions')!.width
+    expect(actions).toBe(26)
+    const header = tableHeader(cols)
+    expect(tableRule(cols).length).toBe(header.length)
+    expect(header.length + 0).toBeLessThanOrEqual(w)
+    // a row is the cells before the actions cell, and the band draws the actions cell beside it
+    for (const a of samples) expect(tableRow(cols, a).length + actions).toBe(header.length)
+  }
 })

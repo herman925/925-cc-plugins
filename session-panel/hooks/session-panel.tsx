@@ -69,6 +69,12 @@ import {
   openCount,
   panelOrder,
   parseIncoming,
+  removeEntry,
+  deleteQuestion,
+  DELETE_OPTIONS,
+  dropResolved,
+  tidy,
+  isStale,
   sortPrompt,
   parseStored,
   plainPath,
@@ -461,6 +467,8 @@ async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrac
 async function loadAssumptions($: Hooked) {
   const t = await locate($, await read($, trackA))
   await update($, trackA, () => t)
+  const now = await $.clock.now()
+  await changeTrack($, t => tidy(t, now))
 }
 
 /** The team heads for this session, read from the roster (read only). Undefined when it cannot be read or this session is not on it. */
@@ -515,6 +523,27 @@ async function wrongEntry($: Hooked, entry: Assumption) {
   await redirectTo($, entry)
 }
 
+/** Delete: an open entry is asked about first; a resolved one goes at once. There is no undo. */
+async function deleteEntry($: Hooked, entry: Assumption) {
+  if (entry.status === 'open') {
+    // no picker in this session, or a Keep, leaves the entry where it is
+    const answer = await $.ui.ask(deleteQuestion(entry), DELETE_OPTIONS).catch(() => 'Keep')
+    if (answer !== 'Delete') return
+  }
+  await changeTrack($, t => removeEntry(t, entry.id))
+}
+
+/** Clear resolved: removes every confirmed and wrong entry, and says how many. */
+async function clearResolved($: Hooked) {
+  let count = 0
+  await changeTrack($, t => {
+    const dropped = dropResolved(t)
+    count = dropped.count
+    return dropped.track
+  })
+  $.ui.toast(`Cleared ${count} resolved assumptions.`)
+}
+
 /** Records the files a tool call wrote, for the Assumptions panel. A denied or failed call wrote nothing. */
 async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknown; isError?: boolean } | undefined) {
   const prefs = await read($, prefsA)
@@ -535,7 +564,7 @@ async function finishAssumptions($: Hooked, e: { agentId?: string }) {
   const prefs = await read($, prefsA)
   const flag = (await read($, enabledA)) && prefs.assumptions && prefs.flagUndeclared
   const now = await $.clock.now()
-  await changeTrack($, t => finishTurn(t, flag, now))
+  await changeTrack($, t => tidy(finishTurn(t, flag, now), now))
 }
 
 function title0(cl: CleanChecklist): string {
@@ -1167,23 +1196,30 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const actionsWidth = cols.find(c => c.key === 'actions')!.width
     const paint = (c: string | undefined) => (c === undefined ? undefined : color(c))
     // the bars and rules are dim; the status and cat cells take their colour; a resolved row dims its text, not its status
+    // a stale open entry (three days or more) shows dim, with its status colour; the stored status is still open
+    const nowMs = Date.now()
     const rowNodes = (a: Assumption) =>
-      rowPieces(cols, a).map((p, i) => {
+      rowPieces(cols, a, nowMs).map((p, i) => {
         const key = `c${i}`
         if (p.key === 'bar') return <Text key={key} dimColor>{p.text}</Text>
-        if (p.key === 'status') return <Text key={key} color={paint(cellColor('status', a.status))}>{p.text}</Text>
+        if (p.key === 'status') return <Text key={key} dimColor={isStale(a, nowMs)} color={paint(cellColor('status', a.status))}>{p.text}</Text>
         if (p.key === 'kind') return <Text key={key} color={paint(cellColor('kind', a.kind))}>{p.text}</Text>
         if (p.key === 'text') return <Text key={key} dimColor={a.status !== 'open'}>{p.text}</Text>
         return <Text key={key} dimColor>{p.text}</Text>
       })
     const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
       <Box flexDirection="column">
-        <Button
-          key="assumptions-toggle"
-          plain
-          label={`${track.open ? '▾' : '▸'} Assumptions (${openCount(track)} open)`}
-          onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
-        />
+        <Box flexDirection="row">
+          <Button
+            key="assumptions-toggle"
+            plain
+            label={`${track.open ? '▾' : '▸'} Assumptions (${openCount(track)} open)`}
+            onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
+          />
+          {track.entries.some(e => e.status !== 'open') ? (
+            <Button key="clear-resolved" plain label="  [Clear resolved]" onPress={() => void clearResolved($)} />
+          ) : null}
+        </Box>
         {track.open ? (
           <Box flexDirection="column">
             <Box flexDirection="row">
@@ -1205,6 +1241,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
                     {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
                     {a.status === 'open' ? <Text> </Text> : null}
                     {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="[Wrong]" onPress={() => void wrongEntry($, a)} /> : null}
+                    {a.status === 'open' ? <Text> </Text> : null}
+                    <Button key={`delete-${a.id}`} plain label="[Delete]" onPress={() => void deleteEntry($, a)} />
                   </Box>
                 </Box>
               </Box>
