@@ -3808,6 +3808,11 @@ async function rosterView($: any, ui: any, cols: number) {
   // each member's open assumptions, by session id: as the last roster refresh read them (see readAssumptions)
   const assumed: Record<string, OpenAssumption[]> = await read($, assumptions)
   const assumedOf = (m: Member): OpenAssumption[] => assumed[m.sessionId] ?? []
+  // Confirm and Wrong are for the member's boss and the team top: every other session sees the count and the list only
+  const viewer = await identity($, list)
+  const top = projectTop(list)
+  const mayAnswer = (target: Member) =>
+    viewer.level === 'full' && !!viewer.me && (viewer.me.name === target.boss || (!!top && keyOf(viewer.me) === keyOf(top)))
   const bosses = bossChoices(list, ticked)
   const finish = async (team: string, work: Promise<string>) => {
     const msg = await work
@@ -4042,11 +4047,12 @@ async function rosterView($: any, ui: any, cols: number) {
               <Text>{e.text}</Text>
               <Box columnGap={1}>
                 <Text dimColor>{`${e.kind} · turn ${e.turn}`}</Text>
-                <Button key={`assume-yes-${e.id}`} label="Confirm" variant="primary" onPress={() => void answer(confirmLine(e.id))} />
-                <Button key={`assume-no-${e.id}`} label="Wrong" onPress={() => void answer(wrongLine(e.id))} />
+                {mayAnswer(who) && <Button key={`assume-yes-${e.id}`} label="Confirm" variant="primary" onPress={() => void answer(confirmLine(e.id))} />}
+                {mayAnswer(who) && <Button key={`assume-no-${e.id}`} label="Wrong" onPress={() => void answer(wrongLine(e.id))} />}
               </Box>
             </Box>
           ))}
+          {items.length > 0 && !mayAnswer(who) && <Text dimColor>Only the member's boss or the team top can confirm or mark these wrong.</Text>}
           {a.msg !== '' && <Text color="green">{a.msg}</Text>}
           {cancel}
         </Box>,

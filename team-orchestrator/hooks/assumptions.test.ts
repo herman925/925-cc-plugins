@@ -3,12 +3,15 @@
 import { expect, test } from 'claude-code/testing'
 
 import { collectOpen, confirmLine, openFrom, wrongLine } from './assumptions'
-import { adopt, HUALONG, ID1, ID2, mountBand, world } from './test-world'
+import { adopt, HUALONG, ID1, ID2, ID3, mountBand, world } from './test-world'
 
 const DIR = 'C:/proj/.claude/session-panel/assumptions'
 const file = (sessionId: string, entries: unknown[], version = 1) => JSON.stringify({ version, member: 'x', sessionId, entries })
 const entry = (id: string, status: string, extra: Record<string, unknown> = {}) => ({ id, text: `text of ${id}`, turn: 3, kind: 'declared', at: 1, status, ...extra })
-const withIds = (rows: typeof HUALONG) => rows.map(r => ({ ...r, handle: '', sessionId: r.name === 'Hualong CEO' ? ID1 : r.name === 'Hualong Workers' ? ID2 : '' }))
+const withIds = (rows: typeof HUALONG) =>
+  rows.map(r => ({ ...r, handle: '', sessionId: r.name === 'Hualong CEO' ? ID1 : r.name === 'Hualong Workers' ? ID2 : r.name === 'Hualong Worker 5' ? ID3 : '' }))
+// the session this test runs in: the team top is Hualong CEO (ID1), its boss-of-a-worker is Hualong Workers (ID2)
+const sessionAs = (on: any, sid: string) => on('session.id', async () => ({ value: sid }) as any)
 
 test('a file reads as its session id and only its open entries, with their text, kind and turn', () => {
   const f = openFrom(file(ID2, [entry('a1', 'open'), entry('a2', 'confirmed'), entry('a3', 'wrong'), entry('a4', 'open', { kind: 'flagged', path: 'src/a.ts', turn: 7 })]))
@@ -58,6 +61,7 @@ test('the open list shows each open entry; Confirm and Wrong send one line to th
   on('session.send', async (_$: any, e: any) => (sends.push(e), { isDelivered: true }) as any)
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open', { text: 'the API takes a path', kind: 'flagged', turn: 7 }), entry('a2', 'confirmed')]))
   const before = files.get(`${DIR}/${ID2}.json`)
+  sessionAs(on, ID1) // the team top answers
   await adopt($, withIds(HUALONG))
   const band = await mountBand($)
   await band.press({ key: 'assume-Hualong|Hualong Workers' })
@@ -73,6 +77,34 @@ test('the open list shows each open entry; Confirm and Wrong send one line to th
   expect(sends.find(s => String(s.text).startsWith('SESSION-PANEL')).to).toBe(ID2)
   expect(files.get(`${DIR}/${ID2}.json`)).toBe(before)
   expect([...files.keys()].filter(k => k.includes('session-panel'))).toEqual([`${DIR}/${ID2}.json`])
+})
+
+test('a session that is neither the member\'s boss nor the team top sees the count and the list, but no Confirm or Wrong', async ($, on) => {
+  const files = world(on)
+  files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open', { text: 'the API takes a path' })]))
+  sessionAs(on, ID3) // Hualong Worker 5 reports to Hualong Workers, so it is neither
+  await adopt($, withIds(HUALONG))
+  const band = await mountBand($)
+  expect(JSON.stringify(await band.drawn())).toContain('1 open')
+  await band.press({ key: 'assume-Hualong|Hualong Workers' })
+  expect(JSON.stringify(await band.drawn())).toContain('the API takes a path')
+  expect(await band.find({ key: 'assume-yes-a1' })).toBeUndefined()
+  expect(await band.find({ key: 'assume-no-a1' })).toBeUndefined()
+})
+
+test('the boss of the member sees Confirm and Wrong, and the answer goes to the member', async ($, on) => {
+  const files = world(on)
+  const sends: any[] = []
+  on('session.send', async (_$: any, e: any) => (sends.push(e), { isDelivered: true }) as any)
+  files.set(`${DIR}/${ID3}.json`, file(ID3, [entry('w1', 'open', { text: 'the worker reads the file first' })]))
+  sessionAs(on, ID2) // Hualong Workers is the boss of Hualong Worker 5
+  await adopt($, withIds(HUALONG))
+  const band = await mountBand($)
+  await band.press({ key: 'assume-Hualong|Hualong Worker 5' })
+  await band.press({ key: 'assume-yes-w1' })
+  const lines = sends.filter(s => String(s.text).startsWith('SESSION-PANEL')).map(s => s.text)
+  expect(lines).toEqual(['SESSION-PANEL: confirm w1'])
+  expect(sends.find(s => String(s.text).startsWith('SESSION-PANEL')).to).toBe(ID3)
 })
 
 test('the files are read on a roster refresh, not on a redraw', async ($, on) => {
