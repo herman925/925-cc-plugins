@@ -806,7 +806,7 @@ export const assumptionsDir = (root: string) => `${normPath(root)}/${STORE_DIR}`
  * `<name>-<first 8 of the session id>.json`. Without a name, the session-id file as before. `takeover` means the name's
  * file belongs to a session that has closed, so this session takes it over and keeps its entries.
  */
-export function chooseFile(p: { root: string; sessionId: string; name: string | undefined; os: Os; baseText: string | undefined; live: Live[] }): {
+export function chooseFile(p: { root: string; sessionId: string; name: string | undefined; os: Os; baseText: string | undefined; live: Live[]; complete: boolean }): {
   file: string
   tagged: boolean
   takeover: boolean
@@ -820,7 +820,9 @@ export function chooseFile(p: { root: string; sessionId: string; name: string | 
   const unreadable = p.baseText !== undefined && owner === undefined
   const sameNameLive = p.live.some(s => s.sessionId !== p.sessionId && sameName(s.name, p.name as string, p.os))
   const ownerLive = owner !== undefined && owner !== p.sessionId && p.live.some(s => s.sessionId === owner)
-  if (unreadable || sameNameLive || ownerLive) {
+  // the registry must have been read whole: a folder that could not be listed, or a record that could not be parsed,
+  // leaves the owner unknown, so this session never takes a file over
+  if (!p.complete || unreadable || sameNameLive || ownerLive) {
     return { file: `${dir}/${nameFile(p.name)}-${p.sessionId.slice(0, 8)}.json`, tagged: true, takeover: false }
   }
   return { file: `${dir}/${nameFile(p.name)}.json`, tagged: false, takeover: owner !== undefined && owner !== p.sessionId }

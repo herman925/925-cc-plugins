@@ -1308,7 +1308,7 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
 })
 
 // The engine's file and session calls, as the test kit answers them. `files` is what the disk holds, by path.
-function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }> } = {}) {
+function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }>; unlistable?: boolean; broken?: boolean } = {}) {
   const writes: Array<{ path: string; text: string }> = []
   const fill: string[] = []
   const reached: string[] = []
@@ -1319,9 +1319,11 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
   // the session registry (~/.claude/sessions/<pid>.json) under the test's home, one file per live session
   const sessionsDir = 'C:/home/.claude/sessions'
   const registry = Object.fromEntries((opts.sessions ?? []).map((x, i) => [`${sessionsDir}/${100 + i}.json`, JSON.stringify({ sessionId: x.sessionId, name: x.name, pid: 100 + i, cwd: opts.root ?? 'C:/proj' })]))
-  on('fs.list', (_$: any, e: any) => ({
-    value: slash(e.path) === sessionsDir ? Object.keys(registry).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [],
-  }))
+  on('fs.list', (_$: any, e: any) => {
+    if (opts.unlistable && slash(e.path) === sessionsDir) throw new Error('the registry folder cannot be listed')
+    return { value: slash(e.path) === sessionsDir ? Object.keys(registry).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [] }
+  })
+  if (opts.broken) registry[`${sessionsDir}/199.json`] = '{ not json'
   on('fs.read', (_$: any, e: any) => ({ value: registry[slash(e.path)] ?? opts.files?.[slash(e.path)] }))
   on('fs.exists', () => ({ value: false }))
   on('fs.write', (_$: any, e: any) => {
@@ -1751,7 +1753,7 @@ test('paths: Windows, macOS and Linux differ in case rules, separators, home fol
 })
 
 test('paths: the chosen file on each OS: owner live, owner closed, unreadable, and no name', () => {
-  const base = { root: 'C:\\proj', sessionId: 'me-1111', name: 'Mod Builder' }
+  const base = { root: 'C:\\proj', sessionId: 'me-1111', name: 'Mod Builder', complete: true }
   const theirs = storedJson('Mod Builder', 'other-2222', [])
   const live = [{ sessionId: 'other-2222', name: 'Mod Builder' }, { sessionId: 'me-1111', name: 'Mod Builder' }]
   // the owner is live: tagged
@@ -1765,7 +1767,7 @@ test('paths: the chosen file on each OS: owner live, owner closed, unreadable, a
   // a file that cannot be read is never written over
   expect(chooseFile({ ...base, os: 'windows', baseText: '{ not json', live: [] }).tagged).toBe(true)
   // no name: the session-id file, as before
-  expect(chooseFile({ root: 'C:/proj', sessionId: 'me-1111', name: undefined, os: 'linux', baseText: undefined, live: [] }).file).toBe('C:/proj/.claude/session-panel/assumptions/me-1111.json')
+  expect(chooseFile({ root: 'C:/proj', sessionId: 'me-1111', name: undefined, os: 'linux', baseText: undefined, live: [], complete: true }).file).toBe('C:/proj/.claude/session-panel/assumptions/me-1111.json')
 })
 
 test('table: columns drop in the order at, path, turn, id; kind and status shrink first', () => {
@@ -1819,4 +1821,62 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   expect(wrong?.props.label).toBe('[Wrong]')
   expect(confirm).not.toBe(wrong)
   await ui.unmount()
+})
+
+
+// 16. takeover writes at once; an unreadable or broken registry never gives a takeover (0.3.36)
+test('takeover: after a takeover with no new entries, the file names the new session as owner', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [
+    { id: 1, text: 'x.md, no stated assumption', turn: 1, kind: 'flagged', path: 'x.md', paths: ['x.md'], status: 'open', at: 1, sessionId: 'old-id-1234' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  // a read-only tool call changes no entry, but the session still finds and takes over its file
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  const takeover = w.writes.find(x => x.path === MODB)
+  expect(takeover).toBeDefined()
+  expect(JSON.parse(takeover!.text).sessionId).toBe('new-id-5678')
+  expect(JSON.parse(takeover!.text).entries.map((e: any) => e.sessionId)).toEqual(['old-id-1234'])
+})
+
+test('fail safe: a registry folder that cannot be listed never gives a takeover of the name file', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, unlistable: true })
+  await flaggedEdit($)
+  // with no registry the name is unknown, so the session writes its own id file, and the name file is left alone
+  expect(w.writes.some(x => x.path === MODB)).toBe(false)
+  expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/new-id-5678.json')
+})
+
+test('fail safe: a registry record that cannot be read gives the tagged file, never a takeover', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }], broken: true })
+  await flaggedEdit($)
+  expect(w.writes.some(x => x.path === MODB)).toBe(false)
+  expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/Mod_Builder-new-id-5.json')
+})
+
+test('takeover still happens with a clean registry and no live owner', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await flaggedEdit($)
+  expect(w.writes.at(-1)!.path).toBe(MODB)
+  expect(w.last().sessionId).toBe('new-id-5678')
+})
+
+test('pure: an incomplete registry is never a takeover, even with no live owner', () => {
+  const r = chooseFile({
+    root: 'C:/proj',
+    sessionId: 'me-1111',
+    name: 'Mod Builder',
+    os: 'windows',
+    baseText: storedJson('Mod Builder', 'old-2222', []),
+    live: [{ sessionId: 'me-1111', name: 'Mod Builder' }],
+    complete: false,
+  })
+  expect(r.takeover).toBe(false)
+  expect(r.tagged).toBe(true)
 })

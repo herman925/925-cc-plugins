@@ -298,31 +298,40 @@ async function readText($: Hooked, path: string): Promise<string | undefined> {
   }
 }
 
-/** This session's name and the sessions the registry lists (~/.claude/sessions/<pid>.json), as team-orchestrator reads them. */
-async function liveSessions($: Hooked): Promise<Array<{ sessionId: string; name: string }>> {
+/**
+ * The sessions the registry lists (~/.claude/sessions/<pid>.json), as team-orchestrator reads them. `complete` is false
+ * when a folder could not be listed or a record could not be read: the list is then not the whole truth, so no owner
+ * can be ruled out.
+ */
+async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: string; name: string }>; complete: boolean }> {
   const none = () => undefined
   const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
   const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
   const dirs = [...new Set([custom, home ? `${homeOf({ USERPROFILE: home })}/.claude` : ''].filter((x): x is string => !!x).map(normPath))]
-  const out: Array<{ sessionId: string; name: string }> = []
+  const live: Array<{ sessionId: string; name: string }> = []
+  let complete = true
   for (const dir of dirs) {
     const at = `${dir}/sessions`
     let listed: any[]
     try {
       listed = (await $.fs.list(at)) as any[]
+      if (!listed || typeof listed.filter !== 'function') throw new Error('not a list')
     } catch {
+      complete = false
       continue
     }
     for (const f of listed.filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))) {
       try {
         const o = JSON.parse(String(await $.fs.read(`${at}/${f.name}`)))
-        if (typeof o?.sessionId === 'string') out.push({ sessionId: o.sessionId, name: typeof o.name === 'string' ? o.name : '' })
+        if (typeof o?.sessionId !== 'string') throw new Error('no session id')
+        live.push({ sessionId: o.sessionId, name: typeof o.name === 'string' ? o.name : '' })
       } catch {
-        // a record being rewritten: skip it this time
+        // a record that cannot be read: the owner of a file may be in it, so the registry is not complete
+        complete = false
       }
     }
   }
-  return out
+  return { live, complete }
 }
 
 /** The OS as team-orchestrator reads it: the OS variable, then uname -s. */
@@ -344,11 +353,11 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
   const root = normPath(await $.session.root())
   const sessionId = await $.session.id()
   const os = await osOf($)
-  const live = await liveSessions($)
+  const { live, complete } = await liveSessions($)
   const name = live.find(s => s.sessionId.toLowerCase() === sessionId.toLowerCase() && s.name.trim() !== '')?.name
   const probe = name !== undefined ? `${assumptionsDir(root)}/${nameFile(name)}.json` : plainPath(root, sessionId)
   const baseText = await readText($, probe)
-  const r = chooseFile({ root, sessionId, name, os, baseText, live })
+  const r = chooseFile({ root, sessionId, name, os, baseText, live, complete })
   const text = r.file === probe ? baseText : await readText($, r.file)
   const stored = parseStored(text)
   if (!stored.ok) {
@@ -356,11 +365,13 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
     if (!t.warned) $.ui.toast(`Assumptions not loaded: ${stored.reason}. This session will not write its file.`)
     return { ...t, file: '', sessionId, member: name ?? sessionId, root, os, warned: true }
   }
+  const loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os }, stored.entries)
+  // a takeover is written at once, so the file's top-level sessionId is this session's even with no new entries
+  if (r.takeover) await saveTrack($, loaded).catch(() => undefined)
   if (r.tagged && !t.warned) {
     $.ui.toast(`Assumptions: this session writes ${r.file.split('/').pop()}, because the usual file belongs to another session.`)
   }
-  const found = { ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os }
-  return loadTrack(found, stored.entries)
+  return loaded
 }
 
 /** Writes the list to this session's file, and takes the file over when its owner has closed. A file this code cannot read is left alone. */
