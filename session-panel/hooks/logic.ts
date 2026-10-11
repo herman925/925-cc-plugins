@@ -844,7 +844,7 @@ export function chooseFile(p: { root: string; sessionId: string; name: string | 
   return { file: `${dir}/${nameFile(p.name)}.json`, tagged: false, takeover: owner !== undefined && owner !== p.sessionId }
 }
 
-// ---------- the table (0.3.34; column rules 0.3.35; separators 0.3.39) ----------
+// ---------- the table (0.3.34; column rules 0.3.35; separators 0.3.39; fitted widths and colours 0.3.40) ----------
 
 /** The text cut to `n` cells, with "…" as its last cell when it is cut. */
 export const clip = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : n <= 1 ? '…' : `${s.slice(0, n - 1)}…`)
@@ -869,19 +869,37 @@ export const SEP = ' │ '
 /** The rule's crossing under each bar. */
 const CROSS = '─┼─'
 
+/** The header of each column, in Title Case: the display label only; the field names stay the same. */
+export const TITLE: Record<Col['key'], string> = { id: 'ID', kind: 'Cat', status: 'Status', turn: 'Turn', text: 'Text', path: 'Path', at: 'Time', actions: '' }
+/** The header of a shortened column. */
+const SHORT_TITLE: Partial<Record<Col['key'], string>> = { kind: 'C', status: 'S' }
+
+/** The width each fixed column needs: its header, or its longest cell, whichever is longer. */
+export type Sizes = { id: number; kind: number; status: number; turn: number; at: number }
+export function sizesOf(entries: readonly Assumption[]): Sizes {
+  const longest = (header: string, cells: string[]) => Math.max(header.length, ...cells.map(c => c.length))
+  return {
+    id: longest('id', entries.map(a => String(a.id))),
+    kind: longest('kind', entries.map(a => a.kind)),
+    status: longest('status', entries.map(a => a.status)),
+    turn: longest('turn', entries.map(a => String(a.turn))),
+    at: longest('at', entries.map(a => hhmm(a.at))),
+  }
+}
+
 /**
  * One layout: the columns in `present` (plus kind, status, text and actions), with kind and status as full words or as
  * one letter. `ok` is false when the text would fall below TEXT_MIN, or the path below PATH_MIN, while an optional column shows.
  */
-function build(width: number, present: ReadonlySet<string>, short: boolean): { cols: Col[]; ok: boolean } {
+function build(width: number, present: ReadonlySet<string>, short: boolean, sizes: Sizes): { cols: Col[]; ok: boolean } {
   const cols: Array<{ key: Col['key']; width: number }> = []
-  if (present.has('id')) cols.push({ key: 'id', width: 4 })
-  cols.push({ key: 'kind', width: short ? 1 : 8 })
-  cols.push({ key: 'status', width: short ? 1 : 9 })
-  if (present.has('turn')) cols.push({ key: 'turn', width: 4 })
+  if (present.has('id')) cols.push({ key: 'id', width: sizes.id })
+  cols.push({ key: 'kind', width: short ? 1 : sizes.kind })
+  cols.push({ key: 'status', width: short ? 1 : sizes.status })
+  if (present.has('turn')) cols.push({ key: 'turn', width: sizes.turn })
   cols.push({ key: 'text', width: 0 })
   if (present.has('path')) cols.push({ key: 'path', width: 0 })
-  if (present.has('at')) cols.push({ key: 'at', width: 5 })
+  if (present.has('at')) cols.push({ key: 'at', width: sizes.at })
   cols.push({ key: 'actions', width: ACTIONS })
   // a bar sits between each pair of columns: the bars come out of the width first
   const room = width - cols.reduce((n, c) => n + c.width, 0) - SEP.length * (cols.length - 1)
@@ -889,11 +907,9 @@ function build(width: number, present: ReadonlySet<string>, short: boolean): { c
   const text = pathOn ? Math.max(TEXT_MIN, Math.floor(room * 0.6)) : room
   const path = pathOn ? room - text : 0
   const ok = text >= TEXT_MIN && (!pathOn || path >= PATH_MIN)
-  // the header is the full word, or its letter when that column is shortened
-  const letter: Partial<Record<Col['key'], string>> = { kind: 'k', status: 's' }
   const laid = cols.map(c => ({
     key: c.key,
-    header: c.key === 'actions' ? '' : short && letter[c.key] !== undefined ? (letter[c.key] as string) : c.key,
+    header: c.key === 'actions' ? '' : short && SHORT_TITLE[c.key] !== undefined ? (SHORT_TITLE[c.key] as string) : TITLE[c.key],
     width: c.key === 'text' ? Math.max(text, 1) : c.key === 'path' ? path : c.width,
     ...(c.key === 'kind' || c.key === 'status' ? { short } : {}),
   })) as Col[]
@@ -901,19 +917,20 @@ function build(width: number, present: ReadonlySet<string>, short: boolean): { c
 }
 
 /**
- * The table's columns for a band of `width` cells. As the band narrows, the optional columns drop in the order at, path,
- * turn, id. At each count of columns, kind and status shrink to one letter before a column is dropped. Text never falls
- * below TEXT_MIN while an optional column shows.
+ * The table's columns for a band of `width` cells, sized to the entries. The fixed columns take what their content needs.
+ * As the band narrows, kind and status first shrink to one letter, then the optional columns drop in the order at, path,
+ * turn, id. Spare width goes to text, and to path when it shows. Text never falls below TEXT_MIN while an optional column shows.
  */
-export function tableColumns(width: number): Col[] {
+export function tableColumns(width: number, entries: readonly Assumption[] = []): Col[] {
+  const sizes = sizesOf(entries)
   for (let dropped = 0; dropped <= DROP_ORDER.length; dropped++) {
     const present = new Set<string>(DROP_ORDER.slice(dropped))
     for (const short of [false, true]) {
-      const laid = build(width, present, short)
+      const laid = build(width, present, short, sizes)
       if (laid.ok) return laid.cols
     }
   }
-  return build(width, new Set(), true).cols
+  return build(width, new Set(), true, sizes).cols
 }
 
 /** The text of one cell, cut to its column. */
@@ -933,26 +950,39 @@ export function cellText(c: Col, a: Assumption): string {
   return ''
 }
 
+/** The colour of a status or kind cell. Other cells have none. */
+export const CELL_COLOR: { status: Record<string, string>; kind: Record<string, string> } = {
+  status: { open: 'yellow', confirmed: 'green', wrong: 'red' },
+  kind: { declared: 'cyan', flagged: 'magenta' },
+}
+export const cellColor = (key: 'status' | 'kind', value: string): string | undefined => CELL_COLOR[key][value]
+
 /** A cell padded to its column's width. */
 const fit = (s: string, w: number) => clip(s, w).padEnd(w)
 
-/** The header line: each header above its column, with the bars. The actions column has no header. */
-export function tableHeader(cols: Col[]): string {
-  return cols.map(c => fit(c.key === 'actions' ? '' : c.header, c.width)).join(SEP)
+/** One piece of a table line: a cell, a bar, or a rule. The band styles each piece; the text of the pieces is the line. */
+export type Piece = { key: Col['key'] | 'bar' | 'rule'; text: string }
+
+/** The header line, in pieces: each header above its column, with the bars between. */
+export function headerPieces(cols: Col[]): Piece[] {
+  return cols.flatMap((c, i) => [...(i > 0 ? [{ key: 'bar' as const, text: SEP }] : []), { key: c.key, text: fit(c.header, c.width) }])
 }
 
-/** The rule under the header, and between rows: a dash under each column, with a crossing under each bar. */
-export function tableRule(cols: Col[]): string {
-  return cols.map(c => '─'.repeat(c.width)).join(CROSS)
+/** The rule under the header, and between rows, in pieces: a dash under each column, with a crossing under each bar. */
+export function rulePieces(cols: Col[]): Piece[] {
+  return cols.flatMap((c, i) => [...(i > 0 ? [{ key: 'rule' as const, text: CROSS }] : []), { key: 'rule' as const, text: '─'.repeat(c.width) }])
 }
 
 /**
- * One data row, up to and including the bar before the actions column. The buttons are drawn beside it, in the actions
- * column, which is the last column's width.
+ * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
+ * the actions column, which is the last column's width.
  */
-export function tableRow(cols: Col[], a: Assumption): string {
-  return cols
-    .filter(c => c.key !== 'actions')
-    .map(c => fit(cellText(c, a), c.width))
-    .join(SEP) + SEP
+export function rowPieces(cols: Col[], a: Assumption): Piece[] {
+  const shown = cols.filter(c => c.key !== 'actions')
+  return shown.flatMap((c, i) => [...(i > 0 ? [{ key: 'bar' as const, text: SEP }] : []), { key: c.key, text: fit(cellText(c, a), c.width) }]).concat([{ key: 'bar', text: SEP }])
 }
+
+const joined = (ps: Piece[]) => ps.map(p => p.text).join('')
+export const tableHeader = (cols: Col[]) => joined(headerPieces(cols))
+export const tableRule = (cols: Col[]) => joined(rulePieces(cols))
+export const tableRow = (cols: Col[], a: Assumption) => joined(rowPieces(cols, a))

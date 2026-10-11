@@ -1786,7 +1786,7 @@ test('paths: the chosen file on each OS: owner live, owner closed, unreadable, a
 })
 
 test('table: columns drop in the order at, path, turn, id; kind and status shrink first', () => {
-  const layout = (w: number) => tableColumns(w)
+  const layout = (w: number) => tableColumns(w, [SAMPLE_DECLARED, SAMPLE_FLAGGED])
   const keys = (w: number) => layout(w).map(c => c.key)
   const shortOf = (w: number) => layout(w).filter(c => c.key === 'kind' || c.key === 'status').map(c => c.short)
   // wide: every column, kind and status as words
@@ -1828,7 +1828,8 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   const labels = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
   // at 76 cells kind and status are one letter, so their headers are k and s
   // the header is one line of text, each header padded above its column
-  expect(labels).toContain(tableHeader(tableColumns(76)))
+  const shown = labels.map((l: string) => l.trim())
+  for (const h of ['ID', 'C', 'S', 'Turn', 'Text']) expect(shown).toContain(h)
   // at 76 cells the text column is narrow, so the sentence is cut with an ellipsis; its start is shown
   expect(labels.some((l: string) => l.includes('notes.md, no'))).toBe(true)
   const confirm = await ui.find({ key: 'confirm-1' })
@@ -2031,7 +2032,7 @@ const at = (line: string, ch: string) => [...line].flatMap((c, i) => (c === ch ?
 
 test('table alignment: every line is one length, within the width, with the bars and cells at the same places', () => {
   for (const w of [120, 90, 76, 60]) {
-    const cols = tableColumns(w)
+    const cols = tableColumns(w, [SAMPLE_DECLARED, SAMPLE_FLAGGED])
     const actionsWidth = cols.find(c => c.key === 'actions')!.width
     const header = tableHeader(cols)
     const rule = tableRule(cols)
@@ -2062,10 +2063,99 @@ test('table alignment: every line is one length, within the width, with the bars
 })
 
 test('table alignment: the sample at 120 has every cell in its column', () => {
-  const cols = tableColumns(120)
+  const cols = tableColumns(120, [SAMPLE_DECLARED, SAMPLE_FLAGGED])
   const row = tableRow(cols, SAMPLE_DECLARED)
-  expect(row.slice(0, 4).trimEnd()).toBe('1')
+  expect(row.startsWith('1')).toBe(true)
   expect(row).toContain('declared')
   expect(row).toContain('14:24')
   expect(row).toContain('│')
+})
+
+// 20. fitted columns, Title Case headers, and colours (0.3.40)
+import { cellColor, headerPieces, rowPieces, sizesOf, TITLE } from './logic'
+
+test('fitted: each fixed column is as wide as its header or its longest cell, and no wider', () => {
+  const short = [{ ...SAMPLE_DECLARED, id: 3 }, { ...SAMPLE_FLAGGED, id: 7 }] as any[]
+  const cols = tableColumns(120, short)
+  const widthOf = (k: string) => cols.find(c => c.key === k)!.width
+  expect(widthOf('id')).toBe(Math.max(2, ...short.map(a => String(a.id).length)))
+  expect(widthOf('turn')).toBe(Math.max(4, ...short.map(a => String(a.turn).length)))
+  expect(widthOf('status')).toBe(Math.max('status'.length, ...short.map(a => a.status.length)))
+  expect(widthOf('kind')).toBe(Math.max('kind'.length, ...short.map(a => a.kind.length)))
+  expect(sizesOf(short).at).toBe(5)
+})
+
+test('fitted: at 120 with short ids, the text column is wider than 30 and id is no wider than max(2, the longest id)', () => {
+  const short = [{ ...SAMPLE_DECLARED, id: 1 }, { ...SAMPLE_FLAGGED, id: 2 }] as any[]
+  const cols = tableColumns(120, short)
+  const text = cols.find(c => c.key === 'text')!.width
+  const id = cols.find(c => c.key === 'id')!.width
+  expect(text).toBeGreaterThan(30)
+  expect(id).toBeLessThanOrEqual(Math.max(2, ...short.map(a => String(a.id).length)))
+})
+
+test('fitted: at 90 and 76, path comes back at 90 and does not at 76; at does not come back at either', () => {
+  const samples = [SAMPLE_DECLARED, SAMPLE_FLAGGED]
+  const keys = (w: number) => tableColumns(w, samples).map(c => c.key)
+  expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
+  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
+})
+
+test('headers: Title Case display labels, and C and S when shortened', () => {
+  expect(TITLE).toMatchObject({ id: 'ID', kind: 'Cat', status: 'Status', turn: 'Turn', text: 'Text', path: 'Path', at: 'Time' })
+  const words = (ps: any[]) => ps.filter(p => p.key !== 'bar' && p.key !== 'rule').map(p => p.text.trim()).filter(Boolean)
+  const full = words(headerPieces(tableColumns(120, [SAMPLE_DECLARED, SAMPLE_FLAGGED])))
+  expect(full).toEqual(['ID', 'Cat', 'Status', 'Turn', 'Text', 'Path', 'Time'])
+  const narrow = words(headerPieces(tableColumns(90, [SAMPLE_DECLARED, SAMPLE_FLAGGED])))
+  expect(narrow).toContain('C')
+  expect(narrow).toContain('S')
+})
+
+test('colours: each status and each cat value has its colour; no other cell is coloured', () => {
+  expect(cellColor('status', 'open')).toBe('yellow')
+  expect(cellColor('status', 'confirmed')).toBe('green')
+  expect(cellColor('status', 'wrong')).toBe('red')
+  expect(cellColor('kind', 'declared')).toBe('cyan')
+  expect(cellColor('kind', 'flagged')).toBe('magenta')
+  expect(cellColor('kind', 'other')).toBeUndefined()
+})
+
+test('colours: the rendered status and cat cells carry their colour, and a resolved row keeps its status colour', async ($, on) => {
+  world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 120 }, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  const nodes = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
+  const cell = (text: string) => nodes.find((n: any) => n.text.trim() === text)
+  expect(cell('flagged')?.props.color).toBe('magenta')
+  expect(cell('open')?.props.color).toBe('yellow')
+  await ui.press({ key: 'confirm-1' })
+  const after = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
+  const status = after.find((n: any) => n.text.trim() === 'confirmed')
+  expect(status?.props.color).toBe('green')
+  await ui.unmount()
+})
+
+test('colours: a wrong entry is red', async ($, on) => {
+  world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 120 }, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await ui.press({ key: 'wrong-1' })
+  const after = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
+  expect(after.find((n: any) => n.text.trim() === 'wrong')?.props.color).toBe('red')
+  await ui.unmount()
+})
+
+test('alignment: the pieces of every line are plain text the same width, with the bars at the same places', () => {
+  const cols = tableColumns(120, [SAMPLE_DECLARED, SAMPLE_FLAGGED])
+  const plain = (ps: any[]) => ps.map(p => p.text).join('')
+  const actions = cols.find(c => c.key === 'actions')!.width
+  const h = plain(headerPieces(cols))
+  // a data row is drawn up to its actions column; the buttons fill that column beside it
+  const r = plain(rowPieces(cols, SAMPLE_DECLARED)) + ' '.repeat(actions)
+  expect(h.length).toBe(r.length)
+  expect([...h].flatMap((c, i) => (c === '│' ? [i] : []))).toEqual([...r].flatMap((c, i) => (c === '│' ? [i] : [])))
 })

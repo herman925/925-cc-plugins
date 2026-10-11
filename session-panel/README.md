@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.39. The version is shown dim beside the band title, as ` v0.3.39`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.40. The version is shown dim beside the band title, as ` v0.3.40`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -115,7 +115,7 @@ The rule is a system-prompt section, `session-panel:assume`, on when Track assum
   - A declared entry gives `Assumption '<text>' is wrong. Instead: `
   - A flagged entry gives `About the edits in turn <n> (<first file> and <N-1> more): `, or `About the edits in turn <n> (<file>): ` for one file.
 - Confirm and Wrong appear only on open entries. They are two separate buttons, `[Confirm] [Wrong]`.
-- **Table:** one row per entry, one column per field: id, kind, status, turn, text, path, at, actions. Columns are separated by ` │ `, with a rule under the header (`─┼─`) and a light rule between entries. Each header sits above its column, and every cell is padded to its column width. The panel takes 2N+1 lines for N entries: the header, its rule, the N rows, and N-1 rules between them. Text and the `[Confirm] [Wrong]` buttons always stay, and text keeps at least 30 cells while an optional column shows. As the band narrows, kind and status first shrink to one letter (`d` or `f` for kind; `o`, `c` or `w` for status, headed `k` and `s`). Then the optional columns drop, in this order: `at`, `path`, `turn`, `id`. Text is cut with an ellipsis. Times show as HH:MM.
+- **Table:** one row per entry, one column per field: ID, Cat (kind), Status, Turn, Text, Path, Time (at), and actions. Headers are Title Case; the field names in the data are unchanged. Each fixed column is as wide as its header or its longest cell, and no wider. Spare width goes to Text, and to Path when it shows. Columns are separated by ` │ `, with a rule under the header (`─┼─`) and a light rule between entries. The panel takes 2N+1 lines for N entries. Colours: the header is bold; Status is yellow (open), green (confirmed) or red (wrong); Cat is cyan (declared) or magenta (flagged); ID, Turn, Time and Path are dim; bars and rules are dim; resolved rows dim their text, but keep the Status colour. Text and the `[Confirm] [Wrong]` buttons always stay, and Text keeps at least 30 cells while an optional column shows. As the band narrows, Cat and Status first shrink to one letter (`C` and `S` in the headers; `d` or `f`, and `o`, `c` or `w`, in the cells). Then the optional columns drop, in this order: Time, Path, Turn, ID. Text is cut with an ellipsis. Times show as HH:MM.
 - **Hidden:** the panel is not shown at all when there are no assumptions.
 
 ### The shared file

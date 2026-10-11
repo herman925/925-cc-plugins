@@ -60,9 +60,10 @@ import {
   relativeTo,
   osFrom,
   tableColumns,
-  tableHeader,
-  tableRow,
-  tableRule,
+  headerPieces,
+  rulePieces,
+  rowPieces,
+  cellColor,
   type Os,
   openCount,
   panelOrder,
@@ -1137,10 +1138,21 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       )
     })
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
-    // header, a rule, then one line per entry with a light rule between entries. Each line is built as text, padded to the
+    // header, a rule, then one line per entry with a light rule between entries. Each line is drawn as pieces, padded to the
     // column widths, so every header sits above its contents; the buttons sit in the last column, beside their row.
-    const cols = tableColumns(width)
+    const cols = tableColumns(width, track.entries)
     const actionsWidth = cols.find(c => c.key === 'actions')!.width
+    const paint = (c: string | undefined) => (c === undefined ? undefined : color(c))
+    // the bars and rules are dim; the status and cat cells take their colour; a resolved row dims its text, not its status
+    const rowNodes = (a: Assumption) =>
+      rowPieces(cols, a).map((p, i) => {
+        const key = `c${i}`
+        if (p.key === 'bar') return <Text key={key} dimColor>{p.text}</Text>
+        if (p.key === 'status') return <Text key={key} color={paint(cellColor('status', a.status))}>{p.text}</Text>
+        if (p.key === 'kind') return <Text key={key} color={paint(cellColor('kind', a.kind))}>{p.text}</Text>
+        if (p.key === 'text') return <Text key={key} dimColor={a.status !== 'open'}>{p.text}</Text>
+        return <Text key={key} dimColor>{p.text}</Text>
+      })
     const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
       <Box flexDirection="column">
         <Button
@@ -1151,13 +1163,21 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         />
         {track.open ? (
           <Box flexDirection="column">
-            <Text bold>{tableHeader(cols)}</Text>
-            <Text dimColor>{tableRule(cols)}</Text>
+            <Box flexDirection="row">
+              {headerPieces(cols).map((p, i) => (p.key === 'bar' ? <Text key={`h${i}`} dimColor>{p.text}</Text> : <Text key={`h${i}`} bold>{p.text}</Text>))}
+            </Box>
+            <Box flexDirection="row">
+              {rulePieces(cols).map((p, i) => <Text key={`r${i}`} dimColor>{p.text}</Text>)}
+            </Box>
             {panelOrder(track.entries).map((a, i) => (
               <Box key={`row-${a.id}`} flexDirection="column">
-                {i > 0 ? <Text dimColor>{tableRule(cols)}</Text> : null}
+                {i > 0 ? (
+                  <Box flexDirection="row">
+                    {rulePieces(cols).map((p, j) => <Text key={`s${j}`} dimColor>{p.text}</Text>)}
+                  </Box>
+                ) : null}
                 <Box flexDirection="row">
-                  <Text dimColor={a.status !== 'open'}>{tableRow(cols, a)}</Text>
+                  {rowNodes(a)}
                   <Box width={actionsWidth} flexDirection="row">
                     {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
                     {a.status === 'open' ? <Text> </Text> : null}
