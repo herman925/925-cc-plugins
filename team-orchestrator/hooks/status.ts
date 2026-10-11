@@ -185,14 +185,22 @@ export const localRef = (listing: string, name: string) => {
  * followed by digits) gets the "claude-" prefix back. The aliases stay. Any other name (a full id with or without [1m],
  * a gateway's model) goes through as typed, so a wrong one fails visibly at start. "default", "keep" and "" give no
  * --model, and so does a name a shell would read as more than one word.
+ * On a custom config (`env`: the ANTHROPIC_DEFAULT_*_MODEL values set), a family's alias and short names start with that
+ * family's value, and a name equal to a set value goes through as typed, never given the "claude-" prefix.
  */
-export function modelArg(model: string): string {
+export type EnvModels = Partial<Record<'opus' | 'sonnet' | 'haiku' | 'fable', string>>
+export function modelArg(model: string, env: EnvModels = {}): string {
   const raw = model.trim()
   const s = raw.toLowerCase().replace(/\s+/g, '-').replace(/(\d)\.(\d)/g, '$1-$2')
   if (s === '' || s === 'default' || s === 'keep') return ''
+  const safe = (x: string) => /^[A-Za-z0-9._:/@+-]+(\[1m\])?$/i.test(x)
+  if (Object.values(env).some(v => v?.toLowerCase() === raw.toLowerCase()) && safe(raw)) return raw
+  const fam = /^(opus|sonnet|haiku|fable)(-\d[\w.-]*)?(\[1m\])?$/.exec(s)
+  const set = fam ? env[fam[1] as keyof EnvModels]?.trim() : undefined
+  if (fam && set && safe(set)) return fam[3] && !/\[1m\]$/i.test(set) ? `${set}[1m]` : set
   if (/^(opus|sonnet|haiku|fable)-\d[\w.-]*(\[1m\])?$/.test(s)) return `claude-${s}`
   if (/^(opus|sonnet|haiku|fable|best|opusplan)(\[1m\])?$/.test(s)) return s
-  return /^[A-Za-z0-9._:/@+-]+(\[1m\])?$/i.test(raw) ? raw : ''
+  return safe(raw) ? raw : ''
 }
 
 /** A model id as the roster shows it: the "claude-" prefix cut, the rest as typed. */

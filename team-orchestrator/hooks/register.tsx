@@ -13,6 +13,7 @@ import type { Sleep, Status, TeamSettings } from './status'
 import { countFromPs, linkFree, livenessOf, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
 import type { Liveness, Proc } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
+import type { EnvModels } from './status'
 import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry, QReason } from './changes'
@@ -276,8 +277,21 @@ async function orca($: any, ...args: string[]) {
     : { ok: false, out: String(r.stderr || r.stdout) }
 }
 
+// The ANTHROPIC_DEFAULT_*_MODEL values of this configuration, read before each start command is built (see modelArg).
+let envModels: EnvModels = {}
+async function readEnvModels($: any): Promise<EnvModels> {
+  const get = (p: Promise<string | undefined>) => p.then(v => v?.trim() || undefined).catch(() => undefined)
+  const [opus, sonnet, haiku, fable] = await Promise.all([
+    get($.env.get('ANTHROPIC_DEFAULT_OPUS_MODEL')),
+    get($.env.get('ANTHROPIC_DEFAULT_SONNET_MODEL')),
+    get($.env.get('ANTHROPIC_DEFAULT_HAIKU_MODEL')),
+    get($.env.get('ANTHROPIC_DEFAULT_FABLE_MODEL')),
+  ])
+  return Object.fromEntries(Object.entries({ opus, sonnet, haiku, fable }).filter(([, v]) => v)) as EnvModels
+}
+
 const flags = (model?: string, effort?: string) => {
-  const m = modelArg(model ?? '')
+  const m = modelArg(model ?? '', envModels)
   // "[1m]" is a pattern to zsh: a name carrying it goes in double quotes (cmd.exe and bash take those too)
   return `${m ? ` --model ${/[[\]]/.test(m) ? `"${m}"` : m}` : ''}${effort && effort !== 'default' && effort !== 'keep' ? ` --effort ${effort}` : ''}`
 }
@@ -1302,6 +1316,7 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   if (!wt) return false
   // the model it last asked for, as typed (#63), else the roster's (which holds what it ran once it has run)
   const model = await requestedModel($, m) || m.model
+  envModels = await readEnvModels($)
   const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume, m.name, model))
   const handle = r.ok ? handleOf(r.out) : ''
   if (!handle) return false
@@ -2222,6 +2237,7 @@ async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'm
   const batches = chunk(now, t.batch)
   for (const m of now) (m.state = 'queued'), (m.pending = false)
   await put($, made)
+  envModels = await readEnvModels($)
   for (const [i, group] of batches.entries()) {
     await update($, spawn, () => ({ names: now.map(m => m.name), batch: i + 1, of: batches.length }))
     for (const m of group) {
@@ -2304,6 +2320,7 @@ async function applyBulk($: any) {
     }
     const canRestart = m.sessionId !== '' && m.handle !== '' && m.state === 'idle'
     if (canRestart) {
+      envModels = await readEnvModels($)
       // kept on "keep": the model it last asked for (#63), else the roster's; its workspace checked first (#68)
       const model = wantModel ? b.model : (await requestedModel($, m)) || m.model
       const wt = await memberWorktree($, m)
