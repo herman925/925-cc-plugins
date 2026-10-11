@@ -2154,7 +2154,7 @@ test('colours: the rendered status and cat cells carry their colour, and a resol
   await ui.press({ key: 'assumptions-toggle' })
   await clock.advance(500)
   const nodes = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
-  const cell = (text: string) => nodes.find((n: any) => n.text.trim() === text)
+  const cell = (text: string) => nodes.find((n: any) => (n.text ?? n.props?.label ?? '').trim() === text)
   expect(cell('flagged')?.props.color).toBe('magenta')
   // the samples are dated 2026, more than three days ago, so the open cell shows stale; its colour is still the open colour
   expect(cell('stale')?.props.color).toBe('yellow')
@@ -2600,4 +2600,32 @@ test('reveal: the rows print after the frame opens, once; a redraw does not run 
   await ui.press({ key: 'col-id' })
   expect(await ui.find({ key: 'row-1' })).toBeTruthy()
   await ui.unmount()
+})
+
+// 26. the Cat cell opens a row when ID and Text are hidden; a deleted row closes (0.3.47)
+import { expandedAfterChange } from './logic'
+
+test('expanded row: a deleted entry closes, and a later entry with the same id does not open expanded', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const w = storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', [entryOf(1, LONG)]), [ROSTER_PATH]: ROSTER } })
+  await touch($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  await ui.press({ key: 'text-1' })
+  const shows = async () => (await ui.findAll({ type: 'Text' })).some((t: any) => t.text === LONG)
+  expect(await shows()).toBe(true)
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: delete 1'), asUser: true })
+  expect(result.drop).toBe('Assumption 1 deleted.')
+  expect(w.last().entries).toEqual([])
+  await ui.unmount()
+})
+
+test('expanded row: the helper closes a row whose entry is gone, and keeps it while the entry stays', () => {
+  const e1 = entryOf(1, 'one')
+  expect(expandedAfterChange(1, [])).toBeNull()
+  expect(expandedAfterChange(null, [e1])).toBeNull()
+  expect(expandedAfterChange(1, [e1])).toBe(1)
+  // the id 1 reused by a new entry: nothing is open, so it does not expand
+  expect(expandedAfterChange(expandedAfterChange(1, []), [entryOf(1, 'new')])).toBeNull()
 })

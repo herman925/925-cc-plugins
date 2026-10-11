@@ -991,10 +991,14 @@ export function tableColumns(width: number, entries: readonly Assumption[] = [],
   return build(width, new Set(), true, sizes, textOn).cols
 }
 
-/** The columns a reader can hide, in the order of the toggle line. Cat, Status and the actions column always show. */
 /** The row whose full text is open: one at a time. Pressing the open row again closes it. */
 export const selectedAfter = (current: number | null, id: number): number | null => (current === id ? null : id)
 
+/** The open row closes when its entry is no longer in the list, so a new entry that reuses the id does not open expanded. */
+export const expandedAfterChange = (expanded: number | null, entries: readonly Assumption[]): number | null =>
+  expanded !== null && !entries.some(e => e.id === expanded) ? null : expanded
+
+/** The columns a reader can hide, in the order of the toggle line. Cat, Status and the actions column always show. */
 export const TOGGLES: ReadonlyArray<{ key: 'id' | 'turn' | 'text' | 'path' | 'at'; label: string }> = [
   { key: 'id', label: 'ID' },
   { key: 'turn', label: 'Turn' },
@@ -1060,10 +1064,6 @@ export function rulePieces(cols: Col[]): Piece[] {
   return cols.flatMap((c, i) => [...(i > 0 ? [{ key: 'rule' as const, text: CROSS }] : []), { key: 'rule' as const, text: '─'.repeat(c.width) }])
 }
 
-/**
- * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
- * the actions column, which is the last column's width.
- */
 /**
  * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
  * the actions column, which is the last column's width.

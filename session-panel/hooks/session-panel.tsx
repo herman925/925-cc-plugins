@@ -65,6 +65,7 @@ import {
   rulePieces,
   rowPieces,
   selectedAfter,
+  expandedAfterChange,
   cellColor,
   type Os,
   openCount,
@@ -471,6 +472,10 @@ async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrac
     }
   }
   await update($, trackA, () => after)
+  // a row whose entry is gone closes, so a later entry with the same id does not open expanded
+  const expanded = await read($, expandedA)
+  const kept = expandedAfterChange(expanded, after.entries)
+  if (kept !== expanded) await update($, expandedA, () => kept)
   // content that appears while the section is open is revealed once; ordinary changes do not reveal again
   if (before.entries.length === 0 && after.entries.length > 0 && after.open) await startReveal($, after.entries.length)
 }
