@@ -43,8 +43,10 @@ import {
   finishTurn,
   loadTrack,
   newTrack,
+  applyIncoming,
   openCount,
   panelOrder,
+  parseIncoming,
   parseStored,
   plainPath,
   resolveStorePath,
@@ -486,6 +488,14 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
   // ---------- a prompt starts a job ----------
   on('prompt.submit', async ($, e, next) => {
+    // A status line from the team head: applied to this session's list and dropped, so no model turn starts for it.
+    const incoming = parseIncoming(e.text)
+    if (incoming !== null) {
+      const applied = applyIncoming(await read($, trackA), incoming, await $.clock.now())
+      if (applied.changed) await changeTrack($, () => applied.track)
+      $.ui.toast(applied.note)
+      return { drop: applied.note }
+    }
     lastInputAt = await $.clock.now()
     const enh = await read($, enhancerA)
     const prefs = await read($, prefsA)

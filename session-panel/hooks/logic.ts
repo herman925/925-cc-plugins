@@ -643,3 +643,20 @@ export function editTargets(tool: string, input: Record<string, unknown>): strin
   if (tool === 'Bash' || tool === 'PowerShell') return shellTargets(String(input.command ?? ''))
   return []
 }
+
+// ---------- messages from the team head (0.3.2) ----------
+
+/** The line the team head sends to set an assumption's status: `SESSION-PANEL: confirm 3` or `SESSION-PANEL: wrong 3`. */
+export function parseIncoming(text: string): { verb: 'confirm' | 'wrong'; id: number } | null {
+  const m = text.trim().match(/^SESSION-PANEL: (confirm|wrong) (\d+)$/)
+  return m ? { verb: m[1] as 'confirm' | 'wrong', id: Number(m[2]) } : null
+}
+
+/** Applies a head's message to this session's list. An unknown id, or an entry already resolved, changes nothing and says why. */
+export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wrong'; id: number }, now: number): { track: AssumptionTrack; note: string; changed: boolean } {
+  const entry = t.entries.find(e => e.id === cmd.id)
+  if (!entry) return { track: t, note: `No assumption ${cmd.id} in this session.`, changed: false }
+  if (entry.status !== 'open') return { track: t, note: `Assumption ${cmd.id} is already ${entry.status}.`, changed: false }
+  const status = cmd.verb === 'confirm' ? 'confirmed' : 'wrong'
+  return { track: setStatus(t, cmd.id, status, now), note: `Assumption ${cmd.id} marked ${status}.`, changed: true }
+}

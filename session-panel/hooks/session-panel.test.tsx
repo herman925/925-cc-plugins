@@ -1295,6 +1295,7 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
 function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string> } = {}) {
   const writes: Array<{ path: string; text: string }> = []
   const fill: string[] = []
+  const reached: string[] = []
   on('session.root', () => ({ value: opts.root ?? 'C:/proj' }))
   on('session.id', () => ({ value: opts.id ?? 'abc123' }))
   // the kit reports paths in native form; the plugin uses forward slashes, so compare in that form
@@ -1309,7 +1310,11 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
     fill.push(e.text)
     return { isFilled: true }
   })
-  return { writes, fill, last: () => JSON.parse(writes.filter(w => w.path.endsWith('.json')).at(-1)!.text) }
+  on('prompt.submit', (_$: any, e: any) => {
+    reached.push(e.text)
+    return { text: e.text }
+  })
+  return { writes, fill, reached, last: () => JSON.parse(writes.filter(w => w.path.endsWith('.json')).at(-1)!.text) }
 }
 
 const FILE = 'C:/proj/.claude/session-panel/assumptions/abc123.json'
@@ -1371,4 +1376,56 @@ test('wrong: the entry becomes wrong, the file is rewritten, and the box gets th
   expect(w.last().entries[0]).toMatchObject({ status: 'wrong' })
   expect(w.fill).toEqual(['About the edit to notes.md: '])
   await ui.unmount()
+})
+
+// 10. messages from the team head: SESSION-PANEL: confirm <id> and SESSION-PANEL: wrong <id>
+import { applyIncoming, parseIncoming } from './logic'
+
+test('incoming: only the exact form is read; anything else is an ordinary prompt', () => {
+  expect(parseIncoming('SESSION-PANEL: confirm 3')).toEqual({ verb: 'confirm', id: 3 })
+  expect(parseIncoming('  SESSION-PANEL: wrong 12  ')).toEqual({ verb: 'wrong', id: 12 })
+  expect(parseIncoming('SESSION-PANEL: confirm x')).toBeNull()
+  expect(parseIncoming('SESSION-PANEL: confirm 3 please')).toBeNull()
+  expect(parseIncoming('confirm 3')).toBeNull()
+  expect(parseIncoming('SESSION-PANEL: delete 3')).toBeNull()
+})
+
+test('incoming: a known open entry is set; an unknown id or a resolved entry changes nothing and says why', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addEdits(t, ['a.md'])
+  t = finishTurn(t, true, 1)
+  const id = t.entries[0].id
+  const done = applyIncoming(t, { verb: 'confirm', id }, 5)
+  expect(done.changed).toBe(true)
+  expect(done.track.entries[0]).toMatchObject({ status: 'confirmed', resolvedAt: 5 })
+  expect(done.note).toBe(`Assumption ${id} marked confirmed.`)
+  const again = applyIncoming(done.track, { verb: 'wrong', id }, 6)
+  expect(again.changed).toBe(false)
+  expect(again.note).toBe(`Assumption ${id} is already confirmed.`)
+  const unknown = applyIncoming(t, { verb: 'wrong', id: 999 }, 7)
+  expect(unknown.changed).toBe(false)
+  expect(unknown.note).toBe('No assumption 999 in this session.')
+})
+
+test('incoming: a confirm line from the head sets the entry, rewrites the file, and starts no model turn', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  const result: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  expect(result.drop).toBe('Assumption 1 marked confirmed.')
+  expect(w.reached).toEqual([])
+  expect(w.last().entries[0]).toMatchObject({ status: 'confirmed' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▸ Assumptions (0 open)')
+  await ui.unmount()
+})
+
+test('incoming: an unknown id is dropped with a note and the file is not touched', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  const before = w.writes.length
+  const result: any = await $.prompt.submit({ text: 'SESSION-PANEL: wrong 99', asUser: true })
+  expect(result.drop).toBe('No assumption 99 in this session.')
+  expect(w.writes.length).toBe(before)
 })
