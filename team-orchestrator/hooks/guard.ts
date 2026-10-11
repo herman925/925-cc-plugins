@@ -138,6 +138,8 @@ export function namesTeamFile(command: string): boolean {
   if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d|requests)\b/.test(c)) return true
   if (dir && /meta(\.json|~\d)/.test(c)) return true
   if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
+  // a change into the team folder: the rest of the command runs there, so the whole command counts
+  if (/(^|[\s;|&(])(cd|chdir|pushd|sl|set-location)\s[^;|&\n]*(team-orchestrator|team-o~\d)/.test(c)) return true
   return [...c.matchAll(/\S*(team-orchestrator|team-o~\d)\S*/g)].some(w => /[*?[\]{}$`]/.test(w[0]))
 }
 

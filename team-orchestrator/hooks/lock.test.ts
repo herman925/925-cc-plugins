@@ -75,6 +75,18 @@ test('real edits to the team files stay blocked: Write, Edit, Set-Content, a red
   expect(deny('Bash', '', 'rm -r .claude/team-orchestrator/changes')).toBe('deny')
 })
 
+test('a command that changes into the team folder is a team-file command, whatever its wildcards and separators', () => {
+  const w1 = m('W1', 'Head')
+  for (const cd of ['cd', 'chdir', 'pushd', 'sl', 'Set-Location']) {
+    expect(namesTeamFile(`${cd} .claude/team-orchestrator && rm *.json`)).toBe(true)
+    expect(namesTeamFile(`${cd} .claude/team-orchestrator; Remove-Item *`)).toBe(true)
+  }
+  expect(judgeTeamFiles({ me: w1, confirmed: true, tool: 'Bash', path: '', command: 'cd .claude/team-orchestrator && rm *.json' })?.kind).toBe('deny')
+  expect(judgeTeamFiles({ me: w1, confirmed: true, tool: 'PowerShell', path: '', command: 'Set-Location .claude/team-orchestrator; Remove-Item *' })?.kind).toBe('deny')
+  // a change into another folder, then a command in that folder, names no team file
+  expect(namesTeamFile('cd C:/proj && claude plugin test team-orchestrator')).toBe(false)
+})
+
 test('plainly read-only means cat, type, Get-Content, ls, dir, grep, Select-String or jq without -i', () => {
   for (const c of [
     'cat .claude/team-orchestrator/roster.json',
