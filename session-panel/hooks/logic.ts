@@ -728,3 +728,16 @@ export function applyStatuses(
   }
   return { track, notes, changed }
 }
+
+// ---------- the version in the band (0.3.31) ----------
+
+/** The `version` a plugin manifest states, or '' when the text is missing, not JSON, or has no version. */
+export function versionFrom(manifest: string | undefined): string {
+  if (manifest === undefined) return ''
+  try {
+    const v = JSON.parse(manifest)?.version
+    return typeof v === 'string' ? v : ''
+  } catch {
+    return ''
+  }
+}

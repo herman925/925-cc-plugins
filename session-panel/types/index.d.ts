@@ -104,6 +104,8 @@ declare module 'claude-code' {
       openGroups: string[]
       gateDenied: number
       assumptionTrack: AssumptionTrack
+      /** the plugin's manifest version, read once per load; '' when it cannot be read */
+      version: string
     }
   }
 }

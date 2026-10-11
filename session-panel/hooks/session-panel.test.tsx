@@ -1532,3 +1532,14 @@ test('mixed: the status is applied and the message goes on to the model, because
   expect(w.last().entries[0].status).toBe('confirmed')
   expect(w.reached).toEqual([text])
 })
+
+// 12. the version shown in the band: read from the manifest, or nothing when the read fails (0.3.31)
+import { versionFrom } from './logic'
+
+test('version: the manifest version is read; a missing, broken or versionless manifest shows nothing', () => {
+  expect(versionFrom('{"name":"session-panel","version":"0.3.31"}')).toBe('0.3.31')
+  expect(versionFrom(undefined)).toBe('')
+  expect(versionFrom('{ not json')).toBe('')
+  expect(versionFrom('{"name":"session-panel"}')).toBe('')
+  expect(versionFrom('{"version":3}')).toBe('')
+})

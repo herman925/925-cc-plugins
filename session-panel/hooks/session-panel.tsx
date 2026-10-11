@@ -8,6 +8,7 @@ import {
   PLAN_SECTION,
   SECTION_TEXT,
   GATE_LIMIT,
+  versionFrom,
   actionLabel,
   applyTaskCreate,
   applyTaskUpdate,
@@ -74,6 +75,7 @@ const prefsA = atom({ plugin: 'session-panel', key: 'prefs' } as const, DEFAULT_
 const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { original: null, passText: null, notes: [], busy: false } as EnhancerState)
 const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const, 0)
 const trackA = atom({ plugin: 'session-panel', key: 'assumptionTrack' } as const, newTrack() as AssumptionTrack)
+const versionA = atom({ plugin: 'session-panel', key: 'version' } as const, '')
 const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
 
 const PLAN = 'mcp__session-panel__plan_steps'
@@ -397,6 +399,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   // The /config menu rows (options) win; where a row is unset, the setting kept by a button or command applies.
   on('session.start', async ($, e, next) => {
     await migrateFromCleanView($)
+    // the version, read once per load from this plugin's own manifest, as team-orchestrator does
+    const manifest = await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`)
+    await update($, versionA, () => versionFrom(manifest))
     await loadAssumptions($)
     const storedPrefs = (await $.store.get('prefs')) as Partial<Prefs> | undefined
     if (storedPrefs) await update($, prefsA, p => ({ ...p, ...storedPrefs, sources: { ...p.sources, ...storedPrefs.sources } }))
@@ -816,6 +821,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const prefs = await read($, prefsA)
     const enh = await read($, enhancerA)
     const openGroups = await read($, openGroupsA)
+    const version = await read($, versionA)
     const track = await read($, trackA)
 
     // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
@@ -1055,9 +1061,12 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       stack(
         <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer}>
           <Box flexDirection="row" justifyContent="space-between" width={width}>
-            <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
-              {enabled ? ' Session Panel ' : ' Session Panel · off '}
-            </Text>
+            <Box flexDirection="row">
+              <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
+                {enabled ? ' Session Panel ' : ' Session Panel · off '}
+              </Text>
+              {version !== '' ? <Text dimColor>{` v${version}`}</Text> : null}
+            </Box>
             {settingsButton}
           </Box>
           {settingsOpen ? (
