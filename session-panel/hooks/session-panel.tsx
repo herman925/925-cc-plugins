@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
-import type { AssumptionTrack, CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
+import type { Assumption, AssumptionTrack, CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
 import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo, type Outcome } from './enhancer'
 import {
   GATE_MESSAGE,
@@ -36,6 +36,7 @@ import {
   sweep,
   visibleRows,
   ASSUME_SECTION,
+  responseText,
   addDeclared,
   addEdits,
   editTargets,
@@ -250,8 +251,8 @@ async function stopTurn($: Hooked) {
 }
 
 /** Redirect: puts the start of a correction in the box. The person finishes it and sends; nothing is submitted here. */
-async function redirectTo($: Hooked, assumption: string) {
-  await $.prompt.fill({ text: redirectText(assumption), mode: 'replace' })
+async function redirectTo($: Hooked, entry: Assumption) {
+  await $.prompt.fill({ text: redirectText(entry), mode: 'replace' })
 }
 
 /** Records the files a tool call wrote, for the Assumptions panel. A denied or failed call wrote nothing. */
@@ -578,8 +579,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   on('session.append', { door: 'response' }, async ($, e, next) => {
     const isOn = (await read($, enabledA)) && (await read($, prefsA)).assumptions
     if (isOn && (e as { agentId?: string }).agentId === undefined) {
-      const blocks = (Array.isArray(e.message.content) ? e.message.content : []) as Array<{ type?: string; text?: unknown }>
-      const text = blocks.map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : '')).join('\n')
+      const text = responseText((e.message as { content?: unknown } | undefined)?.content)
       await update($, trackA, t => addDeclared(t, parseAssumptions(text)))
     }
     return next(e)
@@ -897,7 +897,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             : track.entries.map(a => (
                 <Box key={`assume-${a.id}`} flexDirection="row">
                   <Text wrap="truncate">{`${a.kind === 'undeclared' ? '! ' : ''}${a.text} · turn ${a.turn} `}</Text>
-                  <Button key={`redirect-${a.id}`} plain label="Redirect" onPress={() => void redirectTo($, a.text)} />
+                  <Button key={`redirect-${a.id}`} plain label="Redirect" onPress={() => void redirectTo($, a)} />
                 </Box>
               ))
           : null}

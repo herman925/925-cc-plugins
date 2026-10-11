@@ -1099,7 +1099,7 @@ test('gate: after three denials in a row with no plan, tools go through', async 
 })
 
 // 9. assumptions (stage 2): the parser, the turn reducers, edit detection, and the Stop and Redirect actions
-import { addDeclared, addEdits, editTargets, finishTurn, newTrack, parseAssumptions, redirectText, shellTargets, startTurn } from './logic'
+import { ASSUME_SECTION, addDeclared, addEdits, editTargets, finishTurn, newTrack, parseAssumptions, redirectText, responseText, shellTargets, startTurn } from './logic'
 
 test('assumptions: ASSUMPTION lines are read in order; code fences and other text are ignored', () => {
   const reply = 'Working on it.\nASSUMPTION: The page is for a bakery.\n```\nASSUMPTION: not this one\n```\n  ASSUMPTION: Prices are in pounds.\nASSUMPTION:   \nNot an assumption.'
@@ -1159,8 +1159,32 @@ test('edit targets: writing tools name their file; reading and no-file commands 
   expect(editTargets('Bash', { command: 'echo x > y.md' })).toEqual(['y.md'])
 })
 
-test('redirect: the box gets the start of a correction, and nothing is submitted', () => {
-  expect(redirectText('Use Tailwind')).toBe("Assumption 'Use Tailwind' is wrong. Instead: ")
+test('redirect: a declared entry and a flagged edit each get their own opening, and nothing is submitted', () => {
+  expect(redirectText({ kind: 'declared', text: 'Use Tailwind' })).toBe("Assumption 'Use Tailwind' is wrong. Instead: ")
+  expect(redirectText({ kind: 'undeclared', text: 'edited a.md with no stated assumption', path: 'a.md' })).toBe('About the edit to a.md: ')
+})
+
+test('dedupe: the same assumption twice in one turn is listed once; the next turn may repeat it', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addDeclared(t, ['Keep the header'])
+  t = addDeclared(t, ['Keep the header', 'Keep the header'])
+  expect(t.entries.length).toBe(1)
+  t = startTurn(t, 't2')
+  t = addDeclared(t, ['Keep the header'])
+  expect(t.entries.map(e => e.turn)).toEqual([2, 1])
+})
+
+test('guard: a row with no content, a null block or a string body yields no text and does not throw', () => {
+  expect(responseText(undefined)).toBe('')
+  expect(responseText(null)).toBe('')
+  expect(responseText('ASSUMPTION: plain string')).toBe('')
+  expect(responseText([null, { type: 'tool_use' }, { type: 'text', text: 'ASSUMPTION: kept' }])).toBe('ASSUMPTION: kept')
+  expect(parseAssumptions(responseText([null, { type: 'text', text: 'ASSUMPTION: kept' }]))).toEqual(['kept'])
+})
+
+test('prompt: the rule says the line must start with plain ASSUMPTION:, with no bold, bullet or heading', () => {
+  expect(ASSUME_SECTION).toContain('start of the line')
+  expect(ASSUME_SECTION).toContain('no bold')
 })
 
 test('stop: the Stop button aborts the running turn by its id and says Stopped', async ($, on) => {
@@ -1204,6 +1228,6 @@ test('redirect: an undeclared edit lists in the panel, and Redirect fills the bo
   await ui.press({ key: 'assumptions-toggle' })
   expect(await texts(ui)).toContain('edited notes.md with no stated assumption')
   await ui.press({ key: 'redirect-1' })
-  expect(fills).toEqual(["Assumption 'edited notes.md with no stated assumption' is wrong. Instead: "])
+  expect(fills).toEqual(['About the edit to notes.md: '])
   await ui.unmount()
 })

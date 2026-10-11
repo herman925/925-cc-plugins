@@ -55,7 +55,7 @@ export type Prefs = {
 }
 
 /** One line in the Assumptions panel: a declared ASSUMPTION line, or a flagged undeclared edit. */
-export type Assumption = { id: number; text: string; turn: number; kind: 'declared' | 'undeclared' }
+export type Assumption = { id: number; text: string; turn: number; kind: 'declared' | 'undeclared'; path?: string }
 
 /** Per-session assumption state: the list (newest first), the turn in progress, and the panel's open state. */
 export type AssumptionTrack = {

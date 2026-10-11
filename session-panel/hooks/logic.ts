@@ -468,7 +468,7 @@ export const ASSUMPTION_CAP = 50
 export const ASSUMPTION_TEXT_CAP = 200
 
 /** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
-export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. Do not put ASSUMPTION lines inside code blocks.`
+export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. The line must start with plain ASSUMPTION: at the start of the line, with no bold, no bullet and no heading. Do not put ASSUMPTION lines inside code blocks.`
 
 const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false }
 export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
@@ -494,11 +494,13 @@ export function startTurn(t: AssumptionTrack, turnId: string): AssumptionTrack {
   return { ...t, turnNo: t.turnNo + 1, runningTurnId: turnId, turnDeclared: false, turnEdits: [] }
 }
 
-/** The reply declared assumptions: they go to the top of the list, newest first. */
+/** The reply declared assumptions: they go to the top of the list, newest first. A text already listed for this turn is not added twice. */
 export function addDeclared(t: AssumptionTrack, texts: string[]): AssumptionTrack {
-  if (texts.length === 0) return t
+  const listed = new Set(t.entries.filter(e => e.kind === 'declared' && e.turn === t.turnNo).map(e => e.text))
+  const fresh = texts.filter(text => !listed.has(text) && listed.add(text))
+  if (fresh.length === 0) return t
   let seq = t.seq
-  const added = [...texts].reverse().map(text => ({ id: ++seq, text, turn: t.turnNo, kind: 'declared' as const }))
+  const added = [...fresh].reverse().map(text => ({ id: ++seq, text, turn: t.turnNo, kind: 'declared' as const }))
   return { ...t, seq, turnDeclared: true, entries: [...added, ...t.entries].slice(0, ASSUMPTION_CAP) }
 }
 
@@ -513,13 +515,23 @@ export function finishTurn(t: AssumptionTrack, flag: boolean): AssumptionTrack {
   let seq = t.seq
   const flagged =
     flag && !t.turnDeclared
-      ? [...t.turnEdits].reverse().map(path => ({ id: ++seq, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'undeclared' as const }))
+      ? [...t.turnEdits].reverse().map(path => ({ id: ++seq, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'undeclared' as const, path }))
       : []
   return { ...t, seq, runningTurnId: '', turnDeclared: false, turnEdits: [], entries: [...flagged, ...t.entries].slice(0, ASSUMPTION_CAP) }
 }
 
-/** The text the box takes when the person presses Redirect. The person finishes it; nothing is sent. */
-export const redirectText = (assumption: string) => `Assumption '${assumption}' is wrong. Instead: `
+/** The text the box takes when the person presses Redirect, by entry kind. The person finishes it; nothing is sent. */
+export const redirectText = (a: Pick<Assumption, 'kind' | 'text' | 'path'>) =>
+  a.kind === 'undeclared' ? `About the edit to ${a.path ?? a.text}: ` : `Assumption '${a.text}' is wrong. Instead: `
+
+/** The text of the text blocks in a row's content. Anything else (no content, not a list, a null block) is no text. */
+export function responseText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  return content
+    .map(b => (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : ''))
+    .filter(text => text !== '')
+    .join('\n')
+}
 
 const NOT_A_FILE = /^(\/dev\/null|nul|\$null|&\d)$/i
 const clean = (raw: string) => raw.replace(/^["']|["']$/g, '')
