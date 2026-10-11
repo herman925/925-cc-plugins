@@ -360,13 +360,16 @@ async function liveSessions($: Hooked): Promise<{ live: Array<{ sessionId: strin
   return readRegistry($)
 }
 
-/** The OS as team-orchestrator reads it: the OS variable, then uname -s. */
+/** The OS as team-orchestrator reads it: the OS variable, then uname -s. Read once per load; it cannot change. */
+let osKnown: Os | undefined
 async function osOf($: Hooked): Promise<Os> {
+  if (osKnown !== undefined) return osKnown
   const none = () => undefined
   const osVar = await $.env.get('OS').catch(none)
-  if (osVar === 'Windows_NT') return 'windows'
+  if (osVar === 'Windows_NT') return (osKnown = 'windows')
   const r = await Promise.resolve().then(() => $.process.run(['uname', '-s'], { timeoutMs: 10000 })).catch(none)
-  return osFrom(osVar, String(r?.stdout ?? ''))
+  osKnown = osFrom(osVar, String(r?.stdout ?? ''))
+  return osKnown
 }
 
 /**
@@ -376,8 +379,11 @@ async function osOf($: Hooked): Promise<Os> {
  * (after /clear), is located again; a track already located for this session and file is returned as it is.
  */
 async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
-  const root = normPath(await $.session.root())
   const sessionId = await $.session.id()
+  // a track already located for this session is kept without a registry read; a new id, an older track or a first call reads it.
+  // A /rename is picked up at the next /clear or restart.
+  if (t.file !== '' && t.sessionId === sessionId && !!t.member) return t
+  const root = normPath(await $.session.root())
   const os = await osOf($)
   const { live, complete } = await liveSessions($)
   const name = live.find(s => s.sessionId.toLowerCase() === sessionId.toLowerCase() && s.name.trim() !== '')?.name
@@ -513,13 +519,13 @@ async function wrongEntry($: Hooked, entry: Assumption) {
 async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknown; isError?: boolean } | undefined) {
   const prefs = await read($, prefsA)
   if (!prefs.assumptions || !prefs.flagUndeclared || res?.deny !== undefined || res?.isError) return
+  // a call that edits no file is left alone, so an ordinary tool call reads no registry
+  const targets = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
+  if (targets.length === 0) return
   // only edits inside the project root count; the rest (a temp file, say) is ignored. Paths are kept relative to the root.
   const t = await locate($, await read($, trackA)).catch(() => undefined)
   if (t === undefined || t.root === '') return
-  const inside = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
-    .map(p => relativeTo(t.root, p, t.os))
-    .filter((p): p is string => p !== undefined)
-  // the located track is kept even with no edit, so a merge made here is on screen and in the head-line lookup
+  const inside = targets.map(p => relativeTo(t.root, p, t.os)).filter((p): p is string => p !== undefined)
   await update($, trackA, () => addEdits(t, inside))
 }
 

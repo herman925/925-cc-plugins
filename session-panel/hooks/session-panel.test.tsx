@@ -1325,7 +1325,9 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
     if (opts.broken || opts.flaky) r[`${sessionsDir}/199.json`] = '{ not json'
     return r
   }
+  let lists = 0
   on('fs.list', (_$: any, e: any) => {
+    lists++
     if (opts.unlistable && slash(e.path) === sessionsDir) throw new Error('the registry folder cannot be listed')
     if (opts.unlistablePath !== undefined && slash(e.path) === opts.unlistablePath) throw new Error('the folder cannot be listed')
     return { value: slash(e.path) === sessionsDir ? Object.keys(registryOf()).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [] }
@@ -1364,10 +1366,18 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
     reached.push(e.text)
     return { text: e.text }
   })
-  return { writes, fill, reached, last: () => JSON.parse(writes.filter(w => w.path.endsWith('.json')).at(-1)!.text) }
+  return { writes, fill, reached, lists: () => lists, last: () => JSON.parse(writes.filter(w => w.path.endsWith('.json')).at(-1)!.text) }
 }
 
 const FILE = 'C:/proj/.claude/session-panel/assumptions/abc123.json'
+
+// The first edit in the project finds and loads this session's file, as session start does in a real session.
+// (A read-only call no longer does, so these tests use an edit.)
+async function touch($: any) {
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Edit the notes'] })
+  await $.tool.call({ tool: 'Edit', file_path: 'notes.md', old_string: 'a', new_string: 'b' })
+}
 
 // A flagged edit: plan, one Edit to notes.md, then the turn ends with no assumption.
 async function flaggedEdit($: any) {
@@ -1873,8 +1883,8 @@ test('takeover: after a takeover with no new entries, the file names the new ses
     { id: 1, text: 'x.md, no stated assumption', turn: 1, kind: 'flagged', path: 'x.md', paths: ['x.md'], status: 'open', at: 1, sessionId: 'old-id-1234' } as any,
   ])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
-  // a read-only tool call changes no entry, but the session still finds and takes over its file
-  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  // an edit changes no entry here, but the session still finds and takes over its file on that first edit
+  await touch($)
   const takeover = w.writes.find(x => x.path === MODB)
   expect(takeover).toBeDefined()
   expect(JSON.parse(takeover!.text).sessionId).toBe('new-id-5678')
@@ -1968,7 +1978,7 @@ test('merge: this session\'s old id file is merged once: statuses kept, ids renu
     { id: 2, text: 'old done', turn: 1, kind: 'declared', status: 'confirmed', at: 2, resolvedAt: 3, sessionId: 'new-id-5678' } as any,
   ])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
-  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await touch($)
   const named = w.writes.find(x => x.path === MODB)!
   const saved = JSON.parse(named.text)
   expect(saved.merged).toEqual(['new-id-5678.json'])
@@ -2205,7 +2215,7 @@ test('merge: after a merge, the named file holds each assumption once, and the o
     { id: 2, text: 'old two', turn: 1, kind: 'declared', status: 'open', at: 2, sessionId: 'new-id-5678' } as any,
   ])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
-  await settle(clock, $.tool.call({ tool: 'Read', file_path: 'a.md' }))
+  await settle(clock, touch($))
   const named = JSON.parse(w.writes.filter(x => x.path === MODB).at(-1)!.text)
   const old = JSON.parse(w.writes.filter(x => x.path.endsWith(OLD_ID)).at(-1)!.text)
   expect(named.entries.length + old.entries.length).toBe(2)
@@ -2225,7 +2235,7 @@ test('merge: after a collision, a head line names the current id: confirm 1 is t
     { id: 2, text: 'old two', turn: 1, kind: 'declared', status: 'open', at: 3, sessionId: 'new-id-5678' } as any,
   ])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
-  await settle(clock, $.tool.call({ tool: 'Read', file_path: 'a.md' }))
+  await settle(clock, touch($))
   const first: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
   expect(first.drop).toBe('Assumption 1 marked confirmed.')
   const second: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 3', asUser: true })
@@ -2271,7 +2281,7 @@ test('retire: a file merged on an earlier load, whose retire failed, is retired 
     { id: 1, text: 'old open', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
   ], ['new-id-5678.json'])
   const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
-  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await touch($)
   const retired = JSON.parse(w.writes.filter(x => x.path.endsWith(OLD_ID)).at(-1)!.text)
   expect(retired).toEqual({ version: 1, member: 'new-id-5678', sessionId: 'new-id-5678', entries: [], mergedInto: 'Mod_Builder.json' })
   expect(w.writes.filter(x => x.path === MODB)).toEqual([])
@@ -2289,9 +2299,44 @@ test('new id: after /clear the same name locates again, takes the file over, and
   opts.id = 'new-id-5678'
   opts.sessions = [{ sessionId: 'new-id-5678', name: 'Mod Builder' }]
   const mark = w.writes.length
-  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await touch($)
   expect(w.writes.slice(mark).filter(x => x.path.endsWith('old-id-1234.json'))).toEqual([])
   const saved = JSON.parse(w.writes.slice(mark).filter(x => x.path === MODB).at(-1)!.text)
   expect(saved.sessionId).toBe('new-id-5678')
   expect(saved.entries.map((e: any) => e.sessionId)).toEqual(['old-id-1234'])
+})
+
+// 23. registry reads are kept to the first call, a new session id, or an older track: plain tool calls and status lines read it at most once (0.3.44)
+test('registry reads: a tool call that edits no file reads no registry', async ($, on) => {
+  world(on, WIN_ENV)
+  const w = storeWorld(on, { id: 'abc123', sessions: [{ sessionId: 'abc123', name: 'Mod Builder' }] })
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes'] })
+  const mark = w.lists()
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.tool.call({ tool: 'Grep', pattern: 'x' })
+  await $.tool.call({ tool: 'Read', file_path: 'b.md' })
+  expect(w.lists()).toBe(mark)
+})
+
+test('registry reads: two status lines in a row read the registry at most once', async ($, on) => {
+  world(on, WIN_ENV)
+  const w = storeWorld(on, { id: 'abc123', sessions: [{ sessionId: 'abc123', name: 'Mod Builder' }] })
+  await flaggedEdit($)
+  const mark = w.lists()
+  await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  expect(w.lists() - mark).toBeLessThanOrEqual(1)
+})
+
+test('registry reads: after a session id change the registry is read again', async ($, on) => {
+  world(on, WIN_ENV)
+  const opts: any = { id: 'abc123', sessions: [{ sessionId: 'abc123', name: 'Mod Builder' }] }
+  const w = storeWorld(on, opts)
+  await flaggedEdit($)
+  const mark = w.lists()
+  opts.id = 'new-id-5678'
+  opts.sessions = [{ sessionId: 'new-id-5678', name: 'Mod Builder' }]
+  await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  expect(w.lists()).toBeGreaterThan(mark)
 })
