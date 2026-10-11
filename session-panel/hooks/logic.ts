@@ -946,22 +946,23 @@ export function sizesOf(entries: readonly Assumption[]): Sizes {
  * One layout: the columns in `present` (plus kind, status, text and actions), with kind and status as full words or as
  * one letter. `ok` is false when the text would fall below TEXT_MIN, or the path below PATH_MIN, while an optional column shows.
  */
-function build(width: number, present: ReadonlySet<string>, short: boolean, sizes: Sizes): { cols: Col[]; ok: boolean } {
+function build(width: number, present: ReadonlySet<string>, short: boolean, sizes: Sizes, textOn: boolean): { cols: Col[]; ok: boolean } {
   const cols: Array<{ key: Col['key']; width: number }> = []
   if (present.has('id')) cols.push({ key: 'id', width: sizes.id })
   cols.push({ key: 'kind', width: short ? 1 : sizes.kind })
   cols.push({ key: 'status', width: short ? 1 : sizes.status })
   if (present.has('turn')) cols.push({ key: 'turn', width: sizes.turn })
-  cols.push({ key: 'text', width: 0 })
+  if (textOn) cols.push({ key: 'text', width: 0 })
   if (present.has('path')) cols.push({ key: 'path', width: 0 })
   if (present.has('at')) cols.push({ key: 'at', width: sizes.at })
   cols.push({ key: 'actions', width: ACTIONS })
   // a bar sits between each pair of columns: the bars come out of the width first
   const room = width - cols.reduce((n, c) => n + c.width, 0) - SEP.length * (cols.length - 1)
   const pathOn = present.has('path')
-  const text = pathOn ? Math.max(TEXT_MIN, Math.floor(room * 0.6)) : room
-  const path = pathOn ? room - text : 0
-  const ok = text >= TEXT_MIN && (!pathOn || path >= PATH_MIN)
+  // with text hidden, path takes all the spare width; with text shown, text keeps its share
+  const text = !textOn ? 0 : pathOn ? Math.max(TEXT_MIN, Math.floor(room * 0.6)) : room
+  const path = !pathOn ? 0 : textOn ? room - text : room
+  const ok = (!textOn || text >= TEXT_MIN) && (!pathOn || path >= PATH_MIN)
   const laid = cols.map(c => ({
     key: c.key,
     header: c.key === 'actions' ? '' : short && SHORT_TITLE[c.key] !== undefined ? (SHORT_TITLE[c.key] as string) : TITLE[c.key],
@@ -976,16 +977,41 @@ function build(width: number, present: ReadonlySet<string>, short: boolean, size
  * As the band narrows, kind and status first shrink to one letter, then the optional columns drop in the order at, path,
  * turn, id. Spare width goes to text, and to path when it shows. Text never falls below TEXT_MIN while an optional column shows.
  */
-export function tableColumns(width: number, entries: readonly Assumption[] = []): Col[] {
+export function tableColumns(width: number, entries: readonly Assumption[] = [], hidden: readonly string[] = []): Col[] {
   const sizes = sizesOf(entries)
+  // a column the reader hid is not drawn, and frees its width for the others; the drop order applies to what is left
+  const textOn = !hidden.includes('text')
   for (let dropped = 0; dropped <= DROP_ORDER.length; dropped++) {
-    const present = new Set<string>(DROP_ORDER.slice(dropped))
+    const present = new Set<string>(DROP_ORDER.slice(dropped).filter(k => !hidden.includes(k)))
     for (const short of [false, true]) {
-      const laid = build(width, present, short, sizes)
+      const laid = build(width, present, short, sizes, textOn)
       if (laid.ok) return laid.cols
     }
   }
-  return build(width, new Set(), true, sizes).cols
+  return build(width, new Set(), true, sizes, textOn).cols
+}
+
+/** The columns a reader can hide, in the order of the toggle line. Cat, Status and the actions column always show. */
+/** The row whose full text is open: one at a time. Pressing the open row again closes it. */
+export const selectedAfter = (current: number | null, id: number): number | null => (current === id ? null : id)
+
+export const TOGGLES: ReadonlyArray<{ key: 'id' | 'turn' | 'text' | 'path' | 'at'; label: string }> = [
+  { key: 'id', label: 'ID' },
+  { key: 'turn', label: 'Turn' },
+  { key: 'text', label: 'Text' },
+  { key: 'path', label: 'Path' },
+  { key: 'at', label: 'Time' },
+]
+
+/** Hidden columns are kept as a list of keys; anything else in the stored value is ignored. */
+export function hiddenFrom(stored: unknown): string[] {
+  const keys = new Set(TOGGLES.map(t => t.key as string))
+  return Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string' && keys.has(k)) : []
+}
+
+/** Shows a hidden column, or hides a shown one. */
+export function toggled(hidden: readonly string[], key: string): string[] {
+  return hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]
 }
 
 /** The one-letter status when shortened: o, c, w, and t for a stale open entry. */
@@ -1034,6 +1060,10 @@ export function rulePieces(cols: Col[]): Piece[] {
   return cols.flatMap((c, i) => [...(i > 0 ? [{ key: 'rule' as const, text: CROSS }] : []), { key: 'rule' as const, text: '─'.repeat(c.width) }])
 }
 
+/**
+ * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
+ * the actions column, which is the last column's width.
+ */
 /**
  * One data row, in pieces, up to and including the bar before the actions column. The buttons are drawn beside it, in
  * the actions column, which is the last column's width.

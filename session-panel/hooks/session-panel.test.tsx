@@ -1412,26 +1412,28 @@ test("file: a session never writes another session's file; its own goes to a tag
 })
 
 test('confirm: the entry becomes confirmed, the file is rewritten, and the count drops', async ($, on) => {
-  world(on)
+  const clock = world(on)
   const w = storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▸ Assumptions (1 open)')
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('==== ASSUMPTIONS (1 open) ====')
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'confirm-1' })
   expect(w.last().entries[0]).toMatchObject({ status: 'confirmed' })
   expect(typeof w.last().entries[0].resolvedAt).toBe('number')
-  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▾ Assumptions (0 open)')
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('==== ASSUMPTIONS (0 open) ====')
   expect(w.fill).toEqual([])
   await ui.unmount()
 })
 
 test('wrong: the entry becomes wrong, the file is rewritten, and the box gets the edit prefix', async ($, on) => {
-  world(on)
+  const clock = world(on)
   const w = storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'wrong-1' })
   expect(w.last().entries[0]).toMatchObject({ status: 'wrong' })
   expect(w.fill).toEqual(['About the edits in turn 1 (notes.md): '])
@@ -1477,7 +1479,7 @@ test('incoming: a confirm line from the head sets the entry, rewrites the file, 
   expect(w.reached).toEqual([])
   expect(w.last().entries[0]).toMatchObject({ status: 'confirmed' })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▸ Assumptions (0 open)')
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('==== ASSUMPTIONS (0 open) ====')
   await ui.unmount()
 })
 
@@ -1842,12 +1844,14 @@ test('table: the cells are short: text cut with an ellipsis, times as HH:MM', ()
 })
 
 test('table: the headers, the rows and the two action buttons render, with spacing between them', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
-  const labels = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
+  await clock.advance(500)
+  // the ID and Text cells are buttons now, so the labels come from both kinds of node
+  const labels = [...(await ui.findAll({ type: 'Text' })), ...(await ui.findAll({ type: 'Button' }))].map((t: any) => t.text ?? t.props?.label ?? '')
   // at 76 cells kind and status are one letter, so their headers are k and s
   // the header is one line of text, each header padded above its column
   const shown = labels.map((l: string) => l.trim())
@@ -1856,8 +1860,8 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   expect(labels.some((l: string) => l.includes('notes.md, no'))).toBe(true)
   const confirm = await ui.find({ key: 'confirm-1' })
   const wrong = await ui.find({ key: 'wrong-1' })
-  expect(confirm?.props.label).toBe('[Confirm]')
-  expect(wrong?.props.label).toBe('[Wrong]')
+  expect(confirm?.props.label).toBe('✓ Confirm')
+  expect(wrong?.props.label).toBe('✗ Wrong')
   expect(confirm).not.toBe(wrong)
   await ui.unmount()
 })
@@ -2143,11 +2147,12 @@ test('colours: each status and each cat value has its colour; no other cell is c
 })
 
 test('colours: the rendered status and cat cells carry their colour, and a resolved row keeps its status colour', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 120 }, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   const nodes = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
   const cell = (text: string) => nodes.find((n: any) => n.text.trim() === text)
   expect(cell('flagged')?.props.color).toBe('magenta')
@@ -2161,11 +2166,12 @@ test('colours: the rendered status and cat cells carry their colour, and a resol
 })
 
 test('colours: a wrong entry is red', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 120 }, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'wrong-1' })
   const after = (await ui.findAll({ type: 'Text' })).map((t: any) => t)
   expect(after.find((n: any) => n.text.trim() === 'wrong')?.props.color).toBe('red')
@@ -2347,23 +2353,25 @@ test('registry reads: after a session id change the registry is read again', asy
 import { DAY, DELETE_OPTIONS, STALE_OPEN_MS, TIDY_RESOLVED_MS, deleteQuestion, dropResolved, isStale, removeEntry, tidy } from './logic'
 
 test('delete: a resolved entry is removed at once', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   const w = storeWorld(on)
   await flaggedEdit($)
   await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'delete-1' })
   expect(w.last().entries).toEqual([])
   await ui.unmount()
 })
 
 test('delete: an open entry is kept when its question gets no Delete answer (no picker, or Keep)', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   const w = storeWorld(on)
   await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'delete-1' })
   expect(w.last().entries.length).toBe(1)
   await ui.unmount()
@@ -2375,7 +2383,7 @@ test('delete: the open-entry question and its two answers are fixed', () => {
 })
 
 test('clear resolved: every confirmed and wrong entry goes, the open ones stay, and the count is said', async ($, on) => {
-  world(on, WIN_ENV)
+  const clock = world(on, WIN_ENV)
   const toasts: string[] = []
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(e.text ?? e.message ?? String(e))
@@ -2387,6 +2395,7 @@ test('clear resolved: every confirmed and wrong entry goes, the open ones stay, 
   await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
   await ui.press({ key: 'clear-resolved' })
   expect(w.last().entries.map((e: any) => e.id)).toEqual([2])
   expect(toasts).toContain('Cleared 1 resolved assumptions.')
@@ -2467,4 +2476,128 @@ test('table: with three buttons, every header and row line is the same length at
     // a row is the cells before the actions cell, and the band draws the actions cell beside it
     for (const a of samples) expect(tableRow(cols, a).length + actions).toBe(header.length)
   }
+})
+
+
+
+// 25. the full text of a selected row, the column toggles, the frame and icons, and the reveal (0.3.46)
+import { TOGGLES, hiddenFrom, selectedAfter, toggled } from './logic'
+
+const LONG = 'Turning Flag undeclared edits back on is your call, so I left it off, and this sentence is long enough to need several lines in the band.'
+const entryOf = (id: number, text: string) => ({ id, text, turn: 1, kind: 'declared', status: 'open', at: Date.now(), sessionId: 'abc123' }) as any
+
+test('select: pressing a row\'s text opens its full text below it; a second press closes it', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', [entryOf(1, LONG)]) } })
+  await touch($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  const shows = async () => (await ui.findAll({ type: 'Text' })).some((t: any) => t.text === LONG)
+  expect(await shows()).toBe(false)
+  await ui.press({ key: 'text-1' })
+  expect(await shows()).toBe(true)
+  await ui.press({ key: 'text-1' })
+  expect(await shows()).toBe(false)
+  await ui.unmount()
+})
+
+test('select: pressing another row moves the expansion; the ID cell selects too', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', [entryOf(1, LONG), entryOf(2, 'the second entry, which is also long enough to show in full when it is the one open')]) } })
+  await touch($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  const open = async () => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
+  await ui.press({ key: 'id-1' })
+  expect((await open()).includes(LONG)).toBe(true)
+  await ui.press({ key: 'id-2' })
+  expect((await open()).includes(LONG)).toBe(false)
+  expect((await open()).some(t => t.startsWith('the second entry'))).toBe(true)
+  await ui.unmount()
+})
+
+test('select: the open row is chosen by id, and a second press on it closes it', () => {
+  expect(selectedAfter(null, 3)).toBe(3)
+  expect(selectedAfter(3, 3)).toBeNull()
+  expect(selectedAfter(3, 5)).toBe(5)
+})
+
+test('columns: hiding ID drops its header and its cells; the toggle shows the choice as ☐', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  expect((await ui.find({ key: 'col-id' }))?.props.label).toBe('ID ☑  ')
+  await ui.press({ key: 'col-id' })
+  expect((await ui.find({ key: 'col-id' }))?.props.label).toBe('ID ☐  ')
+  const headers = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text.trim())
+  expect(headers).not.toContain('ID')
+  await ui.unmount()
+})
+
+test('columns: the toggle choice is kept as a list, and junk in the store is ignored', () => {
+  expect(hiddenFrom(['id', 'path'])).toEqual(['id', 'path'])
+  expect(hiddenFrom(['id', 'nope', 3, null])).toEqual(['id'])
+  expect(hiddenFrom(undefined)).toEqual([])
+  expect(toggled(['id'], 'path')).toEqual(['id', 'path'])
+  expect(toggled(['id', 'path'], 'id')).toEqual(['path'])
+  expect(TOGGLES.map(t => t.key)).toEqual(['id', 'turn', 'text', 'path', 'at'])
+})
+
+test('widths with hidden columns: header and row lines match, within the width, at 120, 90, 76 and 60', () => {
+  const samples = [SAMPLE_DECLARED, SAMPLE_FLAGGED] as any[]
+  for (const hidden of [[], ['id'], ['text'], ['path', 'at'], ['id', 'turn', 'text', 'path', 'at']]) {
+    for (const w of [120, 90, 76, 60]) {
+      const cols = tableColumns(w, samples, hidden)
+      expect(cols.some(c => hidden.includes(c.key))).toBe(false)
+      expect(cols.at(-1)!.key).toBe('actions')
+      const header = tableHeader(cols)
+      expect(tableRule(cols).length).toBe(header.length)
+      expect(header.length).toBeLessThanOrEqual(w)
+      for (const a of samples) expect(tableRow(cols, a).length + cols.at(-1)!.width).toBe(header.length)
+    }
+  }
+})
+
+test('widths with text hidden: path takes the spare width, and text is not drawn', () => {
+  const cols = tableColumns(120, [SAMPLE_DECLARED, SAMPLE_FLAGGED] as any[], ['text'])
+  expect(cols.some(c => c.key === 'text')).toBe(false)
+  expect(cols.find(c => c.key === 'path')!.width).toBeGreaterThan(30)
+})
+
+test('frame: the section is one single-line frame, with the heavy title, the toggle line and the buttons with icons', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  expect((await ui.find({ key: 'assumptions-frame' }))?.props.borderStyle).toBe('single')
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('==== ASSUMPTIONS (1 open) ====')
+  expect((await ui.find({ key: 'col-turn' }))?.props.label).toBe('Turn ☑  ')
+  expect((await ui.find({ key: 'confirm-1' }))?.props.label).toBe('✓ Confirm')
+  expect((await ui.find({ key: 'wrong-1' }))?.props.label).toBe('✗ Wrong')
+  expect((await ui.find({ key: 'delete-1' }))?.props.label).toBe('⌫ Delete')
+  await ui.unmount()
+})
+
+test('reveal: the rows print after the frame opens, once; a redraw does not run it again', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  // the frame is there, but no row prints yet
+  expect(await ui.find({ key: 'assumptions-frame' })).toBeTruthy()
+  expect(await ui.find({ key: 'row-1' })).toBeFalsy()
+  await clock.advance(500)
+  expect(await ui.find({ key: 'row-1' })).toBeTruthy()
+  // an ordinary redraw (a column toggle) changes nothing: the row is still there at once, with no new reveal
+  await ui.press({ key: 'col-id' })
+  expect(await ui.find({ key: 'row-1' })).toBeTruthy()
+  await ui.unmount()
 })

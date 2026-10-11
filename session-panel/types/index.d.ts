@@ -123,6 +123,12 @@ declare module 'claude-code' {
       assumptionTrack: AssumptionTrack
       /** the plugin's manifest version, read once per load; '' when it cannot be read */
       version: string
+      /** the assumption row whose full text is open, or null */
+      assumptionExpanded: number | null
+      /** the rows printed while the assumptions reveal runs, or null when it has finished */
+      assumptionReveal: number | null
+      /** the table columns the reader has hidden: id, turn, text, path, at */
+      hiddenColumns: string[]
     }
   }
 }

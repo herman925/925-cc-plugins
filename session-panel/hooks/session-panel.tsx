@@ -64,12 +64,16 @@ import {
   headerPieces,
   rulePieces,
   rowPieces,
+  selectedAfter,
   cellColor,
   type Os,
   openCount,
   panelOrder,
   parseIncoming,
   removeEntry,
+  hiddenFrom,
+  toggled,
+  TOGGLES,
   deleteQuestion,
   DELETE_OPTIONS,
   dropResolved,
@@ -103,6 +107,12 @@ const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const
 const trackA = atom({ plugin: 'session-panel', key: 'assumptionTrack' } as const, newTrack() as AssumptionTrack)
 const versionA = atom({ plugin: 'session-panel', key: 'version' } as const, '')
 const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
+/** The row whose full text is open, or null. One row at a time. */
+const expandedA = atom({ plugin: 'session-panel', key: 'assumptionExpanded' } as const, null as number | null)
+/** The rows printed while the reveal runs: a count, or null once it has finished (all rows print). */
+const revealA = atom({ plugin: 'session-panel', key: 'assumptionReveal' } as const, null as number | null)
+/** The columns the reader has hidden: ID, Turn, Text, Path or Time. Saved in the store as assumptionColumns. */
+const hiddenColsA = atom({ plugin: 'session-panel', key: 'hiddenColumns' } as const, [] as string[])
 
 const PLAN = 'mcp__session-panel__plan_steps'
 const REPORT = 'mcp__session-panel__report_progress'
@@ -461,6 +471,8 @@ async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrac
     }
   }
   await update($, trackA, () => after)
+  // content that appears while the section is open is revealed once; ordinary changes do not reveal again
+  if (before.entries.length === 0 && after.entries.length > 0 && after.open) await startReveal($, after.entries.length)
 }
 
 /** At session start: find this session's file, read it back, and show what it holds. */
@@ -533,6 +545,34 @@ async function deleteEntry($: Hooked, entry: Assumption) {
   await changeTrack($, t => removeEntry(t, entry.id))
 }
 
+/** Shows or hides one column of the table, and keeps the choice in the store. */
+async function toggleColumn($: Hooked, key: string) {
+  const next = toggled(await read($, hiddenColsA), key)
+  await update($, hiddenColsA, () => next)
+  await $.store.set('assumptionColumns', next)
+}
+
+/** Opens the full text of one row, or closes it when it is the open row. */
+async function selectRow($: Hooked, id: number) {
+  await update($, expandedA, cur => selectedAfter(cur, id))
+}
+
+/** Opens or closes the Assumptions section. Opening a section with entries runs the reveal. */
+async function toggleSection($: Hooked) {
+  const before = await read($, trackA)
+  await update($, trackA, t => ({ ...t, open: !t.open }))
+  if (!before.open && before.entries.length > 0) await startReveal($, before.entries.length)
+}
+
+/** Prints the rows one by one over about 400 ms: the frame is already there, then each row. Only the reveal's own timers change it. */
+async function startReveal($: Hooked, count: number) {
+  await update($, revealA, () => 0)
+  const step = Math.max(1, Math.floor(400 / count))
+  for (let i = 1; i <= count; i++) {
+    $.clock.after(i * step, () => void update($, revealA, () => (i === count ? null : i)))
+  }
+}
+
 /** Clear resolved: removes every confirmed and wrong entry, and says how many. */
 async function clearResolved($: Hooked) {
   let count = 0
@@ -580,6 +620,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const manifest = await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`)
     await update($, versionA, () => versionFrom(manifest))
     await loadAssumptions($)
+    // the column choice saved last time; a reload starts from what the reader left
+    const hidden = hiddenFrom(await $.store.get('assumptionColumns'))
+    await update($, hiddenColsA, () => hidden)
     const storedPrefs = (await $.store.get('prefs')) as Partial<Prefs> | undefined
     if (storedPrefs) await update($, prefsA, p => ({ ...p, ...storedPrefs, sources: { ...p.sources, ...storedPrefs.sources } }))
     const hasSetup = (await $.store.get('setupDone')) === true || (await $.store.get('sessionPanelEnabled')) !== undefined
@@ -1000,6 +1043,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const openGroups = await read($, openGroupsA)
     const version = await read($, versionA)
     const track = await read($, trackA)
+    const hiddenCols = await read($, hiddenColsA)
+    const reveal = await read($, revealA)
+    const expanded = await read($, expandedA)
 
     // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
     const pillOf = (label: string, bg: string) => (
@@ -1192,64 +1238,80 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
     // header, a rule, then one line per entry with a light rule between entries. Each line is drawn as pieces, padded to the
     // column widths, so every header sits above its contents; the buttons sit in the last column, beside their row.
-    const cols = tableColumns(width, track.entries)
+    const cols = tableColumns(width - 2, track.entries, hiddenCols)
     const actionsWidth = cols.find(c => c.key === 'actions')!.width
     const paint = (c: string | undefined) => (c === undefined ? undefined : color(c))
     // the bars and rules are dim; the status and cat cells take their colour; a resolved row dims its text, not its status
     // a stale open entry (three days or more) shows dim, with its status colour; the stored status is still open
     const nowMs = Date.now()
+    // a row prints on one line; its ID and Text cells are buttons that open the row's full text below it
     const rowNodes = (a: Assumption) =>
       rowPieces(cols, a, nowMs).map((p, i) => {
         const key = `c${i}`
         if (p.key === 'bar') return <Text key={key} dimColor>{p.text}</Text>
         if (p.key === 'status') return <Text key={key} dimColor={isStale(a, nowMs)} color={paint(cellColor('status', a.status))}>{p.text}</Text>
         if (p.key === 'kind') return <Text key={key} color={paint(cellColor('kind', a.kind))}>{p.text}</Text>
-        if (p.key === 'text') return <Text key={key} dimColor={a.status !== 'open'}>{p.text}</Text>
+        if (p.key === 'text') return <Button key={`text-${a.id}`} plain dimColor={a.status !== 'open'} label={p.text} onPress={() => void selectRow($, a.id)} />
+        if (p.key === 'id') return <Button key={`id-${a.id}`} plain dimColor label={p.text} onPress={() => void selectRow($, a.id)} />
         return <Text key={key} dimColor>{p.text}</Text>
       })
-    const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
-      <Box flexDirection="column">
-        <Box flexDirection="row">
-          <Button
-            key="assumptions-toggle"
-            plain
-            label={`${track.open ? '▾' : '▸'} Assumptions (${openCount(track)} open)`}
-            onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
-          />
-          {track.entries.some(e => e.status !== 'open') ? (
-            <Button key="clear-resolved" plain label="  [Clear resolved]" onPress={() => void clearResolved($)} />
-          ) : null}
-        </Box>
-        {track.open ? (
-          <Box flexDirection="column">
-            <Box flexDirection="row">
-              {headerPieces(cols).map((p, i) => (p.key === 'bar' ? <Text key={`h${i}`} dimColor>{p.text}</Text> : <Text key={`h${i}`} bold>{p.text}</Text>))}
-            </Box>
-            <Box flexDirection="row">
-              {rulePieces(cols).map((p, i) => <Text key={`r${i}`} dimColor>{p.text}</Text>)}
-            </Box>
-            {panelOrder(track.entries).map((a, i) => (
-              <Box key={`row-${a.id}`} flexDirection="column">
-                {i > 0 ? (
-                  <Box flexDirection="row">
-                    {rulePieces(cols).map((p, j) => <Text key={`s${j}`} dimColor>{p.text}</Text>)}
-                  </Box>
-                ) : null}
-                <Box flexDirection="row">
-                  {rowNodes(a)}
-                  <Box width={actionsWidth} flexDirection="row">
-                    {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
-                    {a.status === 'open' ? <Text> </Text> : null}
-                    {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="[Wrong]" onPress={() => void wrongEntry($, a)} /> : null}
-                    {a.status === 'open' ? <Text> </Text> : null}
-                    <Button key={`delete-${a.id}`} plain label="[Delete]" onPress={() => void deleteEntry($, a)} />
-                  </Box>
-                </Box>
-              </Box>
-            ))}
-          </Box>
+    // The title is a heavy bar; open, it sits at the top of a single-line frame with the column toggles and the table.
+    // While the reveal runs, only the first `reveal` rows print; afterwards (reveal null) all of them do.
+    const titleRow = (
+      <Box flexDirection="row">
+        <Button key="assumptions-toggle" plain label={`==== ASSUMPTIONS (${openCount(track)} open) ====`} onPress={() => void toggleSection($)} />
+        {track.entries.some(e => e.status !== 'open') ? (
+          <Button key="clear-resolved" plain label="  ⌫ Clear resolved" onPress={() => void clearResolved($)} />
         ) : null}
       </Box>
+    )
+    const shownRows = reveal === null ? panelOrder(track.entries) : panelOrder(track.entries).slice(0, reveal)
+    const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
+      track.open ? (
+        <Box key="assumptions-frame" flexDirection="column" borderStyle="single">
+          {titleRow}
+          <Box flexDirection="row">
+            <Text dimColor>cols: </Text>
+            {TOGGLES.map(t => (
+              <Button key={`col-${t.key}`} plain label={`${t.label} ${hiddenCols.includes(t.key) ? '☐' : '☑'}  `} onPress={() => void toggleColumn($, t.key)} />
+            ))}
+          </Box>
+          <Text dimColor>{'─'.repeat(width - 2)}</Text>
+          <Box flexDirection="row">
+            {headerPieces(cols).map((p, i) => (p.key === 'bar' ? <Text key={`h${i}`} dimColor>{p.text}</Text> : <Text key={`h${i}`} bold>{p.text}</Text>))}
+          </Box>
+          <Box flexDirection="row">
+            {rulePieces(cols).map((p, i) => <Text key={`r${i}`} dimColor>{p.text}</Text>)}
+          </Box>
+          {shownRows.map((a, i) => (
+            <Box key={`row-${a.id}`} flexDirection="column">
+              {i > 0 ? (
+                <Box flexDirection="row">
+                  {rulePieces(cols).map((p, j) => <Text key={`s${j}`} dimColor>{p.text}</Text>)}
+                </Box>
+              ) : null}
+              <Box flexDirection="row">
+                {rowNodes(a)}
+                <Box width={actionsWidth} flexDirection="row">
+                  {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="✓ Confirm" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
+                  {a.status === 'open' ? <Text> </Text> : null}
+                  {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="✗ Wrong" onPress={() => void wrongEntry($, a)} /> : null}
+                  {a.status === 'open' ? <Text> </Text> : null}
+                  <Button key={`delete-${a.id}`} plain label="⌫ Delete" onPress={() => void deleteEntry($, a)} />
+                </Box>
+              </Box>
+              {expanded === a.id ? (
+                <Box key={`full-${a.id}`} flexDirection="column">
+                  <Text wrap="wrap">{a.text}</Text>
+                  {a.kind === 'flagged' ? <Text dimColor wrap="wrap">{`Path: ${(a.paths ?? [a.path ?? '']).join(', ')}`}</Text> : null}
+                </Box>
+              ) : null}
+            </Box>
+          ))}
+        </Box>
+      ) : (
+        titleRow
+      )
     ) : null
     const enhancerBar = (
       <Box flexDirection="column">
