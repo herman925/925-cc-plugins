@@ -1429,3 +1429,106 @@ test('incoming: an unknown id is dropped with a note and the file is not touched
   expect(result.drop).toBe('No assumption 99 in this session.')
   expect(w.writes.length).toBe(before)
 })
+
+// 11. status lines inside cross-session envelopes: the wrapped form, the sender check, mixed text, and a head's wrong (0.3.3)
+import { applyStatuses, headsFor, sortPrompt } from './logic'
+
+const wrap = (from: string, body: string) =>
+  `Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="${from}" from-mode="bypass">\n${body}\n</cross-session-message>`
+
+const ROSTER = JSON.stringify([
+  { name: 'Mod CEO', team: 'Mods', boss: 'user', sessionId: '06e389e1' },
+  { name: 'Mod Builder', team: 'Mods', boss: 'Mod CEO', sessionId: 'abc123' },
+  { name: 'Mod Builder 2', team: 'Mods', boss: 'Mod CEO', sessionId: 'def456' },
+])
+const ROSTER_PATH = 'C:/proj/.claude/team-orchestrator/roster.json'
+
+test('envelope: a status line alone inside a cross-session message is read with its sender', () => {
+  expect(sortPrompt(wrap('Mod CEO', 'SESSION-PANEL: confirm 1'))).toEqual({
+    statuses: [{ line: 'SESSION-PANEL: confirm 1', sender: 'Mod CEO' }],
+    other: '',
+  })
+})
+
+test('envelope: other text beside the status line is kept as other text', () => {
+  const parts = sortPrompt(wrap('Mod CEO', 'SESSION-PANEL: confirm 1\nPlease also check the header.'))
+  expect(parts.statuses.map(s => s.sender)).toEqual(['Mod CEO'])
+  expect(parts.other).toBe('Please also check the header.')
+})
+
+test('envelope: a plain typed line is the user, and the preamble is not text', () => {
+  expect(sortPrompt('SESSION-PANEL: wrong 2')).toEqual({ statuses: [{ line: 'SESSION-PANEL: wrong 2', sender: 'user' }], other: '' })
+  expect(sortPrompt('Another Claude session sent a message:\nhello there').other).toBe('hello there')
+})
+
+test('head: the roster gives a member its boss and the team top; an unknown session or a bad roster gives none', () => {
+  expect(headsFor(ROSTER, 'abc123')).toEqual(new Set(['Mod CEO']))
+  expect(headsFor(ROSTER, '06e389e1')).toEqual(new Set(['user', 'Mod CEO']))
+  expect(headsFor(ROSTER, 'nobody')).toBeUndefined()
+  expect(headsFor('not json', 'abc123')).toBeUndefined()
+})
+
+test('apply: a refused line changes nothing and its refusal is the note; an allowed one applies', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addEdits(t, ['a.md'])
+  t = finishTurn(t, true, 1)
+  const id = t.entries[0].id
+  const r = applyStatuses(t, [{ verb: 'confirm', id, allowed: false, refusal: "Refused: x is not this session's team head." }], 2)
+  expect(r.changed).toBe(false)
+  expect(r.notes).toEqual(["Refused: x is not this session's team head."])
+  expect(r.track.entries[0].status).toBe('open')
+  const ok = applyStatuses(t, [{ verb: 'confirm', id, allowed: true, refusal: '' }], 3)
+  expect(ok.track.entries[0].status).toBe('confirmed')
+})
+
+test('head: a wrapped line from the team head sets the entry and starts no model turn', async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: confirm 1'), asUser: true })
+  expect(result.drop).toBe('Assumption 1 marked confirmed.')
+  expect(w.reached).toEqual([])
+  expect(w.last().entries[0].status).toBe('confirmed')
+})
+
+test("head: a wrong from the team head sets the entry and fills the box with the Redirect text, without submitting", async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: wrong 1'), asUser: true })
+  expect(result.drop).toBe('Assumption 1 marked wrong.')
+  expect(w.last().entries[0].status).toBe('wrong')
+  expect(w.fill).toEqual(['About the edit to notes.md: '])
+  expect(w.reached).toEqual([])
+})
+
+test('head: a line from a session that is not the head is refused, with a note, and the entry stays open', async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const writes = w.writes.length
+  const result: any = await $.prompt.submit({ text: wrap('Mod Builder 2', 'SESSION-PANEL: confirm 1'), asUser: true })
+  expect(result.drop).toBe("Refused: Mod Builder 2 is not this session's team head.")
+  expect(w.writes.length).toBe(writes)
+  expect(w.reached).toEqual([])
+})
+
+test('head: with no readable roster, the line is refused with the reason', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: confirm 1'), asUser: true })
+  expect(result.drop).toBe('Refused: the team roster cannot be read, so Mod CEO cannot be checked.')
+  expect(w.last().entries[0].status).toBe('open')
+})
+
+test('mixed: the status is applied and the message goes on to the model, because other text is in it', async ($, on) => {
+  world(on)
+  const w = storeWorld(on, { files: { [ROSTER_PATH]: ROSTER } })
+  await flaggedEdit($)
+  const text = wrap('Mod CEO', 'SESSION-PANEL: confirm 1\nPlease also check the header.')
+  const result: any = await $.prompt.submit({ text, asUser: true })
+  expect(result.drop).toBeUndefined()
+  expect(w.last().entries[0].status).toBe('confirmed')
+  expect(w.reached).toEqual([text])
+})

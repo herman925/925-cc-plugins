@@ -660,3 +660,71 @@ export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wron
   const status = cmd.verb === 'confirm' ? 'confirmed' : 'wrong'
   return { track: setStatus(t, cmd.id, status, now), note: `Assumption ${cmd.id} marked ${status}.`, changed: true }
 }
+
+// ---------- status lines inside cross-session envelopes (0.3.3) ----------
+
+/** A message from another session arrives wrapped in this envelope; `from-name` says who sent it. */
+const ENVELOPE = /<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/g
+const PREAMBLE = /^\s*Another Claude session sent a message:\s*$/gm
+
+/**
+ * Splits a prompt into the status lines it carries and the other text. A status line typed by the user has sender
+ * `user`; one inside an envelope has the envelope's `from-name`. The preamble line is framing, not text.
+ */
+export function sortPrompt(text: string): { statuses: Array<{ line: string; sender: string }>; other: string } {
+  const statuses: Array<{ line: string; sender: string }> = []
+  const other: string[] = []
+  const take = (body: string, sender: string) => {
+    for (const raw of body.split('\n')) {
+      const line = raw.trim()
+      if (line === '') continue
+      if (parseIncoming(line) !== null) statuses.push({ line, sender })
+      else other.push(line)
+    }
+  }
+  for (const m of text.matchAll(ENVELOPE)) {
+    const fromName = m[1].match(/from-name="([^"]*)"/)?.[1] ?? ''
+    take(m[2], fromName)
+  }
+  take(text.replace(ENVELOPE, '').replace(PREAMBLE, ''), 'user')
+  return { statuses, other: other.join('\n') }
+}
+
+/** The team roster's heads for this session: its boss, and the team top (the member whose boss is the user). Undefined when the roster cannot be read or this session is not on it. */
+export function headsFor(rosterText: string, sessionId: string): Set<string> | undefined {
+  let roster: any
+  try {
+    roster = JSON.parse(rosterText)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(roster)) return undefined
+  const me = roster.find((m: any) => m && m.sessionId === sessionId)
+  if (!me || typeof me.team !== 'string') return undefined
+  const heads = new Set<string>()
+  if (typeof me.boss === 'string') heads.add(me.boss)
+  for (const m of roster) if (m && m.team === me.team && m.boss === 'user' && typeof m.name === 'string') heads.add(m.name)
+  return heads
+}
+
+/** Applies status lines in order. A refused line changes nothing and its refusal is the note. */
+export function applyStatuses(
+  t: AssumptionTrack,
+  items: Array<{ verb: 'confirm' | 'wrong'; id: number; allowed: boolean; refusal: string }>,
+  now: number,
+): { track: AssumptionTrack; notes: string[]; changed: boolean } {
+  let track = t
+  let changed = false
+  const notes: string[] = []
+  for (const it of items) {
+    if (!it.allowed) {
+      notes.push(it.refusal)
+      continue
+    }
+    const r = applyIncoming(track, it, now)
+    track = r.track
+    changed = changed || r.changed
+    notes.push(r.note)
+  }
+  return { track, notes, changed }
+}

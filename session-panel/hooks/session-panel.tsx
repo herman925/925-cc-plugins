@@ -43,10 +43,12 @@ import {
   finishTurn,
   loadTrack,
   newTrack,
-  applyIncoming,
+  applyStatuses,
+  headsFor,
   openCount,
   panelOrder,
   parseIncoming,
+  sortPrompt,
   parseStored,
   plainPath,
   resolveStorePath,
@@ -323,6 +325,40 @@ async function loadAssumptions($: Hooked) {
   await update($, trackA, () => loadTrack(t, stored.entries))
 }
 
+/** The team heads for this session, read from the roster (read only). Undefined when it cannot be read or this session is not on it. */
+async function headsOfRoster($: Hooked): Promise<Set<string> | undefined> {
+  const root = (await $.session.root()).replace(/\\/g, '/')
+  const text = await readText($, `${root}/.claude/team-orchestrator/roster.json`)
+  return text === undefined ? undefined : headsFor(text, await $.session.id())
+}
+
+/** Applies the status lines in a prompt. Returns the drop for a message that is only status lines, or null to let it go on. */
+async function applyStatusLines($: Hooked, text: string): Promise<{ drop: string } | null> {
+  const parts = sortPrompt(text)
+  if (parts.statuses.length === 0) return null
+  const heads = parts.statuses.some(s => s.sender !== 'user') ? await headsOfRoster($) : undefined
+  const items = parts.statuses.map(s => {
+    const cmd = parseIncoming(s.line)!
+    const allowed = s.sender === 'user' || (heads?.has(s.sender) ?? false)
+    const refusal =
+      heads === undefined ? `Refused: the team roster cannot be read, so ${s.sender} cannot be checked.` : `Refused: ${s.sender} is not this session's team head.`
+    return { ...cmd, allowed, refusal }
+  })
+  const now = await $.clock.now()
+  const before = await read($, trackA)
+  const applied = applyStatuses(before, items, now)
+  if (applied.changed) await changeTrack($, () => applied.track)
+  // a head's wrong does what the local Wrong button does: the box gets the Redirect text, and nothing is submitted
+  for (const it of items) {
+    const was = before.entries.find(e => e.id === it.id)
+    const now2 = applied.track.entries.find(e => e.id === it.id)
+    if (it.allowed && it.verb === 'wrong' && was?.status === 'open' && now2?.status === 'wrong') await redirectTo($, now2)
+  }
+  const note = applied.notes.join(' ')
+  $.ui.toast(note)
+  return parts.other === '' ? { drop: note } : null
+}
+
 /** Confirm or Wrong on one entry: records the status and writes the file. */
 async function resolveEntry($: Hooked, id: number, status: 'confirmed' | 'wrong') {
   const now = await $.clock.now()
@@ -488,14 +524,10 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
   // ---------- a prompt starts a job ----------
   on('prompt.submit', async ($, e, next) => {
-    // A status line from the team head: applied to this session's list and dropped, so no model turn starts for it.
-    const incoming = parseIncoming(e.text)
-    if (incoming !== null) {
-      const applied = applyIncoming(await read($, trackA), incoming, await $.clock.now())
-      if (applied.changed) await changeTrack($, () => applied.track)
-      $.ui.toast(applied.note)
-      return { drop: applied.note }
-    }
+    // Status lines (typed by the user, or sent by the team head in an envelope) are applied here. A message that is only
+    // status lines is dropped, so no model turn starts for it; any other text in it goes on to the model.
+    const status = await applyStatusLines($, e.text)
+    if (status !== null) return status
     lastInputAt = await $.clock.now()
     const enh = await read($, enhancerA)
     const prefs = await read($, prefsA)

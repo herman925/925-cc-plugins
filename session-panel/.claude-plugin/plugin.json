@@ -1,6 +1,6 @@
 {
   "name": "session-panel",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Session Panel: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button.",
   "types": "./types/index.d.ts",
   "userConfig": {
