@@ -400,7 +400,7 @@ export const SOURCE_LABELS: Record<SourceId, string> = {
   instructions: 'CLAUDE.md and AGENTS.md (project and global)',
   skills: 'Project skills list',
   docs: 'CONTEXT.md, PRD, ADRs and glossary',
-  github: 'GitHub wayfinder (via gh)',
+  github: 'GitHub (wayfinder map, else recent issues)',
 }
 
 /** Characters kept from each source, so one source cannot crowd out the rest. */

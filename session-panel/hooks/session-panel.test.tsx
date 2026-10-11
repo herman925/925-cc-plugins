@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { DEFAULT_PREFS, buildContext, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
+import { DEFAULT_PREFS, buildContext, enhance, githubMap, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
 import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -1595,4 +1595,67 @@ test('envelope: a normal single envelope from the head still applies', async ($,
   const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: confirm 1'), asUser: true })
   expect(result.drop).toBe('Assumption 1 marked confirmed.')
   expect(w.last().entries[0].status).toBe('confirmed')
+})
+
+// 14. the GitHub source: the open wayfinder map with its open child tickets, else recent issues; gh missing gives nothing (0.3.33)
+type GhCall = { args: string[] }
+
+function ghIo(answer: (args: string[]) => { exitCode: number; stdout: string } | undefined, calls: GhCall[] = []): EnhancerIo {
+  return {
+    ...fakeIo({}, []),
+    gh: async args => {
+      calls.push({ args })
+      return answer(args)
+    },
+  }
+}
+
+const MAP = JSON.stringify([
+  { number: 85, title: 'Map: Session Panel shipped (stages 0-3)', body: 'Stages and decisions.', url: 'https://github.com/herman925/925-cc-plugins/issues/85' },
+])
+
+test('github: the open wayfinder map gives its body and the titles of its open child tickets', async () => {
+  const calls: GhCall[] = []
+  const io = ghIo(args => {
+    if (args.includes('wayfinder:map')) return { exitCode: 0, stdout: MAP }
+    if (args[0] === 'api') return { exitCode: 0, stdout: JSON.stringify(['Stage 1: Enhancer', 'Stage 2: Assumptions panel']) }
+    return { exitCode: 0, stdout: 'should not be used' }
+  }, calls)
+  const text = await githubMap(io)
+  expect(text).toContain('# Map: Session Panel shipped (stages 0-3)')
+  expect(text).toContain('Stages and decisions.')
+  expect(text).toContain('- Stage 1: Enhancer')
+  expect(text).toContain('- Stage 2: Assumptions panel')
+  expect(calls.some(c => c.args[0] === 'api' && c.args[1] === 'repos/herman925/925-cc-plugins/issues/85/sub_issues')).toBe(true)
+  const ctx = await buildContext(ghIo(args => (args.includes('wayfinder:map') ? { exitCode: 0, stdout: MAP } : { exitCode: 0, stdout: '[]' })), { instructions: false, skills: false, docs: false, github: true })
+  expect(ctx.used).toEqual(['GitHub wayfinder map'])
+})
+
+test('github: with no open map, the recent issues are the fallback', async () => {
+  const calls: GhCall[] = []
+  const io = ghIo(args => {
+    if (args.includes('wayfinder:map')) return { exitCode: 0, stdout: '[]' }
+    return { exitCode: 0, stdout: '#4 line one' }
+  }, calls)
+  const ctx = await buildContext(io, { instructions: false, skills: false, docs: false, github: true })
+  expect(ctx.used).toEqual(['GitHub recent issues (gh)'])
+  expect(ctx.text).toContain('#4 line one')
+  expect(calls.some(c => c.args.join(' ') === 'issue list --limit 10')).toBe(true)
+})
+
+test('github: gh missing or not signed in gives nothing and does not throw', async () => {
+  const none = await buildContext(ghIo(() => undefined), { instructions: false, skills: false, docs: false, github: true })
+  expect(none.used).toEqual([])
+  const failed = await buildContext(ghIo(() => ({ exitCode: 1, stdout: '' })), { instructions: false, skills: false, docs: false, github: true })
+  expect(failed.used).toEqual([])
+})
+
+test('github: the map text is capped at 4000 characters, and the child titles are kept', async () => {
+  const io = ghIo(args => {
+    if (args.includes('wayfinder:map')) return { exitCode: 0, stdout: JSON.stringify([{ number: 85, title: 'Map', body: 'x'.repeat(10000), url: 'https://github.com/a/b/issues/85' }]) }
+    return { exitCode: 0, stdout: JSON.stringify(['Child one']) }
+  })
+  const text = (await githubMap(io)) ?? ''
+  expect(text.length).toBeLessThanOrEqual(4000)
+  expect(text).toContain('- Child one')
 })

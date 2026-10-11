@@ -14,7 +14,8 @@ export type EnhancerIo = {
   ancestors: (names: string[]) => Promise<Array<{ dir: string; name: string; content: string }>>
   cacheGet: (key: string) => Promise<{ mtimeMs: number; text: string } | undefined>
   cacheSet: (key: string, value: { mtimeMs: number; text: string }) => Promise<void>
-  gh: () => Promise<{ exitCode: number; stdout: string } | undefined>
+  /** runs `gh` with these arguments; undefined when gh cannot run */
+  gh: (args: string[]) => Promise<{ exitCode: number; stdout: string } | undefined>
   messages: () => Promise<Array<{ role: string; text: string }>>
   fork: (prompt: string) => Promise<{ isAnswered: true; text: string } | { isAnswered: false; reason: string }>
   complete: (model: string, prompt: string) => Promise<{ isAnswered: true; text: string } | { isAnswered: false }>
@@ -98,11 +99,13 @@ export async function buildContext(io: EnhancerIo, sources: Prefs['sources']): P
   }
 
   if (sources.github) {
-    try {
-      const r = await io.gh()
-      if (r && r.exitCode === 0) add('GitHub issues (gh)', r.stdout.slice(0, SOURCE_CAP))
-    } catch {
-      // gh missing or not signed in
+    // the open wayfinder map if there is one, else the recent issues; gh missing or not signed in gives nothing
+    const map = await githubMap(io)
+    if (map !== undefined) {
+      add('GitHub wayfinder map', map)
+    } else {
+      const r = await io.gh(['issue', 'list', '--limit', '10'])
+      if (r && r.exitCode === 0) add('GitHub recent issues (gh)', r.stdout.slice(0, SOURCE_CAP))
     }
   }
 
@@ -231,4 +234,34 @@ export async function sendBox(d: EnhancerDeps): Promise<void> {
   }
   await d.submitBox(text)
   await d.setState(NO_DRAFT)
+}
+
+function parseList(text: string): unknown[] | undefined {
+  try {
+    const v = JSON.parse(text)
+    return Array.isArray(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The open wayfinder map: its body, with the titles of its open child tickets (GitHub sub-issues). Undefined when there
+ * is no open map, or gh cannot read it. The text is capped at SOURCE_CAP, and the child titles are kept whole.
+ */
+export async function githubMap(io: EnhancerIo): Promise<string | undefined> {
+  const found = await io.gh(['issue', 'list', '--label', 'wayfinder:map', '--state', 'open', '--limit', '1', '--json', 'number,title,body,url'])
+  if (!found || found.exitCode !== 0) return undefined
+  const map = parseList(found.stdout)?.[0] as { number: number; title: string; body?: string; url: string } | undefined
+  if (!map) return undefined
+  const repo = map.url.match(/github\.com\/([^/]+\/[^/]+)\/issues\//)?.[1]
+  let children: string[] = []
+  if (repo !== undefined) {
+    const subs = await io.gh(['api', `repos/${repo}/issues/${map.number}/sub_issues`, '--jq', '[.[] | select(.state == "open") | .title]'])
+    if (subs && subs.exitCode === 0) children = (parseList(subs.stdout) ?? []).filter((c): c is string => typeof c === 'string')
+  }
+  const head = `# ${map.title}\n`
+  const kids = children.length > 0 ? `\nOpen child tickets:\n${children.map(c => `- ${c}`).join('\n')}\n` : ''
+  const room = Math.max(0, SOURCE_CAP - head.length - kids.length)
+  return head + (map.body ?? '').slice(0, room) + kids
 }

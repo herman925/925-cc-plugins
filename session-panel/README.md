@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.32. The version is shown dim beside the band title, as ` v0.3.32`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.33. The version is shown dim beside the band title, as ` v0.3.33`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -68,7 +68,7 @@ Each source has its own toggle in Settings > Enhancer. Each is capped at 4000 ch
 | CLAUDE.md and AGENTS.md (project and global) | on | The global `~/.claude/CLAUDE.md`, and the `CLAUDE.md` and `AGENTS.md` files in the folders above the session. |
 | Project skills list | on | The folder names in `~/.claude/skills` and `.claude/skills`. A missing folder counts as none. |
 | CONTEXT.md, PRD, ADRs and glossary | on | `CONTEXT.md`, `PRD.md`, `GLOSSARY.md`, and the file names in `docs/adr`. |
-| GitHub (via gh) | off | Runs `gh issue list --limit 10`. |
+| GitHub (wayfinder map, else recent issues) | off | The open issue labelled `wayfinder:map`: its body, with the titles of its open child tickets (GitHub sub-issues). If there is no open map, `gh issue list --limit 10`. gh runs in the session's folder, so that folder must be a GitHub repository. A gh that is missing or not signed in gives nothing. |
 
 Each file's digest is cached by its modification time, in the plugin store. A file that cannot be read is skipped.
 
@@ -160,10 +160,9 @@ A status line changes an entry's status without a model turn. It is one line, al
 
 ## Cross-mod functions
 
-These are shared with other mods. Mod Builder 2 will send the agreed wording, so the READMEs of the mods match. Until then, this is a draft.
-
-- **The band and its version.** Session Panel shows its name and version in the band title, as ` Session Panel v<version>`. Team-orchestrator reads its version the same way: once per load, from its own manifest.
-- **Cross-session messages and the head envelope.** A message from another session arrives in `<cross-session-message from="..." from-name="...">`. Session Panel acts on a status line in it only from the team head (see above).
-- **The team-orchestrator roster view.** The roster view can show Confirm and Wrong for each member's open assumptions. The buttons send the status line above to the member's session. Team-orchestrator never writes the member's file.
-- **Open-assumption counts.** Team-orchestrator reads each member's file and shows the count of `open` entries.
-- **When team-orchestrator reads the files.** Only when its team setting `[setting name: pending]` is on, and Session Panel is present and enabled. Mod-Builder-3 is adding the setting. The name will be confirmed with the Mod CEO before release.
+- Session Panel band: the title " Session Panel " with its version (" v0.3.32") when known, read from the plugin's own manifest.
+- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
+- Toasts, as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
+- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm and Wrong, which send the status line as a team message. Others see the count and list only. Team-orchestrator never writes an assumptions file.
+- Shared files: `<project root>/.claude/session-panel/assumptions/<session id>.json` with version, member (the session id for now), sessionId, and entries (id, text, status, kind, turn). `.claude/session-panel/` has a `.gitignore` with `*`.
+- What needs what: Confirm and Wrong need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. [TEAM SETTING NAME], off by default, in the team-orchestrator band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.

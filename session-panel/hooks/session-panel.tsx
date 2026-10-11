@@ -217,7 +217,13 @@ function engineIo($: Hooked): EnhancerIo {
     ancestors: async names => await $.fs.ancestors({ names }),
     cacheGet: async k => (await $.store.get(k)) as { mtimeMs: number; text: string } | undefined,
     cacheSet: (k, v) => $.store.set(k, v),
-    gh: async () => await $.process.run(['gh', 'issue', 'list', '--limit', '10']),
+    gh: async args => {
+      try {
+        return await $.process.run(['gh', ...args])
+      } catch {
+        return undefined
+      }
+    },
     messages: async () => (await $.session.messages()).map(m => ({ role: m.role, text: m.text })),
     fork: async prompt => (await $.model.fork({ prompt })) as Awaited<ReturnType<EnhancerIo['fork']>>,
     complete: async (model, prompt) => (await $.model.complete({ model, prompt })) as Awaited<ReturnType<EnhancerIo['complete']>>,
