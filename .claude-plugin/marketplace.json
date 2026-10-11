@@ -20,7 +20,7 @@
     {
       "name": "session-panel",
       "source": "./session-panel",
-      "description": "Session Panel: hides tool calls and shows a calm step checklist above the prompt, with a Hide/Show details button and in-band choices."
+      "description": "Session Panel: a prompt enhancer and a calm step checklist above the prompt, with hidden tool details, in-band choices and grouped settings."
     }
   ]
 }
