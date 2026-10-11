@@ -66,6 +66,8 @@ import {
   rowPieces,
   selectedAfter,
   expandedAfterChange,
+  canHide,
+  KEEP_ONE_MESSAGE,
   cellColor,
   type Os,
   openCount,
@@ -552,7 +554,12 @@ async function deleteEntry($: Hooked, entry: Assumption) {
 
 /** Shows or hides one column of the table, and keeps the choice in the store. */
 async function toggleColumn($: Hooked, key: string) {
-  const next = toggled(await read($, hiddenColsA), key)
+  const current = await read($, hiddenColsA)
+  if (!canHide(current, key)) {
+    $.ui.toast(KEEP_ONE_MESSAGE)
+    return
+  }
+  const next = toggled(current, key)
   await update($, hiddenColsA, () => next)
   await $.store.set('assumptionColumns', next)
 }
@@ -626,8 +633,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await update($, versionA, () => versionFrom(manifest))
     await loadAssumptions($)
     // the column choice saved last time; a reload starts from what the reader left
-    const hidden = hiddenFrom(await $.store.get('assumptionColumns'))
+    const stored = await $.store.get('assumptionColumns')
+    const hidden = hiddenFrom(stored)
     await update($, hiddenColsA, () => hidden)
+    // a stored state that hid both ID and Text is written back with ID shown
+    if (Array.isArray(stored) && JSON.stringify(stored) !== JSON.stringify(hidden)) await $.store.set('assumptionColumns', hidden)
     const storedPrefs = (await $.store.get('prefs')) as Partial<Prefs> | undefined
     if (storedPrefs) await update($, prefsA, p => ({ ...p, ...storedPrefs, sources: { ...p.sources, ...storedPrefs.sources } }))
     const hasSetup = (await $.store.get('setupDone')) === true || (await $.store.get('sessionPanelEnabled')) !== undefined

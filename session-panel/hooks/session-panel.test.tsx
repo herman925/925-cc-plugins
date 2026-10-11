@@ -2629,3 +2629,61 @@ test('expanded row: the helper closes a row whose entry is gone, and keeps it wh
   // the id 1 reused by a new entry: nothing is open, so it does not expand
   expect(expandedAfterChange(expandedAfterChange(1, []), [entryOf(1, 'new')])).toBeNull()
 })
+
+// 27. ID and Text are never both hidden: a toggle that would hide the last one is refused, and a stored state with both shows ID (0.3.48)
+import { KEEP_ONE_MESSAGE, canHide } from './logic'
+
+test('columns: hiding Text while ID is hidden is refused, with the toast, and Text stays shown', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => {
+    toasts.push(e.text ?? e.message ?? String(e))
+    return { value: undefined }
+  })
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  await ui.press({ key: 'col-id' })
+  await ui.press({ key: 'col-text' })
+  expect(toasts).toContain(KEEP_ONE_MESSAGE)
+  expect((await ui.find({ key: 'col-text' }))?.props.label).toBe('Text ☑  ')
+  expect((await ui.find({ key: 'col-id' }))?.props.label).toBe('ID ☐  ')
+  await ui.unmount()
+})
+
+test('columns: hiding ID while Text is hidden is refused, with the toast, and ID stays shown', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => {
+    toasts.push(e.text ?? e.message ?? String(e))
+    return { value: undefined }
+  })
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  await clock.advance(500)
+  await ui.press({ key: 'col-text' })
+  await ui.press({ key: 'col-id' })
+  expect(toasts).toContain(KEEP_ONE_MESSAGE)
+  expect((await ui.find({ key: 'col-id' }))?.props.label).toBe('ID ☑  ')
+  expect((await ui.find({ key: 'col-text' }))?.props.label).toBe('Text ☐  ')
+  await ui.unmount()
+})
+
+test('columns: a stored state with both ID and Text hidden loads with ID shown', () => {
+  expect(hiddenFrom(['id', 'text'])).toEqual(['text'])
+  expect(hiddenFrom(['text', 'id', 'path'])).toEqual(['text', 'path'])
+  expect(hiddenFrom(['id'])).toEqual(['id'])
+})
+
+test('columns: canHide refuses only the last of ID and Text; showing is always allowed', () => {
+  expect(canHide([], 'id')).toBe(true)
+  expect(canHide(['id'], 'text')).toBe(false)
+  expect(canHide(['text'], 'id')).toBe(false)
+  expect(canHide(['text'], 'text')).toBe(true)
+  expect(canHide(['id', 'text'], 'text')).toBe(true)
+  expect(canHide(['id'], 'path')).toBe(true)
+})

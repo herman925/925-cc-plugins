@@ -1010,7 +1010,19 @@ export const TOGGLES: ReadonlyArray<{ key: 'id' | 'turn' | 'text' | 'path' | 'at
 /** Hidden columns are kept as a list of keys; anything else in the stored value is ignored. */
 export function hiddenFrom(stored: unknown): string[] {
   const keys = new Set(TOGGLES.map(t => t.key as string))
-  return Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string' && keys.has(k)) : []
+  const hidden = Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string' && keys.has(k)) : []
+  // ID and Text are never both hidden: a row must still open its full text. A stored state that has both shows ID.
+  return hidden.includes('id') && hidden.includes('text') ? hidden.filter(k => k !== 'id') : hidden
+}
+
+/** Shown when a toggle would hide the last of ID and Text. */
+export const KEEP_ONE_MESSAGE = 'Keep ID or Text visible, so each row can still open its full text.'
+
+/** False when hiding `key` would leave both ID and Text hidden. Showing a column is always allowed. */
+export function canHide(hidden: readonly string[], key: string): boolean {
+  if (hidden.includes(key)) return true
+  const pair = key === 'id' ? 'text' : key === 'text' ? 'id' : null
+  return pair === null || !hidden.includes(pair)
 }
 
 /** Shows a hidden column, or hides a shown one. */
