@@ -1792,13 +1792,13 @@ test('table: columns drop in the order at, path, turn, id; kind and status shrin
   // wide: every column, kind and status as words
   expect(keys(120)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
   expect(shortOf(120)).toEqual([false, false])
-  // 90: every column still shows; kind and status shrink to one letter to make room
-  expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
+  // 90: kind and status shrink to one letter; the three-cell bars leave no room for at, which drops
+  expect(keys(90)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
   expect(shortOf(90)).toEqual([true, true])
-  // 76: at has dropped; path, turn and id stay
-  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
+  // 76: path has dropped too; id, turn and text stay
+  expect(keys(76)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
   expect(shortOf(76)).toEqual([true, true])
-  // 60: path, turn and id have dropped too; text and the buttons stay
+  // 60: turn and id have dropped too; text and the buttons stay
   expect(keys(60)).toEqual(['kind', 'status', 'text', 'actions'])
   expect(shortOf(60)).toEqual([true, true])
 })
@@ -1827,9 +1827,10 @@ test('table: the headers, the rows and the two action buttons render, with spaci
   await ui.press({ key: 'assumptions-toggle' })
   const labels = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
   // at 76 cells kind and status are one letter, so their headers are k and s
-  for (const h of ['id', 'k', 's', 'turn', 'text', 'path']) expect(labels).toContain(h)
+  // the header is one line of text, each header padded above its column
+  expect(labels).toContain(tableHeader(tableColumns(76)))
   // at 76 cells the text column is narrow, so the sentence is cut with an ellipsis; its start is shown
-  expect(labels.some((l: string) => l.startsWith('notes.md, no'))).toBe(true)
+  expect(labels.some((l: string) => l.includes('notes.md, no'))).toBe(true)
   const confirm = await ui.find({ key: 'confirm-1' })
   const wrong = await ui.find({ key: 'wrong-1' })
   expect(confirm?.props.label).toBe('[Confirm]')
@@ -2017,4 +2018,54 @@ test('registry: the record pattern matches <pid>.json and nothing else', () => {
   expect(REGISTRY_RECORD.test('d+.json')).toBe(false)
   expect(REGISTRY_RECORD.test('12a.json')).toBe(false)
   expect(REGISTRY_RECORD.test('123.json.bak')).toBe(false)
+})
+
+// 19. the table's lines line up: header, rule and rows share one layout, bars at the same places (0.3.39)
+import { SEP, cellText, tableHeader, tableRow, tableRule } from './logic'
+
+const SAMPLE_DECLARED = { id: 1, text: 'Turning Flag undeclared edits back on is your call, so I left it off.', turn: 19, kind: 'declared', status: 'open', at: new Date(2026, 0, 1, 14, 24).getTime(), sessionId: 's' } as any
+const SAMPLE_FLAGGED = { id: 2, text: 'notes.md, no stated assumption', turn: 20, kind: 'flagged', status: 'open', path: 'team-orchestrator/hooks/register.tsx', paths: ['team-orchestrator/hooks/register.tsx', 'b.ts'], at: new Date(2026, 0, 1, 14, 30).getTime(), sessionId: 's' } as any
+
+/** The positions of a character in a line. */
+const at = (line: string, ch: string) => [...line].flatMap((c, i) => (c === ch ? [i] : []))
+
+test('table alignment: every line is one length, within the width, with the bars and cells at the same places', () => {
+  for (const w of [120, 90, 76, 60]) {
+    const cols = tableColumns(w)
+    const actionsWidth = cols.find(c => c.key === 'actions')!.width
+    const header = tableHeader(cols)
+    const rule = tableRule(cols)
+    const rows = [SAMPLE_DECLARED, SAMPLE_FLAGGED].map(a => tableRow(cols, a) + ' '.repeat(actionsWidth))
+    const lines = [header, rule, ...rows]
+    const length = cols.reduce((n, c) => n + c.width, 0) + SEP.length * (cols.length - 1)
+    for (const l of lines) {
+      expect(l.length).toBe(length)
+      expect(l.length).toBeLessThanOrEqual(w)
+    }
+    // each bar is in the same place in the header and in every row; the rule crosses at the same places
+    const bars = at(header, '│')
+    expect(bars.length).toBe(cols.length - 1)
+    expect(at(rule, '┼')).toEqual(bars)
+    for (const r of rows) expect(at(r, '│')).toEqual(bars)
+    // each header starts at its column, and each cell starts at its column
+    let start = 0
+    for (const c of cols) {
+      if (c.key !== 'actions') {
+        expect(header.slice(start, start + c.width).trimEnd()).toBe(c.header)
+        for (const a of [SAMPLE_DECLARED, SAMPLE_FLAGGED]) {
+          expect(cellText(c, a).length).toBeLessThanOrEqual(c.width)
+        }
+      }
+      start += c.width + SEP.length
+    }
+  }
+})
+
+test('table alignment: the sample at 120 has every cell in its column', () => {
+  const cols = tableColumns(120)
+  const row = tableRow(cols, SAMPLE_DECLARED)
+  expect(row.slice(0, 4).trimEnd()).toBe('1')
+  expect(row).toContain('declared')
+  expect(row).toContain('14:24')
+  expect(row).toContain('│')
 })

@@ -844,7 +844,7 @@ export function chooseFile(p: { root: string; sessionId: string; name: string | 
   return { file: `${dir}/${nameFile(p.name)}.json`, tagged: false, takeover: owner !== undefined && owner !== p.sessionId }
 }
 
-// ---------- the table (0.3.34; column rules 0.3.35) ----------
+// ---------- the table (0.3.34; column rules 0.3.35; separators 0.3.39) ----------
 
 /** The text cut to `n` cells, with "…" as its last cell when it is cut. */
 export const clip = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : n <= 1 ? '…' : `${s.slice(0, n - 1)}…`)
@@ -857,17 +857,21 @@ export const hhmm = (ms: number) => {
 
 export type Col = { key: 'id' | 'kind' | 'status' | 'turn' | 'text' | 'path' | 'at' | 'actions'; header: string; width: number; short?: boolean }
 
-/** The text column keeps at least this many cells while any optional column is shown. */
+/** The text column keeps at least this many cells while any optional column shows. */
 export const TEXT_MIN = 30
 /** A path column narrower than this is not worth showing: it is dropped instead. */
 const PATH_MIN = 8
 /** The optional columns, in the order they drop as the band narrows. Text and the actions always stay. */
 const DROP_ORDER = ['at', 'path', 'turn', 'id'] as const
 const ACTIONS = 20
+/** The bar between two columns, with a space either side. It is three cells wide. */
+export const SEP = ' │ '
+/** The rule's crossing under each bar. */
+const CROSS = '─┼─'
 
 /**
  * One layout: the columns in `present` (plus kind, status, text and actions), with kind and status as full words or as
- * one letter. Undefined when the text would fall below TEXT_MIN, or the path below PATH_MIN, while an optional column shows.
+ * one letter. `ok` is false when the text would fall below TEXT_MIN, or the path below PATH_MIN, while an optional column shows.
  */
 function build(width: number, present: ReadonlySet<string>, short: boolean): { cols: Col[]; ok: boolean } {
   const cols: Array<{ key: Col['key']; width: number }> = []
@@ -879,7 +883,8 @@ function build(width: number, present: ReadonlySet<string>, short: boolean): { c
   if (present.has('path')) cols.push({ key: 'path', width: 0 })
   if (present.has('at')) cols.push({ key: 'at', width: 5 })
   cols.push({ key: 'actions', width: ACTIONS })
-  const room = width - cols.reduce((n, c) => n + c.width, 0) - cols.length
+  // a bar sits between each pair of columns: the bars come out of the width first
+  const room = width - cols.reduce((n, c) => n + c.width, 0) - SEP.length * (cols.length - 1)
   const pathOn = present.has('path')
   const text = pathOn ? Math.max(TEXT_MIN, Math.floor(room * 0.6)) : room
   const path = pathOn ? room - text : 0
@@ -909,4 +914,45 @@ export function tableColumns(width: number): Col[] {
     }
   }
   return build(width, new Set(), true).cols
+}
+
+/** The text of one cell, cut to its column. */
+export function cellText(c: Col, a: Assumption): string {
+  if (c.key === 'text') return clip(a.text, c.width)
+  if (c.key === 'path') {
+    // the first file, and how many more the turn wrote
+    const more = (a.paths?.length ?? 1) - 1
+    return clip(more > 0 ? `${a.path ?? ''} +${more}` : (a.path ?? ''), c.width)
+  }
+  if (c.key === 'at') return hhmm(a.at)
+  if (c.key === 'turn') return String(a.turn)
+  if (c.key === 'id') return String(a.id)
+  // one letter when shortened: d or f for kind, o, c or w for status
+  if (c.key === 'kind') return c.short ? a.kind[0]! : a.kind
+  if (c.key === 'status') return c.short ? a.status[0]! : a.status
+  return ''
+}
+
+/** A cell padded to its column's width. */
+const fit = (s: string, w: number) => clip(s, w).padEnd(w)
+
+/** The header line: each header above its column, with the bars. The actions column has no header. */
+export function tableHeader(cols: Col[]): string {
+  return cols.map(c => fit(c.key === 'actions' ? '' : c.header, c.width)).join(SEP)
+}
+
+/** The rule under the header, and between rows: a dash under each column, with a crossing under each bar. */
+export function tableRule(cols: Col[]): string {
+  return cols.map(c => '─'.repeat(c.width)).join(CROSS)
+}
+
+/**
+ * One data row, up to and including the bar before the actions column. The buttons are drawn beside it, in the actions
+ * column, which is the last column's width.
+ */
+export function tableRow(cols: Col[], a: Assumption): string {
+  return cols
+    .filter(c => c.key !== 'actions')
+    .map(c => fit(cellText(c, a), c.width))
+    .join(SEP) + SEP
 }

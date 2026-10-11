@@ -60,6 +60,9 @@ import {
   relativeTo,
   osFrom,
   tableColumns,
+  tableHeader,
+  tableRow,
+  tableRule,
   type Os,
   openCount,
   panelOrder,
@@ -1133,23 +1136,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         </Box>
       )
     })
-    // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table of
-    // one row per assumption, one column per field. Columns drop at narrow widths (see tableColumns).
+    // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
+    // header, a rule, then one line per entry with a light rule between entries. Each line is built as text, padded to the
+    // column widths, so every header sits above its contents; the buttons sit in the last column, beside their row.
     const cols = tableColumns(width)
-    const cell = (c: (typeof cols)[number], a: Assumption) => {
-      if (c.key === 'text') return clip(a.text, c.width)
-      if (c.key === 'path') {
-        // the first file, and how many more the turn wrote
-        const more = (a.paths?.length ?? 1) - 1
-        return clip(more > 0 ? `${a.path ?? ''} +${more}` : (a.path ?? ''), c.width)
-      }
-      if (c.key === 'at') return hhmm(a.at)
-      if (c.key === 'turn') return String(a.turn)
-      if (c.key === 'id') return String(a.id)
-      // one letter when the column is shortened: d or f for kind, o, c or w for status
-      if (c.key === 'kind') return c.short ? a.kind[0]! : a.kind
-      return c.short ? a.status[0]! : a.status
-    }
+    const actionsWidth = cols.find(c => c.key === 'actions')!.width
     const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
       <Box flexDirection="column">
         <Button
@@ -1160,28 +1151,19 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         />
         {track.open ? (
           <Box flexDirection="column">
-            <Box flexDirection="row">
-              {cols.map(c => (
-                <Box key={`head-${c.key}`} width={c.width}>
-                  <Text bold dimColor>{c.key === 'actions' ? '' : c.header}</Text>
+            <Text bold>{tableHeader(cols)}</Text>
+            <Text dimColor>{tableRule(cols)}</Text>
+            {panelOrder(track.entries).map((a, i) => (
+              <Box key={`row-${a.id}`} flexDirection="column">
+                {i > 0 ? <Text dimColor>{tableRule(cols)}</Text> : null}
+                <Box flexDirection="row">
+                  <Text dimColor={a.status !== 'open'}>{tableRow(cols, a)}</Text>
+                  <Box width={actionsWidth} flexDirection="row">
+                    {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
+                    {a.status === 'open' ? <Text> </Text> : null}
+                    {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="[Wrong]" onPress={() => void wrongEntry($, a)} /> : null}
+                  </Box>
                 </Box>
-              ))}
-            </Box>
-            {panelOrder(track.entries).map(a => (
-              <Box key={`row-${a.id}`} flexDirection="row">
-                {cols.map(c =>
-                  c.key === 'actions' ? (
-                    <Box key={`act-${a.id}`} width={c.width} flexDirection="row">
-                      {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
-                      {a.status === 'open' ? <Text> </Text> : null}
-                      {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="[Wrong]" onPress={() => void wrongEntry($, a)} /> : null}
-                    </Box>
-                  ) : (
-                    <Box key={`cell-${a.id}-${c.key}`} width={c.width}>
-                      <Text wrap="truncate" dimColor={a.status !== 'open'}>{cell(c, a)}</Text>
-                    </Box>
-                  ),
-                )}
               </Box>
             ))}
           </Box>
