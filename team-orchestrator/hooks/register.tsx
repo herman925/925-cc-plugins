@@ -1313,7 +1313,8 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
     ...(here ? { machine: here } : {}),
   }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
-  await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now() })
+  // its "clean" from before the close no longer counts: kept, the idle round would close it again at once
+  await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now(), lastClean: 0 })
   await share($)
   return ready
 }
