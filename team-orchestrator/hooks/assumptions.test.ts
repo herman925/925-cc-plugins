@@ -2,7 +2,7 @@
 // go to the member as one team message, and its own Session Panel changes its own file.
 import { expect, test } from 'claude-code/testing'
 
-import { collectOpen, confirmLine, openFrom, wrongLine } from './assumptions'
+import { askDelete, collectOpen, confirmLine, openFrom, wrongLine } from './assumptions'
 import { adopt, HUALONG, ID1, ID2, ID3, mountBand, TEAM, world } from './test-world'
 
 const DIR = 'C:/proj/.claude/session-panel/assumptions'
@@ -124,6 +124,7 @@ test('the boss of the member sees Confirm and Wrong, and the answer goes to the 
   await adopt($, withIds(HUALONG))
   const band = await mountBand($)
   await band.press({ key: 'assume-Hualong|Hualong Worker 5' })
+  expect(await band.find({ key: 'assume-del-w1' })).toBeDefined()
   await band.press({ key: 'assume-yes-w1' })
   const lines = sends.filter(s => String(s.text).startsWith('SESSION-PANEL')).map(s => s.text)
   expect(lines).toEqual(['SESSION-PANEL: confirm w1'])
@@ -178,6 +179,60 @@ test('on without Session Panel: nothing is read and no assumption UI shows; enab
   expect(JSON.stringify(await band.drawn())).not.toContain('1 open')
   expect(await band.find({ key: 'assume-Hualong|Hualong Workers' })).toBeUndefined()
   expect(reads.filter(k => k.startsWith(DIR))).toEqual([])
+})
+
+test('Delete is shown only to the member\'s boss or the team top, next to Confirm and Wrong', async ($, on) => {
+  const files = world(on)
+  assumptionsOn(files)
+  files.set(`${DIR}/${ID3}.json`, file(ID3, [entry('w1', 'open')]))
+  sessionAs(on, ID3) // Hualong Worker 5 looks at its own list: it is neither the boss nor the top
+  await adopt($, withIds(HUALONG))
+  const band = await mountBand($)
+  await band.press({ key: 'assume-Hualong|Hualong Worker 5' })
+  expect(await band.find({ key: 'assume-yes-w1' })).toBeUndefined()
+  expect(await band.find({ key: 'assume-no-w1' })).toBeUndefined()
+  expect(await band.find({ key: 'assume-del-w1' })).toBeUndefined()
+})
+
+// askDelete takes its ask and send as parameters, so the answer is tested here; the roster passes in $.ui.ask and the send
+test('Keep cancels: the head is asked once, and nothing is sent', async () => {
+  const asked: { q: string; options: string[] }[] = []
+  const sent: string[] = []
+  const r = await askDelete(
+    async (q, options) => (asked.push({ q, options }), 'Keep'),
+    async line => void sent.push(line),
+    'w1',
+    'Hualong Worker 5',
+  )
+  expect(r).toBe('kept')
+  expect(asked).toEqual([{ q: 'Delete open assumption w1 of Hualong Worker 5? Nobody has decided on it yet.', options: ['Delete', 'Keep'] }])
+  expect(sent).toEqual([])
+})
+
+test('Delete sends exactly SESSION-PANEL: delete <id>, after one question', async () => {
+  const asked: string[] = []
+  const sent: string[] = []
+  const r = await askDelete(
+    async q => (asked.push(q), 'Delete'),
+    async line => void sent.push(line),
+    'w1',
+    'Hualong Worker 5',
+  )
+  expect(r).toBe('sent')
+  expect(asked.length).toBe(1)
+  expect(sent).toEqual(['SESSION-PANEL: delete w1'])
+})
+
+test('a question that cannot be asked sends nothing', async () => {
+  const sent: string[] = []
+  const r = await askDelete(
+    async () => Promise.reject(new Error('no dialog')),
+    async line => void sent.push(line),
+    'w1',
+    'Hualong Worker 5',
+  )
+  expect(r).toBe('unasked')
+  expect(sent).toEqual([])
 })
 
 test('the files are read on a roster refresh, not on a redraw', async ($, on) => {

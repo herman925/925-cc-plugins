@@ -38,3 +38,22 @@ export function collectOpen(texts: string[]): Record<string, OpenAssumption[]> {
 export const confirmLine = (id: string) => `SESSION-PANEL: confirm ${id}`
 /** The one line a wrong sends to the member. */
 export const wrongLine = (id: string) => `SESSION-PANEL: wrong ${id}`
+/** The one line a delete sends to the member, after the head has said yes. Session Panel applies it on the member's side. */
+export const deleteLine = (id: string) => `SESSION-PANEL: delete ${id}`
+
+/**
+ * Asks the head once before an open assumption is deleted. Delete sends its one line; Keep sends nothing; no answer
+ * (the question could not be asked) sends nothing either. ask and send are the caller's, so the answer can be tested.
+ */
+export async function askDelete(
+  ask: (question: string, options: string[]) => Promise<string>,
+  send: (line: string) => Promise<unknown>,
+  id: string,
+  name: string,
+): Promise<'sent' | 'kept' | 'unasked'> {
+  const pick = await ask(`Delete open assumption ${id} of ${name}? Nobody has decided on it yet.`, ['Delete', 'Keep']).catch(() => undefined)
+  if (pick === undefined) return 'unasked'
+  if (pick !== 'Delete') return 'kept'
+  await send(deleteLine(id))
+  return 'sent'
+}

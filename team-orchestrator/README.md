@@ -631,7 +631,7 @@ While either condition is false, the mod reads no assumption file and shows noth
 |---|---|
 | `N open` on a member's row | The file holds N entries with status `open`. Confirmed and wrong entries are not counted. Missing or unreadable files show nothing. |
 | **Open assumptions of <name> (N)** | You press the row's `N open` button. Each open entry shows its text, its kind and its turn. |
-| **Confirm** and **Wrong** | Only the member's boss and the team top see them. Any other session sees a note: "Only the member's boss or the team top can confirm or mark these wrong." |
+| **Confirm**, **Wrong** and **Delete** | Only the member's boss and the team top see them. Any other session sees a note: "Only the member's boss or the team top can confirm or mark these wrong." Delete asks you once first: "Delete open assumption <id> of <name>? Nobody has decided on it yet." with **Delete** or **Keep**. Keep sends nothing. |
 
 Confirm and Wrong send one line to the member as an ordinary team message, through the same route `team_message`
 uses: `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>`. A closed member reopens, or the message queues,
@@ -755,6 +755,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.28 | Delete an open assumption: the head is asked once, then `SESSION-PANEL: delete <id>` is sent to the member. Only the member's boss and the team top see it. |
 | 0.5.27 | Assumptions are opt-in: Settings → Assumptions → Show, off by default. The files are read only when it is on and Session Panel is enabled in this session, checked on each refresh. A toast says what it needs. |
 | 0.5.26 | Confirm and Wrong show only to the member's boss and the team top. Other sessions see the count and the list. |
 | 0.5.25 | Each member's open assumptions from Session Panel: "N open" on its row, and a list with Confirm and Wrong. Read only. |

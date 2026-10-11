@@ -18,7 +18,7 @@ import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManage
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
-import { ASSUMPTIONS_DIR, collectOpen, confirmLine, wrongLine } from './assumptions'
+import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from './assumptions'
 import type { OpenAssumption } from './assumptions'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
@@ -4081,6 +4081,11 @@ async function rosterView($: any, ui: any, cols: number) {
       if (!who) return box('Open assumptions', <Box flexDirection="column"><Text>That row is gone.</Text>{cancel}</Box>)
       // the answer goes to the member as an ordinary team message; its Session Panel changes its own file
       const answer = async (line: string) => setAct({ msg: await deliver($, who, line) })
+      // Delete asks the head once first, and Keep sends nothing (see askDelete in assumptions.ts)
+      const removeOne = async (e: OpenAssumption) => {
+        const r = await askDelete((q, o) => $.ui.ask(q, o), line => answer(line), e.id, who.name)
+        if (r === 'unasked') await setAct({ msg: 'The question could not be asked, so nothing was sent.' })
+      }
       const items = assumedOf(who)
       return box(
         `Open assumptions of ${who.name} (${items.length})`,
@@ -4093,6 +4098,7 @@ async function rosterView($: any, ui: any, cols: number) {
                 <Text dimColor>{`${e.kind} · turn ${e.turn}`}</Text>
                 {mayAnswer(who) && <Button key={`assume-yes-${e.id}`} label="Confirm" variant="primary" onPress={() => void answer(confirmLine(e.id))} />}
                 {mayAnswer(who) && <Button key={`assume-no-${e.id}`} label="Wrong" onPress={() => void answer(wrongLine(e.id))} />}
+                {mayAnswer(who) && <Button key={`assume-del-${e.id}`} label="Delete" onPress={() => void removeOne(e)} />}
               </Box>
             </Box>
           ))}
