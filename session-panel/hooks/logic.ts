@@ -470,7 +470,7 @@ export const ASSUMPTION_TEXT_CAP = 200
 /** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
 export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. The line must start with plain ASSUMPTION: at the start of the line, with no bold, no bullet and no heading. Do not put ASSUMPTION lines inside code blocks.`
 
-const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '' }
+const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '', member: '', warned: false, root: '', os: '' }
 export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
 
 /** The texts of the ASSUMPTION lines in a reply, in order. Lines inside a code fence are ignored. */
@@ -500,7 +500,7 @@ export function addDeclared(t: AssumptionTrack, texts: string[], now: number): A
   const fresh = texts.filter(text => !listed.has(text) && listed.add(text))
   if (fresh.length === 0) return t
   // ids rise in the order written; the list shows the newest first
-  const added = fresh.map((text, i) => ({ id: t.seq + i + 1, text, turn: t.turnNo, kind: 'declared' as const, status: 'open' as const, at: now })).reverse()
+  const added = fresh.map((text, i) => ({ id: t.seq + i + 1, text, turn: t.turnNo, kind: 'declared' as const, status: 'open' as const, at: now, sessionId: t.sessionId })).reverse()
   return { ...t, seq: t.seq + fresh.length, turnDeclared: true, entries: [...added, ...t.entries].slice(0, ASSUMPTION_CAP) }
 }
 
@@ -512,13 +512,24 @@ export function addEdits(t: AssumptionTrack, paths: string[]): AssumptionTrack {
 
 /** The turn ended. With flagging on, an edit in a turn that declared no assumption becomes one entry per file. */
 export function finishTurn(t: AssumptionTrack, flag: boolean, now: number): AssumptionTrack {
-  const edits = flag && !t.turnDeclared ? t.turnEdits : []
-  // ids rise in the order the files were written; the list shows the newest first
-  const flagged = edits
-    .map((path, i) => ({ id: t.seq + i + 1, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'flagged' as const, path, status: 'open' as const, at: now }))
-    .reverse()
-  const entries = flagged.length > 0 ? [...flagged, ...t.entries].slice(0, ASSUMPTION_CAP) : t.entries
-  return { ...t, seq: t.seq + flagged.length, runningTurnId: '', turnDeclared: false, turnEdits: [], entries }
+  const paths = flag && !t.turnDeclared ? t.turnEdits : []
+  if (paths.length === 0) return { ...t, runningTurnId: '', turnDeclared: false, turnEdits: [] }
+  // one row for the whole turn, however many files it wrote
+  const first = paths[0] as string
+  const name = first.split('/').pop() ?? first
+  const text = paths.length === 1 ? `${name}, no stated assumption` : `${paths.length} files, no stated assumption`
+  const row: Assumption = { id: t.seq + 1, text, turn: t.turnNo, kind: 'flagged', path: first, paths: [...paths], status: 'open', at: now, sessionId: t.sessionId }
+  return { ...t, seq: t.seq + 1, runningTurnId: '', turnDeclared: false, turnEdits: [], entries: [row, ...t.entries].slice(0, ASSUMPTION_CAP) }
+}
+
+/** A path relative to the project root, with forward slashes. Undefined when the path lies outside the root. A relative path is inside it. */
+export function relativeTo(root: string, path: string, os: 'windows' | 'macos' | 'linux' | ''): string | undefined {
+  const p = normPath(path)
+  if (!/^([a-zA-Z]:)?\//.test(p)) return p
+  const r = normPath(root)
+  const fold = (s: string) => (os === 'windows' || os === 'macos' ? s.toLowerCase() : s)
+  if (!fold(p).startsWith(`${fold(r)}/`)) return undefined
+  return p.slice(r.length + 1)
 }
 
 /** Confirm or Wrong on an open entry. A resolved entry does not change again. */
@@ -532,8 +543,14 @@ export const openCount = (t: AssumptionTrack) => t.entries.filter(e => e.status 
 export const panelOrder = (entries: Assumption[]) => [...entries.filter(e => e.status === 'open'), ...entries.filter(e => e.status !== 'open')]
 
 /** The text the box takes when the person presses Wrong, by entry kind. The person finishes it; nothing is sent. */
-export const redirectText = (a: Pick<Assumption, 'kind' | 'text' | 'path'>) =>
-  a.kind === 'flagged' ? `About the edit to ${a.path ?? a.text}: ` : `Assumption '${a.text}' is wrong. Instead: `
+export const redirectText = (a: Pick<Assumption, 'kind' | 'text' | 'path' | 'turn' | 'paths'>) =>
+  a.kind === 'flagged' ? flaggedRedirect(a) : `Assumption '${a.text}' is wrong. Instead: `
+
+/** The opening for a flagged row: the turn, the first file, and how many more. */
+const flaggedRedirect = (a: Pick<Assumption, 'text' | 'path' | 'turn' | 'paths'>) => {
+  const more = (a.paths?.length ?? 1) - 1
+  return more > 0 ? `About the edits in turn ${a.turn} (${a.path} and ${more} more): ` : `About the edits in turn ${a.turn} (${a.path ?? a.text}): `
+}
 
 // ---------- the stored file: <project>/.claude/session-panel/assumptions/<session id>.json ----------
 
@@ -592,13 +609,15 @@ export function parseStored(text: string | undefined): { ok: true; entries: Assu
     return { ok: false, reason: 'the file is not JSON' }
   }
   if (!j || j.version !== STORE_VERSION || !Array.isArray(j.entries)) return { ok: false, reason: 'the file is not a version 1 assumptions file' }
-  return { ok: true, entries: j.entries.filter(isEntry) as Assumption[] }
+  // an entry written before 0.3.34 has no sessionId: it belongs to the file's owner
+  return { ok: true, entries: j.entries.filter(isEntry).map((e: any) => ({ ...e, sessionId: typeof e.sessionId === 'string' ? e.sessionId : String(j.sessionId ?? '') })) as Assumption[] }
 }
 
 /** The track after a load: the stored entries, with the counters moved past them so new entries do not clash. */
 export function loadTrack(t: AssumptionTrack, entries: Assumption[]): AssumptionTrack {
-  const seq = entries.reduce((m, e) => Math.max(m, e.id), 0)
-  const turnNo = entries.reduce((m, e) => Math.max(m, e.turn), 0)
+  // the counters never go back: a file loaded in the middle of a turn keeps the turn number that turn already has
+  const seq = entries.reduce((m, e) => Math.max(m, e.id), t.seq)
+  const turnNo = entries.reduce((m, e) => Math.max(m, e.turn), t.turnNo)
   return { ...t, entries: entries.slice(0, ASSUMPTION_CAP), seq, turnNo }
 }
 
@@ -757,4 +776,95 @@ export function versionFrom(manifest: string | undefined): string {
   } catch {
     return ''
   }
+}
+
+// ---------- file names, OS and paths: the team-orchestrator rules (0.3.34) ----------
+
+export type Os = 'windows' | 'macos' | 'linux'
+export type Live = { sessionId: string; name: string }
+
+/** A file name for a session name: the rule team-orchestrator uses for its status files. Runs of other characters become "_". */
+export const nameFile = (name: string) => name.replace(/[^\p{L}\p{N}._-]+/gu, '_')
+
+/** The OS from the OS variable (Windows_NT on Windows) and `uname -s` elsewhere, as team-orchestrator reads them. */
+export const osFrom = (osVar: string | undefined, uname: string): Os => (osVar === 'Windows_NT' ? 'windows' : /darwin/i.test(uname) ? 'macos' : 'linux')
+
+/** Two names are the same name: case-insensitive on Windows and macOS, case-sensitive on Linux. */
+export const sameName = (a: string, b: string, os: Os) => (os === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase())
+
+/** A path with forward slashes and no trailing slash. */
+export const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+
+/** The home folder: USERPROFILE, else HOME, as team-orchestrator resolves it. */
+export const homeOf = (env: { USERPROFILE?: string; HOME?: string }) => normPath(env.USERPROFILE || env.HOME || '')
+
+export const assumptionsDir = (root: string) => `${normPath(root)}/${STORE_DIR}`
+
+/**
+ * The file a session writes. With a name, the name's file; with the name's file held by a session that is not this one
+ * (and still live), or by a session that cannot be read, or when another live session has the same name, the tagged
+ * `<name>-<first 8 of the session id>.json`. Without a name, the session-id file as before. `takeover` means the name's
+ * file belongs to a session that has closed, so this session takes it over and keeps its entries.
+ */
+export function chooseFile(p: { root: string; sessionId: string; name: string | undefined; os: Os; baseText: string | undefined; live: Live[] }): {
+  file: string
+  tagged: boolean
+  takeover: boolean
+} {
+  if (p.name === undefined || p.name.trim() === '') {
+    const r = resolveStorePath(p.root, p.sessionId, p.baseText)
+    return { file: r.file, tagged: r.foreign, takeover: false }
+  }
+  const dir = assumptionsDir(p.root)
+  const owner = p.baseText === undefined ? undefined : ownerOf(p.baseText)
+  const unreadable = p.baseText !== undefined && owner === undefined
+  const sameNameLive = p.live.some(s => s.sessionId !== p.sessionId && sameName(s.name, p.name as string, p.os))
+  const ownerLive = owner !== undefined && owner !== p.sessionId && p.live.some(s => s.sessionId === owner)
+  if (unreadable || sameNameLive || ownerLive) {
+    return { file: `${dir}/${nameFile(p.name)}-${p.sessionId.slice(0, 8)}.json`, tagged: true, takeover: false }
+  }
+  return { file: `${dir}/${nameFile(p.name)}.json`, tagged: false, takeover: owner !== undefined && owner !== p.sessionId }
+}
+
+// ---------- the table (0.3.34) ----------
+
+/** The text cut to `n` cells, with "…" as its last cell when it is cut. */
+export const clip = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : n <= 1 ? '…' : `${s.slice(0, n - 1)}…`)
+
+/** A time as HH:MM, in this machine's clock. */
+export const hhmm = (ms: number) => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+export type Col = { key: 'id' | 'kind' | 'status' | 'turn' | 'text' | 'path' | 'at' | 'actions'; header: string; width: number }
+
+/**
+ * The table's columns for a band of `width` cells. Narrow bands drop the lowest-value columns first: `at` below 90 cells,
+ * then `path` below 70. `text` and `path` share the room left over: text gets 60%, path the rest.
+ */
+export function tableColumns(width: number): Col[] {
+  const showAt = width >= 90
+  const showPath = width >= 70
+  const fixed: Array<{ key: Col['key']; width: number }> = [
+    { key: 'id', width: 4 },
+    { key: 'kind', width: 8 },
+    { key: 'status', width: 9 },
+    { key: 'turn', width: 4 },
+  ]
+  if (showAt) fixed.push({ key: 'at', width: 5 })
+  fixed.push({ key: 'actions', width: 20 })
+  const flex = ['text', ...(showPath ? ['path'] : [])] as const
+  const used = fixed.reduce((n, c) => n + c.width, 0) + flex.length + fixed.length
+  const room = Math.max(flex.length * 10, width - used)
+  const textW = showPath ? Math.floor(room * 0.6) : room
+  const pathW = showPath ? room - textW : 0
+  const cols: Col[] = []
+  const add = (key: Col['key'], w: number) => cols.push({ key, header: key, width: w })
+  for (const c of fixed.slice(0, 4)) add(c.key, c.width)
+  add('text', textW)
+  if (showPath) add('path', pathW)
+  if (showAt) add('at', 5)
+  add('actions', 20)
+  return cols
 }

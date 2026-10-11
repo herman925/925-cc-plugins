@@ -1150,15 +1150,30 @@ test('dedupe: the same assumption twice in one turn is listed once; the next tur
   expect(t.entries.map(e => e.turn)).toEqual([2, 1])
 })
 
-test('flagged edits: a turn that edits and declares nothing gets one entry per file, newest first', () => {
+test('flagged edits: a turn that edits and declares nothing gets one row for the whole turn', () => {
   let t = startTurn(newTrack(), 't1')
   t = addEdits(t, ['a.md', 'b.ts', 'a.md'])
   expect(t.turnEdits).toEqual(['a.md', 'b.ts'])
   const done = finishTurn(t, true, 9)
-  expect(done.entries.map(e => e.text)).toEqual(['edited b.ts with no stated assumption', 'edited a.md with no stated assumption'])
-  expect(done.entries.every(e => e.kind === 'flagged' && e.status === 'open' && e.at === 9)).toBe(true)
-  expect(done.entries[0].path).toBe('b.ts')
+  expect(done.entries.length).toBe(1)
+  expect(done.entries[0]).toMatchObject({ text: '2 files, no stated assumption', kind: 'flagged', path: 'a.md', paths: ['a.md', 'b.ts'], status: 'open', at: 9 })
   expect(done.runningTurnId).toBe('')
+})
+
+test('flagged edits: one file gives the file name in the text, and no "+N" in the path', () => {
+  const done = finishTurn(addEdits(startTurn(newTrack(), 't1'), ['src/a.ts']), true, 1)
+  expect(done.entries[0]).toMatchObject({ text: 'a.ts, no stated assumption', path: 'src/a.ts', paths: ['src/a.ts'] })
+})
+
+test('flagged edits: edits outside the project root are not flagged', () => {
+  expect(relativeTo('C:/proj', 'C:/proj/src/a.ts', 'windows')).toBe('src/a.ts')
+  expect(relativeTo('C:/proj', 'C:\\proj\\src\\a.ts', 'windows')).toBe('src/a.ts')
+  expect(relativeTo('C:/proj', 'C:/Proj/src/a.ts', 'windows')).toBe('src/a.ts')
+  expect(relativeTo('C:/proj', 'C:/Proj/src/a.ts', 'linux')).toBeUndefined()
+  expect(relativeTo('C:/proj', 'C:/Users/me/AppData/Local/Temp/x.txt', 'windows')).toBeUndefined()
+  expect(relativeTo('/work/app', '/work/app/src/a.ts', 'linux')).toBe('src/a.ts')
+  expect(relativeTo('/work/app', '/tmp/x.txt', 'linux')).toBeUndefined()
+  expect(relativeTo('/work/app', 'notes/a.md', 'linux')).toBe('notes/a.md')
 })
 
 test('flagged edits: a declared assumption in the same turn stops the flag, and flagging off adds nothing', () => {
@@ -1193,7 +1208,8 @@ test('edit targets: writing tools name their file; reading and no-file commands 
 
 test('wrong: a declared entry and a flagged edit each get their own opening, and nothing is submitted', () => {
   expect(redirectText({ kind: 'declared', text: 'Use Tailwind' })).toBe("Assumption 'Use Tailwind' is wrong. Instead: ")
-  expect(redirectText({ kind: 'flagged', text: 'edited a.md with no stated assumption', path: 'a.md' })).toBe('About the edit to a.md: ')
+  expect(redirectText({ kind: 'flagged', text: 'a.md, no stated assumption', path: 'a.md', turn: 2, paths: ['a.md'] })).toBe('About the edits in turn 2 (a.md): ')
+  expect(redirectText({ kind: 'flagged', text: '2 files, no stated assumption', path: 'a.md', turn: 2, paths: ['a.md', 'b.ts'] })).toBe('About the edits in turn 2 (a.md and 1 more): ')
 })
 
 test('guard: a row with no content, a null block or a string body yields no text and does not throw', () => {
@@ -1215,7 +1231,7 @@ test('file: the stored shape is version 1 with the session, the entries and the 
   expect(json.version).toBe(1)
   expect(json.sessionId).toBe('abc123')
   expect(json.member).toBe('abc123')
-  expect(json.entries[0]).toEqual({ id: 1, text: 'edited notes.md with no stated assumption', turn: 1, kind: 'flagged', path: 'notes.md', status: 'open', at: 42 })
+  expect(json.entries[0]).toEqual({ id: 1, text: 'notes.md, no stated assumption', turn: 1, kind: 'flagged', path: 'notes.md', paths: ['notes.md'], status: 'open', at: 42, sessionId: '' })
   expect(STORE_IGNORE).toBe('*\n')
 })
 
@@ -1292,7 +1308,7 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
 })
 
 // The engine's file and session calls, as the test kit answers them. `files` is what the disk holds, by path.
-function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string> } = {}) {
+function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string>; sessions?: Array<{ sessionId: string; name: string }> } = {}) {
   const writes: Array<{ path: string; text: string }> = []
   const fill: string[] = []
   const reached: string[] = []
@@ -1300,7 +1316,13 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
   on('session.id', () => ({ value: opts.id ?? 'abc123' }))
   // the kit reports paths in native form; the plugin uses forward slashes, so compare in that form
   const slash = (q: string) => q.replace(/\\/g, '/')
-  on('fs.read', (_$: any, e: any) => ({ value: opts.files?.[slash(e.path)] }))
+  // the session registry (~/.claude/sessions/<pid>.json) under the test's home, one file per live session
+  const sessionsDir = 'C:/home/.claude/sessions'
+  const registry = Object.fromEntries((opts.sessions ?? []).map((x, i) => [`${sessionsDir}/${100 + i}.json`, JSON.stringify({ sessionId: x.sessionId, name: x.name, pid: 100 + i, cwd: opts.root ?? 'C:/proj' })]))
+  on('fs.list', (_$: any, e: any) => ({
+    value: slash(e.path) === sessionsDir ? Object.keys(registry).map(k => ({ name: k.split('/').pop(), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [],
+  }))
+  on('fs.read', (_$: any, e: any) => ({ value: registry[slash(e.path)] ?? opts.files?.[slash(e.path)] }))
   on('fs.exists', () => ({ value: false }))
   on('fs.write', (_$: any, e: any) => {
     writes.push({ path: slash(e.path), text: e.text })
@@ -1336,7 +1358,7 @@ test('file: a flagged edit writes this session file with the right path and shap
   expect(w.writes.at(-1)!.path).toBe(FILE)
   expect(saved).toMatchObject({ version: 1, sessionId: 'abc123', member: 'abc123' })
   expect(saved.entries).toEqual([
-    expect.objectContaining({ kind: 'flagged', path: 'notes.md', status: 'open', text: 'edited notes.md with no stated assumption' }),
+    expect.objectContaining({ kind: 'flagged', path: 'notes.md', status: 'open', text: 'notes.md, no stated assumption' }),
   ])
 })
 
@@ -1374,7 +1396,7 @@ test('wrong: the entry becomes wrong, the file is rewritten, and the box gets th
   await ui.press({ key: 'assumptions-toggle' })
   await ui.press({ key: 'wrong-1' })
   expect(w.last().entries[0]).toMatchObject({ status: 'wrong' })
-  expect(w.fill).toEqual(['About the edit to notes.md: '])
+  expect(w.fill).toEqual(['About the edits in turn 1 (notes.md): '])
   await ui.unmount()
 })
 
@@ -1431,7 +1453,7 @@ test('incoming: an unknown id is dropped with a note and the file is not touched
 })
 
 // 11. status lines inside cross-session envelopes: the wrapped form, the sender check, mixed text, and a head's wrong (0.3.3)
-import { applyStatuses, headsFor, sortPrompt } from './logic'
+import { applyStatuses, headsFor, relativeTo, sortPrompt } from './logic'
 
 const wrap = (from: string, body: string) =>
   `Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="${from}" from-mode="bypass">\n${body}\n</cross-session-message>`
@@ -1498,7 +1520,7 @@ test("head: a wrong from the team head sets the entry and fills the box with the
   const result: any = await $.prompt.submit({ text: wrap('Mod CEO', 'SESSION-PANEL: wrong 1'), asUser: true })
   expect(result.drop).toBe('Assumption 1 marked wrong.')
   expect(w.last().entries[0].status).toBe('wrong')
-  expect(w.fill).toEqual(['About the edit to notes.md: '])
+  expect(w.fill).toEqual(['About the edits in turn 1 (notes.md): '])
   expect(w.reached).toEqual([])
 })
 
@@ -1658,4 +1680,123 @@ test('github: the map text is capped at 4000 characters, and the child titles ar
   const text = (await githubMap(io)) ?? ''
   expect(text.length).toBeLessThanOrEqual(4000)
   expect(text).toContain('- Child one')
+})
+
+// 15. the panel and the files (0.3.34): names, takeover, the live owner, paths on each OS, and the table
+import { chooseFile, clip, hhmm, homeOf, nameFile, normPath, osFrom, sameName, tableColumns, assumptionsDir } from './logic'
+
+const WIN_ENV = { USERPROFILE: 'C:/home', OS: 'Windows_NT' }
+const MODB = 'C:/proj/.claude/session-panel/assumptions/Mod_Builder.json'
+
+test('panel: with no assumptions the panel is hidden', async ($, on) => {
+  world(on, WIN_ENV)
+  storeWorld(on)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'assumptions-toggle' })).toBeUndefined()
+  expect(await texts(ui)).not.toContain('Assumptions (')
+  await ui.unmount()
+})
+
+test('takeover: the same name with a new session id keeps the open entries and takes the file over', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [
+    { id: 1, text: 'x.md, no stated assumption', turn: 1, kind: 'flagged', path: 'x.md', paths: ['x.md'], status: 'open', at: 1, sessionId: 'old-id-1234' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: old }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await flaggedEdit($)
+  expect(w.writes.at(-1)!.path).toBe(MODB)
+  const saved = w.last()
+  expect(saved.sessionId).toBe('new-id-5678')
+  expect(saved.member).toBe('Mod Builder')
+  expect(saved.entries.map((e: any) => e.sessionId)).toEqual(['new-id-5678', 'old-id-1234'])
+  expect(saved.entries[1]).toMatchObject({ text: 'x.md, no stated assumption', status: 'open' })
+})
+
+test('takeover: a live owner with the same name sends this session to the tagged file', async ($, on) => {
+  world(on, WIN_ENV)
+  const old = storedJson('Mod Builder', 'old-id-1234', [])
+  const w = storeWorld(on, {
+    id: 'bbbbbbbb-2222',
+    files: { [MODB]: old },
+    sessions: [
+      { sessionId: 'old-id-1234', name: 'Mod Builder' },
+      { sessionId: 'bbbbbbbb-2222', name: 'Mod Builder' },
+    ],
+  })
+  await flaggedEdit($)
+  expect(w.writes.some(x => x.path === MODB)).toBe(false)
+  expect(w.writes.at(-1)!.path).toBe('C:/proj/.claude/session-panel/assumptions/Mod_Builder-bbbbbbbb.json')
+  expect(w.last().sessionId).toBe('bbbbbbbb-2222')
+})
+
+test('paths: a file name is the team-orchestrator rule; illegal characters become "_"', () => {
+  expect(nameFile('Mod Builder 2')).toBe('Mod_Builder_2')
+  expect(nameFile('a<b>c:d"e/f\\g|h?i*j')).toBe('a_b_c_d_e_f_g_h_i_j')
+  expect(nameFile('会话 A')).toBe('会话_A')
+  expect(nameFile('Mod-Builder.3_x')).toBe('Mod-Builder.3_x')
+})
+
+test('paths: Windows, macOS and Linux differ in case rules, separators, home folder and OS', () => {
+  expect(sameName('Mod Builder', 'mod builder', 'windows')).toBe(true)
+  expect(sameName('Mod Builder', 'mod builder', 'macos')).toBe(true)
+  expect(sameName('Mod Builder', 'mod builder', 'linux')).toBe(false)
+  expect(normPath('C:\\Users\\Herman\\proj\\')).toBe('C:/Users/Herman/proj')
+  expect(normPath('/work/app/')).toBe('/work/app')
+  expect(homeOf({ USERPROFILE: 'C:\\Users\\Herman', HOME: '/home/x' })).toBe('C:/Users/Herman')
+  expect(homeOf({ HOME: '/Users/me/' })).toBe('/Users/me')
+  expect(osFrom('Windows_NT', '')).toBe('windows')
+  expect(osFrom(undefined, 'Darwin')).toBe('macos')
+  expect(osFrom(undefined, 'Linux')).toBe('linux')
+  expect(assumptionsDir('C:\\proj\\')).toBe('C:/proj/.claude/session-panel/assumptions')
+})
+
+test('paths: the chosen file on each OS: owner live, owner closed, unreadable, and no name', () => {
+  const base = { root: 'C:\\proj', sessionId: 'me-1111', name: 'Mod Builder' }
+  const theirs = storedJson('Mod Builder', 'other-2222', [])
+  const live = [{ sessionId: 'other-2222', name: 'Mod Builder' }, { sessionId: 'me-1111', name: 'Mod Builder' }]
+  // the owner is live: tagged
+  expect(chooseFile({ ...base, os: 'windows', baseText: theirs, live })).toEqual({ file: 'C:/proj/.claude/session-panel/assumptions/Mod_Builder-me-1111.json', tagged: true, takeover: false })
+  // the owner closed: take over the plain file
+  expect(chooseFile({ ...base, os: 'windows', baseText: theirs, live: [{ sessionId: 'me-1111', name: 'Mod Builder' }] })).toEqual({ file: 'C:/proj/.claude/session-panel/assumptions/Mod_Builder.json', tagged: false, takeover: true })
+  // a same-name session on macOS with a different case is still a second live session: tagged
+  expect(chooseFile({ ...base, os: 'macos', baseText: undefined, live: [{ sessionId: 'x-3333', name: 'mod builder' }, { sessionId: 'me-1111', name: 'Mod Builder' }] }).tagged).toBe(true)
+  // the same name on Linux in another case is another name: not tagged
+  expect(chooseFile({ ...base, os: 'linux', baseText: undefined, live: [{ sessionId: 'x-3333', name: 'mod builder' }, { sessionId: 'me-1111', name: 'Mod Builder' }] }).tagged).toBe(false)
+  // a file that cannot be read is never written over
+  expect(chooseFile({ ...base, os: 'windows', baseText: '{ not json', live: [] }).tagged).toBe(true)
+  // no name: the session-id file, as before
+  expect(chooseFile({ root: 'C:/proj', sessionId: 'me-1111', name: undefined, os: 'linux', baseText: undefined, live: [] }).file).toBe('C:/proj/.claude/session-panel/assumptions/me-1111.json')
+})
+
+test('table: the columns and their order; at drops first, then path, on narrow bands', () => {
+  const keys = (w: number) => tableColumns(w).map(c => c.key)
+  expect(keys(100)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'at', 'actions'])
+  expect(keys(80)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'path', 'actions'])
+  expect(keys(60)).toEqual(['id', 'kind', 'status', 'turn', 'text', 'actions'])
+  const narrow = tableColumns(60)
+  expect(narrow.find(c => c.key === 'text')!.width).toBeGreaterThanOrEqual(10)
+})
+
+test('table: the cells are short: text cut with an ellipsis, times as HH:MM', () => {
+  expect(clip('abcdef', 4)).toBe('abc…')
+  expect(clip('abc', 4)).toBe('abc')
+  expect(hhmm(new Date(2026, 0, 1, 9, 5).getTime())).toBe('09:05')
+})
+
+test('table: the headers, the rows and the two action buttons render, with spacing between them', async ($, on) => {
+  world(on, WIN_ENV)
+  storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  const labels = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
+  for (const h of ['id', 'kind', 'status', 'turn', 'text', 'path']) expect(labels).toContain(h)
+  // at 76 cells the text column is narrow, so the sentence is cut with an ellipsis; its start is shown
+  expect(labels.some((l: string) => l.startsWith('notes.md, no'))).toBe(true)
+  const confirm = await ui.find({ key: 'confirm-1' })
+  const wrong = await ui.find({ key: 'wrong-1' })
+  expect(confirm?.props.label).toBe('[Confirm]')
+  expect(wrong?.props.label).toBe('[Wrong]')
+  expect(confirm).not.toBe(wrong)
+  await ui.unmount()
 })

@@ -45,7 +45,18 @@ import {
   loadTrack,
   newTrack,
   applyStatuses,
+  assumptionsDir,
+  chooseFile,
+  clip,
   headsFor,
+  hhmm,
+  homeOf,
+  nameFile,
+  normPath,
+  relativeTo,
+  osFrom,
+  tableColumns,
+  type Os,
   openCount,
   panelOrder,
   parseIncoming,
@@ -287,31 +298,88 @@ async function readText($: Hooked, path: string): Promise<string | undefined> {
   }
 }
 
-/** Finds this session's file the first time it is needed: the project root and the session id decide it. */
-async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
-  if (t.file !== '') return t
-  const root = (await $.session.root()).replace(/\\/g, '/')
-  const sessionId = await $.session.id()
-  const r = resolveStorePath(root, sessionId, await readText($, plainPath(root, sessionId)))
-  return { ...t, file: r.file, sessionId }
+/** This session's name and the sessions the registry lists (~/.claude/sessions/<pid>.json), as team-orchestrator reads them. */
+async function liveSessions($: Hooked): Promise<Array<{ sessionId: string; name: string }>> {
+  const none = () => undefined
+  const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
+  const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
+  const dirs = [...new Set([custom, home ? `${homeOf({ USERPROFILE: home })}/.claude` : ''].filter((x): x is string => !!x).map(normPath))]
+  const out: Array<{ sessionId: string; name: string }> = []
+  for (const dir of dirs) {
+    const at = `${dir}/sessions`
+    let listed: any[]
+    try {
+      listed = (await $.fs.list(at)) as any[]
+    } catch {
+      continue
+    }
+    for (const f of listed.filter(f => f.kind === 'file' && /^\d+\.json$/.test(String(f.name)))) {
+      try {
+        const o = JSON.parse(String(await $.fs.read(`${at}/${f.name}`)))
+        if (typeof o?.sessionId === 'string') out.push({ sessionId: o.sessionId, name: typeof o.name === 'string' ? o.name : '' })
+      } catch {
+        // a record being rewritten: skip it this time
+      }
+    }
+  }
+  return out
 }
 
-/** Writes the list to this session's file. A file this code cannot read is left alone, never overwritten. */
+/** The OS as team-orchestrator reads it: the OS variable, then uname -s. */
+async function osOf($: Hooked): Promise<Os> {
+  const none = () => undefined
+  const osVar = await $.env.get('OS').catch(none)
+  if (osVar === 'Windows_NT') return 'windows'
+  const r = await Promise.resolve().then(() => $.process.run(['uname', '-s'], { timeoutMs: 10000 })).catch(none)
+  return osFrom(osVar, String(r?.stdout ?? ''))
+}
+
+/**
+ * Finds this session's file and loads what it holds. The name (from the registry) decides the file name; a file that
+ * belongs to a closed session is taken over with its entries. Runs the first time a file is needed, so every path
+ * that writes has the entries already.
+ */
+async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
+  if (t.file !== '') return t
+  const root = normPath(await $.session.root())
+  const sessionId = await $.session.id()
+  const os = await osOf($)
+  const live = await liveSessions($)
+  const name = live.find(s => s.sessionId.toLowerCase() === sessionId.toLowerCase() && s.name.trim() !== '')?.name
+  const probe = name !== undefined ? `${assumptionsDir(root)}/${nameFile(name)}.json` : plainPath(root, sessionId)
+  const baseText = await readText($, probe)
+  const r = chooseFile({ root, sessionId, name, os, baseText, live })
+  const text = r.file === probe ? baseText : await readText($, r.file)
+  const stored = parseStored(text)
+  if (!stored.ok) {
+    // a file this code cannot read is never written over: the list is shown empty and nothing is saved
+    if (!t.warned) $.ui.toast(`Assumptions not loaded: ${stored.reason}. This session will not write its file.`)
+    return { ...t, file: '', sessionId, member: name ?? sessionId, root, os, warned: true }
+  }
+  if (r.tagged && !t.warned) {
+    $.ui.toast(`Assumptions: this session writes ${r.file.split('/').pop()}, because the usual file belongs to another session.`)
+  }
+  const found = { ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os }
+  return loadTrack(found, stored.entries)
+}
+
+/** Writes the list to this session's file, and takes the file over when its owner has closed. A file this code cannot read is left alone. */
 async function saveTrack($: Hooked, t: AssumptionTrack) {
   if (t.file === '') return
   if (!parseStored(await readText($, t.file)).ok) return
   const ignore = t.file.replace(/\/assumptions\/[^/]+$/, '/.gitignore')
   if (!(await $.fs.exists(ignore))) await $.fs.write(ignore, STORE_IGNORE)
-  await $.fs.write(t.file, storedJson(t.sessionId, t.sessionId, t.entries))
+  await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries))
 }
 
-/** Changes the track. When the list changed, this session's file is written at once. */
+/** Changes the track. The file is found first, so new entries carry this session's id. When the list changed, the file is written at once. */
 async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrack) {
-  const before = await read($, trackA)
+  const current = await read($, trackA)
+  // a session that cannot say where its file is still keeps its list on screen; it writes no file
+  const before = await locate($, current).catch(() => current)
   let after = fn(before)
   if (after.entries !== before.entries) {
     try {
-      after = await locate($, after)
       await saveTrack($, after)
     } catch (err) {
       // the list still changes on screen; a failed file write must never break the turn that caused it
@@ -324,13 +392,7 @@ async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrac
 /** At session start: find this session's file, read it back, and show what it holds. */
 async function loadAssumptions($: Hooked) {
   const t = await locate($, await read($, trackA))
-  const stored = parseStored(await readText($, t.file))
-  if (!stored.ok) {
-    await update($, trackA, () => t)
-    $.ui.toast(`Assumptions not loaded: ${stored.reason}.`)
-    return
-  }
-  await update($, trackA, () => loadTrack(t, stored.entries))
+  await update($, trackA, () => t)
 }
 
 /** The team heads for this session, read from the roster (read only). Undefined when it cannot be read or this session is not on it. */
@@ -388,8 +450,13 @@ async function wrongEntry($: Hooked, entry: Assumption) {
 async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknown; isError?: boolean } | undefined) {
   const prefs = await read($, prefsA)
   if (!prefs.assumptions || !prefs.flagUndeclared || res?.deny !== undefined || res?.isError) return
-  const paths = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
-  if (paths.length > 0) await update($, trackA, t => addEdits(t, paths))
+  // only edits inside the project root count; the rest (a temp file, say) is ignored. Paths are kept relative to the root.
+  const t = await locate($, await read($, trackA)).catch(() => undefined)
+  if (t === undefined || t.root === '') return
+  const inside = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
+    .map(p => relativeTo(t.root, p, t.os))
+    .filter((p): p is string => p !== undefined)
+  if (inside.length > 0) await update($, trackA, () => addEdits(t, inside))
 }
 
 /** A turn ended: an edit in a turn that stated no assumption becomes a flagged entry, when flagging is on. */
@@ -1023,7 +1090,22 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         </Box>
       )
     })
-    const assumptionsBlock = prefs.assumptions ? (
+    // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table of
+    // one row per assumption, one column per field. Columns drop at narrow widths (see tableColumns).
+    const cols = tableColumns(width)
+    const cell = (c: (typeof cols)[number], a: Assumption) => {
+      if (c.key === 'text') return clip(a.text, c.width)
+      if (c.key === 'path') {
+        // the first file, and how many more the turn wrote
+        const more = (a.paths?.length ?? 1) - 1
+        return clip(more > 0 ? `${a.path ?? ''} +${more}` : (a.path ?? ''), c.width)
+      }
+      if (c.key === 'at') return hhmm(a.at)
+      if (c.key === 'turn') return String(a.turn)
+      if (c.key === 'id') return String(a.id)
+      return a[c.key as 'kind' | 'status']
+    }
+    const assumptionsBlock = prefs.assumptions && track.entries.length > 0 ? (
       <Box flexDirection="column">
         <Button
           key="assumptions-toggle"
@@ -1031,19 +1113,34 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           label={`${track.open ? '▾' : '▸'} Assumptions (${openCount(track)} open)`}
           onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
         />
-        {track.open
-          ? track.entries.length === 0
-            ? <Text dimColor>None yet. Claude states its assumptions here as it works.</Text>
-            : panelOrder(track.entries).map(a => (
-                <Box key={`assume-${a.id}`} flexDirection="row">
-                  <Text wrap="truncate" dimColor={a.status !== 'open'}>
-                    {`${a.kind === 'flagged' ? '! ' : ''}${a.text} · turn ${a.turn}${a.status === 'open' ? '' : ` · ${a.status}`} `}
-                  </Text>
-                  {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="Confirm" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
-                  {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="Wrong" onPress={() => void wrongEntry($, a)} /> : null}
+        {track.open ? (
+          <Box flexDirection="column">
+            <Box flexDirection="row">
+              {cols.map(c => (
+                <Box key={`head-${c.key}`} width={c.width}>
+                  <Text bold dimColor>{c.key === 'actions' ? '' : c.header}</Text>
                 </Box>
-              ))
-          : null}
+              ))}
+            </Box>
+            {panelOrder(track.entries).map(a => (
+              <Box key={`row-${a.id}`} flexDirection="row">
+                {cols.map(c =>
+                  c.key === 'actions' ? (
+                    <Box key={`act-${a.id}`} width={c.width} flexDirection="row">
+                      {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="[Confirm]" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
+                      {a.status === 'open' ? <Text> </Text> : null}
+                      {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="[Wrong]" onPress={() => void wrongEntry($, a)} /> : null}
+                    </Box>
+                  ) : (
+                    <Box key={`cell-${a.id}-${c.key}`} width={c.width}>
+                      <Text wrap="truncate" dimColor={a.status !== 'open'}>{cell(c, a)}</Text>
+                    </Box>
+                  ),
+                )}
+              </Box>
+            ))}
+          </Box>
+        ) : null}
       </Box>
     ) : null
     const enhancerBar = (

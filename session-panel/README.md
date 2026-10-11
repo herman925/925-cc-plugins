@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.33. The version is shown dim beside the band title, as ` v0.3.33`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.34. The version is shown dim beside the band title, as ` v0.3.34`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -107,14 +107,16 @@ Claude is asked to state each assumption it makes while building, as its own lin
 The rule is a system-prompt section, `session-panel:assume`, on when Track assumptions is on. The line must start with plain `ASSUMPTION:`, with no bold, bullet or heading. Lines inside a code fence are ignored. Each text is cut at 200 characters.
 
 - **Declared entries:** each `ASSUMPTION:` line in a reply becomes an entry. The same text listed twice in one turn is kept once.
-- **Flagged entries:** a turn that writes a file and states no assumption adds one entry per file: `edited <path> with no stated assumption`. Files are written by Edit, Write, MultiEdit, NotebookEdit, and by Bash or PowerShell commands that write (redirects, `Set-Content`, `Add-Content`, `Out-File`, `Copy-Item`, `Move-Item`, `sed -i`, `cp`, `mv`). A denied or failed call writes nothing and is not flagged. The flag needs Track assumptions and Flag undeclared edits both on.
+- **Flagged entries:** a turn that writes files inside the project root and states no assumption adds one row for the whole turn. Its text is `<file name>, no stated assumption` for one file, or `<N> files, no stated assumption` for more. Its path cell shows the first file, relative to the project root, with ` +N-1` when there are more. Edits outside the project root are ignored. Files are written by Edit, Write, MultiEdit, NotebookEdit, and by Bash or PowerShell commands that write (redirects, `Set-Content`, `Add-Content`, `Out-File`, `Copy-Item`, `Move-Item`, `sed -i`, `cp`, `mv`). A denied or failed call writes nothing and is not flagged. The flag needs Track assumptions and Flag undeclared edits both on.
 - **The list** is newest first, capped at 50 entries. Open entries come first in the panel, then the resolved ones, dimmed with their status.
 - **Title:** `Assumptions (N open)`, with the count of open entries. Click it to expand.
 - **Confirm** sets an entry to `confirmed`.
 - **Wrong** sets it to `wrong`, then puts the correction prefix in the box for you to finish. Nothing is sent.
   - A declared entry gives `Assumption '<text>' is wrong. Instead: `
-  - A flagged entry gives `About the edit to <path>: `
-- Confirm and Wrong appear only on open entries.
+  - A flagged entry gives `About the edits in turn <n> (<first file> and <N-1> more): `, or `About the edits in turn <n> (<file>): ` for one file.
+- Confirm and Wrong appear only on open entries. They are two separate buttons, `[Confirm] [Wrong]`.
+- **Table:** one row per entry, one column per field: id, kind, status, turn, text, path, at, actions. On narrow bands `at` drops first (below 90 cells), then `path` (below 70). Text is cut with an ellipsis. Times show as HH:MM.
+- **Hidden:** the panel is not shown at all when there are no assumptions.
 
 ### The shared file
 
@@ -122,11 +124,14 @@ Each session keeps its list in one file, written on every change and read back w
 
 `<project root>/.claude/session-panel/assumptions/<session id>.json`
 
-- The file name is the session id. The plugin cannot read the `/rename` title, so the title is not used.
+- The file name is the session's name, with the team-orchestrator rule: any run of characters that is not a letter, a digit, `.`, `_` or `-` becomes `_` (so `Mod Builder 2` is `Mod_Builder_2.json`). The name comes from the session registry (`<config dir>/sessions/<pid>.json`, field `name`), matched by this session's id. With no name, the file is the session id's file, as before.
+- Takeover: when a session closes and a new one starts with the same name, the new session takes over the same file. It keeps the old entries (each still tagged with its old `sessionId`) and sets the file's top-level `sessionId` to itself.
+- A live owner: if the file's owner is still in the registry, or another live session has the same name, this session writes `<name>-<first 8 of the session id>.json` instead, and shows one toast.
 - The folder `.claude/session-panel/` has a `.gitignore` with `*`, so git ignores the whole folder. The project's own `.gitignore` is not changed.
-- Shape: `{ "version": 1, "member": "<session id>", "sessionId": "<session id>", "entries": [...] }`. `member` holds the session id until the plugin can read a member name.
-- Each entry: `{ id, text, turn, kind: "declared" | "flagged", path?, status: "open" | "confirmed" | "wrong", at, resolvedAt? }`.
-- A session writes only its own file. If the plain file belongs to another session, or cannot be read, this session writes `<session id>-<tag>.json` instead. An unreadable file is never overwritten.
+- Shape: `{ "version": 1, "member": "<name>", "sessionId": "<owner session id>", "entries": [...] }`. `member` is the session's name, or its session id when it has no name.
+- Each entry: `{ id, text, turn, kind: "declared" | "flagged", path?, paths?, status: "open" | "confirmed" | "wrong", at, resolvedAt?, sessionId }`. `path` and `paths` are on flagged entries only: `path` is the first file, `paths` all of them, both relative to the project root.
+- Files from before 0.3.34 (named by session id) are left as they are. A session with no name still reads and writes its own id file. Nothing is merged or moved.
+- An unreadable file is never overwritten.
 - Failures show a toast: `Assumptions not loaded: <reason>.` on a bad file, and `Assumptions file not written: <message>` if a write fails. A failed write never stops the turn.
 
 ## Status lines from the team head
@@ -164,6 +169,6 @@ A status line changes an entry's status without a model turn. It is one line, al
 - Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
 - Toasts, as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
 - Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm and Wrong, which send the status line as a team message. Others see the count and list only. Team-orchestrator never writes an assumptions file.
-- Shared files: `<project root>/.claude/session-panel/assumptions/<session id>.json` with version, member (the session id for now), sessionId, and entries (id, text, status, kind, turn, path (flagged entries only), at, resolvedAt). `.claude/session-panel/` has a `.gitignore` with `*`.
+- Shared files: `<project root>/.claude/session-panel/assumptions/<name>.json` with version, member, sessionId, and entries (id, text, status, kind, turn, path (flagged entries only), paths (flagged entries only), at, resolvedAt, sessionId). `.claude/session-panel/` has a `.gitignore` with `*`.
 - What needs what: Confirm and Wrong need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the Team Orchestrator band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
 - Detection: team-orchestrator detects Session Panel from `enabledPlugins["session-panel@herman-mods"]` in `.claude/settings.local.json`, then `.claude/settings.json`, then the user `settings.json`. It rechecks on each roster refresh (every 30 s). After enabling Session Panel, run `/reload-plugins`.

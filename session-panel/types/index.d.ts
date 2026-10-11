@@ -60,11 +60,16 @@ export type Assumption = {
   text: string
   turn: number
   kind: 'declared' | 'flagged'
+  /** flagged: the first edited file, relative to the project root */
   path?: string
+  /** flagged: every edited file of the turn, relative to the project root */
+  paths?: string[]
   status: 'open' | 'confirmed' | 'wrong'
   /** when it was added, ms since the epoch */
   at: number
   resolvedAt?: number
+  /** the session that added it; a file can hold entries of sessions that closed */
+  sessionId: string
 }
 
 /** Per-session assumption state: the list (newest first), the turn in progress, and the panel's open state. */
@@ -79,6 +84,14 @@ export type AssumptionTrack = {
   /** this session's file, absolute with forward slashes; '' until located, or when the file could not be read */
   file: string
   sessionId: string
+  /** the session's name, or its session id when it has no name */
+  member: string
+  /** the project root, forward slashes, '' until located */
+  root: string
+  /** the OS, for case rules; '' until located */
+  os: 'windows' | 'macos' | 'linux' | ''
+  /** true once the 'another session' toast has shown for this session */
+  warned: boolean
 }
 
 /** What the band's enhancer holds for the draft: the text before it was enhanced, and the notes. */
