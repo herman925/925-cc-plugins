@@ -49,6 +49,8 @@ import {
   chooseFile,
   clip,
   headsFor,
+  resolveId,
+  retiredJson,
   hhmm,
   homeOf,
   nameFile,
@@ -390,7 +392,7 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
     if (!t.warned) $.ui.toast(`Assumptions not loaded: ${stored.reason}. This session will not write its file.`)
     return { ...t, file: '', sessionId, member: name ?? sessionId, root, os, warned: true }
   }
-  let loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os, merged: stored.merged }, stored.entries)
+  let loaded = loadTrack({ ...t, file: r.file, sessionId, member: name ?? sessionId, warned: t.warned || r.tagged, root, os, merged: stored.merged, idMap: stored.idMap }, stored.entries)
   // this session's own old id file (<session id>.json) is merged into the named file, once; another session's is never read
   const oldPath = plainPath(root, sessionId)
   let merged = false
@@ -403,7 +405,10 @@ async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
     }
   }
   // a takeover, or a merge, is written at once: the file's owner is this session, and the merge is recorded
-  if (r.takeover || merged) await saveTrack($, loaded).catch(() => undefined)
+  let saved = true
+  if (r.takeover || merged) saved = await saveTrack($, loaded).then(() => true, () => false)
+  // the old id file is retired only after the named file holds its entries, so no assumption is counted twice
+  if (merged && saved) await $.fs.write(oldPath, retiredJson(sessionId, sessionId, r.file.split('/').pop() as string)).catch(() => undefined)
   if (r.tagged && !t.warned) {
     $.ui.toast(`Assumptions: this session writes ${r.file.split('/').pop()}, because the usual file belongs to another session.`)
   }
@@ -416,7 +421,7 @@ async function saveTrack($: Hooked, t: AssumptionTrack) {
   if (!parseStored(await readText($, t.file)).ok) return
   const ignore = t.file.replace(/\/assumptions\/[^/]+$/, '/.gitignore')
   if (!(await $.fs.exists(ignore))) await $.fs.write(ignore, STORE_IGNORE)
-  await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries, t.merged))
+  await $.fs.write(t.file, storedJson(t.member, t.sessionId, t.entries, t.merged, t.idMap))
 }
 
 /** Changes the track. The file is found first, so new entries carry this session's id. When the list changed, the file is written at once. */
@@ -472,8 +477,9 @@ async function applyStatusLines($: Hooked, text: string): Promise<{ drop: string
   if (applied.changed) await changeTrack($, () => applied.track)
   // a head's wrong does what the local Wrong button does: the box gets the Redirect text, and nothing is submitted
   for (const it of items) {
-    const was = before.entries.find(e => e.id === it.id)
-    const now2 = applied.track.entries.find(e => e.id === it.id)
+    const rid = resolveId(before, it.id)
+    const was = before.entries.find(e => e.id === rid)
+    const now2 = applied.track.entries.find(e => e.id === rid)
     if (it.allowed && it.verb === 'wrong' && was?.status === 'open' && now2?.status === 'wrong') await redirectTo($, now2)
   }
   const note = applied.notes.join(' ')
@@ -503,7 +509,8 @@ async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknow
   const inside = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
     .map(p => relativeTo(t.root, p, t.os))
     .filter((p): p is string => p !== undefined)
-  if (inside.length > 0) await update($, trackA, () => addEdits(t, inside))
+  // the located track is kept even with no edit, so a merge made here is on screen and in the head-line lookup
+  await update($, trackA, () => addEdits(t, inside))
 }
 
 /** A turn ended: an edit in a turn that stated no assumption becomes a flagged entry, when flagging is on. */

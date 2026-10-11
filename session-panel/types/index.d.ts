@@ -90,6 +90,8 @@ export type AssumptionTrack = {
   root: string
   /** the old id files already merged into this file, by file name */
   merged: string[]
+  /** old ids renumbered by a merge: old id -> the id the entry has here */
+  idMap: Record<string, number>
   /** the OS, for case rules; '' until located */
   os: 'windows' | 'macos' | 'linux' | ''
   /** true once the 'another session' toast has shown for this session */

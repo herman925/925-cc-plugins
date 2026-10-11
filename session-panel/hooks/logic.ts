@@ -470,7 +470,7 @@ export const ASSUMPTION_TEXT_CAP = 200
 /** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
 export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. The line must start with plain ASSUMPTION: at the start of the line, with no bold, no bullet and no heading. Do not put ASSUMPTION lines inside code blocks.`
 
-const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '', member: '', warned: false, root: '', os: '', merged: [] }
+const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '', member: '', warned: false, root: '', os: '', merged: [], idMap: {} }
 export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
 
 /** The texts of the ASSUMPTION lines in a reply, in order. Lines inside a code fence are ignored. */
@@ -595,16 +595,20 @@ const isEntry = (e: any) =>
   (e.kind === 'declared' || e.kind === 'flagged') &&
   (e.status === 'open' || e.status === 'confirmed' || e.status === 'wrong')
 
-export function storedJson(member: string, sessionId: string, entries: Assumption[], merged: string[] = []): string {
-  return JSON.stringify({ version: STORE_VERSION, member, sessionId, entries, merged }, null, 2) + '\n'
+export function storedJson(member: string, sessionId: string, entries: Assumption[], merged: string[] = [], idMap: Record<string, number> = {}): string {
+  return JSON.stringify({ version: STORE_VERSION, member, sessionId, entries, merged, idMap }, null, 2) + '\n'
 }
+
+/** The file an old id file is retired to once its entries are merged: no entries, and the named file it went into. */
+export const retiredJson = (member: string, sessionId: string, mergedInto: string) =>
+  JSON.stringify({ version: STORE_VERSION, member, sessionId, entries: [], mergedInto }, null, 2) + '\n'
 
 /** A registry record: <pid>.json. The pattern is pinned by a test, since its backslashes were lost twice in editing. */
 export const REGISTRY_RECORD = /^\d+\.json$/
 
 /** The entries a stored file holds, and the old id files already merged into it, or why it cannot be read. A file this code cannot read is never overwritten. */
-export function parseStored(text: string | undefined): { ok: true; entries: Assumption[]; merged: string[] } | { ok: false; reason: string } {
-  if (text === undefined) return { ok: true, entries: [], merged: [] }
+export function parseStored(text: string | undefined): { ok: true; entries: Assumption[]; merged: string[]; idMap: Record<string, number> } | { ok: false; reason: string } {
+  if (text === undefined) return { ok: true, entries: [], merged: [], idMap: {} }
   let j: any
   try {
     j = JSON.parse(text)
@@ -615,7 +619,9 @@ export function parseStored(text: string | undefined): { ok: true; entries: Assu
   // an entry written before 0.3.34 has no sessionId: it belongs to the file's owner
   const entries = j.entries.filter(isEntry).map((e: any) => ({ ...e, sessionId: typeof e.sessionId === 'string' ? e.sessionId : String(j.sessionId ?? '') })) as Assumption[]
   const merged = Array.isArray(j.merged) ? j.merged.filter((x: unknown): x is string => typeof x === 'string') : []
-  return { ok: true, entries, merged }
+  const idMap: Record<string, number> = {}
+  if (j.idMap && typeof j.idMap === 'object') for (const [k, v] of Object.entries(j.idMap)) if (typeof v === 'number') idMap[k] = v
+  return { ok: true, entries, merged, idMap }
 }
 
 /** The track after a load: the stored entries, with the counters moved past them so new entries do not clash. */
@@ -633,9 +639,21 @@ export function loadTrack(t: AssumptionTrack, entries: Assumption[]): Assumption
  */
 export function mergeOld(t: AssumptionTrack, old: { fileName: string; sessionId: string; entries: Assumption[] }): AssumptionTrack {
   if (t.merged.includes(old.fileName)) return t
-  let seq = t.seq
-  const added = old.entries.map(e => ({ ...e, id: ++seq, sessionId: old.sessionId }))
-  return { ...t, seq, merged: [...t.merged, old.fileName], entries: [...t.entries, ...added].slice(0, ASSUMPTION_CAP) }
+  // an old id the named file does not have is kept; an old id it already has gets the next free id, recorded in idMap
+  const named = new Set(t.entries.map(e => e.id))
+  const kept = new Set(old.entries.map(e => e.id).filter(id => !named.has(id)))
+  const taken = new Set([...named, ...kept])
+  let seq = Math.max(t.seq, ...kept)
+  const idMap = { ...t.idMap }
+  const added = old.entries.map(e => {
+    if (!named.has(e.id)) return { ...e, sessionId: old.sessionId }
+    do seq++
+    while (taken.has(seq))
+    taken.add(seq)
+    idMap[String(e.id)] = seq
+    return { ...e, id: seq, sessionId: old.sessionId }
+  })
+  return { ...t, seq, idMap, merged: [...t.merged, old.fileName], entries: [...t.entries, ...added].slice(0, ASSUMPTION_CAP) }
 }
 /** The text of the text blocks in a row's content. Anything else (no content, not a list, a null block) is no text. */
 export function responseText(content: unknown): string {
@@ -688,12 +706,16 @@ export function parseIncoming(text: string): { verb: 'confirm' | 'wrong'; id: nu
 }
 
 /** Applies a head's message to this session's list. An unknown id, or an entry already resolved, changes nothing and says why. */
+/** The entry an id names: the id's merged entry when an old id was renumbered, else the entry with that id. */
+export const resolveId = (t: AssumptionTrack, id: number): number => t.idMap[String(id)] ?? id
+
 export function applyIncoming(t: AssumptionTrack, cmd: { verb: 'confirm' | 'wrong'; id: number }, now: number): { track: AssumptionTrack; note: string; changed: boolean } {
-  const entry = t.entries.find(e => e.id === cmd.id)
+  const id = resolveId(t, cmd.id)
+  const entry = t.entries.find(e => e.id === id)
   if (!entry) return { track: t, note: `No assumption ${cmd.id} in this session.`, changed: false }
   if (entry.status !== 'open') return { track: t, note: `Assumption ${cmd.id} is already ${entry.status}.`, changed: false }
   const status = cmd.verb === 'confirm' ? 'confirmed' : 'wrong'
-  return { track: setStatus(t, cmd.id, status, now), note: `Assumption ${cmd.id} marked ${status}.`, changed: true }
+  return { track: setStatus(t, id, status, now), note: `Assumption ${cmd.id} marked ${status}.`, changed: true }
 }
 
 // ---------- status lines inside cross-session envelopes (0.3.3) ----------

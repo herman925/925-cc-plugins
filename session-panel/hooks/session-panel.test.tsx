@@ -1268,7 +1268,7 @@ test('reload: a stored list reads back with its statuses, and the counters move 
 test('reload: a file this code cannot read is reported, not used', () => {
   expect(parseStored('{"version":2,"entries":[]}').ok).toBe(false)
   expect(parseStored('not json').ok).toBe(false)
-  expect(parseStored(undefined)).toEqual({ ok: true, entries: [], merged: [] })
+  expect(parseStored(undefined)).toEqual({ ok: true, entries: [], merged: [], idMap: {} })
 })
 
 test('confirm and wrong: a resolved entry does not change again; the count and the order follow the status', () => {
@@ -2009,7 +2009,7 @@ test('merge: the merged list is recorded in the named file, and mergeOld is idem
   const base = { ...newTrack(), seq: 4, merged: [] as string[] }
   const once = mergeOld(base, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: [{ id: 1, text: 'x', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' }] })
   expect(once.merged).toEqual(['new-id-5678.json'])
-  expect(once.entries[0]).toMatchObject({ id: 5, text: 'x' })
+  expect(once.entries[0]).toMatchObject({ id: 1, text: 'x' })
   const twice = mergeOld(once, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: [{ id: 1, text: 'x', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' }] })
   expect(twice).toBe(once)
 })
@@ -2158,4 +2158,66 @@ test('alignment: the pieces of every line are plain text the same width, with th
   const r = plain(rowPieces(cols, SAMPLE_DECLARED)) + ' '.repeat(actions)
   expect(h.length).toBe(r.length)
   expect([...h].flatMap((c, i) => (c === '│' ? [i] : []))).toEqual([...r].flatMap((c, i) => (c === '│' ? [i] : [])))
+})
+
+// 21. the merge keeps old ids, renumbers on collision (recorded in idMap), retires the old file, and head lines go through idMap (0.3.41)
+import { resolveId, retiredJson } from './logic'
+
+test('merge: an old id that does not collide is kept', () => {
+  const base = { ...newTrack(), seq: 0, merged: [] as string[] }
+  const merged = mergeOld(base, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: [{ id: 3, text: 'x', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' }] })
+  expect(merged.entries[0]).toMatchObject({ id: 3, text: 'x' })
+  expect(merged.idMap).toEqual({})
+})
+
+test('merge: a colliding old id is renumbered, and the new id is recorded in idMap', () => {
+  const base = { ...newTrack(), seq: 1, entries: [{ id: 1, text: 'named', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'x' } as any], merged: [] as string[] }
+  const old = [
+    { id: 1, text: 'old one', turn: 1, kind: 'declared', status: 'open', at: 2, sessionId: 'new-id-5678' } as any,
+    { id: 2, text: 'old two', turn: 1, kind: 'declared', status: 'confirmed', at: 3, sessionId: 'new-id-5678' } as any,
+  ]
+  const merged = mergeOld(base, { fileName: 'new-id-5678.json', sessionId: 'new-id-5678', entries: old })
+  expect(merged.entries.map(e => [e.text, e.id])).toEqual([['named', 1], ['old one', 3], ['old two', 2]])
+  expect(merged.idMap).toEqual({ '1': 3 })
+  expect(resolveId(merged, 1)).toBe(3)
+  expect(resolveId(merged, 2)).toBe(2)
+})
+
+test('merge: the file retires to no entries, naming the named file it went into', () => {
+  const retired = JSON.parse(retiredJson('new-id-5678', 'new-id-5678', 'Mod_Builder.json'))
+  expect(retired).toEqual({ version: 1, member: 'new-id-5678', sessionId: 'new-id-5678', entries: [], mergedInto: 'Mod_Builder.json' })
+})
+
+test('merge: after a merge, the named file holds each assumption once, and the old file holds none', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old one', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+    { id: 2, text: 'old two', turn: 1, kind: 'declared', status: 'open', at: 2, sessionId: 'new-id-5678' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await settle(clock, $.tool.call({ tool: 'Read', file_path: 'a.md' }))
+  const named = JSON.parse(w.writes.filter(x => x.path === MODB).at(-1)!.text)
+  const old = JSON.parse(w.writes.filter(x => x.path.endsWith(OLD_ID)).at(-1)!.text)
+  expect(named.entries.length + old.entries.length).toBe(2)
+  expect(old.entries).toEqual([])
+  expect(old.mergedInto).toBe('Mod_Builder.json')
+  expect(named.merged).toEqual(['new-id-5678.json'])
+})
+
+test('merge: a head line naming an old id that was renumbered finds the merged entry, through idMap', async ($, on) => {
+  const clock = world(on, WIN_ENV)
+  const named = storedJson('Mod Builder', 'new-id-5678', [
+    { id: 1, text: 'named one', turn: 1, kind: 'declared', status: 'open', at: 1, sessionId: 'new-id-5678' } as any,
+  ])
+  const oldFile = storedJson('new-id-5678', 'new-id-5678', [
+    { id: 1, text: 'old one', turn: 1, kind: 'declared', status: 'open', at: 2, sessionId: 'new-id-5678' } as any,
+  ])
+  const w = storeWorld(on, { id: 'new-id-5678', files: { [MODB]: named, [`C:/proj/.claude/session-panel/${OLD_ID}`]: oldFile }, sessions: [{ sessionId: 'new-id-5678', name: 'Mod Builder' }] })
+  await settle(clock, $.tool.call({ tool: 'Read', file_path: 'a.md' }))
+  const result: any = await $.prompt.submit({ text: 'SESSION-PANEL: confirm 1', asUser: true })
+  expect(result.drop).toBe('Assumption 1 marked confirmed.')
+  const saved = JSON.parse(w.writes.filter(x => x.path === MODB).at(-1)!.text)
+  expect(saved.entries.find((e: any) => e.text === 'old one')).toMatchObject({ id: 2, status: 'confirmed' })
+  expect(saved.entries.find((e: any) => e.text === 'named one')).toMatchObject({ id: 1, status: 'open' })
+  expect(saved.idMap).toEqual({ '1': 2 })
 })
