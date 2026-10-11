@@ -49,7 +49,23 @@ export type Prefs = {
   autoEnhance: boolean
   model: string
   chat: 'recent' | 'full'
+  assumptions: boolean
+  flagUndeclared: boolean
   sources: { instructions: boolean; skills: boolean; docs: boolean; github: boolean }
+}
+
+/** One line in the Assumptions panel: a declared ASSUMPTION line, or a flagged undeclared edit. */
+export type Assumption = { id: number; text: string; turn: number; kind: 'declared' | 'undeclared' }
+
+/** Per-session assumption state: the list (newest first), the turn in progress, and the panel's open state. */
+export type AssumptionTrack = {
+  entries: Assumption[]
+  seq: number
+  turnNo: number
+  runningTurnId: string
+  turnDeclared: boolean
+  turnEdits: string[]
+  open: boolean
 }
 
 /** What the band's enhancer holds for the draft: the text before it was enhanced, and the notes. */
@@ -74,6 +90,7 @@ declare module 'claude-code' {
       enhancer: EnhancerState
       openGroups: string[]
       gateDenied: number
+      assumptionTrack: AssumptionTrack
     }
   }
 }

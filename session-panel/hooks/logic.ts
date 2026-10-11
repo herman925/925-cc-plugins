@@ -1,4 +1,4 @@
-import type { CleanChecklist, CleanTask } from '../types'
+import type { AssumptionTrack, CleanChecklist, CleanTask } from '../types'
 
 // Pure helpers for Session Panel: no engine calls here, so tests can use them directly.
 
@@ -460,4 +460,96 @@ export function recentExcerpt(rows: Array<{ role: string; text: string }>): stri
     .map(r => `${r.role}: ${r.text.trim().slice(0, EXCERPT_MESSAGE_CAP)}`)
     .join('\n\n')
   return joined.length > EXCERPT_CAP ? joined.slice(-EXCERPT_CAP) : joined
+}
+
+// ---------- assumptions (stage 2) ----------
+
+export const ASSUMPTION_CAP = 50
+export const ASSUMPTION_TEXT_CAP = 200
+
+/** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
+export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. Do not put ASSUMPTION lines inside code blocks.`
+
+const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false }
+export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
+
+/** The texts of the ASSUMPTION lines in a reply, in order. Lines inside a code fence are ignored. */
+export function parseAssumptions(text: string): string[] {
+  const out: string[] = []
+  let inFence = false
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const m = line.match(/^\s*ASSUMPTION:\s*(\S.*?)\s*$/)
+    if (m) out.push(m[1].slice(0, ASSUMPTION_TEXT_CAP))
+  }
+  return out
+}
+
+/** A turn began: count it, remember its id for Stop, and clear what the last turn left. */
+export function startTurn(t: AssumptionTrack, turnId: string): AssumptionTrack {
+  return { ...t, turnNo: t.turnNo + 1, runningTurnId: turnId, turnDeclared: false, turnEdits: [] }
+}
+
+/** The reply declared assumptions: they go to the top of the list, newest first. */
+export function addDeclared(t: AssumptionTrack, texts: string[]): AssumptionTrack {
+  if (texts.length === 0) return t
+  let seq = t.seq
+  const added = [...texts].reverse().map(text => ({ id: ++seq, text, turn: t.turnNo, kind: 'declared' as const }))
+  return { ...t, seq, turnDeclared: true, entries: [...added, ...t.entries].slice(0, ASSUMPTION_CAP) }
+}
+
+/** A file was written during the turn. Each path is kept once. */
+export function addEdits(t: AssumptionTrack, paths: string[]): AssumptionTrack {
+  const turnEdits = [...new Set([...t.turnEdits, ...paths])]
+  return { ...t, turnEdits }
+}
+
+/** The turn ended. With flagging on, an edit in a turn that declared no assumption becomes one entry per file. */
+export function finishTurn(t: AssumptionTrack, flag: boolean): AssumptionTrack {
+  let seq = t.seq
+  const flagged =
+    flag && !t.turnDeclared
+      ? [...t.turnEdits].reverse().map(path => ({ id: ++seq, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'undeclared' as const }))
+      : []
+  return { ...t, seq, runningTurnId: '', turnDeclared: false, turnEdits: [], entries: [...flagged, ...t.entries].slice(0, ASSUMPTION_CAP) }
+}
+
+/** The text the box takes when the person presses Redirect. The person finishes it; nothing is sent. */
+export const redirectText = (assumption: string) => `Assumption '${assumption}' is wrong. Instead: `
+
+const NOT_A_FILE = /^(\/dev\/null|nul|\$null|&\d)$/i
+const clean = (raw: string) => raw.replace(/^["']|["']$/g, '')
+
+/** The file paths a shell command writes to. Best effort: redirects, a few cmdlets and common file tools. */
+export function shellTargets(command: string): string[] {
+  const found: string[] = []
+  for (const m of command.matchAll(/(?:^|[^>\d&])\d?>>?\s*("[^"]+"|'[^']+'|[^\s;&|<>"']+)/g)) found.push(clean(m[1]))
+  for (const m of command.matchAll(/\b(?:Set-Content|Add-Content|Out-File|Copy-Item|Move-Item)\b([^;|\n]*)/gi)) {
+    const named = m[1].match(/-(?:FilePath|Path|LiteralPath|Destination)\s+("[^"]+"|'[^']+'|\S+)/i)
+    const first = m[1].split(/\s+/).find(w => w !== '' && !w.startsWith('-'))
+    const target = named ? named[1] : first
+    if (target) found.push(clean(target))
+  }
+  for (const m of command.matchAll(/\bsed\s+-i[^;|&\n]*/g)) {
+    const last = m[0].trim().split(/\s+/).pop()
+    if (last) found.push(clean(last))
+  }
+  for (const m of command.matchAll(/\b(?:cp|mv)\s+[^;|&\n]+/g)) {
+    const last = m[0].trim().split(/\s+/).pop()
+    if (last) found.push(clean(last))
+  }
+  return [...new Set(found.filter(p => p !== '' && !NOT_A_FILE.test(p)))]
+}
+
+/** The files a tool call writes to, by tool name and its input. Other tools write nothing this panel tracks. */
+export function editTargets(tool: string, input: Record<string, unknown>): string[] {
+  const str = (v: unknown) => (typeof v === 'string' && v !== '' ? [v] : [])
+  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit') return str(input.file_path)
+  if (tool === 'NotebookEdit') return str(input.notebook_path)
+  if (tool === 'Bash' || tool === 'PowerShell') return shellTargets(String(input.command ?? ''))
+  return []
 }

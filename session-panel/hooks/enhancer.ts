@@ -175,6 +175,8 @@ export const DEFAULT_PREFS: Prefs = {
   model: 'haiku',
   chat: 'recent',
   sources: { instructions: true, skills: true, docs: true, github: false },
+  assumptions: true,
+  flagUndeclared: true,
 }
 
 /** The enhancer's engine calls plus the band's box and state, as plain functions, so the actions can be tested. */

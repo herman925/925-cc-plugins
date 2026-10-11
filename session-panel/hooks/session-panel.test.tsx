@@ -1097,3 +1097,113 @@ test('gate: after three denials in a row with no plan, tools go through', async 
   const escaped = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
   expect((escaped as any).deny).toBeUndefined()
 })
+
+// 9. assumptions (stage 2): the parser, the turn reducers, edit detection, and the Stop and Redirect actions
+import { addDeclared, addEdits, editTargets, finishTurn, newTrack, parseAssumptions, redirectText, shellTargets, startTurn } from './logic'
+
+test('assumptions: ASSUMPTION lines are read in order; code fences and other text are ignored', () => {
+  const reply = 'Working on it.\nASSUMPTION: The page is for a bakery.\n```\nASSUMPTION: not this one\n```\n  ASSUMPTION: Prices are in pounds.\nASSUMPTION:   \nNot an assumption.'
+  expect(parseAssumptions(reply)).toEqual(['The page is for a bakery.', 'Prices are in pounds.'])
+  expect(parseAssumptions('Assumption: wrong case')).toEqual([])
+  expect(parseAssumptions('ASSUMPTION: ' + 'x'.repeat(300))[0].length).toBe(200)
+})
+
+test('assumptions: declared lines go to the top, newest first, and mark the turn declared', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addDeclared(t, ['first', 'second'])
+  expect(t.entries.map(e => e.text)).toEqual(['second', 'first'])
+  expect(t.entries.every(e => e.turn === 1 && e.kind === 'declared')).toBe(true)
+  expect(t.turnDeclared).toBe(true)
+  t = startTurn(t, 't2')
+  t = addDeclared(t, ['third'])
+  expect(t.entries[0]).toMatchObject({ text: 'third', turn: 2 })
+})
+
+test('undeclared edits: a turn that edits and declares nothing gets one flagged entry per file', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addEdits(t, ['a.md', 'b.ts', 'a.md'])
+  expect(t.turnEdits).toEqual(['a.md', 'b.ts'])
+  const done = finishTurn(t, true)
+  expect(done.entries.map(e => e.text)).toEqual(['edited b.ts with no stated assumption', 'edited a.md with no stated assumption'])
+  expect(done.entries.every(e => e.kind === 'undeclared')).toBe(true)
+  expect(done.runningTurnId).toBe('')
+})
+
+test('undeclared edits: a declared assumption in the same turn stops the flag, and flagging off adds nothing', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addEdits(addDeclared(t, ['Keep the old header']), ['a.md'])
+  expect(finishTurn(t, true).entries.filter(e => e.kind === 'undeclared')).toEqual([])
+  let u = addEdits(startTurn(newTrack(), 't2'), ['c.md'])
+  expect(finishTurn(u, false).entries).toEqual([])
+})
+
+test('undeclared edits: the list keeps the newest 50 entries', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addDeclared(t, Array.from({ length: 60 }, (_, i) => `a${i}`))
+  expect(t.entries.length).toBe(50)
+  expect(t.entries[0].text).toBe('a59')
+})
+
+test('edit targets: writing tools name their file; reading and no-file commands name none', () => {
+  expect(editTargets('Edit', { file_path: 'src/a.ts' })).toEqual(['src/a.ts'])
+  expect(editTargets('Write', { file_path: 'notes.md' })).toEqual(['notes.md'])
+  expect(editTargets('NotebookEdit', { notebook_path: 'x.ipynb' })).toEqual(['x.ipynb'])
+  expect(editTargets('Read', { file_path: 'a.md' })).toEqual([])
+  expect(shellTargets('echo hi > out.txt')).toEqual(['out.txt'])
+  expect(shellTargets('echo hi >> "docs/log.md"')).toEqual(['docs/log.md'])
+  expect(shellTargets('Set-Content -Path "src/a.ts" -Value x')).toEqual(['src/a.ts'])
+  expect(shellTargets("sed -i 's/a/b/' file.md")).toEqual(['file.md'])
+  expect(shellTargets('cp a.txt b.txt')).toEqual(['b.txt'])
+  expect(shellTargets('cat a.txt && ls')).toEqual([])
+  expect(shellTargets('npm test > /dev/null 2>&1')).toEqual([])
+  expect(editTargets('Bash', { command: 'echo x > y.md' })).toEqual(['y.md'])
+})
+
+test('redirect: the box gets the start of a correction, and nothing is submitted', () => {
+  expect(redirectText('Use Tailwind')).toBe("Assumption 'Use Tailwind' is wrong. Instead: ")
+})
+
+test('stop: the Stop button aborts the running turn by its id and says Stopped', async ($, on) => {
+  world(on)
+  const aborts: string[] = []
+  on('ui.toast', () => ({ value: undefined }))
+  on('turn.abort', (_$: any, e: any) => {
+    aborts.push(e.turnId)
+    return { value: undefined }
+  })
+  await begin($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'stop' })).toBeDefined()
+  await ui.press({ key: 'stop' })
+  expect(aborts).toEqual(['t1'])
+  await ui.unmount()
+})
+
+test('stop: the button is gone once the turn has completed', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ key: 'stop' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('redirect: an undeclared edit lists in the panel, and Redirect fills the box without sending', async ($, on) => {
+  world(on)
+  const fills: string[] = []
+  const submits: string[] = []
+  on('prompt.fill', (_$: any, e: any) => {
+    fills.push(e.text)
+    return { isFilled: true }
+  })
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Edit the notes'] })
+  await $.tool.call({ tool: 'Edit', file_path: 'notes.md', old_string: 'a', new_string: 'b' })
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'assumptions-toggle' })
+  expect(await texts(ui)).toContain('edited notes.md with no stated assumption')
+  await ui.press({ key: 'redirect-1' })
+  expect(fills).toEqual(["Assumption 'edited notes.md with no stated assumption' is wrong. Instead: "])
+  await ui.unmount()
+})

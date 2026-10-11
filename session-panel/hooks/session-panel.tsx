@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
-import type { CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
+import type { AssumptionTrack, CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
 import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo, type Outcome } from './enhancer'
 import {
   GATE_MESSAGE,
@@ -35,6 +35,15 @@ import {
   stepNumber,
   sweep,
   visibleRows,
+  ASSUME_SECTION,
+  addDeclared,
+  addEdits,
+  editTargets,
+  finishTurn,
+  newTrack,
+  parseAssumptions,
+  redirectText,
+  startTurn,
 } from './logic'
 
 type Hooked = EngineInterface
@@ -49,6 +58,7 @@ const finishedA = atom({ plugin: 'session-panel', key: 'finished' } as const, []
 const prefsA = atom({ plugin: 'session-panel', key: 'prefs' } as const, DEFAULT_PREFS as Prefs)
 const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { original: null, passText: null, notes: [], busy: false } as EnhancerState)
 const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const, 0)
+const trackA = atom({ plugin: 'session-panel', key: 'assumptionTrack' } as const, newTrack() as AssumptionTrack)
 const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
 
 const PLAN = 'mcp__session-panel__plan_steps'
@@ -229,6 +239,37 @@ async function runSetup($: Hooked) {
   await $.store.set('setupDone', true)
 }
 
+/** Stop: cancels the running turn by the id turn.start gave us. Shown only while a turn runs. */
+async function stopTurn($: Hooked) {
+  const id = (await read($, trackA)).runningTurnId
+  if (id === '') return
+  await $.turn.abort({ turnId: id }).then(
+    () => $.ui.toast('Stopped'),
+    () => $.ui.toast('Nothing to stop: the turn has ended.'),
+  )
+}
+
+/** Redirect: puts the start of a correction in the box. The person finishes it and sends; nothing is submitted here. */
+async function redirectTo($: Hooked, assumption: string) {
+  await $.prompt.fill({ text: redirectText(assumption), mode: 'replace' })
+}
+
+/** Records the files a tool call wrote, for the Assumptions panel. A denied or failed call wrote nothing. */
+async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknown; isError?: boolean } | undefined) {
+  const prefs = await read($, prefsA)
+  if (!prefs.assumptions || !prefs.flagUndeclared || res?.deny !== undefined || res?.isError) return
+  const paths = editTargets(String(e.tool), e as unknown as Record<string, unknown>)
+  if (paths.length > 0) await update($, trackA, t => addEdits(t, paths))
+}
+
+/** A turn ended: an edit in a turn that stated no assumption becomes a flagged entry, when flagging is on. */
+async function finishAssumptions($: Hooked, e: { agentId?: string }) {
+  if (e.agentId !== undefined) return
+  const prefs = await read($, prefsA)
+  const flag = (await read($, enabledA)) && prefs.assumptions && prefs.flagUndeclared
+  await update($, trackA, t => finishTurn(t, flag))
+}
+
 function title0(cl: CleanChecklist): string {
   return cl.title === '' ? 'Working on it' : cl.title
 }
@@ -356,6 +397,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       sections: [
         ...result.sections,
         { id: 'session-panel:plan', text: PLAN_SECTION, scope: 'session' as const },
+        ...((await read($, prefsA)).assumptions ? [{ id: 'session-panel:assume', text: ASSUME_SECTION, scope: 'session' as const }] : []),
         { id: 'session-panel:rules', text, scope: 'session' as const },
       ],
     }
@@ -379,6 +421,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   })
 
   on('turn.start', async ($, e, next) => {
+    await update($, trackA, t => startTurn(t, e.turnId))
     const result = await next(e)
     if (!(await read($, enabledA))) return result
     const text = e.text.trim()
@@ -494,6 +537,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     }
 
     const res = await next(e)
+    await recordEdits($, e, res)
     if (isOurs) return res
 
     const isFailure = res.deny === undefined && res.isError === true
@@ -530,8 +574,21 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   })
 
   // ---------- the end of a turn ----------
+  // ---------- assumptions: what Claude states, and edits that state none ----------
+  on('session.append', { door: 'response' }, async ($, e, next) => {
+    const isOn = (await read($, enabledA)) && (await read($, prefsA)).assumptions
+    if (isOn && (e as { agentId?: string }).agentId === undefined) {
+      const blocks = (Array.isArray(e.message.content) ? e.message.content : []) as Array<{ type?: string; text?: unknown }>
+      const text = blocks.map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : '')).join('\n')
+      await update($, trackA, t => addDeclared(t, parseAssumptions(text)))
+    }
+    return next(e)
+  })
+
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    await finishAssumptions($, e)
     if (e.agentId !== undefined || !(await read($, enabledA))) return result
     const now = await $.clock.now()
     const c = await read($, checklistA)
@@ -636,6 +693,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const prefs = await read($, prefsA)
     const enh = await read($, enhancerA)
     const openGroups = await read($, openGroupsA)
+    const track = await read($, trackA)
 
     // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
     const pillOf = (label: string, bg: string) => (
@@ -698,6 +756,24 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         kind: 'toggle',
         isOn: prefs.autoEnhance,
         set: v => void setPrefs($, { autoEnhance: v }),
+      },
+      {
+        id: 'assume',
+        group: 'assumptions',
+        label: 'Track assumptions',
+        hint: 'Claude states each assumption; the band lists them',
+        kind: 'toggle',
+        isOn: prefs.assumptions,
+        set: v => void setPrefs($, { assumptions: v }),
+      },
+      {
+        id: 'flag',
+        group: 'assumptions',
+        label: 'Flag undeclared edits',
+        hint: 'Note each edit in a turn that states no assumption',
+        kind: 'toggle',
+        isOn: prefs.flagUndeclared,
+        set: v => void setPrefs($, { flagUndeclared: v }),
       },
       {
         id: 'model',
@@ -789,7 +865,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const GROUPS: Array<{ id: string; title: string; note?: string }> = [
       { id: 'band', title: 'Band' },
       { id: 'enhancer', title: 'Enhancer' },
-      { id: 'assumptions', title: 'Assumptions', note: 'Coming in a later stage.' },
+      { id: 'assumptions', title: 'Assumptions' },
       { id: 'shelf', title: 'Shelf', note: 'Coming in a later stage.' },
       { id: 'setup', title: 'Setup' },
     ]
@@ -807,12 +883,33 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         </Box>
       )
     })
+    const assumptionsBlock = prefs.assumptions ? (
+      <Box flexDirection="column">
+        <Button
+          key="assumptions-toggle"
+          plain
+          label={`${track.open ? '▾' : '▸'} Assumptions (${track.entries.length})`}
+          onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
+        />
+        {track.open
+          ? track.entries.length === 0
+            ? <Text dimColor>None yet. Claude states its assumptions here as it works.</Text>
+            : track.entries.map(a => (
+                <Box key={`assume-${a.id}`} flexDirection="row">
+                  <Text wrap="truncate">{`${a.kind === 'undeclared' ? '! ' : ''}${a.text} · turn ${a.turn} `}</Text>
+                  <Button key={`redirect-${a.id}`} plain label="Redirect" onPress={() => void redirectTo($, a.text)} />
+                </Box>
+              ))
+          : null}
+      </Box>
+    ) : null
     const enhancerBar = (
       <Box flexDirection="column">
         <Box flexDirection="row">
           <Button key="enhance" variant="primary" label={enh.busy ? 'Enhancing…' : 'Enhance'} onPress={() => void runEnhance(deps($)).then(line => $.ui.toast(line))} />
           <Button key="undo" label="Undo" onPress={() => void undoEnhance(deps($))} />
           <Button key="send" label="Send" onPress={() => void sendBox(deps($))} />
+          {track.runningTurnId !== '' ? <Button key="stop" label="Stop" onPress={() => void stopTurn($)} /> : null}
         </Box>
         {enh.notes.map((n, i) => (
           <Text key={`note-${i}`} dimColor wrap="truncate">{`· ${n}`}</Text>
@@ -846,6 +943,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             </Box>
           ) : null}
           {enhancerBar}
+          {assumptionsBlock}
           {body}
         </Box>,
       )
