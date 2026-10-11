@@ -1098,8 +1098,29 @@ test('gate: after three denials in a row with no plan, tools go through', async 
   expect((escaped as any).deny).toBeUndefined()
 })
 
-// 9. assumptions (stage 2): the parser, the turn reducers, edit detection, and the Stop and Redirect actions
-import { ASSUME_SECTION, addDeclared, addEdits, editTargets, finishTurn, newTrack, parseAssumptions, redirectText, responseText, shellTargets, startTurn } from './logic'
+// 9. assumptions: the parser, the turn reducers, edit detection, the stored file, and the Stop, Confirm and Wrong actions
+import {
+  ASSUME_SECTION,
+  addDeclared,
+  addEdits,
+  editTargets,
+  finishTurn,
+  idTag,
+  loadTrack,
+  newTrack,
+  openCount,
+  panelOrder,
+  parseAssumptions,
+  parseStored,
+  redirectText,
+  resolveStorePath,
+  responseText,
+  setStatus,
+  shellTargets,
+  startTurn,
+  storedJson,
+  STORE_IGNORE,
+} from './logic'
 
 test('assumptions: ASSUMPTION lines are read in order; code fences and other text are ignored', () => {
   const reply = 'Working on it.\nASSUMPTION: The page is for a bakery.\n```\nASSUMPTION: not this one\n```\n  ASSUMPTION: Prices are in pounds.\nASSUMPTION:   \nNot an assumption.'
@@ -1108,38 +1129,49 @@ test('assumptions: ASSUMPTION lines are read in order; code fences and other tex
   expect(parseAssumptions('ASSUMPTION: ' + 'x'.repeat(300))[0].length).toBe(200)
 })
 
-test('assumptions: declared lines go to the top, newest first, and mark the turn declared', () => {
+test('assumptions: declared lines go to the top, newest first, with status open and a time', () => {
   let t = startTurn(newTrack(), 't1')
-  t = addDeclared(t, ['first', 'second'])
+  t = addDeclared(t, ['first', 'second'], 500)
   expect(t.entries.map(e => e.text)).toEqual(['second', 'first'])
-  expect(t.entries.every(e => e.turn === 1 && e.kind === 'declared')).toBe(true)
+  expect(t.entries.every(e => e.turn === 1 && e.kind === 'declared' && e.status === 'open' && e.at === 500)).toBe(true)
   expect(t.turnDeclared).toBe(true)
   t = startTurn(t, 't2')
-  t = addDeclared(t, ['third'])
+  t = addDeclared(t, ['third'], 600)
   expect(t.entries[0]).toMatchObject({ text: 'third', turn: 2 })
 })
 
-test('undeclared edits: a turn that edits and declares nothing gets one flagged entry per file', () => {
+test('dedupe: the same assumption twice in one turn is listed once; the next turn may repeat it', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addDeclared(t, ['Keep the header'], 1)
+  t = addDeclared(t, ['Keep the header', 'Keep the header'], 2)
+  expect(t.entries.length).toBe(1)
+  t = startTurn(t, 't2')
+  t = addDeclared(t, ['Keep the header'], 3)
+  expect(t.entries.map(e => e.turn)).toEqual([2, 1])
+})
+
+test('flagged edits: a turn that edits and declares nothing gets one entry per file, newest first', () => {
   let t = startTurn(newTrack(), 't1')
   t = addEdits(t, ['a.md', 'b.ts', 'a.md'])
   expect(t.turnEdits).toEqual(['a.md', 'b.ts'])
-  const done = finishTurn(t, true)
+  const done = finishTurn(t, true, 9)
   expect(done.entries.map(e => e.text)).toEqual(['edited b.ts with no stated assumption', 'edited a.md with no stated assumption'])
-  expect(done.entries.every(e => e.kind === 'undeclared')).toBe(true)
+  expect(done.entries.every(e => e.kind === 'flagged' && e.status === 'open' && e.at === 9)).toBe(true)
+  expect(done.entries[0].path).toBe('b.ts')
   expect(done.runningTurnId).toBe('')
 })
 
-test('undeclared edits: a declared assumption in the same turn stops the flag, and flagging off adds nothing', () => {
+test('flagged edits: a declared assumption in the same turn stops the flag, and flagging off adds nothing', () => {
   let t = startTurn(newTrack(), 't1')
-  t = addEdits(addDeclared(t, ['Keep the old header']), ['a.md'])
-  expect(finishTurn(t, true).entries.filter(e => e.kind === 'undeclared')).toEqual([])
-  let u = addEdits(startTurn(newTrack(), 't2'), ['c.md'])
-  expect(finishTurn(u, false).entries).toEqual([])
+  t = addEdits(addDeclared(t, ['Keep the old header'], 1), ['a.md'])
+  expect(finishTurn(t, true, 2).entries.filter(e => e.kind === 'flagged')).toEqual([])
+  const u = addEdits(startTurn(newTrack(), 't2'), ['c.md'])
+  expect(finishTurn(u, false, 2).entries).toEqual([])
 })
 
-test('undeclared edits: the list keeps the newest 50 entries', () => {
+test('the list keeps the newest 50 entries', () => {
   let t = startTurn(newTrack(), 't1')
-  t = addDeclared(t, Array.from({ length: 60 }, (_, i) => `a${i}`))
+  t = addDeclared(t, Array.from({ length: 60 }, (_, i) => `a${i}`), 1)
   expect(t.entries.length).toBe(50)
   expect(t.entries[0].text).toBe('a59')
 })
@@ -1159,19 +1191,9 @@ test('edit targets: writing tools name their file; reading and no-file commands 
   expect(editTargets('Bash', { command: 'echo x > y.md' })).toEqual(['y.md'])
 })
 
-test('redirect: a declared entry and a flagged edit each get their own opening, and nothing is submitted', () => {
+test('wrong: a declared entry and a flagged edit each get their own opening, and nothing is submitted', () => {
   expect(redirectText({ kind: 'declared', text: 'Use Tailwind' })).toBe("Assumption 'Use Tailwind' is wrong. Instead: ")
-  expect(redirectText({ kind: 'undeclared', text: 'edited a.md with no stated assumption', path: 'a.md' })).toBe('About the edit to a.md: ')
-})
-
-test('dedupe: the same assumption twice in one turn is listed once; the next turn may repeat it', () => {
-  let t = startTurn(newTrack(), 't1')
-  t = addDeclared(t, ['Keep the header'])
-  t = addDeclared(t, ['Keep the header', 'Keep the header'])
-  expect(t.entries.length).toBe(1)
-  t = startTurn(t, 't2')
-  t = addDeclared(t, ['Keep the header'])
-  expect(t.entries.map(e => e.turn)).toEqual([2, 1])
+  expect(redirectText({ kind: 'flagged', text: 'edited a.md with no stated assumption', path: 'a.md' })).toBe('About the edit to a.md: ')
 })
 
 test('guard: a row with no content, a null block or a string body yields no text and does not throw', () => {
@@ -1185,6 +1207,63 @@ test('guard: a row with no content, a null block or a string body yields no text
 test('prompt: the rule says the line must start with plain ASSUMPTION:, with no bold, bullet or heading', () => {
   expect(ASSUME_SECTION).toContain('start of the line')
   expect(ASSUME_SECTION).toContain('no bold')
+})
+
+test('file: the stored shape is version 1 with the session, the entries and the status fields', () => {
+  const entries = finishTurn(addEdits(startTurn(newTrack(), 't1'), ['notes.md']), true, 42).entries
+  const json = JSON.parse(storedJson('abc123', 'abc123', entries))
+  expect(json.version).toBe(1)
+  expect(json.sessionId).toBe('abc123')
+  expect(json.member).toBe('abc123')
+  expect(json.entries[0]).toEqual({ id: 1, text: 'edited notes.md with no stated assumption', turn: 1, kind: 'flagged', path: 'notes.md', status: 'open', at: 42 })
+  expect(STORE_IGNORE).toBe('*\n')
+})
+
+test('file: the path is the project folder, the session id, and a tagged name only when the plain one is someone else', () => {
+  expect(resolveStorePath('C:/proj', 'abc123', undefined)).toEqual({ file: 'C:/proj/.claude/session-panel/assumptions/abc123.json', foreign: false })
+  const mine = storedJson('abc123', 'abc123', [])
+  expect(resolveStorePath('C:/proj', 'abc123', mine).foreign).toBe(false)
+  const theirs = storedJson('other9', 'other9', [])
+  const r = resolveStorePath('C:/proj', 'abc123', theirs)
+  expect(r.foreign).toBe(true)
+  expect(r.file).toBe(`C:/proj/.claude/session-panel/assumptions/abc123-${idTag('abc123')}.json`)
+  expect(resolveStorePath('C:/proj', 'abc123', '{not json').foreign).toBe(true)
+  expect(idTag('abc123')).toBe(idTag('abc123'))
+  expect(idTag('abc123')).not.toBe(idTag('abc124'))
+})
+
+test('reload: a stored list reads back with its statuses, and the counters move past it', () => {
+  const stored = storedJson('abc123', 'abc123', [
+    { id: 7, text: 'Keep the header', turn: 3, kind: 'declared', status: 'confirmed', at: 1, resolvedAt: 2 },
+    { id: 9, text: 'edited a.md with no stated assumption', turn: 4, kind: 'flagged', path: 'a.md', status: 'open', at: 3 },
+  ])
+  const parsed = parseStored(stored)
+  expect(parsed.ok).toBe(true)
+  if (!parsed.ok) return
+  const t = loadTrack(newTrack(), parsed.entries)
+  expect(t.entries.map(e => e.status)).toEqual(['confirmed', 'open'])
+  expect(t.seq).toBe(9)
+  expect(t.turnNo).toBe(4)
+  expect(openCount(t)).toBe(1)
+  expect(panelOrder(t.entries).map(e => e.id)).toEqual([9, 7])
+})
+
+test('reload: a file this code cannot read is reported, not used', () => {
+  expect(parseStored('{"version":2,"entries":[]}').ok).toBe(false)
+  expect(parseStored('not json').ok).toBe(false)
+  expect(parseStored(undefined)).toEqual({ ok: true, entries: [] })
+})
+
+test('confirm and wrong: a resolved entry does not change again; the count and the order follow the status', () => {
+  let t = startTurn(newTrack(), 't1')
+  t = addDeclared(t, ['one', 'two', 'three'], 1)
+  t = setStatus(t, 2, 'confirmed', 5)
+  expect(t.entries.find(e => e.id === 2)).toMatchObject({ status: 'confirmed', resolvedAt: 5 })
+  t = setStatus(t, 2, 'wrong', 6)
+  expect(t.entries.find(e => e.id === 2)?.status).toBe('confirmed')
+  t = setStatus(t, 3, 'wrong', 7)
+  expect(openCount(t)).toBe(1)
+  expect(panelOrder(t.entries).map(e => e.id)).toEqual([1, 3, 2])
 })
 
 test('stop: the Stop button aborts the running turn by its id and says Stopped', async ($, on) => {
@@ -1212,22 +1291,84 @@ test('stop: the button is gone once the turn has completed', async ($, on) => {
   await ui.unmount()
 })
 
-test('redirect: an undeclared edit lists in the panel, and Redirect fills the box without sending', async ($, on) => {
-  world(on)
-  const fills: string[] = []
-  const submits: string[] = []
+// The engine's file and session calls, as the test kit answers them. `files` is what the disk holds, by path.
+function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<string, string> } = {}) {
+  const writes: Array<{ path: string; text: string }> = []
+  const fill: string[] = []
+  on('session.root', () => ({ value: opts.root ?? 'C:/proj' }))
+  on('session.id', () => ({ value: opts.id ?? 'abc123' }))
+  // the kit reports paths in native form; the plugin uses forward slashes, so compare in that form
+  const slash = (q: string) => q.replace(/\\/g, '/')
+  on('fs.read', (_$: any, e: any) => ({ value: opts.files?.[slash(e.path)] }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_$: any, e: any) => {
+    writes.push({ path: slash(e.path), text: e.text })
+    return { value: undefined }
+  })
   on('prompt.fill', (_$: any, e: any) => {
-    fills.push(e.text)
+    fill.push(e.text)
     return { isFilled: true }
   })
+  return { writes, fill, last: () => JSON.parse(writes.filter(w => w.path.endsWith('.json')).at(-1)!.text) }
+}
+
+const FILE = 'C:/proj/.claude/session-panel/assumptions/abc123.json'
+
+// A flagged edit: plan, one Edit to notes.md, then the turn ends with no assumption.
+async function flaggedEdit($: any) {
   await begin($)
   await $.tool.call({ tool: PLAN, steps: ['Edit the notes'] })
   await $.tool.call({ tool: 'Edit', file_path: 'notes.md', old_string: 'a', new_string: 'b' })
   await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+}
+
+test('file: a flagged edit writes this session file with the right path and shape, and the folder ignore file', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  expect(w.writes.some(x => x.path === 'C:/proj/.claude/session-panel/.gitignore' && x.text === '*\n')).toBe(true)
+  const saved = w.last()
+  expect(w.writes.at(-1)!.path).toBe(FILE)
+  expect(saved).toMatchObject({ version: 1, sessionId: 'abc123', member: 'abc123' })
+  expect(saved.entries).toEqual([
+    expect.objectContaining({ kind: 'flagged', path: 'notes.md', status: 'open', text: 'edited notes.md with no stated assumption' }),
+  ])
+})
+
+test("file: a session never writes another session's file; its own goes to a tagged name", async ($, on) => {
+  world(on)
+  const theirs = storedJson('other9', 'other9', [])
+  const w = storeWorld(on, { files: { [FILE]: theirs } })
+  await flaggedEdit($)
+  expect(w.writes.length).toBeGreaterThan(0)
+  expect(w.writes.some(x => x.path.endsWith('/other9.json'))).toBe(false)
+  expect(w.writes.every(x => x.path !== FILE)).toBe(true)
+  expect(w.writes.at(-1)!.path).toBe(`C:/proj/.claude/session-panel/assumptions/abc123-${idTag('abc123')}.json`)
+})
+
+test('confirm: the entry becomes confirmed, the file is rewritten, and the count drops', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▸ Assumptions (1 open)')
+  await ui.press({ key: 'assumptions-toggle' })
+  await ui.press({ key: 'confirm-1' })
+  expect(w.last().entries[0]).toMatchObject({ status: 'confirmed' })
+  expect(typeof w.last().entries[0].resolvedAt).toBe('number')
+  expect((await ui.find({ key: 'assumptions-toggle' }))?.props.label).toBe('▾ Assumptions (0 open)')
+  expect(w.fill).toEqual([])
+  await ui.unmount()
+})
+
+test('wrong: the entry becomes wrong, the file is rewritten, and the box gets the edit prefix', async ($, on) => {
+  world(on)
+  const w = storeWorld(on)
+  await flaggedEdit($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'assumptions-toggle' })
-  expect(await texts(ui)).toContain('edited notes.md with no stated assumption')
-  await ui.press({ key: 'redirect-1' })
-  expect(fills).toEqual(['About the edit to notes.md: '])
+  await ui.press({ key: 'wrong-1' })
+  expect(w.last().entries[0]).toMatchObject({ status: 'wrong' })
+  expect(w.fill).toEqual(['About the edit to notes.md: '])
   await ui.unmount()
 })

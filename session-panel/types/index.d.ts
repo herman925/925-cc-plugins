@@ -55,7 +55,17 @@ export type Prefs = {
 }
 
 /** One line in the Assumptions panel: a declared ASSUMPTION line, or a flagged undeclared edit. */
-export type Assumption = { id: number; text: string; turn: number; kind: 'declared' | 'undeclared'; path?: string }
+export type Assumption = {
+  id: number
+  text: string
+  turn: number
+  kind: 'declared' | 'flagged'
+  path?: string
+  status: 'open' | 'confirmed' | 'wrong'
+  /** when it was added, ms since the epoch */
+  at: number
+  resolvedAt?: number
+}
 
 /** Per-session assumption state: the list (newest first), the turn in progress, and the panel's open state. */
 export type AssumptionTrack = {
@@ -66,6 +76,9 @@ export type AssumptionTrack = {
   turnDeclared: boolean
   turnEdits: string[]
   open: boolean
+  /** this session's file, absolute with forward slashes; '' until located, or when the file could not be read */
+  file: string
+  sessionId: string
 }
 
 /** What the band's enhancer holds for the draft: the text before it was enhanced, and the notes. */

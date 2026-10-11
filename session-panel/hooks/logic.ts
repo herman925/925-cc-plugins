@@ -470,7 +470,7 @@ export const ASSUMPTION_TEXT_CAP = 200
 /** The system-prompt rule that asks for ASSUMPTION lines. Kept here so the parser and the rule name the same form. */
 export const ASSUME_SECTION = `Session Panel rule for stated assumptions: when you make an assumption about what the person wants while you build, write it on its own line in exactly this form: ASSUMPTION: <one short sentence>. Write one line per assumption. Use this form only for assumptions, never for facts you checked. The line must start with plain ASSUMPTION: at the start of the line, with no bold, no bullet and no heading. Do not put ASSUMPTION lines inside code blocks.`
 
-const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false }
+const EMPTY_TRACK: AssumptionTrack = { entries: [], seq: 0, turnNo: 0, runningTurnId: '', turnDeclared: false, turnEdits: [], open: false, file: '', sessionId: '' }
 export const newTrack = (): AssumptionTrack => ({ ...EMPTY_TRACK, entries: [], turnEdits: [] })
 
 /** The texts of the ASSUMPTION lines in a reply, in order. Lines inside a code fence are ignored. */
@@ -495,13 +495,13 @@ export function startTurn(t: AssumptionTrack, turnId: string): AssumptionTrack {
 }
 
 /** The reply declared assumptions: they go to the top of the list, newest first. A text already listed for this turn is not added twice. */
-export function addDeclared(t: AssumptionTrack, texts: string[]): AssumptionTrack {
+export function addDeclared(t: AssumptionTrack, texts: string[], now: number): AssumptionTrack {
   const listed = new Set(t.entries.filter(e => e.kind === 'declared' && e.turn === t.turnNo).map(e => e.text))
   const fresh = texts.filter(text => !listed.has(text) && listed.add(text))
   if (fresh.length === 0) return t
-  let seq = t.seq
-  const added = [...fresh].reverse().map(text => ({ id: ++seq, text, turn: t.turnNo, kind: 'declared' as const }))
-  return { ...t, seq, turnDeclared: true, entries: [...added, ...t.entries].slice(0, ASSUMPTION_CAP) }
+  // ids rise in the order written; the list shows the newest first
+  const added = fresh.map((text, i) => ({ id: t.seq + i + 1, text, turn: t.turnNo, kind: 'declared' as const, status: 'open' as const, at: now })).reverse()
+  return { ...t, seq: t.seq + fresh.length, turnDeclared: true, entries: [...added, ...t.entries].slice(0, ASSUMPTION_CAP) }
 }
 
 /** A file was written during the turn. Each path is kept once. */
@@ -511,18 +511,96 @@ export function addEdits(t: AssumptionTrack, paths: string[]): AssumptionTrack {
 }
 
 /** The turn ended. With flagging on, an edit in a turn that declared no assumption becomes one entry per file. */
-export function finishTurn(t: AssumptionTrack, flag: boolean): AssumptionTrack {
-  let seq = t.seq
-  const flagged =
-    flag && !t.turnDeclared
-      ? [...t.turnEdits].reverse().map(path => ({ id: ++seq, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'undeclared' as const, path }))
-      : []
-  return { ...t, seq, runningTurnId: '', turnDeclared: false, turnEdits: [], entries: [...flagged, ...t.entries].slice(0, ASSUMPTION_CAP) }
+export function finishTurn(t: AssumptionTrack, flag: boolean, now: number): AssumptionTrack {
+  const edits = flag && !t.turnDeclared ? t.turnEdits : []
+  // ids rise in the order the files were written; the list shows the newest first
+  const flagged = edits
+    .map((path, i) => ({ id: t.seq + i + 1, text: `edited ${path} with no stated assumption`, turn: t.turnNo, kind: 'flagged' as const, path, status: 'open' as const, at: now }))
+    .reverse()
+  const entries = flagged.length > 0 ? [...flagged, ...t.entries].slice(0, ASSUMPTION_CAP) : t.entries
+  return { ...t, seq: t.seq + flagged.length, runningTurnId: '', turnDeclared: false, turnEdits: [], entries }
 }
 
-/** The text the box takes when the person presses Redirect, by entry kind. The person finishes it; nothing is sent. */
+/** Confirm or Wrong on an open entry. A resolved entry does not change again. */
+export function setStatus(t: AssumptionTrack, id: number, status: 'confirmed' | 'wrong', now: number): AssumptionTrack {
+  return { ...t, entries: t.entries.map(e => (e.id === id && e.status === 'open' ? { ...e, status, resolvedAt: now } : e)) }
+}
+
+export const openCount = (t: AssumptionTrack) => t.entries.filter(e => e.status === 'open').length
+
+/** The panel's order: open entries first, then the resolved ones. Each group keeps its newest-first order. */
+export const panelOrder = (entries: Assumption[]) => [...entries.filter(e => e.status === 'open'), ...entries.filter(e => e.status !== 'open')]
+
+/** The text the box takes when the person presses Wrong, by entry kind. The person finishes it; nothing is sent. */
 export const redirectText = (a: Pick<Assumption, 'kind' | 'text' | 'path'>) =>
-  a.kind === 'undeclared' ? `About the edit to ${a.path ?? a.text}: ` : `Assumption '${a.text}' is wrong. Instead: `
+  a.kind === 'flagged' ? `About the edit to ${a.path ?? a.text}: ` : `Assumption '${a.text}' is wrong. Instead: `
+
+// ---------- the stored file: <project>/.claude/session-panel/assumptions/<session id>.json ----------
+
+export const STORE_DIR = '.claude/session-panel/assumptions'
+export const STORE_VERSION = 1
+/** Written into .claude/session-panel/ so git ignores the whole folder. */
+export const STORE_IGNORE = '*\n'
+
+/** A session's file name: its id, with anything unsafe in a file name replaced. */
+export const safeName = (id: string) => id.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'session'
+
+/** A short, stable tag of a session id, used in the second file name when the plain one belongs to another session. */
+export function idTag(id: string): string {
+  let h = 5381
+  for (const ch of id) h = ((h << 5) + h + ch.charCodeAt(0)) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+
+export const plainPath = (root: string, sessionId: string) => `${root}/${STORE_DIR}/${safeName(sessionId)}.json`
+
+/** The session that a stored file belongs to, or undefined when the text is not a stored file. */
+export function ownerOf(text: string): string | undefined {
+  try {
+    const j = JSON.parse(text)
+    return j && typeof j.sessionId === 'string' ? j.sessionId : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** This session's file: its plain name, or a tagged name when the plain file holds another session's list (or cannot be read). */
+export function resolveStorePath(root: string, sessionId: string, baseText: string | undefined): { file: string; foreign: boolean } {
+  if (baseText === undefined || ownerOf(baseText) === sessionId) return { file: plainPath(root, sessionId), foreign: false }
+  return { file: `${root}/${STORE_DIR}/${safeName(sessionId)}-${idTag(sessionId)}.json`, foreign: true }
+}
+
+const isEntry = (e: any) =>
+  !!e &&
+  typeof e.id === 'number' &&
+  typeof e.text === 'string' &&
+  typeof e.turn === 'number' &&
+  (e.kind === 'declared' || e.kind === 'flagged') &&
+  (e.status === 'open' || e.status === 'confirmed' || e.status === 'wrong')
+
+export function storedJson(member: string, sessionId: string, entries: Assumption[]): string {
+  return JSON.stringify({ version: STORE_VERSION, member, sessionId, entries }, null, 2) + '\n'
+}
+
+/** The entries a stored file holds, or why it cannot be read. A file this code cannot read is never overwritten. */
+export function parseStored(text: string | undefined): { ok: true; entries: Assumption[] } | { ok: false; reason: string } {
+  if (text === undefined) return { ok: true, entries: [] }
+  let j: any
+  try {
+    j = JSON.parse(text)
+  } catch {
+    return { ok: false, reason: 'the file is not JSON' }
+  }
+  if (!j || j.version !== STORE_VERSION || !Array.isArray(j.entries)) return { ok: false, reason: 'the file is not a version 1 assumptions file' }
+  return { ok: true, entries: j.entries.filter(isEntry) as Assumption[] }
+}
+
+/** The track after a load: the stored entries, with the counters moved past them so new entries do not clash. */
+export function loadTrack(t: AssumptionTrack, entries: Assumption[]): AssumptionTrack {
+  const seq = entries.reduce((m, e) => Math.max(m, e.id), 0)
+  const turnNo = entries.reduce((m, e) => Math.max(m, e.turn), 0)
+  return { ...t, entries: entries.slice(0, ASSUMPTION_CAP), seq, turnNo }
+}
 
 /** The text of the text blocks in a row's content. Anything else (no content, not a list, a null block) is no text. */
 export function responseText(content: unknown): string {

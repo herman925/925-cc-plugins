@@ -41,7 +41,17 @@ import {
   addEdits,
   editTargets,
   finishTurn,
+  loadTrack,
   newTrack,
+  openCount,
+  panelOrder,
+  parseStored,
+  plainPath,
+  resolveStorePath,
+  setStatus,
+  storedJson,
+  STORE_DIR,
+  STORE_IGNORE,
   parseAssumptions,
   redirectText,
   startTurn,
@@ -255,6 +265,74 @@ async function redirectTo($: Hooked, entry: Assumption) {
   await $.prompt.fill({ text: redirectText(entry), mode: 'replace' })
 }
 
+/** Reads a file as text, or undefined when it is missing or cannot be read. */
+async function readText($: Hooked, path: string): Promise<string | undefined> {
+  try {
+    const v = await $.fs.read(path)
+    return typeof v === 'string' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Finds this session's file the first time it is needed: the project root and the session id decide it. */
+async function locate($: Hooked, t: AssumptionTrack): Promise<AssumptionTrack> {
+  if (t.file !== '') return t
+  const root = (await $.session.root()).replace(/\\/g, '/')
+  const sessionId = await $.session.id()
+  const r = resolveStorePath(root, sessionId, await readText($, plainPath(root, sessionId)))
+  return { ...t, file: r.file, sessionId }
+}
+
+/** Writes the list to this session's file. A file this code cannot read is left alone, never overwritten. */
+async function saveTrack($: Hooked, t: AssumptionTrack) {
+  if (t.file === '') return
+  if (!parseStored(await readText($, t.file)).ok) return
+  const ignore = t.file.replace(/\/assumptions\/[^/]+$/, '/.gitignore')
+  if (!(await $.fs.exists(ignore))) await $.fs.write(ignore, STORE_IGNORE)
+  await $.fs.write(t.file, storedJson(t.sessionId, t.sessionId, t.entries))
+}
+
+/** Changes the track. When the list changed, this session's file is written at once. */
+async function changeTrack($: Hooked, fn: (t: AssumptionTrack) => AssumptionTrack) {
+  const before = await read($, trackA)
+  let after = fn(before)
+  if (after.entries !== before.entries) {
+    try {
+      after = await locate($, after)
+      await saveTrack($, after)
+    } catch (err) {
+      // the list still changes on screen; a failed file write must never break the turn that caused it
+      $.ui.toast(`Assumptions file not written: ${String((err as any)?.message ?? err).slice(0, 80)}`)
+    }
+  }
+  await update($, trackA, () => after)
+}
+
+/** At session start: find this session's file, read it back, and show what it holds. */
+async function loadAssumptions($: Hooked) {
+  const t = await locate($, await read($, trackA))
+  const stored = parseStored(await readText($, t.file))
+  if (!stored.ok) {
+    await update($, trackA, () => t)
+    $.ui.toast(`Assumptions not loaded: ${stored.reason}.`)
+    return
+  }
+  await update($, trackA, () => loadTrack(t, stored.entries))
+}
+
+/** Confirm or Wrong on one entry: records the status and writes the file. */
+async function resolveEntry($: Hooked, id: number, status: 'confirmed' | 'wrong') {
+  const now = await $.clock.now()
+  await changeTrack($, t => setStatus(t, id, status, now))
+}
+
+/** Wrong: records it, then puts the correction prefix in the box for the person to finish. */
+async function wrongEntry($: Hooked, entry: Assumption) {
+  await resolveEntry($, entry.id, 'wrong')
+  await redirectTo($, entry)
+}
+
 /** Records the files a tool call wrote, for the Assumptions panel. A denied or failed call wrote nothing. */
 async function recordEdits($: Hooked, e: { tool: unknown }, res: { deny?: unknown; isError?: boolean } | undefined) {
   const prefs = await read($, prefsA)
@@ -268,7 +346,8 @@ async function finishAssumptions($: Hooked, e: { agentId?: string }) {
   if (e.agentId !== undefined) return
   const prefs = await read($, prefsA)
   const flag = (await read($, enabledA)) && prefs.assumptions && prefs.flagUndeclared
-  await update($, trackA, t => finishTurn(t, flag))
+  const now = await $.clock.now()
+  await changeTrack($, t => finishTurn(t, flag, now))
 }
 
 function title0(cl: CleanChecklist): string {
@@ -280,6 +359,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   // The /config menu rows (options) win; where a row is unset, the setting kept by a button or command applies.
   on('session.start', async ($, e, next) => {
     await migrateFromCleanView($)
+    await loadAssumptions($)
     const storedPrefs = (await $.store.get('prefs')) as Partial<Prefs> | undefined
     if (storedPrefs) await update($, prefsA, p => ({ ...p, ...storedPrefs, sources: { ...p.sources, ...storedPrefs.sources } }))
     const hasSetup = (await $.store.get('setupDone')) === true || (await $.store.get('sessionPanelEnabled')) !== undefined
@@ -580,7 +660,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const isOn = (await read($, enabledA)) && (await read($, prefsA)).assumptions
     if (isOn && (e as { agentId?: string }).agentId === undefined) {
       const text = responseText((e.message as { content?: unknown } | undefined)?.content)
-      await update($, trackA, t => addDeclared(t, parseAssumptions(text)))
+      const now = await $.clock.now()
+      await changeTrack($, t => addDeclared(t, parseAssumptions(text), now))
     }
     return next(e)
   })
@@ -888,16 +969,19 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         <Button
           key="assumptions-toggle"
           plain
-          label={`${track.open ? '▾' : '▸'} Assumptions (${track.entries.length})`}
+          label={`${track.open ? '▾' : '▸'} Assumptions (${openCount(track)} open)`}
           onPress={() => void update($, trackA, t => ({ ...t, open: !t.open }))}
         />
         {track.open
           ? track.entries.length === 0
             ? <Text dimColor>None yet. Claude states its assumptions here as it works.</Text>
-            : track.entries.map(a => (
+            : panelOrder(track.entries).map(a => (
                 <Box key={`assume-${a.id}`} flexDirection="row">
-                  <Text wrap="truncate">{`${a.kind === 'undeclared' ? '! ' : ''}${a.text} · turn ${a.turn} `}</Text>
-                  <Button key={`redirect-${a.id}`} plain label="Redirect" onPress={() => void redirectTo($, a)} />
+                  <Text wrap="truncate" dimColor={a.status !== 'open'}>
+                    {`${a.kind === 'flagged' ? '! ' : ''}${a.text} · turn ${a.turn}${a.status === 'open' ? '' : ` · ${a.status}`} `}
+                  </Text>
+                  {a.status === 'open' ? <Button key={`confirm-${a.id}`} plain label="Confirm" onPress={() => void resolveEntry($, a.id, 'confirmed')} /> : null}
+                  {a.status === 'open' ? <Button key={`wrong-${a.id}`} plain label="Wrong" onPress={() => void wrongEntry($, a)} /> : null}
                 </Box>
               ))
           : null}
