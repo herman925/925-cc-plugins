@@ -73,7 +73,7 @@ export type Bulk = {
 export type Act = {
   /** the team whose Team actions list is open, '' none */
   menu: string
-  /** none | remove | rmteam | boss | bulk | add | new | short */
+  /** none | remove | rmteam | boss | bulk | add | new | short | assume */
   kind: string
   /** the team card the open action (and its message) belongs to */
   to: string
@@ -119,6 +119,8 @@ declare module 'claude-code' {
       settings: Settings
       act: Act
       spawn: Spawn
+      /** the open assumptions of each session, by session id (#89) */
+      assumptions: Record<string, { id: string; text: string; kind: string; turn: number }[]>
     }
   }
 }

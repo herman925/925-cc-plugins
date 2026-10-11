@@ -18,6 +18,8 @@ import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManage
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
+import { ASSUMPTIONS_DIR, collectOpen, confirmLine, wrongLine } from './assumptions'
+import type { OpenAssumption } from './assumptions'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -138,6 +140,8 @@ const cardsPerRow = (s: Settings, cols: number, _cardW: number, cards: number) =
   s.layout === 'columns' || s.layout === 'dock' ? sideBySide(cols, cards, FRAME) : 1
 const ACT0: Act = { menu: '', kind: 'none', to: '', key: '', draft: '', boss: '', handle: '', role: '', tabs: [], msg: '', name: '', model: 'default', effort: 'default' }
 const act = atom({ plugin: 'team-orchestrator', key: 'act' } as const, ACT0)
+// the open assumptions of each session, by session id; read on each roster refresh only (see readAssumptions)
+const assumptions = atom({ plugin: 'team-orchestrator', key: 'assumptions' } as const, {} as Record<string, OpenAssumption[]>)
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
 const DOCK = 'team-dock'
@@ -1773,6 +1777,15 @@ const under = (cwd: string, wt: string) => wt !== '' && `${slash(cwd)}/`.startsW
 const DERIVED = /^(no Orca tab|no transcript|several tabs named .*|status line not readable)$/
 const withNotes = (old: string, add: string[]) => [...old.split(', ').filter(p => p !== '' && !DERIVED.test(p)), ...add].join(', ')
 
+// The open assumptions of every session in the project (#89), read in one pass per roster refresh. Read only: a file that
+// is missing or does not parse counts for nothing, and no file is ever written here.
+async function readAssumptions($: any) {
+  const dir = `${await rootOf($)}/${ASSUMPTIONS_DIR}`
+  const names = ((await $.fs.list(dir).catch(() => [])) as any[]).filter(f => f.kind === 'file' && String(f.name).endsWith('.json')).map(f => String(f.name))
+  const texts = await Promise.all(names.map(n => $.fs.read(`${dir}/${n}`).then(String, () => '')))
+  await update($, assumptions, () => collectOpen(texts))
+}
+
 // Reads state, context, model and effort of every member: Orca's agent state plus the tab's status line, the
 // transcript where the status line says nothing. A handle that is empty or dead is found again by tab title (a
 // restarted session gets a new one); an empty session id by the transcript's customTitle.
@@ -1805,6 +1818,7 @@ async function refresh($: any) {
       return s ? { ...m, state: shownState(s, now, sleeps()) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
   )
+  await readAssumptions($)
   // Only one session polls Orca: the team's top member (boss "user"), or a session not on the roster (the person's
   // own). Every other member just pulls the roster file that session shares. Fourteen sessions each reading fourteen
   // terminals every refresh queued ~200 orca calls at once and made Orca's own typing and scrolling lag.
@@ -3791,6 +3805,9 @@ async function rosterView($: any, ui: any, cols: number) {
   const a = await readAct($)
   const setAct = (patch: Partial<Act>) => update($, act, old => ({ ...ACT0, ...old, ...patch }))
   const ticked = new Set(list.filter(m => m.sel).map(keyOf))
+  // each member's open assumptions, by session id: as the last roster refresh read them (see readAssumptions)
+  const assumed: Record<string, OpenAssumption[]> = await read($, assumptions)
+  const assumedOf = (m: Member): OpenAssumption[] => assumed[m.sessionId] ?? []
   const bosses = bossChoices(list, ticked)
   const finish = async (team: string, work: Promise<string>) => {
     const msg = await work
@@ -4010,6 +4027,31 @@ async function rosterView($: any, ui: any, cols: number) {
         </Box>,
       )
     }
+    if (a.kind === 'assume') {
+      const who = list.find(m => keyOf(m) === a.key)
+      if (!who) return box('Open assumptions', <Box flexDirection="column"><Text>That row is gone.</Text>{cancel}</Box>)
+      // the answer goes to the member as an ordinary team message; its Session Panel changes its own file
+      const answer = async (line: string) => setAct({ msg: await deliver($, who, line) })
+      const items = assumedOf(who)
+      return box(
+        `Open assumptions of ${who.name} (${items.length})`,
+        <Box flexDirection="column">
+          {items.length === 0 && <Text>No open assumptions now. Refresh shows the latest.</Text>}
+          {items.map(e => (
+            <Box flexDirection="column">
+              <Text>{e.text}</Text>
+              <Box columnGap={1}>
+                <Text dimColor>{`${e.kind} · turn ${e.turn}`}</Text>
+                <Button key={`assume-yes-${e.id}`} label="Confirm" variant="primary" onPress={() => void answer(confirmLine(e.id))} />
+                <Button key={`assume-no-${e.id}`} label="Wrong" onPress={() => void answer(wrongLine(e.id))} />
+              </Box>
+            </Box>
+          ))}
+          {a.msg !== '' && <Text color="green">{a.msg}</Text>}
+          {cancel}
+        </Box>,
+      )
+    }
     if (a.kind === 'bulk') return bulkBox
     return a.msg !== '' ? <Text color="green">{a.msg}</Text> : null
   }
@@ -4087,6 +4129,14 @@ async function rosterView($: any, ui: any, cols: number) {
                     {p.cols.map(c => (
                       <Text color={value[c.id]?.[1]} dimColor={away(m)}>{cell(value[c.id]?.[0] ?? '', c.w)}</Text>
                     ))}
+                    {assumedOf(m).length > 0 && (
+                      <Button
+                        key={`assume-${keyOf(m)}`}
+                        label={`${assumedOf(m).length} open`}
+                        plain
+                        onPress={() => void setAct({ ...ACT0, kind: 'assume', to: team, key: keyOf(m) })}
+                      />
+                    )}
                     {rowNote !== '' && room > rowNote.length && <Text dimColor> {rowNote}</Text>}
                   </Box>
                   {rowNote !== '' && room <= rowNote.length && <Text dimColor>{' '.repeat(CHECK_W)}{fit(rowNote, inner - CHECK_W)}</Text>}
