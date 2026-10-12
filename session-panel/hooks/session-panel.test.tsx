@@ -2842,6 +2842,28 @@ test('decide: the digest is injected once the toggle is pressed, and it uses the
   expect(again.sections.some((s: any) => s.id === 'session-panel:assume')).toBe(true)
 })
 
+test('decide: the Jev pass is off by default, and with no key it adds nothing and says nothing', async ($, on) => {
+  baseCompose(on)
+  world(on, WIN_ENV)
+  storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', WRONG_BAKERY) } })
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => {
+    toasts.push(e.text ?? e.message ?? String(e))
+    return { value: undefined }
+  })
+  const ui = await decideRows($)
+  // the Jev row is there and off; the step itself is still off, so the digest stays empty
+  expect((await ui.find({ key: 'set-jev' }))?.props.label ?? '').toContain('Jev pass')
+  await ui.press({ key: 'set-jev' })
+  await ui.press({ key: 'set-decide' })
+  await ui.unmount()
+  // TYPESAFE_API_KEY is not set in this world, so the pass is off: nothing is asked and nothing is said
+  await $.prompt.submit({ text: 'add the bakery prices to the page', asUser: true })
+  const out: any = await $.prompt.compose(DECIDE_FACTS)
+  expect(decideSection(out)?.text).toContain('#19')
+  expect(toasts).toEqual([])
+})
+
 test('decide: the Keep threshold row offers 0.4 to 0.8, and 0.5 is the default', async ($, on) => {
   baseCompose(on)
   world(on, WIN_ENV)

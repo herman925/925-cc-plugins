@@ -182,6 +182,7 @@ export const DEFAULT_PREFS: Prefs = {
   flagUndeclared: true,
   decide: false,
   decideThreshold: 0.5,
+  jev: false,
 }
 
 /** The enhancer's engine calls plus the band's box and state, as plain functions, so the actions can be tested. */

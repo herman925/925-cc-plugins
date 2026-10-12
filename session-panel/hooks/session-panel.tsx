@@ -544,10 +544,18 @@ function decideIo($: Hooked): DecideIo {
     entries: async () => (await locate($, await read($, trackA)).catch(() => read($, trackA))).entries,
     prefs: async () => {
       const p = await read($, prefsA)
-      return { decide: p.decide, decideThreshold: p.decideThreshold }
+      return { decide: p.decide, decideThreshold: p.decideThreshold, jev: p.jev }
     },
     now: () => $.clock.now(),
     toast: text => $.ui.toast(text),
+    // the key is read from the environment, never stored, and never logged
+    key: () => $.env.get('TYPESAFE_API_KEY').catch(() => undefined),
+    // the one HTTP call: through $.http.fetch, as #91 requires, with the engine's own cancel-on-timeout
+    fetch: args =>
+      $.http.fetch({ url: args.url, method: args.method, headers: args.headers, body: args.body, timeoutMs: args.timeoutMs }).then(r => ({
+        status: r.status,
+        body: typeof r.body === 'string' ? r.body : '',
+      })),
   }
 }
 
@@ -1238,6 +1246,15 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         value: String(prefs.decideThreshold),
         options: THRESHOLD_CHOICES.map(n => ({ value: String(n), label: n.toFixed(1) })),
         set: v => void setPrefs($, { decideThreshold: clampThreshold(Number(v)) }),
+      },
+      {
+        id: 'jev',
+        group: 'assumptions',
+        label: 'Jev pass',
+        hint: 'A second opinion from TypeSafe, one request per turn. Needs TYPESAFE_API_KEY.',
+        kind: 'toggle',
+        isOn: prefs.jev,
+        set: v => void setPrefs($, { jev: v }),
       },
       {
         id: 'model',

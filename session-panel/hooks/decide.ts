@@ -158,8 +158,27 @@ export function digestOf(kept: readonly Scored[], cap = DIGEST_CHAR_CAP): string
 // ---------- the rules file: `.claude/session-panel/decide.json` ----------
 
 /** The threshold rules of one project. Keys are matched in lower case. */
-export type DecideRules = { version: number; default?: number; paths: Record<string, number>; roles: Record<string, number> }
-export const EMPTY_RULES: DecideRules = { version: 1, paths: {}, roles: {} }
+export type DecideRules = {
+  version: number
+  default?: number
+  paths: Record<string, number>
+  roles: Record<string, number>
+  /** thresholds by task type, the label Jev's Choice gives the prompt (slice 2) */
+  tasks: Record<string, number>
+}
+export const EMPTY_RULES: DecideRules = { version: 1, paths: {}, roles: {}, tasks: {} }
+
+/** The task types the Jev Choice labels a prompt with, and what each means to the model. */
+export const TASK_TYPES = ['build', 'fix', 'review', 'research', 'docs', 'other'] as const
+export type TaskType = (typeof TASK_TYPES)[number]
+export const TASK_CRITERIA: Record<TaskType, string> = {
+  build: 'Add or change behaviour: a new feature, page, or file',
+  fix: 'Repair something broken: a bug, a failing test, an error',
+  review: 'Read and judge work that already exists, without changing it',
+  research: 'Find out something and report back: an investigation or a question',
+  docs: 'Write or update explanation: a README, comment or guide',
+  other: 'A request that fits none of the above',
+}
 
 /** Reads the rules file. A missing file is no rules; junk is a reason, and the caller falls back to the default. */
 export function parseRules(text: string | undefined): { ok: true; rules: DecideRules } | { ok: false; reason: string } {
@@ -182,7 +201,7 @@ export function parseRules(text: string | undefined): { ok: true; rules: DecideR
     }
     return out
   }
-  return { ok: true, rules: { version: 1, default: num(o.default), paths: map(o.paths), roles: map(o.roles) } }
+  return { ok: true, rules: { version: 1, default: num(o.default), paths: map(o.paths), roles: map(o.roles), tasks: map(o.tasks) } }
 }
 
 const escapeChar = (c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -215,10 +234,25 @@ export function globMatch(glob: string, path: string): boolean {
  * value. Task-type rules are slice 2, because they need Jev's label.
  */
 export function pickThreshold(rules: DecideRules, paths: readonly string[], role: string | undefined, fallback: number): number {
-  const hits = Object.entries(rules.paths).filter(([glob]) => paths.some(p => globMatch(glob, p)))
+  return pickThresholdFor(rules, { paths, role }, fallback)
+}
+
+/**
+ * The threshold for this turn, with the task type in the order. The most specific rule wins: a path glob that matches
+ * one of the turn's paths (the longest matching glob when several do), then the session's role, then the task type the
+ * Jev Choice labelled the prompt with, then the file's own default, then the Settings value.
+ */
+export function pickThresholdFor(
+  rules: DecideRules,
+  ctx: { paths?: readonly string[]; role?: string | undefined; task?: string | undefined },
+  fallback: number,
+): number {
+  const hits = Object.entries(rules.paths).filter(([glob]) => (ctx.paths ?? []).some(p => globMatch(glob, p)))
   if (hits.length > 0) return clampThreshold([...hits].sort((a, b) => b[0].length - a[0].length)[0][1])
-  const key = role?.trim().toLowerCase()
+  const key = ctx.role?.trim().toLowerCase()
   if (key !== undefined && key !== '' && Object.hasOwn(rules.roles, key)) return clampThreshold(rules.roles[key])
+  const task = ctx.task?.trim().toLowerCase()
+  if (task !== undefined && task !== '' && Object.hasOwn(rules.tasks, task)) return clampThreshold(rules.tasks[task])
   if (rules.default !== undefined) return clampThreshold(rules.default)
   return clampThreshold(fallback)
 }
@@ -238,6 +272,129 @@ export function roleFor(rosterText: string, sessionId: string): string | undefin
 
 // ---------- the step itself ----------
 
+// ---------- the Jev pass (slice 2): TypeSafe System One, opt-in ----------
+
+export const JEV_URL = 'https://api.typesafe.ai/v1/systemone'
+export const JEV_MODEL = 'jev-latest'
+export const JEV_KEY_VAR = 'TYPESAFE_API_KEY'
+/** The Jev pass must answer inside this many milliseconds, or the local score is used instead. */
+export const JEV_TIMEOUT_MS = 1500
+/** A Jev Noul keeps an assertion at this probability and above. */
+export const JEV_KEEP = 0.8
+/** The one question asked of every shortlist item. */
+export const JEV_QUESTION = 'Is this assumption relevant to this prompt?'
+export const JEV_NO_KEY_TOAST = '' // no key means Jev is off: nothing is said
+export const JEV_FAIL_TOAST = 'Session Panel: the Jev pass could not answer, so the local score was used.'
+
+/** What one Jev call returned: the probability for each id, and the task type the prompt was labelled with. */
+export type JevAnswer = { isOk: true; scores: Record<number, number>; task: TaskType } | { isOk: false; reason: string }
+
+/** The HTTP call the Jev pass makes. The band hands over `$.http.fetch`; tests hand over their own. */
+export type JevFetch = (args: { url: string; method: string; headers: Record<string, string>; body: string; timeoutMs: number }) => Promise<{ status: number; body: string }>
+
+export const jevId = (id: number) => `assumption_${id}`
+
+/** The request body: one Noul per shortlist item, and one Choice for the task type. */
+export function jevRequestBody(items: readonly Scored[], prompt: string): string {
+  const questions: Record<string, unknown> = {}
+  for (const i of items) questions[jevId(i.id)] = { type: 'noul', instructions: JEV_QUESTION }
+  questions.task_type = { type: 'choice', instructions: 'What kind of request is this?', criteria: TASK_CRITERIA }
+  return JSON.stringify({ state: prompt, model: JEV_MODEL, questions })
+}
+
+/** Reads the answers back. A missing or malformed answer leaves that item to the local score. */
+export function parseJevReply(body: string, items: readonly Scored[]): { scores: Record<number, number>; task: TaskType } {
+  const scores: Record<number, number> = {}
+  let task: TaskType = 'other'
+  let parsed: any
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return { scores, task }
+  }
+  const answers = parsed?.answers
+  if (typeof answers !== 'object' || answers === null) return { scores, task }
+  for (const i of items) {
+    const noul = answers[jevId(i.id)]?.noul
+    if (typeof noul === 'number' && Number.isFinite(noul)) scores[i.id] = clampThreshold(noul)
+  }
+  const chosen = answers.task_type?.choice
+  if (typeof chosen === 'string' && (TASK_TYPES as readonly string[]).includes(chosen)) task = chosen as TaskType
+  return { scores, task }
+}
+
+/** Why a Jev answer cannot be used: no key, an HTTP error, or an answer that took too long. */
+export type JevIo = {
+  key: () => Promise<string | undefined>
+  fetch: JevFetch
+  now: () => Promise<number>
+}
+
+/**
+ * One Jev request for the whole shortlist. It returns isOk:false for no key, a non-200 answer, a thrown call, a reply
+ * that is not JSON, and an answer that arrived after JEV_TIMEOUT_MS. It never throws and never retries.
+ */
+export async function runJev(io: JevIo, items: readonly Scored[], prompt: string): Promise<JevAnswer> {
+  let key: string | undefined
+  try {
+    key = await io.key()
+  } catch {
+    return { isOk: false, reason: 'no key' }
+  }
+  if (key === undefined || key.trim() === '') return { isOk: false, reason: 'no key' }
+  const started = await io.now()
+  let status = 0
+  let body = ''
+  try {
+    const r = await io.fetch({
+      url: JEV_URL,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: jevRequestBody(items, prompt),
+      timeoutMs: JEV_TIMEOUT_MS,
+    })
+    status = r?.status ?? 0
+    body = typeof r?.body === 'string' ? r.body : ''
+  } catch (err) {
+    return { isOk: false, reason: String((err as any)?.message ?? err).slice(0, 80) }
+  }
+  // the clock is read after the call, so a slow answer falls back however long the call itself took
+  const took = (await io.now()) - started
+  if (took > JEV_TIMEOUT_MS) return { isOk: false, reason: 'over 1.5 s' }
+  if (status !== 200) return { isOk: false, reason: `HTTP ${status}` }
+  let scores: Record<number, number>
+  let task: TaskType
+  try {
+    const out = parseJevReply(body, items)
+    scores = out.scores
+    task = out.task
+  } catch {
+    return { isOk: false, reason: 'the reply could not be read' }
+  }
+  if (Object.keys(scores).length === 0) return { isOk: false, reason: 'the reply held no answer' }
+  return { isOk: true, scores, task }
+}
+
+/**
+ * The Jev keep rule: keep a scored item when Jev's probability is over 0.8, at most five per kind. A wrong assumption
+ * is always kept, whatever Jev said. An item Jev did not answer keeps its local place.
+ */
+export function keepJev(items: readonly Scored[], scores: Record<number, number>, maxPerKind = MAX_PER_KIND): Scored[] {
+  const byScore = (a: Scored, b: Scored) => b.score - a.score || a.id - b.id
+  const byKind = new Map<string, Scored[]>()
+  for (const i of items) {
+    if (i.isWrong) continue
+    const p = scores[i.id]
+    if (p === undefined || p <= JEV_KEEP) continue
+    const group = byKind.get(i.candidateKind) ?? []
+    group.push(i)
+    byKind.set(i.candidateKind, group)
+  }
+  const kept: Scored[] = []
+  for (const group of byKind.values()) kept.push(...[...group].sort(byScore).slice(0, maxPerKind))
+  return [...items.filter(i => i.isWrong).sort(byScore), ...kept.sort(byScore)]
+}
+
 /** What the step needs from the engine. The band builds this from `$` in session-panel.tsx. */
 export type DecideIo = {
   /** the rules file's text, or undefined when it is missing or cannot be read */
@@ -249,22 +406,30 @@ export type DecideIo = {
   /** the files this turn has touched, relative to the project root */
   paths: () => Promise<readonly string[]>
   entries: () => Promise<readonly Scorable[]>
-  prefs: () => Promise<Pick<Prefs, 'decide' | 'decideThreshold'>>
+  prefs: () => Promise<Pick<Prefs, 'decide' | 'decideThreshold' | 'jev'>>
   now: () => Promise<number>
   toast: (text: string) => void
+  /** the TYPESAFE_API_KEY, or undefined when it is not set */
+  key: () => Promise<string | undefined>
+  /** the TypeSafe call; the band passes this through from $.http.fetch, never from a direct fetch */
+  fetch: JevFetch
 }
 
 export type DecideOutcome = { text: string; warned: boolean }
 
 /**
  * Runs the step for one turn. It never throws and never blocks the turn: on any error it returns no digest and asks
- * for one toast, at most once per load. The digest is '' when the step is off, there is nothing to point at, or the
- * shortlist is empty.
+ * for one toast, at most once per load.
+ *
+ * Order (ticket #91): the settings rules build the local score and the shortlist first. Then, when the Jev pass is on
+ * and a key is set, ONE TypeSafe request re-scores that shortlist and labels the task type. The task type then picks the
+ * threshold, and the digest is built from the Jev keep rule. The digest is '' when the step is off, there is nothing to
+ * point at, or nothing is kept.
  */
 export async function runDecide(io: DecideIo, warned: boolean): Promise<DecideOutcome> {
   const say = (text: string) => {
     try {
-      io.toast(text)
+      if (text !== '') io.toast(text)
     } catch {
       // a toast that cannot be shown never breaks a turn
     }
@@ -284,12 +449,37 @@ export async function runDecide(io: DecideIo, warned: boolean): Promise<DecideOu
     const rules = parsed.ok ? parsed.rules : EMPTY_RULES
     const role = parsed.ok ? await io.role().catch(() => undefined) : undefined
     const now = await io.now()
-    // the path rules read the prompt box's paths and the files this turn has touched, so a rule fits the work at hand
+    // the path rules read the prompt's paths and the files this turn has touched, so a rule fits the work at hand
     const paths = [...new Set([...promptPaths(prompt), ...(await io.paths())])]
-    const threshold = pickThreshold(rules, paths, role, prefs.decideThreshold)
-    return { text: digestOf(keepShortlist(scoreAll(entries, prompt, now), threshold)), warned: seen }
+    // the settings rules first: the local score and the shortlist they build
+    const local = scoreAll(entries, prompt, now)
+    const shortlist = keepShortlist(local, pickThreshold(rules, paths, role, prefs.decideThreshold))
+    if (shortlist.length === 0) return { text: '', warned: seen }
+
+    // then the Jev pass, when it is on and a key is set. A failure here always falls back to the local shortlist.
+    if (prefs.jev) {
+      const jev = await runJev({ key: io.key, fetch: io.fetch, now: io.now }, shortlist, prompt)
+      if (jev.isOk) {
+        const threshold = pickThresholdFor(rules, { paths, role, task: jev.task }, prefs.decideThreshold)
+        return { text: digestOf(keepJev(keepJevShortlist(shortlist, threshold), jev.scores)), warned: seen }
+      }
+      if (jev.reason !== 'no key' && !seen) {
+        say(JEV_FAIL_TOAST)
+        seen = true
+      }
+    }
+    return { text: digestOf(shortlist), warned: seen }
   } catch {
     if (!warned) say(FAIL_TOAST)
     return { text: '', warned: true }
   }
+}
+
+/**
+ * The shortlist the task type re-thresholds before Jev scores it: the local keep rule again, on the same list, with the
+ * threshold the task type picked. A wrong assumption still stays.
+ */
+export function keepJevShortlist(items: readonly Scored[], threshold: number): Scored[] {
+  const t = clampThreshold(threshold)
+  return items.filter(i => i.isWrong || i.score >= t)
 }

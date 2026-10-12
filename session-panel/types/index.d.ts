@@ -55,6 +55,8 @@ export type Prefs = {
   decide: boolean
   /** the fallback threshold the keep rule uses when decide.json names none for this turn */
   decideThreshold: number
+  /** the TypeSafe Jev pass: a second, opt-in opinion on the shortlist (#91 slice 2) */
+  jev: boolean
   sources: { instructions: boolean; skills: boolean; docs: boolean; github: boolean }
 }
 

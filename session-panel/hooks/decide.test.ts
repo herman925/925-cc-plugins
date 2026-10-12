@@ -4,6 +4,15 @@ import type { Assumption } from '../types'
 import {
   DECIDE_FILE,
   DEFAULT_THRESHOLD,
+  JEV_FAIL_TOAST,
+  JEV_KEY_VAR,
+  JEV_KEEP,
+  JEV_MODEL,
+  JEV_QUESTION,
+  JEV_TIMEOUT_MS,
+  JEV_URL,
+  TASK_CRITERIA,
+  TASK_TYPES,
   DIGEST_CHAR_CAP,
   DIGEST_HEAD,
   DIGEST_TAIL,
@@ -15,13 +24,19 @@ import {
   digestOf,
   filesTouched,
   globMatch,
+  jevId,
+  jevRequestBody,
+  keepJev,
   keepShortlist,
   overlapOf,
   parseRules,
+  parseJevReply,
   pathsOf,
   pickThreshold,
+  pickThresholdFor,
   roleFor,
   runDecide,
+  runJev,
   scoreAssumption,
   scoreAll,
   words,
@@ -200,15 +215,19 @@ test('rules: the file path is fixed, a missing or empty file is no rules', () =>
 
 test('rules: the three rule kinds are read; junk is a reason and a clamped number is kept', () => {
   const r = parseRules(JSON.stringify({ default: 0.6, paths: { 'src/**': 0.7 }, roles: { tester: 0.8 } }))
-  expect(r).toEqual({ ok: true, rules: { version: 1, default: 0.6, paths: { 'src/**': 0.7 }, roles: { tester: 0.8 } } })
-  // task rules are slice 2: the key is read as an ordinary field and never used, so it is simply absent here
-  expect(Object.hasOwn((r as any).rules, 'tasks')).toBe(false)
+  expect(r).toEqual({ ok: true, rules: { version: 1, default: 0.6, paths: { 'src/**': 0.7 }, roles: { tester: 0.8 }, tasks: {} } })
+  // task rules arrived in slice 2: the key is read like the other two, and an absent one is an empty map
+  expect((r as any).rules.tasks).toEqual({})
+  expect(parseRules(JSON.stringify({ tasks: { docs: 0.7 } }))).toEqual({
+    ok: true,
+    rules: { version: 1, default: undefined, paths: {}, roles: {}, tasks: { docs: 0.7 } },
+  })
   expect(parseRules('not json')).toEqual({ ok: false, reason: 'not JSON' })
   expect(parseRules('[1,2]')).toEqual({ ok: false, reason: 'not an object' })
   const junk = parseRules(JSON.stringify({ default: 'x', paths: { 'a/**': 'x', 'b/**': 0.9 }, roles: [] }))
-  expect(junk).toEqual({ ok: true, rules: { version: 1, default: undefined, paths: { 'b/**': 0.9 }, roles: {} } })
+  expect(junk).toEqual({ ok: true, rules: { version: 1, default: undefined, paths: { 'b/**': 0.9 }, roles: {}, tasks: {} } })
   const clamp = parseRules(JSON.stringify({ default: 4, paths: { 'a': -1 } }))
-  expect(clamp).toEqual({ ok: true, rules: { version: 1, default: 1, paths: { a: 0 }, roles: {} } })
+  expect(clamp).toEqual({ ok: true, rules: { version: 1, default: 1, paths: { a: 0 }, roles: {}, tasks: {} } })
 })
 
 test('glob: ** crosses folders, * and ? stay inside one, and the case is ignored', () => {
@@ -234,7 +253,7 @@ test('order: path wins over role, role wins over default, default wins over the 
 })
 
 test('order: with two globs matching, the longer one wins', () => {
-  const rules = { version: 1, paths: { 'src/**': 0.7, 'src/app/**': 0.9, '**': 0.2 }, roles: {} }
+  const rules = { version: 1, paths: { 'src/**': 0.7, 'src/app/**': 0.9, '**': 0.2 }, roles: {}, tasks: {} }
   expect(pickThreshold(rules, ['src/app/page.tsx'], undefined, 0.5)).toBe(0.9)
   expect(pickThreshold(rules, ['src/x.ts'], undefined, 0.5)).toBe(0.7)
   expect(pickThreshold(rules, ['docs/a.md'], undefined, 0.5)).toBe(0.2)
@@ -260,8 +279,22 @@ test('clamp: a threshold is always 0 to 1, and junk is the default', () => {
 
 // ---------- 5. the step: it never throws and never blocks a turn ----------
 
-function ioOf(opts: { rules?: string | undefined; role?: string; box?: string; paths?: string[]; entries?: Assumption[]; decide?: boolean; threshold?: number; fail?: 'box' | 'entries' | 'rules' | 'now' | 'paths' } = {}) {
+function ioOf(opts: {
+  rules?: string | undefined
+  role?: string
+  box?: string
+  paths?: string[]
+  entries?: Assumption[]
+  decide?: boolean
+  jev?: boolean
+  threshold?: number
+  key?: string
+  reply?: { status: number; body: string } | 'throw' | 'slow'
+  fail?: 'box' | 'entries' | 'rules' | 'now' | 'paths'
+} = {}) {
   const toasts: string[] = []
+  const calls: Array<{ url: string; method: string; headers: Record<string, string>; body: string; timeoutMs: number }> = []
+  let clock = NOW
   const io: DecideIo = {
     rules: async () => {
       if (opts.fail === 'rules') throw new Error('boom')
@@ -280,15 +313,35 @@ function ioOf(opts: { rules?: string | undefined; role?: string; box?: string; p
       if (opts.fail === 'entries') throw new Error('boom')
       return opts.entries ?? [entry(1)]
     },
-    prefs: async () => ({ decide: opts.decide ?? true, decideThreshold: opts.threshold ?? DEFAULT_THRESHOLD }),
+    prefs: async () => ({ decide: opts.decide ?? true, decideThreshold: opts.threshold ?? DEFAULT_THRESHOLD, jev: opts.jev ?? false }),
     now: async () => {
       if (opts.fail === 'now') throw new Error('boom')
-      return NOW
+      return clock
     },
     toast: t => void toasts.push(t),
+    key: async () => opts.key,
+    fetch: async args => {
+      calls.push(args)
+      if (opts.reply === 'throw') throw new Error('the network is down')
+      // a slow answer: the clock jumps past the Jev timeout while the call is in flight
+      if (opts.reply === 'slow') clock += 5000
+      return opts.reply ?? { status: 200, body: '{}' }
+    },
   }
-  return { io, toasts }
+  return { io, toasts, calls }
 }
+
+/** A Jev reply: one noul answer per assumption id, plus the task-type choice. */
+const jevReply = (byId: Record<number, number>, task = 'build') => ({
+  status: 200,
+  body: JSON.stringify({
+    model: 'jev-1.13.0',
+    answers: {
+      ...Object.fromEntries(Object.entries(byId).map(([id, noul]) => [`assumption_${id}`, { type: 'noul', noul }])),
+      task_type: { type: 'choice', choice: task, confidence: 0.9, probabilities: { [task]: 0.9 } },
+    },
+  }),
+})
 
 test('step: off adds nothing and says nothing', async () => {
   const { io, toasts } = ioOf({ decide: false })
@@ -370,4 +423,192 @@ test('step: the rules file and the role decide the threshold the keep rule uses'
   const strict = ioOf({ entries, rules: JSON.stringify({ roles: { builder: 1 } }), role: 'Builder' })
   const narrow = await runDecide(strict.io, false)
   expect(narrow.text).not.toContain('#1')
+})
+
+// ---------- 6. the Jev pass (slice 2): TypeSafe System One, opt-in ----------
+
+test('jev: no key means Jev is off, nothing is asked, and nothing is said', async () => {
+  const { io, toasts, calls } = ioOf({ jev: true, key: undefined })
+  const r = await runDecide(io, false)
+  expect(calls).toEqual([])
+  expect(toasts).toEqual([])
+  expect(r.text).toContain('#1')
+})
+
+test('jev: an empty or blank key counts as no key', async () => {
+  for (const key of ['', '   ']) {
+    const { io, calls, toasts } = ioOf({ jev: true, key })
+    await runDecide(io, false)
+    expect(calls).toEqual([])
+    expect(toasts).toEqual([])
+  }
+})
+
+test('jev: with the pass off, no request is made even when a key is set', async () => {
+  const { io, calls } = ioOf({ jev: false, key: 'k-123' })
+  await runDecide(io, false)
+  expect(calls).toEqual([])
+})
+
+test('jev: one request, to the fixed endpoint, with the model, the Nouls and the task Choice', async () => {
+  const { io, calls } = ioOf({
+    jev: true,
+    key: 'k-123',
+    entries: [entry(19, { status: 'wrong', text: 'Prices are in dollars.' }), entry(24)],
+    reply: jevReply({ 19: 0.2, 24: 0.95 }),
+  })
+  await runDecide(io, false)
+  expect(calls.length).toBe(1)
+  const call = calls[0]
+  expect(call.url).toBe(JEV_URL)
+  expect(call.method).toBe('POST')
+  expect(call.headers.Authorization).toBe('Bearer k-123')
+  expect(call.timeoutMs).toBe(JEV_TIMEOUT_MS)
+  const body = JSON.parse(call.body)
+  expect(body.model).toBe(JEV_MODEL)
+  expect(body.state).toBe('the bakery page')
+  expect(body.questions[jevId(19)]).toEqual({ type: 'noul', instructions: JEV_QUESTION })
+  expect(body.questions[jevId(24)]).toEqual({ type: 'noul', instructions: JEV_QUESTION })
+  expect(body.questions.task_type.type).toBe('choice')
+  expect(Object.keys(body.questions.task_type.criteria).sort()).toEqual([...TASK_TYPES].sort())
+})
+
+test('jev: the keep rule is p over 0.8, at most five per kind, and a wrong item always stays', async () => {
+  const items = scoreAll(
+    [
+      at({ id: 1, text: 'the bakery page' }),
+      at({ id: 2, text: 'the bakery page' }),
+      at({ id: 3, text: 'the bakery page' }),
+      at({ id: 4, status: 'wrong', text: 'nothing shared' }),
+    ],
+    'the bakery page',
+    NOW,
+  )
+  // exactly 0.8 is not over it; 0.81 and 0.99 are. The wrong item is kept whatever Jev said.
+  const kept = keepJev(items, { 1: 0.81, 2: 0.8, 3: 0.99 })
+  expect(kept.map(k => k.id).sort()).toEqual([1, 3, 4])
+  const kept2 = keepJev(items, { 1: 0.8, 2: 0.5, 3: 0.79 })
+  expect(kept2.map(k => k.id)).toEqual([4])
+  // an item Jev did not answer is left to the local score: it is not kept here
+  expect(keepJev(items, {}).map(k => k.id)).toEqual([4])
+})
+
+test('jev: at most five per kind survive the Jev keep rule', async () => {
+  const many = Array.from({ length: 8 }, (_, i) => at({ id: i + 1, text: 'the bakery page' }))
+  const scores = Object.fromEntries(many.map(a => [a.id, 0.99]))
+  const kept = keepJev(scoreAll(many, 'the bakery page', NOW), scores)
+  expect(kept.length).toBe(5)
+  expect(JEV_KEEP).toBe(0.8)
+})
+
+test('jev: a good answer changes which entries the digest points at', async () => {
+  // two entries tie on the local score; Jev prefers the second, so the digest drops the first
+  const entries = [entry(1, { text: 'the bakery page' }), entry(2, { text: 'the bakery page' })]
+  const { io } = ioOf({ jev: true, key: 'k', entries, reply: jevReply({ 1: 0.1, 2: 0.99 }) })
+  const r = await runDecide(io, false)
+  expect(r.text).toContain('#2')
+  expect(r.text).not.toContain('#1')
+})
+
+test('jev: an HTTP error falls back to the local score, with one toast per load', async () => {
+  const { io, toasts } = ioOf({ jev: true, key: 'k', reply: { status: 401, body: '{"error":"bad key"}' } })
+  const first = await runDecide(io, false)
+  expect(first.text).toContain('#1')
+  expect(toasts).toEqual([JEV_FAIL_TOAST])
+  const second = await runDecide(io, true)
+  expect(toasts).toEqual([JEV_FAIL_TOAST])
+  expect(second.text).toContain('#1')
+})
+
+test('jev: a thrown call falls back, and the turn is never blocked', async () => {
+  const { io, toasts } = ioOf({ jev: true, key: 'k', reply: 'throw' })
+  const r = await runDecide(io, false)
+  expect(r.text).toContain('#1')
+  expect(toasts).toEqual([JEV_FAIL_TOAST])
+})
+
+test('jev: an answer slower than 1.5 s falls back to the local score', async () => {
+  const { io, toasts } = ioOf({ jev: true, key: 'k', reply: 'slow' })
+  const r = await runDecide(io, false)
+  expect(r.text).toContain('#1')
+  expect(toasts).toEqual([JEV_FAIL_TOAST])
+  expect(JEV_TIMEOUT_MS).toBe(1500)
+})
+
+test('jev: a reply that is not JSON, or holds no answer, falls back', async () => {
+  for (const body of ['not json at all', '{"answers":{}}', '{"answers":null}']) {
+    const { io, toasts } = ioOf({ jev: true, key: 'k', reply: { status: 200, body } })
+    const r = await runDecide(io, false)
+    expect(r.text).toContain('#1')
+    expect(toasts).toEqual([JEV_FAIL_TOAST])
+  }
+})
+
+test('jev: the reply shape is read strictly, and a junk task type becomes other', async () => {
+  const items = scoreAll([at({ id: 7 }), at({ id: 8 })], 'x', NOW)
+  const out = parseJevReply(
+    JSON.stringify({ answers: { assumption_7: { type: 'noul', noul: 0.9 }, assumption_8: { type: 'noul', noul: 'x' }, task_type: { choice: 'nonsense' } } }),
+    items,
+  )
+  expect(out.scores).toEqual({ 7: 0.9 })
+  expect(out.task).toBe('other')
+  const missing = parseJevReply('{}', items)
+  expect(missing).toEqual({ scores: {}, task: 'other' })
+})
+
+test('jev: the request body names every shortlist item and no more', async () => {
+  const items = scoreAll([at({ id: 1 }), at({ id: 2 })], 'x', NOW)
+  const body = JSON.parse(jevRequestBody(items, 'the prompt'))
+  expect(Object.keys(body.questions)).toEqual(['assumption_1', 'assumption_2', 'task_type'])
+  expect(jevId(3)).toBe('assumption_3')
+})
+
+test('jev: with the step off, the pass is never asked for anything', async () => {
+  const { io, calls, toasts } = ioOf({ decide: false, jev: true, key: 'k' })
+  expect((await runDecide(io, false)).text).toBe('')
+  expect(calls).toEqual([])
+  expect(toasts).toEqual([])
+})
+
+// ---------- 7. the rule order with the task type (slice 2) ----------
+
+test('order: path, then role, then task type, then default, then the Settings value', () => {
+  const rules = {
+    version: 1,
+    default: 0.6,
+    paths: { 'src/**': 0.7 },
+    roles: { tester: 0.8 },
+    tasks: { docs: 0.9, build: 0.55 },
+  }
+  // path beats everything
+  expect(pickThresholdFor(rules, { paths: ['src/a.ts'], role: 'tester', task: 'docs' }, 0.5)).toBe(0.7)
+  // role beats the task type and the default
+  expect(pickThresholdFor(rules, { paths: ['docs/a.md'], role: 'tester', task: 'docs' }, 0.5)).toBe(0.8)
+  // the task type beats the default
+  expect(pickThresholdFor(rules, { paths: ['docs/a.md'], role: 'builder', task: 'docs' }, 0.5)).toBe(0.9)
+  // the default beats the Settings value
+  expect(pickThresholdFor(rules, { paths: [], role: undefined, task: 'other' }, 0.5)).toBe(0.6)
+  // no rule at all: the Settings value
+  expect(pickThresholdFor(EMPTY_RULES, { paths: [], role: undefined, task: 'build' }, 0.42)).toBe(0.42)
+  // a task rule is matched without case, and an unknown task falls through
+  expect(pickThresholdFor(rules, { paths: [], task: 'BUILD' }, 0.5)).toBe(0.55)
+  expect(pickThresholdFor({ ...EMPTY_RULES, tasks: { docs: 0.9 } }, { paths: [], task: 'fix' }, 0.5)).toBe(0.5)
+})
+
+test('order: the task type read from the rules file itself is used', () => {
+  const parsed = parseRules(JSON.stringify({ default: 0.5, tasks: { research: 0.75 } }))
+  expect(parsed.ok).toBe(true)
+  const rules = parsed.ok ? parsed.rules : EMPTY_RULES
+  expect(rules.tasks).toEqual({ research: 0.75 })
+  expect(pickThresholdFor(rules, { paths: [], task: 'research' }, 0.5)).toBe(0.75)
+})
+
+test('order: the Jev task type picks the threshold the digest is built with', async () => {
+  // a docs rule of 1 keeps nothing scored; only a wrong item would survive it
+  const rules = JSON.stringify({ default: 0.5, tasks: { docs: 1 } })
+  const entries = [entry(1, { text: 'the bakery page' })]
+  const strict = await runDecide(ioOf({ jev: true, key: 'k', rules, entries, reply: jevReply({ 1: 0.99 }, 'docs') }).io, false)
+  expect(strict.text).toBe('')
+  const loose = await runDecide(ioOf({ jev: true, key: 'k', rules, entries, reply: jevReply({ 1: 0.99 }, 'other') }).io, false)
+  expect(loose.text).toContain('#1')
 })
