@@ -51,6 +51,10 @@ export type Prefs = {
   chat: 'recent' | 'full'
   assumptions: boolean
   flagUndeclared: boolean
+  /** the decision step: a pointer digest of the assumptions worth reading this turn (#91) */
+  decide: boolean
+  /** the fallback threshold the keep rule uses when decide.json names none for this turn */
+  decideThreshold: number
   sources: { instructions: boolean; skills: boolean; docs: boolean; github: boolean }
 }
 
@@ -129,6 +133,8 @@ declare module 'claude-code' {
       assumptionReveal: number | null
       /** the table columns the reader has hidden: id, turn, text, path, at */
       hiddenColumns: string[]
+      /** the text of the last prompt the person sent; the decision step reads the turn's wording from here */
+      submittedText: string
     }
   }
 }

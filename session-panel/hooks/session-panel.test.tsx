@@ -23,9 +23,9 @@ const REPORT = 'mcp__session-panel__report_progress'
 const ASK = 'mcp__session-panel__ask_choices'
 
 // The world beneath the plugin: a clock, a store, an env and a tool bottom that says ok.
-function world(on: any, env: Record<string, string> = {}, hasOwnBand = false) {
+function world(on: any, env: Record<string, string> = {}, hasOwnBand = false, seed?: Record<string, unknown>) {
   const clock = mock.clock(on)
-  mock.store(on)
+  mock.store(on, seed)
   mock.env(on, env)
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
@@ -2686,4 +2686,88 @@ test('columns: canHide refuses only the last of ID and Text; showing is always a
   expect(canHide(['text'], 'text')).toBe(true)
   expect(canHide(['id', 'text'], 'text')).toBe(true)
   expect(canHide(['id'], 'path')).toBe(true)
+})
+
+// 28. the decision step (#91, slice 1, 0.3.49): the digest reaches prompt.compose, and reads the text that was
+// submitted rather than the prompt box (the box is already empty by the time prompt.compose runs).
+import { DIGEST_HEAD, MAX_PER_KIND } from './decide'
+
+const DECIDE_FACTS = { promptModel: 'claude-haiku-4-5', outputStyle: null, tools: [], traits: [], surfaces: [] } as any
+
+/** The wrong entry this session's file holds: whatever the prompt says, the digest always points at it. */
+const WRONG_BAKERY = [
+  { id: 19, text: 'Prices are in pounds for the bakery.', turn: 1, kind: 'declared', status: 'wrong', at: 1, sessionId: 'abc123' } as any,
+]
+
+/** What the engine composes beneath the plugins, so prompt.compose has a chain to join. */
+const baseCompose = (on: any) => on('prompt.compose', () => ({ sections: [{ id: 'probe:base', text: 'BASE', scope: 'session' }] }))
+
+/** A world with the decision step already saved as on or off, the way a past session left it. */
+function decideWorld(on: any, decide: boolean) {
+  baseCompose(on)
+  world(on, WIN_ENV, false, { prefs: { ...DEFAULT_PREFS, decide, decideThreshold: 0.5 } })
+  return storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', WRONG_BAKERY) } })
+}
+
+/** The decision step's two Settings rows, read through the band. */
+async function decideRows($: any) {
+  await begin($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'settings' })
+  if (!(await ui.find({ key: 'set-decide' }))) await ui.press({ key: 'toggle-assumptions' })
+  return ui
+}
+
+const decideSection = (out: any) => out.sections.find((s: any) => s.id === 'session-panel:decide')
+
+test('decide: with the step off, no decide section is composed', async ($, on) => {
+  decideWorld(on, false)
+  await $.prompt.submit({ text: 'add the bakery prices to the page', asUser: true })
+  const out: any = await $.prompt.compose(DECIDE_FACTS)
+  expect(decideSection(out)).toBeUndefined()
+  expect(out.sections.some((s: any) => s.id === 'session-panel:plan')).toBe(true)
+  expect(out.sections.some((s: any) => s.id === 'session-panel:rules')).toBe(true)
+})
+
+test('decide: the digest is injected once the toggle is pressed, and it uses the text that was submitted', async ($, on) => {
+  baseCompose(on)
+  world(on, WIN_ENV)
+  storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', WRONG_BAKERY) } })
+  // the box cannot even be read: the step must not go near it
+  on('prompt.read', () => {
+    throw new Error('the box is empty by now')
+  })
+  const ui = await decideRows($)
+  expect((await ui.find({ key: 'set-decide' }))?.props.label ?? '').toContain('Decision step')
+  await ui.press({ key: 'set-decide' })
+  await ui.unmount()
+  await $.prompt.submit({ text: 'add the bakery prices to the page', asUser: true })
+  const out: any = await $.prompt.compose(DECIDE_FACTS)
+  const decide = decideSection(out)
+  expect(decide?.scope).toBe('session')
+  expect(decide?.text.startsWith(DIGEST_HEAD)).toBe(true)
+  expect(decide?.text).toContain('#19 (wrong: "Prices are in pounds for the bakery.")')
+  expect(decide?.text).toContain('Skip the rest.')
+  // the wording of a new turn is read again, and the sections around the digest are untouched
+  await $.prompt.submit({ text: 'something else entirely', asUser: true })
+  const again: any = await $.prompt.compose(DECIDE_FACTS)
+  expect(decideSection(again)?.text).toContain('#19')
+  expect(again.sections.some((s: any) => s.id === 'session-panel:rules')).toBe(true)
+  expect(again.sections.some((s: any) => s.id === 'session-panel:assume')).toBe(true)
+})
+
+test('decide: the Keep threshold row offers 0.4 to 0.8, and 0.5 is the default', async ($, on) => {
+  baseCompose(on)
+  world(on, WIN_ENV)
+  storeWorld(on, { files: { [FILE]: storedJson('abc123', 'abc123', WRONG_BAKERY) } })
+  const ui = await decideRows($)
+  for (const v of ['0.4', '0.6', '0.7', '0.8']) expect(await ui.find({ key: `set-threshold-${v}` })).toBeDefined()
+  // 0.5 is the default threshold: its pill is the chosen one, so it is drawn without a button
+  expect(await ui.find({ key: 'opt-threshold-0.5' })).toBeDefined()
+  expect(await ui.find({ key: 'set-threshold-0.5' })).toBeUndefined()
+  await ui.press({ key: 'set-threshold-0.8' })
+  expect(await ui.find({ key: 'opt-threshold-0.8' })).toBeDefined()
+  expect(await ui.find({ key: 'set-threshold-0.5' })).toBeDefined()
+  expect(MAX_PER_KIND).toBe(5)
+  await ui.unmount()
 })

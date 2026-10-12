@@ -180,6 +180,8 @@ export const DEFAULT_PREFS: Prefs = {
   sources: { instructions: true, skills: true, docs: true, github: false },
   assumptions: true,
   flagUndeclared: true,
+  decide: false,
+  decideThreshold: 0.5,
 }
 
 /** The enhancer's engine calls plus the band's box and state, as plain functions, so the actions can be tested. */

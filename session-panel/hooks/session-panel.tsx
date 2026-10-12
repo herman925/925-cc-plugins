@@ -94,6 +94,7 @@ import {
   redirectText,
   startTurn,
 } from './logic'
+import { DECIDE_FILE, THRESHOLD_CHOICES, clampThreshold, runDecide, roleFor, type DecideIo } from './decide'
 
 type Hooked = EngineInterface
 
@@ -116,6 +117,9 @@ const expandedA = atom({ plugin: 'session-panel', key: 'assumptionExpanded' } as
 const revealA = atom({ plugin: 'session-panel', key: 'assumptionReveal' } as const, null as number | null)
 /** The columns the reader has hidden: ID, Turn, Text, Path or Time. Saved in the store as assumptionColumns. */
 const hiddenColsA = atom({ plugin: 'session-panel', key: 'hiddenColumns' } as const, [] as string[])
+/** The text of the last prompt the person sent. The prompt box is already empty by the time prompt.compose runs, so the
+ * decision step reads the wording of the turn from here, not from the box. */
+const submittedA = atom({ plugin: 'session-panel', key: 'submittedText' } as const, '')
 
 const PLAN = 'mcp__session-panel__plan_steps'
 const REPORT = 'mcp__session-panel__report_progress'
@@ -497,6 +501,34 @@ async function headsOfRoster($: Hooked): Promise<Set<string> | undefined> {
   return text === undefined ? undefined : headsFor(text, await $.session.id())
 }
 
+// The decision step (#91, slice 1). It never blocks a turn: the flag keeps its toast to one per load.
+let decideWarned = false
+
+/** The decision step's engine calls and state as plain functions, so the step can be tested without the band. */
+function decideIo($: Hooked): DecideIo {
+  return {
+    rules: async () => {
+      const root = (await $.session.root()).replace(/\\/g, '/')
+      return readText($, `${root}/${DECIDE_FILE}`)
+    },
+    role: async () => {
+      const root = (await $.session.root()).replace(/\\/g, '/')
+      const text = await readText($, `${root}/.claude/team-orchestrator/roster.json`)
+      return text === undefined ? undefined : roleFor(text, await $.session.id())
+    },
+    // the box is empty by the time prompt.compose runs, so the turn's wording comes from the last submitted prompt
+    box: async () => read($, submittedA),
+    paths: async () => (await read($, trackA)).turnEdits,
+    entries: async () => (await locate($, await read($, trackA)).catch(() => read($, trackA))).entries,
+    prefs: async () => {
+      const p = await read($, prefsA)
+      return { decide: p.decide, decideThreshold: p.decideThreshold }
+    },
+    now: () => $.clock.now(),
+    toast: text => $.ui.toast(text),
+  }
+}
+
 /** Applies the status lines in a prompt. Returns the drop for a message that is only status lines, or null to let it go on. */
 async function applyStatusLines($: Hooked, text: string): Promise<{ drop: string } | null> {
   const parts = sortPrompt(text)
@@ -752,11 +784,22 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const text = (await read($, askEnabledA))
       ? SECTION_TEXT
       : SECTION_TEXT.split('\n').filter(l => !l.includes('ask_choices')).join('\n')
+    // The decision step (#91): one pointer digest of the assumptions worth reading this turn. Its own try keeps any
+    // failure here from touching the sections below, and it never blocks the turn.
+    let digest = ''
+    try {
+      const step = await runDecide(decideIo($), decideWarned)
+      decideWarned = step.warned
+      digest = step.text
+    } catch {
+      digest = ''
+    }
     return {
       sections: [
         ...result.sections,
         { id: 'session-panel:plan', text: PLAN_SECTION, scope: 'session' as const },
         ...((await read($, prefsA)).assumptions ? [{ id: 'session-panel:assume', text: ASSUME_SECTION, scope: 'session' as const }] : []),
+        ...(digest === '' ? [] : [{ id: 'session-panel:decide', text: digest, scope: 'session' as const }]),
         { id: 'session-panel:rules', text, scope: 'session' as const },
       ],
     }
@@ -768,6 +811,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     // status lines is dropped, so no model turn starts for it; any other text in it goes on to the model.
     const status = await applyStatusLines($, e.text)
     if (status !== null) return status
+    await update($, submittedA, () => e.text)
     lastInputAt = await $.clock.now()
     const enh = await read($, enhancerA)
     const prefs = await read($, prefsA)
@@ -1141,6 +1185,25 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         kind: 'toggle',
         isOn: prefs.flagUndeclared,
         set: v => void setPrefs($, { flagUndeclared: v }),
+      },
+      {
+        id: 'decide',
+        group: 'assumptions',
+        label: 'Decision step',
+        hint: 'Point the model at the assumptions worth reading this turn',
+        kind: 'toggle',
+        isOn: prefs.decide,
+        set: v => void setPrefs($, { decide: v }),
+      },
+      {
+        id: 'threshold',
+        group: 'assumptions',
+        label: 'Keep threshold',
+        hint: 'Rules in .claude/session-panel/decide.json win over this',
+        kind: 'choice',
+        value: String(prefs.decideThreshold),
+        options: THRESHOLD_CHOICES.map(n => ({ value: String(n), label: n.toFixed(1) })),
+        set: v => void setPrefs($, { decideThreshold: clampThreshold(Number(v)) }),
       },
       {
         id: 'model',
