@@ -52,6 +52,8 @@ import {
   retiredJson,
   hhmm,
   homeOf,
+  configDirOf,
+  enhanceKeyEdit,
   nameFile,
   normPath,
   mergeOld,
@@ -327,6 +329,26 @@ async function readText($: Hooked, path: string): Promise<string | undefined> {
     return typeof v === 'string' ? v : undefined
   } catch {
     return undefined
+  }
+}
+
+/** /enhance-key and its Settings button, only when the person asks: Ctrl+X E for Enhance in keybindings.json. */
+async function addEnhanceKey($: Hooked): Promise<string> {
+  const none = () => undefined
+  const dir = configDirOf({
+    CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR').catch(none),
+    USERPROFILE: await $.env.get('USERPROFILE').catch(none),
+    HOME: await $.env.get('HOME').catch(none),
+  })
+  if (dir === '') return 'No Claude config folder was found, so nothing was changed.'
+  const path = `${dir}/keybindings.json`
+  try {
+    // a file that is there but cannot be read is never taken for a missing one
+    const edit = enhanceKeyEdit((await $.fs.exists(path)) ? String(await $.fs.read(path)) : undefined)
+    if (edit.write !== undefined) await $.fs.write(path, edit.write)
+    return edit.line
+  } catch (err) {
+    return `keybindings.json could not be changed: ${String((err as any)?.message ?? err).slice(0, 160)}`
   }
 }
 
@@ -732,6 +754,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await $.command.register({ name: 'progress', description: 'Flip between the bar view and the list view.' })
     await $.command.register({ name: 'progress-clear', description: 'Remove the finished bars.' })
     await $.command.register({ name: 'enhance', description: 'Rewrite the prompt box, or /enhance <draft> to rewrite a draft given here.', argumentHint: '[draft]' })
+    await $.command.register({ name: 'enhance-key', description: 'Add Ctrl+X E for Enhance to your keybindings.json.' })
     const c = await read($, checklistA)
     if (c.phase === 'working' || c.phase === 'needs-you') runClock($)
     return next(e)
@@ -774,6 +797,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       return { text: `Enhancer: ${String((err as any)?.message ?? err).slice(0, 160)}` }
     }
   })
+  on('command.run', { command: 'enhance-key' }, async ($) => ({ text: await addEnhanceKey($) }))
   on('command.run', { command: 'progress-clear' }, async ($) => {
     await update($, finishedA, () => [])
     return { text: 'Finished bars removed.' }
@@ -1169,6 +1193,14 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         kind: 'toggle',
         isOn: prefs.autoEnhance,
         set: v => void setPrefs($, { autoEnhance: v }),
+      },
+      {
+        id: 'key',
+        group: 'enhancer',
+        label: 'Add Ctrl+X E for Enhance',
+        hint: 'Adds the key to keybindings.json',
+        kind: 'button',
+        press: () => void addEnhanceKey($).then(line => $.ui.toast(line)),
       },
       {
         id: 'assume',

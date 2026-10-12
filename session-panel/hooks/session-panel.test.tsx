@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { DEFAULT_PREFS, buildContext, enhance, githubMap, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
-import { parseEnhanced, enhancePrompt, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
+import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -1091,6 +1091,78 @@ test('enhancer: /enhance <draft> from the prompt box puts the result back in the
   expect(fills).toEqual(['Build a bakery page'])
   expect((await run('sdk')).text).toContain('Build a bakery page')
   expect(fills).toHaveLength(1)
+})
+
+// /enhance-key and its Settings button: the keyboard file in the config folder, read and written through the engine's fs
+const KEYS = 'C:/home/.claude/keybindings.json'
+const ADDED = 'Added Ctrl+X E for Enhance. Restart the session if the key does nothing.'
+function keyWorld(on: any, text?: string) {
+  world(on, { USERPROFILE: 'C:/home' })
+  const writes: string[] = []
+  const toasts: string[] = []
+  // off Windows the engine puts the working folder in front of a C:/... path, as in storeWorld
+  const slash = (q: string) => q.replace(/\\/g, '/').replace(/^\/.*?\/(?=[A-Za-z]:)/, '')
+  on('fs.exists', (_$: any, e: any) => ({ value: text !== undefined && slash(e.path) === KEYS }))
+  on('fs.read', (_$: any, e: any) => ({ value: slash(e.path) === KEYS ? text : undefined }))
+  on('fs.write', (_$: any, e: any) => (slash(e.path) === KEYS && writes.push(e.text), { value: undefined }))
+  on('ui.toast', (_$: any, e: any) => (toasts.push(e.text), { value: undefined }))
+  return { writes, toasts }
+}
+const enhanceKey = async ($: any) =>
+  (await $.command.run({ command: 'enhance-key', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as any)).text
+
+test('enhance key: with no keyboard file, the Settings button creates it with the key and the schema', async ($, on) => {
+  const w = keyWorld(on)
+  await begin($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'settings' })
+  await ui.press({ key: 'set-key' })
+  expect(w.toasts).toContain(ADDED)
+  expect(w.writes.map(t => JSON.parse(t))).toEqual([
+    {
+      $schema: 'https://www.schemastore.org/claude-code-keybindings.json',
+      $docs: 'https://code.claude.com/docs/en/keybindings',
+      bindings: [{ context: 'Chat', bindings: { 'ctrl+x e': 'command:enhance' } }],
+    },
+  ])
+  await ui.unmount()
+})
+
+test('enhance key: an existing file keeps every other field, key and context, and its own indent', async ($, on) => {
+  const mine = {
+    $schema: 'https://www.schemastore.org/claude-code-keybindings.json',
+    bindings: [
+      { context: 'Global', bindings: { 'ctrl+t': null } },
+      { context: 'Chat', bindings: { 'ctrl+e': 'chat:externalEditor' } },
+    ],
+  }
+  const w = keyWorld(on, `${JSON.stringify(mine, null, 4)}\n`)
+  expect(await enhanceKey($)).toBe(ADDED)
+  const want = { ...mine, bindings: [mine.bindings[0], { context: 'Chat', bindings: { 'ctrl+e': 'chat:externalEditor', 'ctrl+x e': 'command:enhance' } }] }
+  expect(w.writes).toEqual([`${JSON.stringify(want, null, 4)}\n`])
+  // with no Chat entry, one is appended after the others
+  const noChat = JSON.parse(enhanceKeyEdit(JSON.stringify({ bindings: [mine.bindings[0]] })).write!)
+  expect(noChat.bindings).toEqual([mine.bindings[0], { context: 'Chat', bindings: { 'ctrl+x e': 'command:enhance' } }])
+})
+
+test('enhance key: a Ctrl+X E taken by another action, or by null, changes nothing and names it', async ($, on) => {
+  const w = keyWorld(on, JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'Ctrl+X E': 'chat:externalEditor' } }] }))
+  expect(await enhanceKey($)).toBe('Ctrl+X E is taken by chat:externalEditor in keybindings.json, so nothing was changed.')
+  expect(w.writes).toEqual([])
+  const off = enhanceKeyEdit(JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'ctrl+x e': null } }] }))
+  expect(off).toEqual({ line: 'Ctrl+X E is taken by null in keybindings.json, so nothing was changed.' })
+})
+
+test('enhance key: a key already set for Enhance changes nothing and says so', async ($, on) => {
+  const w = keyWorld(on, JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'ctrl+x e': 'command:enhance' } }] }))
+  expect(await enhanceKey($)).toBe('Ctrl+X E is already set for Enhance. Restart the session if the key does nothing.')
+  expect(w.writes).toEqual([])
+})
+
+test('enhance key: a file that is not JSON is never written', async ($, on) => {
+  const w = keyWorld(on, '{ "bindings": [ // my notes\n')
+  expect(await enhanceKey($)).toBe('keybindings.json is not readable JSON, so nothing was changed.')
+  expect(w.writes).toEqual([])
 })
 
 // 8. the gate: factual deny text, a system-section rule, and an escape after GATE_LIMIT denials

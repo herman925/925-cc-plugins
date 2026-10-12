@@ -28,6 +28,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 | `/askchoices on`, `/askchoices off` | Turns the `ask_choices` picker on or off. Off by default. |
 | `/enhance` | Enhances the text in the prompt box. |
 | `/enhance <draft>` | Enhances a draft given in the command. From the prompt box, the result goes back in the box, as Enhance does. Elsewhere (for example `claude -p`), it shows the result and the model that answered (`via`), with its notes. |
+| `/enhance-key` | Adds Ctrl+X E for Enhance to your `keybindings.json`. |
 
 ## The plan gate
 
@@ -51,7 +52,7 @@ The enhancer rewrites the prompt box so Claude can act on it, using the project 
 - **No picker:** in a session with no picker (for example `claude -p`), the questions cannot be asked. The result is `Enhancer: it needs answers, and no picker is open in this session.`
 - **`/enhance <draft>`:** from the prompt box, the enhanced draft goes back in the box, ready to send. Elsewhere, the result is shown.
   For a draft too long for the band to stay on screen, start it with `/enhance`.
-- **A key for Enhance:** in `~/.claude/keybindings.json`, bind a chord to the `/enhance` command in the `Chat` context. It enhances the box as it stands, even when the band is off screen. `ctrl+x e` (Ctrl+X, then E) is free by default:
+- **A key for Enhance:** Settings → Add Ctrl+X E for Enhance, or `/enhance-key`. It adds Ctrl+X, then E, to `keybindings.json` in your Claude config folder; the key enhances the box as it stands, even when the band is off screen. It runs only when you ask. If Ctrl+X E is already bound, or the file is not readable JSON, nothing is changed. By hand, the same key in the `Chat` context:
 
   ```json
   { "bindings": [{ "context": "Chat", "bindings": { "ctrl+x e": "command:enhance" } }] }
@@ -96,7 +97,7 @@ The answers are saved. Settings > Setup > **Run setup again** asks the questions
 Settings is a button on the band. It has five groups; only Enhancer is open at first. Each group collapses.
 
 - **Band:** Hide tool details; Ask choices; Progress look (List, Bars).
-- **Enhancer:** Enhancer (on or off); Auto-enhance on Enter; Model; Chat context; the four context sources.
+- **Enhancer:** Enhancer (on or off); Auto-enhance on Enter; Add Ctrl+X E for Enhance (a button); Model; Chat context; the four context sources.
 - **Assumptions:** Track assumptions; Flag undeclared edits.
 - **Shelf:** placeholder, coming in a later stage.
 - **Setup:** Run setup again.

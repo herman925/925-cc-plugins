@@ -868,6 +868,54 @@ export const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
 /** The home folder: USERPROFILE, else HOME, as team-orchestrator resolves it. */
 export const homeOf = (env: { USERPROFILE?: string; HOME?: string }) => normPath(env.USERPROFILE || env.HOME || '')
 
+/** The Claude config folder: CLAUDE_CONFIG_DIR, else <home>/.claude, as the session registry is found. '' when none is set. */
+export const configDirOf = (env: { CLAUDE_CONFIG_DIR?: string; USERPROFILE?: string; HOME?: string }) =>
+  env.CLAUDE_CONFIG_DIR ? normPath(env.CLAUDE_CONFIG_DIR) : homeOf(env) ? `${homeOf(env)}/.claude` : ''
+
+/** The key /enhance-key adds to keybindings.json: Ctrl+X, then E, in the Chat context, running /enhance. */
+export const ENHANCE_CHORD = 'ctrl+x e'
+export const ENHANCE_ACTION = 'command:enhance'
+const RESTART = 'Restart the session if the key does nothing.'
+
+/**
+ * What /enhance-key does to keybindings.json, given its text (undefined: there is no file): the text to write, if any,
+ * and the one line to show. A file that does not parse, or a Ctrl+X E already bound in Chat (to anything, null too), is
+ * left as it is. Otherwise every other field is kept, with the file's own indent and line ends.
+ */
+export function enhanceKeyEdit(text: string | undefined): { write?: string; line: string } {
+  const added = `Added Ctrl+X E for Enhance. ${RESTART}`
+  if (text === undefined) {
+    const file = {
+      $schema: 'https://www.schemastore.org/claude-code-keybindings.json',
+      $docs: 'https://code.claude.com/docs/en/keybindings',
+      bindings: [{ context: 'Chat', bindings: { [ENHANCE_CHORD]: ENHANCE_ACTION } }],
+    }
+    return { write: `${JSON.stringify(file, null, 2)}\n`, line: added }
+  }
+  const unreadable = { line: 'keybindings.json is not readable JSON, so nothing was changed.' }
+  let file: any
+  try {
+    file = JSON.parse(text)
+  } catch {
+    return unreadable
+  }
+  if (!file || typeof file !== 'object' || Array.isArray(file) || (file.bindings !== undefined && !Array.isArray(file.bindings))) return unreadable
+  const chats = ((file.bindings ?? []) as any[]).filter(b => b?.context === 'Chat' && b.bindings && typeof b.bindings === 'object' && !Array.isArray(b.bindings))
+  // keys are read case-insensitively, with any spacing between the two presses
+  const isChord = (k: string) => k.trim().toLowerCase().replace(/^control\+/, 'ctrl+').split(/\s+/).join(' ') === ENHANCE_CHORD
+  const bound = chats.flatMap(c => Object.entries(c.bindings).filter(([k]) => isChord(k)).map(([, v]) => v))
+  if (bound.length > 0) {
+    const v = bound[bound.length - 1]
+    if (v === ENHANCE_ACTION) return { line: `Ctrl+X E is already set for Enhance. ${RESTART}` }
+    return { line: `Ctrl+X E is taken by ${typeof v === 'string' ? v : JSON.stringify(v)} in keybindings.json, so nothing was changed.` }
+  }
+  if (chats.length > 0) chats[0].bindings[ENHANCE_CHORD] = ENHANCE_ACTION
+  else file.bindings = [...(file.bindings ?? []), { context: 'Chat', bindings: { [ENHANCE_CHORD]: ENHANCE_ACTION } }]
+  const indent = text.match(/^([ \t]+)\S/m)?.[1] ?? 2
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  return { write: JSON.stringify(file, null, indent).split('\n').join(eol) + (/\n$/.test(text) ? eol : ''), line: added }
+}
+
 export const assumptionsDir = (root: string) => `${normPath(root)}/${STORE_DIR}`
 
 /**
