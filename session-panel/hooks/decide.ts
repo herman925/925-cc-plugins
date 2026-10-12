@@ -300,6 +300,65 @@ export function roleFor(rosterText: string, sessionId: string): string | undefin
 
 // ---------- the step itself ----------
 
+// ---------- where the key is kept: the global env in settings.json ----------
+
+/**
+ * The variable the pass reads, and the global place it is written: the `env` map in the user's `settings.json`.
+ * The engine reads that map for every session, so a key written here is a global env, not a per-session one, and the
+ * read path of the pass does not change.
+ */
+export const ENV_KEY = 'TYPESAFE_API_KEY'
+
+/** A key shown as `abcd…wxyz`, never in full, so a screenshot or a log cannot leak it. */
+export function maskKey(key: string): string {
+  // under 16 characters, showing the ends would give most of the key away, so none of it is shown
+  if (key.length < 16) return '•'.repeat(key.length)
+  return `${key.slice(0, 4)}…${key.slice(-4)}`
+}
+
+/**
+ * Adds or removes one key in a settings file's `env` map, leaving every other setting exactly as it was. A null value
+ * removes the key; a map that ends up empty is dropped, so a settings file that never had `env` gets it back. The text
+ * is returned unchanged (changed: false) when there is nothing to do.
+ *
+ * A file that cannot be read as a JSON object is never written over: that is the isOk:false case, and the caller
+ * changes nothing and says why.
+ */
+export function withEnvKey(
+  text: string | undefined,
+  name: string,
+  value: string | null,
+): { isOk: true; text: string; changed: boolean } | { isOk: false; reason: string } {
+  const empty = text === undefined || text.trim() === ''
+  let root: Record<string, unknown> = {}
+  if (!empty) {
+    try {
+      const parsed = JSON.parse(text as string)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { isOk: false, reason: 'settings.json is not an object' }
+      root = parsed as Record<string, unknown>
+    } catch {
+      return { isOk: false, reason: 'settings.json is not valid JSON' }
+    }
+  }
+  const raw = root.env
+  const env: Record<string, string> = {}
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string') env[k] = v
+  }
+  const had = Object.hasOwn(env, name)
+  if (value === null) {
+    if (!had) return { isOk: true, text: text ?? '', changed: false }
+    delete env[name]
+  } else {
+    if (had && env[name] === value) return { isOk: true, text: text ?? '', changed: false }
+    env[name] = value
+  }
+  if (Object.keys(env).length > 0) root.env = env
+  else delete root.env
+  // two spaces, as the engine's own settings files use, and one newline at the end
+  return { isOk: true, text: `${JSON.stringify(root, null, 2)}\n`, changed: true }
+}
+
 // ---------- the Jev pass (slice 2): TypeSafe System One, opt-in ----------
 
 export const JEV_URL = 'https://api.typesafe.ai/v1/systemone'

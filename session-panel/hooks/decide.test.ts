@@ -4,6 +4,7 @@ import type { Assumption } from '../types'
 import {
   DECIDE_FILE,
   DEFAULT_THRESHOLD,
+  ENV_KEY,
   JEV_FAIL_TOAST,
   JEV_KEY_VAR,
   JEV_KEEP,
@@ -31,6 +32,7 @@ import {
   keepJev,
   keepJevShortlist,
   keepShortlist,
+  maskKey,
   overlapOf,
   parseRules,
   parseJevReply,
@@ -40,6 +42,7 @@ import {
   roleFor,
   runDecide,
   runJev,
+  withEnvKey,
   scoreAssumption,
   scoreAll,
   words,
@@ -708,4 +711,75 @@ test('order: the Jev task type picks the threshold the digest is built with', as
   expect(strict.text).toBe('')
   const loose = await runDecide(ioOf({ jev: true, key: 'k', rules, entries, reply: jevReply({ 1: 0.99 }, 'other') }).io, false)
   expect(loose.text).toContain('#1')
+})
+
+// ---------- 8. the API key: the global env in settings.json ----------
+
+test('key: the variable is the one the pass already reads', () => {
+  expect(ENV_KEY).toBe('TYPESAFE_API_KEY')
+  expect(JEV_KEY_VAR).toBe(ENV_KEY)
+})
+
+test('key: a key is never shown in full', () => {
+  // neutral test strings on purpose: something shaped like a real credential must never sit in this file
+  expect(maskKey('abcdEFGHijklMNOP')).toBe('abcd…MNOP')
+  expect(maskKey('abc')).toBe('•'.repeat(3))
+  // under 16 characters the ends are not shown at all, or most of the key would be given away by the mask itself
+  expect(maskKey('abcdefgh')).toBe('•'.repeat(8))
+  expect(maskKey('abcdefghijklmno')).toBe('•'.repeat(15))
+  // 16 characters is the first length that shows both ends
+  expect(maskKey('abcdefghijklmnop')).toBe('abcd…mnop')
+})
+
+test('key: a fresh file gains the env map, and only that', () => {
+  const out = withEnvKey(undefined, ENV_KEY, 'sk-test')
+  expect(out.isOk).toBe(true)
+  expect(JSON.parse((out as any).text)).toEqual({ env: { TYPESAFE_API_KEY: 'sk-test' } })
+  expect((out as any).text.endsWith('\n')).toBe(true)
+})
+
+test('key: every other setting is left exactly as it was', () => {
+  const before = JSON.stringify({ model: 'opus', permissions: { allow: ['Bash(ls)'] }, env: { OTHER: 'keep' } })
+  const out = withEnvKey(before, ENV_KEY, 'sk-test') as any
+  expect(out.isOk).toBe(true)
+  const after = JSON.parse(out.text)
+  expect(after.model).toBe('opus')
+  expect(after.permissions).toEqual({ allow: ['Bash(ls)'] })
+  expect(after.env).toEqual({ OTHER: 'keep', TYPESAFE_API_KEY: 'sk-test' })
+})
+
+test('key: the same value is not rewritten, and replacing one is', () => {
+  const once = JSON.stringify({ env: { TYPESAFE_API_KEY: 'sk-test' } })
+  expect(withEnvKey(once, ENV_KEY, 'sk-test')).toEqual({ isOk: true, text: once, changed: false })
+  const swapped = withEnvKey(once, ENV_KEY, 'sk-new') as any
+  expect(swapped.changed).toBe(true)
+  expect(JSON.parse(swapped.text).env.TYPESAFE_API_KEY).toBe('sk-new')
+})
+
+test('key: a null value removes only this key, and drops an env map that empties', () => {
+  const both = JSON.stringify({ model: 'opus', env: { OTHER: 'keep', TYPESAFE_API_KEY: 'sk-test' } })
+  const one = withEnvKey(both, ENV_KEY, null) as any
+  expect(JSON.parse(one.text)).toEqual({ model: 'opus', env: { OTHER: 'keep' } })
+  const last = withEnvKey(JSON.stringify({ env: { TYPESAFE_API_KEY: 'sk-test' } }), ENV_KEY, null) as any
+  expect(JSON.parse(last.text)).toEqual({})
+  // nothing to remove: the file is not touched
+  const none = JSON.stringify({ model: 'opus' })
+  expect(withEnvKey(none, ENV_KEY, null)).toEqual({ isOk: true, text: none, changed: false })
+})
+
+test('key: a settings file that is not a readable object is never written over', () => {
+  expect(withEnvKey('not json at all', ENV_KEY, 'sk-test')).toEqual({ isOk: false, reason: 'settings.json is not valid JSON' })
+  expect(withEnvKey('[1,2]', ENV_KEY, 'sk-test')).toEqual({ isOk: false, reason: 'settings.json is not an object' })
+  expect(withEnvKey('"a string"', ENV_KEY, 'sk-test')).toEqual({ isOk: false, reason: 'settings.json is not an object' })
+})
+
+test('key: a junk env map counts as no env map, and non-string values are dropped', () => {
+  const out = withEnvKey(JSON.stringify({ env: { N: 5, S: 'keep' } }), ENV_KEY, 'sk-test') as any
+  expect(out.changed).toBe(true)
+  // the number value is dropped, the string is kept, and the key is added
+  expect(JSON.parse(out.text).env).toEqual({ S: 'keep', TYPESAFE_API_KEY: 'sk-test' })
+  const junk = withEnvKey(JSON.stringify({ env: 'nonsense' }), ENV_KEY, 'sk-test') as any
+  expect(JSON.parse(junk.text).env).toEqual({ TYPESAFE_API_KEY: 'sk-test' })
+  const list = withEnvKey(JSON.stringify({ env: ['a'] }), ENV_KEY, 'sk-test') as any
+  expect(JSON.parse(list.text).env).toEqual({ TYPESAFE_API_KEY: 'sk-test' })
 })

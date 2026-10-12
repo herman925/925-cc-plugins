@@ -96,7 +96,7 @@ import {
   redirectText,
   startTurn,
 } from './logic'
-import { DECIDE_FILE, THRESHOLD_CHOICES, clampThreshold, runDecide, roleFor, type DecideIo } from './decide'
+import { DECIDE_FILE, ENV_KEY, THRESHOLD_CHOICES, clampThreshold, maskKey, runDecide, roleFor, withEnvKey, type DecideIo } from './decide'
 
 type Hooked = EngineInterface
 
@@ -525,6 +525,78 @@ async function headsOfRoster($: Hooked): Promise<Set<string> | undefined> {
 
 // The decision step (#91, slice 1). It never blocks a turn: the flag keeps its toast to one per load.
 let decideWarned = false
+
+/** The user settings file that holds the global env: `<config dir>/settings.json`. '' when the dir is unknown. */
+async function settingsFile($: Hooked): Promise<string> {
+  const none = () => undefined
+  const custom = await $.env.get('CLAUDE_CONFIG_DIR').catch(none)
+  if (custom !== undefined && custom.trim() !== '') return `${normPath(custom)}/settings.json`
+  const home = (await $.env.get('USERPROFILE').catch(none)) || (await $.env.get('HOME').catch(none))
+  return home === undefined || home.trim() === '' ? '' : `${homeOf({ USERPROFILE: home })}/.claude/settings.json`
+}
+
+/**
+ * Writes the key into the global env in settings.json, so every future session has it, and into this session's
+ * environment so the pass works without a restart. The file's other settings are left exactly as they were, and a
+ * settings file that cannot be read is never overwritten.
+ */
+async function setApiKey($: Hooked, value: string) {
+  const file = await settingsFile($)
+  if (file === '') {
+    $.ui.toast('Session Panel: the settings folder could not be found, so the key was not saved.')
+    return
+  }
+  const text = await readText($, file)
+  const written = withEnvKey(text, ENV_KEY, value)
+  if (!written.isOk) {
+    $.ui.toast(`Session Panel: ${written.reason}, so the key was not saved. Fix it, then try again.`)
+    return
+  }
+  try {
+    if (written.changed) {
+      if (text !== undefined) await $.fs.write(`${file}.session-panel.bak`, text)
+      await $.fs.write(file, written.text)
+    }
+    await $.env.set('TYPESAFE_API_KEY', value)
+  } catch (err) {
+    $.ui.toast(`Session Panel: the key was not saved (${String((err as any)?.message ?? err).slice(0, 60)}).`)
+    return
+  }
+  $.ui.toast(`${ENV_KEY} saved to ${file.split('/').pop()} for every session.`)
+}
+
+/** Removes the key from the global env and this session. The key value itself is never said. */
+async function clearApiKey($: Hooked) {
+  const file = await settingsFile($)
+  if (file === '') return
+  const text = await readText($, file)
+  const written = withEnvKey(text, ENV_KEY, null)
+  if (!written.isOk) {
+    $.ui.toast(`Session Panel: ${written.reason}, so the key was left alone.`)
+    return
+  }
+  try {
+    if (written.changed) await $.fs.write(file, written.text)
+    await $.env.set('TYPESAFE_API_KEY', '')
+  } catch {
+    // the file is the real home; a session that cannot unset its own copy still loses the key at the next start
+  }
+  $.ui.toast(`${ENV_KEY} removed from settings.json.`)
+}
+
+/** The Set API key button: ask in the dialog, then save. An empty answer changes nothing. */
+async function askApiKey($: Hooked) {
+  let answer: string
+  try {
+    answer = await $.ui.ask(`Paste your TypeSafe API key. It is saved to the global env in settings.json, for every session.`, ['Cancel'])
+  } catch {
+    $.ui.toast('Session Panel: no picker is open in this session, so the key was not asked for.')
+    return
+  }
+  const value = answer.trim()
+  if (value === '' || value === 'Cancel') return
+  await setApiKey($, value)
+}
 
 /** The decision step's engine calls and state as plain functions, so the step can be tested without the band. */
 function decideIo($: Hooked): DecideIo {
@@ -1135,6 +1207,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const enh = await read($, enhancerA)
     const openGroups = await read($, openGroupsA)
     const version = await read($, versionA)
+    // the key itself never enters the view: only whether one is in force, masked, for the status line
+    const envKey = await $.env.get('TYPESAFE_API_KEY').catch(() => undefined)
     const track = await read($, trackA)
     const hiddenCols = await read($, hiddenColsA)
     const reveal = await read($, revealA)
@@ -1251,10 +1325,30 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         id: 'jev',
         group: 'assumptions',
         label: 'Jev pass',
-        hint: 'A second opinion from TypeSafe, one request per turn. Needs TYPESAFE_API_KEY.',
+        hint: 'A second opinion from TypeSafe, one request per turn. Needs an API key.',
         kind: 'toggle',
         isOn: prefs.jev,
         set: v => void setPrefs($, { jev: v }),
+      },
+      {
+        id: 'key',
+        group: 'assumptions',
+        label: 'API key',
+        // the key itself is never drawn: only which one is in force, and where it came from
+        hint:
+          envKey === undefined || envKey.trim() === ''
+            ? 'Not set. The Jev pass stays off.'
+            : `Set: ${maskKey(envKey)} (global env, settings.json)`,
+        kind: 'button',
+        press: () => void askApiKey($),
+      },
+      {
+        id: 'key-clear',
+        group: 'assumptions',
+        label: 'Clear API key',
+        hint: 'Remove it from the global env in settings.json',
+        kind: 'button',
+        press: () => void clearApiKey($),
       },
       {
         id: 'model',
