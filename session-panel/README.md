@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.46. The version is shown dim beside the band title, as ` v0.3.46`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.52. The version is shown dim beside the band title, as ` v0.3.52`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -98,7 +98,7 @@ Settings is a button on the band. It has five groups; only Enhancer is open at f
 
 - **Band:** Hide tool details; Ask choices; Progress look (List, Bars).
 - **Enhancer:** Enhancer (on or off); Auto-enhance on Enter; Add Ctrl+X E for Enhance (a button); Model; Chat context; the four context sources.
-- **Assumptions:** Track assumptions; Flag undeclared edits.
+- **Assumptions:** Track assumptions; Flag undeclared edits; Decision step (off by default); Keep threshold (0.4 to 0.8, default 0.5); Jev pass (off by default).
 - **Shelf:** placeholder, coming in a later stage.
 - **Setup:** Run setup again.
 
@@ -156,6 +156,33 @@ Each session keeps its list in one file, written on every change and read back w
 - Merge: when a named session loads, its own old `<session id>.json` (only if its top-level sessionId is this session's) is merged into the named file, once. Statuses are kept. An old id the named file does not have is kept. An old id it already has gets the next free id, recorded in the named file's `idMap` (old id to new id). Head lines name current ids (the roster reads the named file's ids), so `idMap` is a record of the renumbering only and is not used for lookup. The merged file name is recorded in the named file's `merged` list, so a reload does not merge it again. After the named file is saved, the old file is retired: rewritten with no entries and `mergedInto` naming the named file, so each assumption is counted once. A failed save of the named file retires nothing, so the old file keeps its entries. If the retire write itself fails, the old file is retired on a later load, when its name is still in `merged` and it still holds entries; it is not merged a second time. Another session's id file is never merged.
 - An unreadable file is never overwritten.
 - Failures show a toast: `Assumptions not loaded: <reason>.` on a bad file, and `Assumptions file not written: <message>` if a write fails. A failed write never stops the turn.
+
+## Decision step
+
+Off by default. Turn it on in Settings → Assumptions → **Decision step**. It points the model at the assumptions worth reading this turn.
+
+- **Score:** each assumption gets a score from 0 to 1, from five parts: status (wrong 1, open 0.6, confirmed 0.2), age (less stale is higher), kind (declared 1, flagged 0.3), files the prompt names, and word overlap with the prompt.
+- **Keep rule:** a wrong assumption is always kept. Any other is kept when its score reaches the threshold. At most 5 are kept for each kind.
+- **Keep threshold:** Settings → Assumptions → **Keep threshold**, 0.4 to 0.8, default 0.5. A rule in `decide.json` wins over it.
+- **Digest:** one line is added to the turn, for example `Read only these assumptions: #19 (wrong: "uses the old API"), #24, #31. Skip the rest.` Wrong assumptions are quoted in full. The budget is 360 characters, about 60 to 90 tokens. Nothing kept means no digest.
+- **Jev pass:** Settings → Assumptions → **Jev pass**, off by default. It is a second opinion from TypeSafe, one request per turn.
+  - **Key:** read from the environment variable `TYPESAFE_API_KEY`. With no key, Jev is off and nothing is said.
+  - **Request:** one call to the TypeSafe API (`https://api.typesafe.ai/v1/systemone`, model `jev-latest`). It asks, for each shortlisted assumption, whether it is relevant to the prompt, and it labels the prompt with one task type: build, fix, review, research, docs or other.
+  - **Keep:** an assumption is kept when its answer is above 0.8, at most 5 for each kind. Wrong assumptions are always kept.
+  - **Fallback:** no key, an error, a reply that is not usable, or an answer later than 1.5 s, and the local score is used. A failure shows one toast: `Session Panel: the Jev pass could not answer, so the local score was used.`
+- **Rules file:** `.claude/session-panel/decide.json` in the project root. It is optional and has four keys:
+
+  ```json
+  { "version": 1, "default": 0.6, "paths": { "src/**": 0.7 }, "roles": { "Builder": 0.4 }, "tasks": { "fix": 0.4 } }
+  ```
+
+  - `paths`: a glob to a threshold. `**` crosses folders, `*` and `?` stay in one folder, and matching ignores case. The longest matching glob wins.
+  - `roles`: the session's role on the team roster, to a threshold.
+  - `tasks`: a task type from the Jev pass, to a threshold. It applies only when the Jev pass answers.
+  - `default`: the threshold when no other rule matches.
+  - Order, most specific first: path, then role, then task type, then `default`, then the Settings value.
+- **Never blocks a turn.** Any failure gives no digest and the turn goes on. A bad rules file gives one toast per load: `Session Panel: decide.json could not be read, so the default threshold was used.` Other failures give one toast: `Session Panel: the decision step could not run. No pointer was added.`
+- **Not yet:** skill and context-source candidates, file spans, and self-tuning are later slices of #91.
 
 ## Status lines from the team head
 
