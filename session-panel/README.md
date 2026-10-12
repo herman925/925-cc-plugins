@@ -27,7 +27,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 | `/progress-clear` | Removes the finished bars. |
 | `/askchoices on`, `/askchoices off` | Turns the `ask_choices` picker on or off. Off by default. |
 | `/enhance` | Enhances the text in the prompt box. |
-| `/enhance <draft>` | Enhances a draft given in the command. Shows the result and the model that answered (`via`), with its notes. |
+| `/enhance <draft>` | Enhances a draft given in the command. From the prompt box, the result goes back in the box, as Enhance does. Elsewhere (for example `claude -p`), it shows the result and the model that answered (`via`), with its notes. |
 
 ## The plan gate
 
@@ -49,6 +49,13 @@ The enhancer rewrites the prompt box so Claude can act on it, using the project 
 - **Notes:** after an enhance, 2 to 4 short notes show under the buttons, saying what was added and which sources were used.
 - **Questions:** if the draft is vague, the enhancer asks up to 3 questions, one `ask` call each, then enhances again with the answers.
 - **No picker:** in a session with no picker (for example `claude -p`), the questions cannot be asked. The result is `Enhancer: it needs answers, and no picker is open in this session.`
+- **`/enhance <draft>`:** from the prompt box, the enhanced draft goes back in the box, ready to send. Elsewhere, the result is shown.
+  For a draft too long for the band to stay on screen, start it with `/enhance`.
+- **A key for Enhance:** in `~/.claude/keybindings.json`, bind a chord to the `/enhance` command in the `Chat` context. It enhances the box as it stands, even when the band is off screen. `ctrl+x e` (Ctrl+X, then E) is free by default:
+
+  ```json
+  { "bindings": [{ "context": "Chat", "bindings": { "ctrl+x e": "command:enhance" } }] }
+  ```
 - **Auto-enhance on Enter** (a setting, off by default): the first Enter enhances and fills the box, and does not send. The second Enter sends the enhanced text.
 - **Other messages:** `The box is empty. Type a draft first.` when there is nothing to enhance. `The enhancer is off. Open Settings to turn it on.` when it is off. `Enhancer: something went wrong. The box is unchanged.` on an unexpected error.
 

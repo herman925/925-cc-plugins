@@ -1080,6 +1080,19 @@ test('enhancer: an explicit draft is enhanced even when the box is empty (auto-e
   expect(f.fills).toEqual(['Build a bakery page'])
 })
 
+test('enhancer: /enhance <draft> from the prompt box puts the result back in the box; from claude -p it is shown', async ($, on) => {
+  world(on)
+  const fills: string[] = []
+  on('model.complete', () => ({ value: { isAnswered: true, text: JSON.stringify({ prompt: 'Build a bakery page', notes: [], questions: [] }) } }))
+  on('prompt.fill', (_$: any, e: any) => (fills.push(e.text), { isFilled: true }))
+  const run = (kind: string) =>
+    $.command.run({ command: 'enhance', args: 'make a bakery page', origin: { kind }, presentation: { isFullscreen: false, columns: 80 } } as any)
+  expect((await run('composer')).text).toBe('Enhanced. Check the box, then Send.')
+  expect(fills).toEqual(['Build a bakery page'])
+  expect((await run('sdk')).text).toContain('Build a bakery page')
+  expect(fills).toHaveLength(1)
+})
+
 // 8. the gate: factual deny text, a system-section rule, and an escape after GATE_LIMIT denials
 test('gate: the deny text is a fact, not an order, and the rule sits in the system section', () => {
   expect(GATE_MESSAGE).toContain('mcp__session-panel__plan_steps')
@@ -1315,8 +1328,9 @@ function storeWorld(on: any, opts: { root?: string; id?: string; files?: Record<
   const reached: string[] = []
   on('session.root', () => ({ value: opts.root ?? 'C:/proj' }))
   on('session.id', () => ({ value: opts.id ?? 'abc123' }))
-  // the kit reports paths in native form; the plugin uses forward slashes, so compare in that form
-  const slash = (q: string) => q.replace(/\\/g, '/')
+  // the kit reports paths in native form; the plugin uses forward slashes, so compare in that form. On macOS and Linux a
+  // test's C:/... path is relative, so the engine puts the working folder in front of it (<cwd>/C:/proj/... is C:/proj/...)
+  const slash = (q: string) => q.replace(/\\/g, '/').replace(/^\/.*?\/(?=[A-Za-z]:)/, '')
   // the session registry (~/.claude/sessions/<pid>.json) under the test's home, one file per live session
   const sessionsDir = 'C:/home/.claude/sessions'
   // read on each use, so a test can change opts.sessions between calls (a /clear gives a new id and a new registry record)

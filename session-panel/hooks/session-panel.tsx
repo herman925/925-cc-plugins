@@ -766,6 +766,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   on('command.run', { command: 'enhance' }, async ($, e) => {
     const draft = e.args.trim()
     if (draft === '') return { text: await runEnhance(deps($)) }
+    // typed in the box: the result goes back in the box, as the Enhance button does, for a draft too long for the band
+    if (e.origin.kind === 'composer') return { text: await runEnhance(deps($), draft) }
     try {
       return { text: formatOutcome(await enhance(engineIo($), draft, await read($, prefsA))) }
     } catch (err) {
