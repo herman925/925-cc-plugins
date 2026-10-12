@@ -25,6 +25,12 @@ export type RegEntry = { sessionId: string; cwd?: string; name?: string }
 export const REG0: RegEntry[] = [{ sessionId: ID1 }, { sessionId: ID2 }, { sessionId: ID3 }]
 
 /**
+ * The key a path the engine hands an fs hook is kept under: forward slashes, and on macOS and Linux, where a test's
+ * C:/... path is relative, without the working folder the engine put in front of it (<cwd>/C:/proj/... is C:/proj/...).
+ */
+export const keyOf = (path: string) => String(path).replace(/\\/g, '/').replace(/^\/.*?\/(?=[A-Za-z]:)/, '')
+
+/**
  * files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title. opts.env
  * adds environment values (ORCA_TERMINAL_HANDLE, say) or replaces OS; opts.registry replaces the session registry; opts.dirs gives
  * folder listings by path (links included); opts.version is the version the mod's own manifest says; opts.refuse
@@ -40,7 +46,7 @@ export const world = (
   const registry = opts.registry ?? REG0
   const regDir = 'C:/home/.claude/sessions'
   const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
-  const p = (s: string) => s.replace(/\\/g, '/')
+  const p = keyOf
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) => (t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '')
   on('session.root', async () => ({ value: 'C:/proj' }) as any)

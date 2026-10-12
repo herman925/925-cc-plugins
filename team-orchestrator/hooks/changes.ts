@@ -172,7 +172,9 @@ export const metaAfter = (m: Meta, version: string, here: string): Meta => ({
 
 // ── machines ──
 
-export const sameMachine = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+/** By the name before any domain: a Mac is "mac" to scutil and "mac.local" to a shell's HOSTNAME. */
+const shortName = (s: string) => s.trim().toLowerCase().split('.')[0] as string
+export const sameMachine = (a: string, b: string) => shortName(a) === shortName(b)
 
 /** The member's home is another PC. A member with no machine recorded, or a PC that does not know its own name, is local. */
 export const isAway = (m: Partial<Member>, here: string) => !!here && !!m.machine && !sameMachine(m.machine, here)

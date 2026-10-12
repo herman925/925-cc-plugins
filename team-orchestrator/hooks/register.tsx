@@ -411,10 +411,39 @@ async function exclude($: any) {
 // (the mod cannot delete a file). Until a team has a running top on this machine, a session that is not on the roster
 // (the person's own) writes in its place; the first write of a new team is always direct.
 
-// This machine's name, for each member's home machine and the top machine; '' when the platform gives none.
+// This machine's name, for each member's home machine and the top machine; '' when the platform gives none. macOS and
+// Linux export no COMPUTERNAME and seldom HOSTNAME (a shell variable), so there it is asked once per load: macOS's
+// LocalHostName (`uname -n` there follows the network), else `uname -n`. "localhost" names no machine.
+const host = { name: undefined as Promise<string> | undefined }
 async function machineOf($: any): Promise<string> {
   const none = () => undefined
-  return String((await $.env.get('COMPUTERNAME').catch(none)) || (await $.env.get('HOSTNAME').catch(none)) || '').trim()
+  const env = String((await $.env.get('COMPUTERNAME').catch(none)) || (await $.env.get('HOSTNAME').catch(none)) || '').trim()
+  if (env || (await isWindows($))) return env
+  host.name ??= (async () => {
+    for (const argv of [['scutil', '--get', 'LocalHostName'], ['uname', '-n']]) {
+      const r = await $.process.run(argv, { timeoutMs: 10000 }).catch(none)
+      const name = r?.exitCode === 0 ? String(r.stdout).trim() : ''
+      if (name) return /^localhost(\.|$)/i.test(name) ? '' : name
+    }
+    return ''
+  })()
+  return host.name
+}
+
+// A member launched while this PC gave no name has no machine recorded, so its crash check can never prove its home.
+// A running one records it when its own session identifies; for the rest (a crashed one never will) the writer gives
+// this PC to each whose session's transcript is in this PC's config folder: that session ran here. One with no
+// transcript here is left alone, since it may run on another PC. Each session id is looked up once per load.
+const homeLooked = new Set<string>()
+async function homeHere($: any, here: string) {
+  const bare = (await readMembers($)).filter(m => !m.machine && m.sessionId && !homeLooked.has(m.sessionId))
+  if (bare.length === 0) return
+  for (const m of bare) homeLooked.add(m.sessionId)
+  const ran = new Set((await transcripts($)).map(t => t.id))
+  const mine = new Set(bare.filter(m => ran.has(m.sessionId)).map(keyOf))
+  if (mine.size === 0) return
+  await update($, members, old => old.map(m => (mine.has(keyOf(m)) && !m.machine ? { ...m, machine: here } : m)))
+  await share($)
 }
 
 const changesDir = async ($: any) => `${await teamDir($)}/changes`
@@ -726,7 +755,34 @@ async function writeRoles($: any, list: Member[]) {
 // and a first prompt "Builder".
 const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean, name = m.name, model = m.model, effort = m.effort, first = '') =>
   `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name "${name}"${flags(model, effort)}` +
+  `${memberSettings.path ? ` --settings "${memberSettings.path}"` : ''}` +
   ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
+
+// Browser-automation plugins (Chrome DevTools, Playwright) start an idle server in every session. A member starts with
+// the ones the person enabled turned off, by a settings file of its own (--settings, on this machine), so the person's
+// own sessions keep them. Read from the settings files the way sessionPanelOn reads them, never from this session's
+// merged settings (a member launching a worker carries the file's own "off"). The path is '' when nothing is turned off.
+const BROWSER_PLUGIN = /^(chrome-devtools-mcp|playwright)@/
+const memberSettings = { path: '' }
+async function writeMemberSettings($: any): Promise<void> {
+  memberSettings.path = ''
+  try {
+    const root = await rootOf($)
+    const [user] = await claudeDirs($)
+    const named = new Map<string, unknown>()
+    for (const f of [`${root}/.claude/settings.local.json`, `${root}/.claude/settings.json`, ...(user ? [`${user}/settings.json`] : [])])
+      for (const [k, v] of Object.entries((await readJson($, f))?.enabledPlugins ?? {})) if (!named.has(k)) named.set(k, v)
+    const off = [...named].filter(([k, v]) => BROWSER_PLUGIN.test(k) && v !== false).map(([k]) => [k, false])
+    const dir = await configDir($)
+    // the path goes in double quotes on a command line a shell types: nothing there may expand
+    if (off.length === 0 || !dir || /["%$`!\r\n]/.test(dir)) return
+    const path = `${dir}/team-orchestrator/member-settings.json`
+    await putFile($, path, JSON.stringify({ enabledPlugins: Object.fromEntries(off) }, null, 1))
+    memberSettings.path = path
+  } catch {
+    // no file: the member starts with the person's plugins, as before
+  }
+}
 
 // The roster as every session sees it: the file plus the change files not yet applied (see share).
 async function pull($: any) {
@@ -1335,21 +1391,34 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   // the model it last asked for, as typed (#63), else the roster's (which holds what it ran once it has run)
   const model = await requestedModel($, m) || m.model
   envModels = await readEnvModels($)
+  await writeMemberSettings($)
   const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume, m.name, model))
   const handle = r.ok ? handleOf(r.out) : ''
   if (!handle) return false
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
-  const ready = w.ok && /"satisfied":\s*true/.test(w.out)
+  const ready = w.ok && /"satisfied":\s*true/.test(w.out) && (await registers($, sessionId))
   const here = await machineOf($)
   const back = {
     ...m, handle, sessionId, worktree: wt, model, location: 'local' as const, state: ready ? 'idle' : 'starting', briefed: true, pending: false,
     ...(here ? { machine: here } : {}),
   }
   await update($, members, old => old.map(x => (x.name === m.name ? back : x)))
+  // the roster first: a status write that fails must not leave a started member "not started" there
+  await share($)
   // its "clean" from before the close no longer counts: kept, the idle round would close it again at once
   await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now(), lastClean: 0 })
-  await share($)
   return ready
+}
+
+// Whether this PC's session registry lists the session, asked once a second for up to a minute: Orca's tui-idle can be
+// the shell's prompt, seconds before claude has started (Linux over Orca's relay), and a message sent then reaches
+// nobody. Each pause is a process: a $ call's time is not the hook's budget, a $.clock.sleep's is.
+async function registers($: any, sessionId: string): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    if ((await registry($)).some(r => r.sessionId === sessionId)) return true
+    if (i === 60) return false
+    await $.process.run((await isWindows($)) ? ['powershell.exe', '-NoProfile', '-Command', 'Start-Sleep 1'] : ['sleep', '1'], { timeoutMs: 10000 }).catch(() => undefined)
+  }
 }
 
 // ── The queue (0.5.12, #59): one file per message, queue/<ms>-<rand>.json, see changes.ts ──
@@ -1413,14 +1482,16 @@ async function tellSenderHead($: any, q: QEntry) {
     await $.ui.toast(`Team Orchestrator: a queued message for ${q.to} failed${q.error ? ` (${q.error})` : ''}; ${head ? `${head.name} could not be told` : 'its sender has no head on the roster'}.`)
 }
 
-// Make room for, and reopen, a closed member; undefined when it must wait in the queue.
-async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings): Promise<boolean | undefined> {
+// Make room for, and reopen, a closed member; undefined when it must wait in the queue. proved: the caller has just
+// proved its session dead (#65), so its process is not looked up again.
+async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings, proved = false): Promise<boolean | undefined> {
   // a member of another CLI is never reopened (#69)
   if (!isManaged(target)) return false
-  // still running after all (its tab is live): never start a second copy of the same conversation
+  // still running after all: its tab is live, or (the tab check missing it: Orca slow, say) a process of this PC holds
+  // its session. Never a second copy of the same conversation, and a stale "not started" is cleared
   const live = await liveHandleOf($, target)
-  if (live) {
-    await update($, members, old => old.map(x => (x.name === target.name ? { ...x, handle: live, state: 'idle' } : x)))
+  if (live || (!proved && (await crashCheck($, target, await readStatus($, target.name), true)).kind === 'alive')) {
+    await update($, members, old => old.map(x => (x.name === target.name ? { ...x, handle: live || x.handle, state: 'idle', pending: false } : x)))
     await writeStatusOf($, target, { state: 'idle' })
     await share($)
     return true
@@ -1476,12 +1547,14 @@ async function sendNow($: any, target: Member, message: string): Promise<{ ok: b
 // Asked only when a message is about to go to a local member silent for over 90 s of awake time (deliver, and the
 // queue's delivery), never on a timer. Proof that it is dead needs all three of #65: its home is this PC, this PC's
 // session registry (~/.claude/sessions/<pid>.json) names no live process for its session id, and no process it names
-// still carries that id. Anything short of proof is "unsure", and an unsure member is never reopened.
-async function crashCheck($: any, m: Member, st?: Status): Promise<Liveness> {
+// still carries that id. Anything short of proof is "unsure", and an unsure member is never reopened. anyHome: its home
+// is not asked for, only this PC's registry and processes: for a fresh copy the user said yes to (startHere), which
+// resumes no conversation, and for a process found alive here before a reopen.
+async function crashCheck($: any, m: Member, st?: Status, anyHome = false): Promise<Liveness> {
   const unsure = (why: string): Liveness => ({ kind: 'unsure', why })
   const here = await machineOf($)
-  if (!here) return unsure('this PC does not know its own name, so it cannot be proved to be its home')
-  if (!m.machine || !sameMachine(m.machine, here)) return unsure(`its home is not recorded as this PC (${here})`)
+  if (!here && !anyHome) return unsure('this PC does not know its own name, so it cannot be proved to be its home')
+  if ((!m.machine || !sameMachine(m.machine, here)) && !anyHome) return unsure(`its home is not recorded as this PC (${here})`)
   // the roster's id and the one its status file last wrote (a /clear changes it): proof must hold for both
   const ids = [...new Set([m.sessionId, st?.sessionId ?? ''].filter(Boolean))]
   if (ids.length === 0) return unsure('the roster has no session id for it')
@@ -1567,7 +1640,8 @@ async function hold($: any, target: Member, message: string, v: Liveness, st: St
   const mins = Math.max(1, Math.round(awakeAge(st.heartbeat, Date.now(), sleeps()) / MIN))
   return (
     `${target.name} has written no status for ${mins} min, and whether its session still runs could not be proved (${v.kind === 'unsure' ? v.why : 'no answer'}). ` +
-    'It was not reopened, so no second copy of its conversation starts. Your message is queued and is delivered when it answers.'
+    'It was not reopened, so no second copy of its conversation starts. Your message is queued and is delivered when it answers. ' +
+    `If it stays silent, ask the user whether to start a fresh copy of ${target.name} on this PC; on a yes, call team_message again with startHere: true.`
   )
 }
 
@@ -1588,19 +1662,25 @@ async function closeTheGone($: any, gone: Member[], statuses: Map<string, Status
   }
 }
 
+// Why a start failed, as the sender reads it: no tab, or a session that did not register in time (see registers).
+const NOT_STARTED = 'no Orca tab opened, or its session had not started a minute after its tab did, so your message was not sent.'
+
 // Send a message to a member, starting or reopening it first. A string result goes back to the sender.
 async function deliver($: any, target: Member, message: string, startHere = false): Promise<string> {
   const here = await machineOf($)
   let said = ''
   if (!isManaged(target)) return unmanagedAnswer(target)
   if (target.location === 'remote' && !isAway(target, here)) return `${target.name} is on another device. ${NO_MESSENGER}`
-  if (isAway(target, here)) {
+  // startHere for a member of this PC: the user said yes to a fresh copy, started once no session of it runs here (its
+  // home need not be proved: the copy resumes no conversation)
+  const fresh = startHere && !isAway(target, here) && (await crashCheck($, target, await readStatus($, target.name), true)).kind === 'dead'
+  if (isAway(target, here) || fresh) {
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
     await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
-    // its Orca workspace id is the other PC's: the copy starts in this session's workspace
-    const ok = await reopen($, { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
-    if (!ok) return `A fresh copy of ${target.name} could not be started here. Ask the person to open its tab.`
+    // a member from another PC: its Orca workspace id is that PC's, so the copy starts in this session's workspace
+    const ok = await reopen($, fresh ? target : { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
+    if (!ok) return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
   } else {
     const st = await readStatus($, target.name)
     let closed = isClosed(target, st)
@@ -1620,14 +1700,14 @@ async function deliver($: any, target: Member, message: string, startHere = fals
       // a member proved dead keeps its conversation (#65): --resume whatever the team's reopen setting says
       const t: TeamSettings = resume ? { ...t0, reopen: 'resume' } : t0
       await $.ui.toast(`${target.state === 'unstarted' ? 'Starting' : 'Reopening'} ${target.name}${resume ? ' (its session had stopped)' : ''}…`)
-      const ok = await admitAndReopen($, target, await readMembers($), t)
+      const ok = await admitAndReopen($, target, await readMembers($), t, resume)
       if (ok === undefined) {
         const me = await rosterSelf($)
         const ahead = (await readQueue($)).filter(f => f.q.state === 'pending' || f.q.state === 'sending').length
         await enqueue($, target.name, me?.me.name ?? 'someone', message)
         return `${said}${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
       }
-      if (!ok) return `${said}${target.name} could not be started. Ask the person to open its tab.`
+      if (!ok) return `${said}${target.name} could not be started: ${NOT_STARTED} Ask the person to look at its tab.`
     }
   }
   // a reopen may have changed its session id (fresh) and its home (a fresh copy here): send to the member as it is now
@@ -1829,6 +1909,7 @@ async function refresh($: any) {
   if (writer && (await pendingChanges($)).length > 0) await share($, who)
   // the team top checks that every member's rights in the roster file are the ones the mod wrote
   if (role.role === 'top') await checkGrants($).catch(() => undefined)
+  if (writes(role) && role.here) await homeHere($, role.here).catch(() => undefined)
   const list: Member[] = await readMembers($)
   const here = role.here
   // a member whose home is another PC: never asked about here, shown as "on <that PC>"
@@ -2284,6 +2365,7 @@ async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'm
   for (const m of now) (m.state = 'queued'), (m.pending = false)
   await put($, made)
   envModels = await readEnvModels($)
+  await writeMemberSettings($)
   for (const [i, group] of batches.entries()) {
     await update($, spawn, () => ({ names: now.map(m => m.name), batch: i + 1, of: batches.length }))
     for (const m of group) {
@@ -2367,6 +2449,7 @@ async function applyBulk($: any) {
     const canRestart = m.sessionId !== '' && m.handle !== '' && m.state === 'idle'
     if (canRestart) {
       envModels = await readEnvModels($)
+      await writeMemberSettings($)
       // kept on "keep": the model it last asked for (#63), else the roster's; its workspace checked first (#68)
       const model = wantModel ? b.model : (await requestedModel($, m)) || m.model
       const wt = await memberWorktree($, m)
@@ -2515,7 +2598,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'team_message',
       description:
-        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name. startHere: only after the user said yes, for a member whose home is another PC: start a fresh copy of it on this PC.',
+        'Send a message to a teammate on the roster, starting it first when it has not started yet or was closed (it is then briefed before the message arrives). Use this, not SendMessage, for messages to your direct reports. to is the member name. startHere: only after the user said yes, for a member whose home is another PC, or whose session on this PC has stopped: start a fresh copy of it on this PC.',
       inputSchema: {
         type: 'object',
         properties: { to: { type: 'string' }, message: { type: 'string' }, summary: { type: 'string' }, startHere: { type: 'boolean' } },
@@ -2695,7 +2778,8 @@ export const register: Register = (on, options) => {
     const target = list0.find(m => m.name === to || m.address === to)
     // a member from another PC, or of another CLI, is never reopened from here: SendMessage answers for it as it can
     if (target && message && isManaged(target) && !isAway(target, await machineOf($)) && isClosed(target, await readStatus($, target.name))) {
-      return { result: await deliver($, target, message) } as any
+      // in SendMessage's own shape, an object: core fails a bare string with "SendMessage output is not an object"
+      return { result: { success: true, message: await deliver($, target, message) } } as any
     }
     const r: any = await next(e)
     if (r?.deny !== undefined) return r
@@ -2803,7 +2887,7 @@ export const register: Register = (on, options) => {
       return { result: `Kept ${meta.topMachine || 'the recorded PC'} as the team top's machine. This session stays read-only for the team files and is not asked again.` } as any
     }
     if (!turnAsk.answered) return { deny: 'Ask the user first with AskUserQuestion in this turn; team_take_top applies the answer.' } as any
-    if (!here) return { result: 'This PC gives no computer name (COMPUTERNAME or HOSTNAME), so it cannot be recorded as the team top\'s machine.' } as any
+    if (!here) return { result: 'This PC gives no computer name (COMPUTERNAME, HOSTNAME, scutil or uname -n), so it cannot be recorded as the team top\'s machine.' } as any
     const was = meta.topMachine
     await serial(async () => putFile($, await metaFile($), JSON.stringify({ ...metaAfter(meta, cfg.version, here), topMachine: here }, null, 1)))
     told.away = ''
@@ -2874,6 +2958,7 @@ export const register: Register = (on, options) => {
         head: who.list.some(m => m !== who.me && m.boss === who.me.name),
         temps,
         projectScratch: t.scratchDir.trim() ? `${root}/${t.scratchDir.trim().replace(/^[\\/]+/, '')}` : '',
+        caseSensitive: !(await isWindows($)),
       })
       // the words allow it; the disk must too: no link from the allowed root down to the target, nor inside a folder
       // a recursive delete empties (a link there would carry the delete into real files). Else the engine's ask stands.

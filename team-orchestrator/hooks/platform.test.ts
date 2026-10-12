@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { workerNote } from './housekeeping'
-import { countFromPs, livenessOf, parseWinProcs, psProc, scratchDeleteAllowed, winProcScript } from './platform'
+import { countFromPs, livenessOf, parseWinProcs, psProc, scratchDeleteAllowed, scratchDeletePlan, winProcScript } from './platform'
 import { pointer } from './roles'
 
 const ID = '0638214f-11d8-4d45-be96-9d56f54f30ba'
@@ -41,6 +41,34 @@ test('anything that is not one plain delete still asks', () => {
   expect(scratchDeleteAllowed('rm -rf ~/tmp', linuxHead)).toBe(false)
   expect(scratchDeleteAllowed('cat /tmp/a', linuxHead)).toBe(false)
   expect(scratchDeleteAllowed('rm -rf', linuxHead)).toBe(false)
+})
+
+// macOS and Linux: Claude's own temp folder carries the uid (/tmp/claude-1000), and a path keeps its case
+const linuxWorker = { ...linuxHead, head: false, caseSensitive: true }
+const LINUX_OWN = `/tmp/claude-1000/-home-lin-proj/${ID}/scratchpad`
+
+test('on Linux a worker may delete inside its own session folder under /tmp/claude-<uid>, without asking', () => {
+  expect(scratchDeletePlan(`rm -rf ${LINUX_OWN}/out`, linuxWorker)?.targets).toEqual([{ root: '/tmp/claude-1000', path: `${LINUX_OWN}/out` }])
+  expect(scratchDeleteAllowed('rm -rf /tmp/claude-1000/-home-lin-proj/other-session/scratchpad', linuxWorker)).toBe(false)
+  expect(scratchDeleteAllowed(`rm -rf /tmp/claude-1000x/${ID}/out`, linuxWorker)).toBe(false)
+})
+
+test('on Linux a path is not its case-folded twin; on Windows it still is', () => {
+  const linuxLead = { ...linuxWorker, head: true }
+  expect(scratchDeleteAllowed(`rm -rf /TMP/claude-1000/p/${ID}/out`, linuxWorker)).toBe(false)
+  expect(scratchDeleteAllowed('rm -rf /home/lin/proj/.claude/Scratch/data', linuxLead)).toBe(false)
+  expect(scratchDeleteAllowed('rm -rf /home/lin/proj/.claude/scratch/data', linuxLead)).toBe(true)
+  expect(scratchDeleteAllowed('rm C:/USERS/ME/AppData/Local/Temp/out.csv', { ...winWorker, head: true })).toBe(true)
+})
+
+test('what bash expands beyond the words still asks: a brace, and /c to rm (Git Bash names the C: drive so)', () => {
+  const winOwn = `C:/Users/me/AppData/Local/Temp/claude/proj/${ID}/scratchpad`
+  expect(scratchDeleteAllowed(`rm -rf ${LINUX_OWN}/{x,/home/lin}`, linuxWorker)).toBe(false)
+  expect(scratchDeleteAllowed(`rm -rf ${winOwn}/{x,/c/Users/me}`, winWorker)).toBe(false)
+  expect(scratchDeleteAllowed(`rm -rf ${winOwn}/x /c`, winWorker)).toBe(false)
+  expect(scratchDeleteAllowed(`rm -rf ${LINUX_OWN}/x /s`, linuxWorker)).toBe(false)
+  // cmd's own deletes keep their switches
+  expect(scratchDeletePlan(`rd /s /q ${winOwn}/x`, winWorker)?.recursive).toBe(true)
 })
 
 test('on macOS and Linux the leftover count comes from ps: shells and runtimes under the member\'s own claude', () => {

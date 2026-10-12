@@ -203,7 +203,12 @@ test('a fresh reopen sends to the new session id, not the old one', async ($, on
   const files = world(on, [], [], (e: any) => {
     const a: string[] = e.argv
     if (a[1] === 'worktree' && a[2] === 'current') return ok('{"result":{"worktree":{"id":"r1::C:/proj"}}}')
-    if (a[1] === 'terminal' && a[2] === 'create') return ok('{"result":{"terminal":{"handle":"term_ae2"}}}')
+    if (a[1] === 'terminal' && a[2] === 'create') {
+      // the new session registers itself once it runs
+      const id = String(a[a.indexOf('--command') + 1]).match(/--session-id (\S+)/)?.[1]
+      files.set('C:/home/.claude/sessions/150.json', JSON.stringify({ pid: 150, sessionId: id, cwd: 'C:/proj', name: '', kind: 'interactive' }))
+      return ok('{"result":{"terminal":{"handle":"term_ae2"}}}')
+    }
     if (a[1] === 'terminal' && a[2] === 'wait') return ok('{"result":{"satisfied": true}}')
     return undefined
   })

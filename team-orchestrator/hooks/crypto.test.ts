@@ -41,8 +41,9 @@ const altered = (text: string, prefix: string, edit: (b: Uint8Array) => void, re
 }
 /** flip the low bit of byte `at` (negative: from the end) */
 const flip = (b: Uint8Array, at: number) => { const i = at < 0 ? b.length + at : at; b[i] = b[i]! ^ 1 }
-// cheap Argon2id for the tests that are not about cost
-const QUICK = { m: 8 * 1024, t: 1, p: 1 }
+// cheap Argon2id for the tests that are not about cost: 1 MiB, as 8 MiB took about 0.4 s a call in the engine on a
+// 2-core Linux machine, and the async pair's tests make up to nine calls
+const QUICK = { m: 1024, t: 1, p: 1 }
 const PAYLOAD = { address: 'home-pc.tail1234.ts.net:4417', secret: 'Zq3v8kM2nYpX7rTw', at: 1791532800000 }
 
 // ── the vendored primitives: known-answer vectors ──

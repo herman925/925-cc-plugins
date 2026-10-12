@@ -47,9 +47,15 @@ export type ScratchContext = {
   temps: string[]
   /** the project's scratch folder, absolute; '' for none */
   projectScratch: string
+  /** macOS and Linux: paths are compared with their case kept (/tmp/Claude is not /tmp/claude there) */
+  caseSensitive?: boolean
 }
 
 const DELETE = /^(rm|rmdir|del|erase|rd|remove-item|ri)$/i
+// cmd's own deletes, the only ones whose /s and /q are switches: to rm, /c is a folder (Git Bash's C: drive)
+const CMD_DELETE = /^(rmdir|del|erase|rd)$/i
+// Claude Code's own temp folder in a temp folder: claude on Windows, claude-<uid> on macOS and Linux
+const CLAUDE_TEMP = /^claude(-\d+)?$/
 // options that take a value: Remove-Item's -Path / -LiteralPath name the target, the rest are skipped with their value
 const VALUE_OPTS = /^-(path|literalpath|filter|include|exclude)$/i
 
@@ -60,8 +66,9 @@ export type ScratchPlan = { targets: ScratchTarget[]; recursive: boolean }
 
 /**
  * The delete, when a Bash or PowerShell command is only a delete of paths the member may clean up without asking;
- * undefined otherwise. Only plain literal paths (0.5.11, #60): no wildcard (* ? [ ]) and no trailing slash, since
- * either can carry the shell through a link into real files. Links themselves are checked by linkFree, on the disk.
+ * undefined otherwise. Only plain literal paths (0.5.11, #60): no wildcard (* ? [ ]), no brace ({a,/b} is two paths
+ * to bash) and no trailing slash, since each can carry the shell through a link or out of the folder. Links themselves
+ * are checked by linkFree, on the disk.
  */
 export function scratchDeletePlan(command: string, c: ScratchContext): ScratchPlan | undefined {
   const w = words(command)
@@ -84,27 +91,33 @@ export function scratchDeletePlan(command: string, c: ScratchContext): ScratchPl
       if (/r/i.test(t)) recursive = true
       continue
     }
-    if (/^\/[a-z]$/i.test(t)) {
+    if (CMD_DELETE.test(w[0] as string) && /^\/[a-z]$/i.test(t)) {
       if (/^\/s$/i.test(t)) recursive = true
       continue
     }
     raws.push(t)
   }
   if (raws.length === 0) return undefined
+  const norm = c.caseSensitive ? keepPath : normPath
   const cwd = keepPath(c.cwd)
-  const temps = c.temps.filter(Boolean).map(normPath)
-  const claudeTemps = temps.map(t => `${t}/claude`)
-  const scratch = c.projectScratch ? normPath(c.projectScratch) : ''
+  const temps = c.temps.filter(Boolean).map(norm)
+  // the Claude temp folder the path is in, if any
+  const claudeTemps = (p: string) =>
+    temps.flatMap(t => {
+      const seg = under(p, t) ? (p.slice(t.length + 1).split('/')[0] as string) : ''
+      return CLAUDE_TEMP.test(seg) ? [`${t}/${seg}`] : []
+    })
+  const scratch = c.projectScratch ? norm(c.projectScratch) : ''
   const id = c.sessionId.toLowerCase()
   const targets: ScratchTarget[] = []
   for (const raw of raws) {
-    if (raw.startsWith('~') || /[*?[\]]/.test(raw) || /[\\/]$/.test(raw)) return undefined
+    if (raw.startsWith('~') || /[*?[\]{}]/.test(raw) || /[\\/]$/.test(raw)) return undefined
     let k = keepPath(raw)
     if (!isAbs(k.toLowerCase())) k = `${cwd}/${k}`
-    const p = k.toLowerCase()
+    const p = norm(k)
     if (p.split('/').some(s => s === '..' || s === '.')) return undefined
     const roots = [
-      ...(id !== '' && p.includes(id) ? claudeTemps.filter(t => under(p, t) && p !== t) : []),
+      ...(id !== '' && p.includes(id) ? claudeTemps(p).filter(t => p !== t) : []),
       ...(c.head ? temps.filter(t => under(p, t) && p !== t) : []),
       ...(c.head && scratch !== '' && under(p, scratch) && p !== scratch ? [scratch] : []),
     ]

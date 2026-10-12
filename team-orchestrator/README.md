@@ -608,6 +608,10 @@ browser-automation servers, delete its scratch files and tell its boss "clean". 
 its reports, it is reminded to check that report's leftovers. A plain "clean" reply does not trigger the reminder
 again.
 
+Members start with the browser-automation plugins you enabled (Chrome DevTools, Playwright) turned off, so no idle
+browser server starts in each tab. The mod writes `<claude config dir>/team-orchestrator/member-settings.json` and starts
+each member with `--settings` pointing at it. Your own sessions keep the plugins.
+
 ### Assumptions from Session Panel
 
 Session Panel is a separate mod. It writes each session's open assumptions to
@@ -784,6 +788,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.31 | Linux and reliability. **No second copy:** before any reopen, the mod checks this PC's session registry and the process, and a member whose session is still held is sent to, never started again (a hung Orca call had made `claude --resume` copy a live worker). Reopen saves the roster before the status file, and finding a live tab clears `pending`, so a running member is no longer taken for one not yet started. A start counts as ready only once the new session registers (checked each second, up to 60 s); before that, the first brief could go to a Claude still loading. `startHere` also starts a fresh copy of a member of this PC whose session has stopped (it applied only to members of another PC). SendMessage to a member the mod starts answers with an object (it failed with "SendMessage output is not an object"). **Machine name:** when the environment gives none (Linux does not export `HOSTNAME`), `scutil --get LocalHostName` (macOS), then `uname -n`, once per load; names compare before any domain, and a member with no machine gets this PC once its transcript shows it ran here. **Scratch-delete auto-approval:** single-letter `/x` words are switches only for cmd's `rd`, `del`, `erase` and `rmdir` (`rm … /c` was approved, the whole C: drive in Git Bash); braces are refused; paths compare case-sensitively off Windows; the Claude temp folder `claude-<uid>` is recognised. **Browser tools:** members start with `--settings` pointing at `<config>/team-orchestrator/member-settings.json`, which turns off the browser-automation plugins the person enabled, so no idle browser server starts in each tab; the person's own sessions keep them. **Tests:** Windows-style test paths work on Linux, and the crypto tests use a cheaper Argon2id cost; 298 pass on Linux. |
 | 0.5.30 | macOS and Linux: a team folder made under a parent whose default ACL gives its owner `rw-` came out without its x bit, so every status write failed with EACCES and workers could not start. Every write now goes through `putFile`: refused with EACCES, it makes each folder on the way enterable (`chmod u+rwx`), sets a mended folder's default ACL to pass `rwx` on, and writes once more. |
 | 0.5.29 | Hermes members: `hermes/guard.py` (a `pre_tool_call` shell hook, `fail_closed` on) and `hermes/patch_check.py` (a read-only re-check after `hermes update`). Documented, with the rule that `guard.py` must stay at its path. |
 | 0.5.28 | Delete an open assumption: the head is asked once, then `SESSION-PANEL: delete <id>` is sent to the member. Only the member's boss and the team top see it. |

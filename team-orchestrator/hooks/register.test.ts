@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
+import { keyOf } from './test-world'
+
 const mountBand = ($: any) =>
   $.ui.mount({
     plugin: 'team-orchestrator',
@@ -71,10 +73,10 @@ test('once a team exists the roster and bulk tools show and the welcome screen i
 // item 4: the roster file never lands in git by accident
 const ok = (stdout: string) => ({ exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const no = { exitCode: 1, stdout: '', stderr: 'no orca in test', isStdoutTruncated: false, isStderrTruncated: false }
-// the engine hands fs hooks a native path; the map keys use forward slashes
+// the engine hands fs hooks a native path (made absolute off Windows); keyOf gives the map key
 const adoptIn = async ($: any, on: any, root: string, git: () => any, seed: [string, string][] = []) => {
   const files = new Map<string, string>(seed)
-  const p = (e: any) => String(e.path).replace(/\\/g, '/')
+  const p = (e: any) => keyOf(e.path)
   on('session.root', async () => ({ value: root }) as any)
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e)) }) as any)
   on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e)) }) as any)
@@ -117,7 +119,7 @@ const ID1 = '11111111-1111-4111-8111-111111111111'
 const ID2 = '22222222-2222-4222-8222-222222222222'
 const world = (on: any, tabs: Tab[], trs: Tr[]) => {
   const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
-  const p = (s: string) => s.replace(/\\/g, '/')
+  const p = keyOf
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) =>
     [
