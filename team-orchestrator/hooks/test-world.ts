@@ -26,15 +26,16 @@ export const REG0: RegEntry[] = [{ sessionId: ID1 }, { sessionId: ID2 }, { sessi
 
 /**
  * files in memory (keys use forward slashes), Orca answering nothing, transcripts that carry only a title. opts.env
- * adds environment values (ORCA_TERMINAL_HANDLE, say); opts.registry replaces the session registry; opts.dirs gives
- * folder listings by path (links included); opts.version is the version the mod's own manifest says.
+ * adds environment values (ORCA_TERMINAL_HANDLE, say) or replaces OS; opts.registry replaces the session registry; opts.dirs gives
+ * folder listings by path (links included); opts.version is the version the mod's own manifest says; opts.refuse
+ * makes a write fail with EACCES while it answers true.
  */
 export const world = (
   on: any,
   tabs: Tab[] = [],
   trs: Tr[] = [],
   first?: (e: any) => string | undefined,
-  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string } = {},
+  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string; refuse?: (path: string) => boolean } = {},
 ) => {
   const registry = opts.registry ?? REG0
   const regDir = 'C:/home/.claude/sessions'
@@ -43,12 +44,15 @@ export const world = (
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) => (t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '')
   on('session.root', async () => ({ value: 'C:/proj' }) as any)
-  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : opts.env?.[e.name] }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: opts.env?.[e.name] ?? (e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : undefined) }) as any)
   registry.forEach((r, i) => files.set(`${regDir}/${100 + i}.json`, JSON.stringify({ pid: 100 + i, sessionId: r.sessionId, cwd: r.cwd ?? 'C:/proj', name: r.name ?? '', kind: 'interactive' })))
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
   const manifest = (path: string) => (opts.version && path.endsWith('/.claude-plugin/plugin.json') ? JSON.stringify({ name: 'team-orchestrator', version: opts.version }) : undefined)
   on('fs.read', async (_$: any, e: any) => ({ value: manifest(p(e.path)) ?? files.get(p(e.path)) }) as any)
-  on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
+  on('fs.write', async (_$: any, e: any) => {
+    if (opts.refuse?.(p(e.path))) return { deny: `$.fs.write(${e.path}) failed: EACCES` } as any
+    return (files.set(p(e.path), e.text), { value: undefined }) as any
+  })
   on('fs.list', async (_$: any, e: any) => {
     const at = p(e.path)
     const fake = opts.dirs?.[at]

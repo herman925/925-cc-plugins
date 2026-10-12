@@ -10,7 +10,7 @@ import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './
 import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
 import type { Claim, Level } from './identity'
 import type { Sleep, Status, TeamSettings } from './status'
-import { countFromPs, linkFree, livenessOf, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
+import { countFromPs, linkFree, livenessOf, MEND_DIRS, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
 import type { Liveness, Proc } from './platform'
 import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
 import type { EnvModels } from './status'
@@ -28,6 +28,18 @@ const os = { windows: undefined as boolean | undefined }
 async function isWindows($: any): Promise<boolean> {
   if (os.windows === undefined) os.windows = String((await $.env.get('OS').catch(() => undefined)) ?? '') === 'Windows_NT'
   return os.windows
+}
+// Every file write goes through putFile (0.5.30). Refused with EACCES on macOS or Linux (a folder made without its x
+// bit, see MEND_DIRS), it mends the folders on the way and writes once more; any other failure is the caller's as before.
+async function putFile($: any, path: string, text: string): Promise<void> {
+  try {
+    return await $.fs.write(path, text)
+  } catch (err) {
+    if (!/EACCES/.test(String(err)) || (await isWindows($))) throw err
+    const r = await $.process.run(['sh', '-c', MEND_DIRS, 'sh', path.replace(/[\\/][^\\/]*$/, '')], { timeoutMs: 20000 }).catch(() => undefined)
+    if (r?.exitCode !== 0) throw err
+    return $.fs.write(path, text)
+  }
 }
 const cfg = { orcaCommand: '', version: '', versionRead: false }
 // the version shown in the panel, read once per load from this plugin's own manifest, so it always matches what is installed
@@ -369,9 +381,9 @@ async function migrate($: any) {
   } catch {
     return
   }
-  await $.fs.write(to, text)
-  await $.fs.write(`${await teamDir($)}/roster.json.bak`, text)
-  await $.fs.write(from, JSON.stringify({ movedTo: '.claude/team-orchestrator/roster.json' }))
+  await putFile($, to, text)
+  await putFile($, `${await teamDir($)}/roster.json.bak`, text)
+  await putFile($, from, JSON.stringify({ movedTo: '.claude/team-orchestrator/roster.json' }))
 }
 
 // The file sits inside the repo, so the first write of each load lists it in the repo's info/exclude: git then
@@ -388,7 +400,7 @@ async function exclude($: any) {
   const line = `${prefix ?? ''}.claude/team-orchestrator/`
   const before = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
   if (before.split(/\r?\n/).some(l => l.trim().replace(/^\//, '') === line)) return
-  await $.fs.write(path, `${before}${before === '' || before.endsWith('\n') ? '' : '\n'}${line}\n`)
+  await putFile($, path, `${before}${before === '' || before.endsWith('\n') ? '' : '\n'}${line}\n`)
 }
 
 // ── One writer (0.5.12, #59) and machines (#64), see changes.ts ──────────────────────────────────────────────
@@ -457,7 +469,7 @@ async function pendingChanges($: any): Promise<Pending[]> {
 
 async function markApplied($: any, names: string[]) {
   if (names.length === 0) return
-  await $.fs.write(`${await changesDir($)}/applied.json`, JSON.stringify({ names: appliedAfter(await readApplied($), names, Date.now()) }, null, 1))
+  await putFile($, `${await changesDir($)}/applied.json`, JSON.stringify({ names: appliedAfter(await readApplied($), names, Date.now()) }, null, 1))
 }
 
 // The roster as this session last read it (the file plus the pending changes), and which change files that read
@@ -601,14 +613,14 @@ async function writeRoster($: any, r: Writer) {
   if (before !== text) {
     await exclude($)
     const prev = await readGrantRecord($, file)
-    await $.fs.write(file, text)
+    await putFile($, file, text)
     await writeGrantRecord($, file, recordAfterWrite(prev, grantMap(rowsOf(before)), grantMap(list)))
   }
   // the stamp: the newest mod version that wrote, and the top's machine (moved only by team_take_top once set)
   if (r.role === 'top') {
     const next = metaAfter(r.meta, cfg.version, r.here)
     const was = { schemaVersion: r.meta.schemaVersion, writtenBy: r.meta.writtenBy, topMachine: r.meta.topMachine }
-    if (JSON.stringify(next) !== JSON.stringify(was) || !(await $.fs.exists(await metaFile($)))) await $.fs.write(await metaFile($), JSON.stringify(next, null, 1))
+    if (JSON.stringify(next) !== JSON.stringify(was) || !(await $.fs.exists(await metaFile($)))) await putFile($, await metaFile($), JSON.stringify(next, null, 1))
   }
   const settingsChanges = pending.filter(c => c.change.kind === 'settings')
   if (settingsChanges.length > 0) await writeSettingsFile($, applySettings(await readSettingsFile($), settingsChanges))
@@ -624,7 +636,7 @@ async function writeChangeFile($: any, r: Writer, body: { kind: 'roster'; ops: a
   const name = fileName(at, rand())
   const sid = String(await $.session.id().catch(() => ''))
   const c = { v: 1, ...body, at, by: { session: sid, member: r.me, machine: r.here, version: cfg.version } } as Change
-  await $.fs.write(`${await changesDir($)}/${name}`, JSON.stringify(c, null, 1))
+  await putFile($, `${await changesDir($)}/${name}`, JSON.stringify(c, null, 1))
   changeMemo.set(name, c)
   // this session's view has it already: as the writer later, it does not apply it again over newer edits
   seenRoster.overlay.add(name)
@@ -703,7 +715,7 @@ async function writeRoles($: any, list: Member[]) {
     if (roleSeen.get(path) === generated) continue
     const before = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : undefined
     const after = mergeRole(before, generated)
-    if (after !== before) await $.fs.write(path, after)
+    if (after !== before) await putFile($, path, after)
     roleSeen.set(path, generated)
   }
 }
@@ -1029,14 +1041,14 @@ async function moveFiles($: any, from: string, to: string) {
   const dir = await teamDir($)
   const [ro, rn] = [`${dir}/${roleFile(from)}`, `${dir}/${roleFile(to)}`]
   if (ro !== rn && (await $.fs.exists(ro))) {
-    if (!(await $.fs.exists(rn))) await $.fs.write(rn, String(await $.fs.read(ro)))
-    await $.fs.write(ro, `# ${from} was renamed\n\n${from} is now ${to}. Its role file is .claude/team-orchestrator/${roleFile(to)}.\n`)
+    if (!(await $.fs.exists(rn))) await putFile($, rn, String(await $.fs.read(ro)))
+    await putFile($, ro, `# ${from} was renamed\n\n${from} is now ${to}. Its role file is .claude/team-orchestrator/${roleFile(to)}.\n`)
     roleSeen.delete(ro)
   }
   const s = await readStatus($, from)
   if (s && statusFile(from) !== statusFile(to)) {
-    await $.fs.write(await statusPath($, to), JSON.stringify({ ...s, name: to }, null, 1))
-    await $.fs.write(await statusPath($, from), JSON.stringify({ name: from, movedTo: statusFile(to) }, null, 1))
+    await putFile($, await statusPath($, to), JSON.stringify({ ...s, name: to }, null, 1))
+    await putFile($, await statusPath($, from), JSON.stringify({ name: from, movedTo: statusFile(to) }, null, 1))
   }
 }
 
@@ -1052,7 +1064,7 @@ async function readClaims($: any): Promise<Claim[]> {
     return []
   }
 }
-const writeClaims = async ($: any, c: Claim[]) => $.fs.write(await claimsFile($), JSON.stringify(c, null, 1))
+const writeClaims = async ($: any, c: Claim[]) => putFile($, await claimsFile($), JSON.stringify(c, null, 1))
 
 // Once per session id: record the claim, warn the member's head, and tell the team top to ask the user at once.
 async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string; machine: string }) {
@@ -1194,7 +1206,7 @@ async function readStatus($: any, name: string): Promise<Status | undefined> {
   try {
     const s = JSON.parse(String(await $.fs.read(old)))
     if (!s || typeof s !== 'object' || typeof s.heartbeat !== 'number') return undefined
-    await $.fs.write(p, JSON.stringify(s, null, 1))
+    await putFile($, p, JSON.stringify(s, null, 1))
     return s as Status
   } catch {
     return undefined
@@ -1213,7 +1225,7 @@ async function readStatuses($: any, list0: Member[]): Promise<Map<string, Status
 async function writeStatusOf($: any, m: Member, patch: Partial<Status>) {
   const now = Date.now()
   const old = (await readStatus($, m.name)) ?? { name: m.name, sessionId: m.sessionId, state: 'idle', heartbeat: now }
-  await $.fs.write(await statusPath($, m.name), JSON.stringify({ ...old, ...patch, name: m.name }, null, 1))
+  await putFile($, await statusPath($, m.name), JSON.stringify({ ...old, ...patch, name: m.name }, null, 1))
 }
 
 // Every caller fires it without waiting, so it never throws: a missed heartbeat is written by the next one.
@@ -1264,7 +1276,7 @@ async function readSettingsFile($: any): Promise<TeamSettings> {
     return TEAM_SETTINGS0
   }
 }
-const writeSettingsFile = async ($: any, s: TeamSettings) => $.fs.write(await teamSettingsFile($), JSON.stringify(s, null, 1))
+const writeSettingsFile = async ($: any, s: TeamSettings) => putFile($, await teamSettingsFile($), JSON.stringify(s, null, 1))
 async function readTeamSettings($: any): Promise<TeamSettings> {
   const file = await readSettingsFile($)
   const changes = (await pendingChanges($)).filter(c => c.change.kind === 'settings')
@@ -1367,7 +1379,7 @@ async function readQueue($: any): Promise<QFile[]> {
   }
   return out
 }
-const writeQ = async ($: any, f: QFile) => $.fs.write(`${await queueDir($)}/${f.name}`, JSON.stringify(f.q, null, 1))
+const writeQ = async ($: any, f: QFile) => putFile($, `${await queueDir($)}/${f.name}`, JSON.stringify(f.q, null, 1))
 async function enqueue($: any, to: string, from: string, message: string, reason?: QReason): Promise<QFile> {
   const created = Date.now()
   const f: QFile = { name: fileName(created, rand()), q: { to, from, message, created, state: 'pending', tries: 0, ...(reason ? { reason } : {}) } }
@@ -1376,7 +1388,7 @@ async function enqueue($: any, to: string, from: string, message: string, reason
 }
 async function markPruned($: any, names: string[]) {
   if (names.length === 0) return
-  await $.fs.write(`${await queueDir($)}/pruned.json`, JSON.stringify({ names: appliedAfter(await readPruned($), names, Date.now()) }, null, 1))
+  await putFile($, `${await queueDir($)}/pruned.json`, JSON.stringify({ names: appliedAfter(await readPruned($), names, Date.now()) }, null, 1))
 }
 // The single queue.json of earlier versions: its messages move into queue/ once, and the file is left empty.
 async function migrateQueue($: any) {
@@ -1384,7 +1396,7 @@ async function migrateQueue($: any) {
   const entries = fromOldQueue(await readJson($, old), Date.now())
   if (entries.length === 0) return
   for (const q of entries) await writeQ($, { name: fileName(q.created, rand()), q })
-  await $.fs.write(old, '[]')
+  await putFile($, old, '[]')
 }
 
 // A queued message that failed for good: the sender's head is told (the sender itself when it is the top); when nobody
@@ -2102,7 +2114,7 @@ async function readRequest($: any, id: string): Promise<AddRequest | undefined> 
   const v = await readJson($, `${await requestsDir($)}/${id}.json`)
   return v && typeof v.add === 'object' && typeof v.state === 'string' ? (v as AddRequest) : undefined
 }
-const writeRequest = async ($: any, r: AddRequest) => $.fs.write(`${await requestsDir($)}/${r.id}.json`, JSON.stringify(r, null, 1))
+const writeRequest = async ($: any, r: AddRequest) => putFile($, `${await requestsDir($)}/${r.id}.json`, JSON.stringify(r, null, 1))
 
 const specLine = (s: NewSpec, list: Member[]) => {
   const boss = s.boss || headOf(list, s.team)?.name || 'user'
@@ -2793,7 +2805,7 @@ export const register: Register = (on, options) => {
     if (!turnAsk.answered) return { deny: 'Ask the user first with AskUserQuestion in this turn; team_take_top applies the answer.' } as any
     if (!here) return { result: 'This PC gives no computer name (COMPUTERNAME or HOSTNAME), so it cannot be recorded as the team top\'s machine.' } as any
     const was = meta.topMachine
-    await serial(async () => $.fs.write(await metaFile($), JSON.stringify({ ...metaAfter(meta, cfg.version, here), topMachine: here }, null, 1)))
+    await serial(async () => putFile($, await metaFile($), JSON.stringify({ ...metaAfter(meta, cfg.version, here), topMachine: here }, null, 1)))
     told.away = ''
     told.asked = false
     await $.ui.toast(`Team Orchestrator: this PC (${here}) now holds the team top.${was && was !== here ? ` ${was} is read-only for the team files from now on.` : ''}`)

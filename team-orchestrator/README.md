@@ -784,6 +784,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.30 | macOS and Linux: a team folder made under a parent whose default ACL gives its owner `rw-` came out without its x bit, so every status write failed with EACCES and workers could not start. Every write now goes through `putFile`: refused with EACCES, it makes each folder on the way enterable (`chmod u+rwx`), sets a mended folder's default ACL to pass `rwx` on, and writes once more. |
 | 0.5.29 | Hermes members: `hermes/guard.py` (a `pre_tool_call` shell hook, `fail_closed` on) and `hermes/patch_check.py` (a read-only re-check after `hermes update`). Documented, with the rule that `guard.py` must stay at its path. |
 | 0.5.28 | Delete an open assumption: the head is asked once, then `SESSION-PANEL: delete <id>` is sent to the member. Only the member's boss and the team top see it. |
 | 0.5.27 | Assumptions are opt-in: Settings → Assumptions → Show, off by default. The files are read only when it is on and Session Panel is enabled in this session, checked on each refresh. A toast says what it needs. |

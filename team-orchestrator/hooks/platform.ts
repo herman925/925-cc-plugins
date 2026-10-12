@@ -15,6 +15,16 @@ export const keepPath = (p: string) =>
 /** keepPath, lower case for comparing (the same length, so a prefix found here cuts keepPath too). */
 export const normPath = (p: string) => keepPath(p).toLowerCase()
 
+/**
+ * macOS and Linux (0.5.30): the shell that makes each folder on the way to $1 exist and enterable by its owner. A
+ * parent whose default ACL gives its owner rw- passes that to each new folder, so nothing can be written inside it
+ * (EACCES). A mended folder that carries a default ACL is set to pass rwx on, so later folders come out right.
+ */
+export const MEND_DIRS =
+  'd=$1; set --; while [ ! -d "$d" ] || [ ! -x "$d" ]; do set -- "$d" "$@"; n=$(dirname -- "$d"); [ "$n" = "$d" ] && exit 1; d=$n; done; ' +
+  'for p; do [ -d "$p" ] || mkdir -- "$p" || exit 1; chmod u+rwx -- "$p" || exit 1; ' +
+  '[ -z "$(getfacl -dcp -- "$p" 2>/dev/null)" ] || setfacl -m d:u::rwx -- "$p" || true; done'
+
 const isAbs = (p: string) => /^([a-z]:\/|\/)/.test(p)
 const under = (p: string, root: string) => root !== '' && (p === root || p.startsWith(`${root}/`))
 
