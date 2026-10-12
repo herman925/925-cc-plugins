@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.52. The version is shown dim beside the band title, as ` v0.3.52`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.53. The version is shown dim beside the band title, as ` v0.3.53`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -162,13 +162,16 @@ Each session keeps its list in one file, written on every change and read back w
 Off by default. Turn it on in Settings → Assumptions → **Decision step**. It points the model at the assumptions worth reading this turn.
 
 - **Score:** each assumption gets a score from 0 to 1, from five parts: status (wrong 1, open 0.6, confirmed 0.2), age (less stale is higher), kind (declared 1, flagged 0.3), files the prompt names, and word overlap with the prompt.
-- **Keep rule:** a wrong assumption is always kept. Any other is kept when its score reaches the threshold. At most 5 are kept for each kind.
+  - **Files:** a prompt path with a folder (`hooks/decide.ts`) matches an entry by its full path or a path suffix (`src/hooks/decide.ts` matches). A bare file name (`decide.ts`) matches by base name.
+- **Must match:** with the local score, an assumption that is not wrong is kept only when it shares a file or a meaningful word with the prompt. Status, age and kind only rank the matches; they never make one.
+- **Keep rule:** a wrong assumption is always kept. Any other is kept when it matches the prompt and its score is strictly above the threshold. At most 5 are kept for each kind.
 - **Keep threshold:** Settings → Assumptions → **Keep threshold**, 0.4 to 0.8, default 0.5. A rule in `decide.json` wins over it.
-- **Digest:** one line is added to the turn, for example `Read only these assumptions: #19 (wrong: "uses the old API"), #24, #31. Skip the rest.` Wrong assumptions are quoted in full. The budget is 360 characters, about 60 to 90 tokens. Nothing kept means no digest.
+- **Digest:** one line is added to the turn, for example `Read only these assumptions: #19 (wrong: "uses the old API"), #24, #31. Skip the rest.` The 5 newest wrong assumptions are quoted in full; any others show as `also wrong: #31, #33`. The budget is 360 characters, about 60 to 90 tokens. Nothing kept means no digest.
 - **Jev pass:** Settings → Assumptions → **Jev pass**, off by default. It is a second opinion from TypeSafe, one request per turn.
   - **Key:** read from the environment variable `TYPESAFE_API_KEY`. With no key, Jev is off and nothing is said.
   - **Request:** one call to the TypeSafe API (`https://api.typesafe.ai/v1/systemone`, model `jev-latest`). It asks, for each shortlisted assumption, whether it is relevant to the prompt, and it labels the prompt with one task type: build, fix, review, research, docs or other.
-  - **Keep:** an assumption is kept when its answer is above 0.8, at most 5 for each kind. Wrong assumptions are always kept.
+  - **Shortlist:** before Jev, the local score keeps the assumptions scored strictly above the task threshold. Wrong assumptions stay. Jev then decides relevance, so the match rule does not apply here.
+  - **Keep:** an assumption is kept when Jev's answer is above 0.8 (p > 0.8), at most 5 for each kind. Wrong assumptions are always kept.
   - **Fallback:** no key, an error, a reply that is not usable, or an answer later than 1.5 s, and the local score is used. A failure shows one toast: `Session Panel: the Jev pass could not answer, so the local score was used.`
 - **Rules file:** `.claude/session-panel/decide.json` in the project root. It is optional and has four keys:
 
