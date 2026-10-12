@@ -1899,6 +1899,30 @@ async function readAssumptions($: any) {
   await update($, assumptions, () => collectOpen(texts))
 }
 
+// A member the roster still calls not started, or keeps without a session id, whose session is proved to run: its own
+// status file is fresh and names the roster's session id (or the roster has none), or this PC's registry and process
+// list hold that id. The writer clears the stale flag and takes the id onto the roster as it is now. A start whose
+// roster write was lost (an EACCES before 0.5.31, a slow round before 0.5.32) heals: every start of a "not yet" member
+// carries its role pointer, so it counts as briefed too, as that write would have said. Nothing else of the row changes.
+async function reconcile($: any, list: Member[], statuses: Map<string, Status>, now: number) {
+  const fix = new Map<string, string>()
+  for (const m of list) {
+    if (!m.pending && m.sessionId) continue
+    const s = statuses.get(m.name)
+    const shown = shownState(s, now, sleeps())
+    if (s?.sessionId && shown !== undefined && shown !== 'offline' && shown !== 'closed' && (!m.sessionId || s.sessionId === m.sessionId)) fix.set(keyOf(m), s.sessionId)
+    else if (m.sessionId && (await crashCheck($, m, s, true)).kind === 'alive') fix.set(keyOf(m), m.sessionId)
+  }
+  if (fix.size === 0) return
+  await update($, members, old =>
+    old.map(x => {
+      const id = fix.get(keyOf(x))
+      return id === undefined ? x : { ...x, pending: false, ...(x.pending ? { briefed: true } : {}), ...(x.sessionId ? {} : { sessionId: id }) }
+    }),
+  )
+  await share($)
+}
+
 // Reads state, context, model and effort of every member: Orca's agent state plus the tab's status line, the
 // transcript where the status line says nothing. A handle that is empty or dead is found again by tab title (a
 // restarted session gets a new one); an empty session id by the transcript's customTitle.
@@ -1932,6 +1956,7 @@ async function refresh($: any) {
       return s ? { ...m, state: shownState(s, now, sleeps()) ?? m.state, model: s.model || m.model, effort: s.effort || m.effort, ctx: s.ctx ?? m.ctx } : m
     }),
   )
+  if (writes(role)) await reconcile($, list.filter(m => !skip(m)), statuses, now)
   // the assumptions are read only when the team's switch is on and Session Panel is on in this session; otherwise no file is read
   const assumingOn = (await readTeamSettings($)).assumptions && (await sessionPanelOn($))
   await update($, assumptionsOn, () => assumingOn)
