@@ -106,7 +106,10 @@ const merge = <T extends object>(m: T, patch: Record<string, unknown>): T => {
   return out as T
 }
 
-/** The roster with ops applied in order, field by field. A set or del of a member that is gone does nothing. */
+/**
+ * The roster with ops applied in order, field by field. A set or del of a member that is gone does nothing; an add of
+ * a member already there (its row sent again from an older read) only fills the fields it lacks, never rolls one back.
+ */
 export function applyOps<T extends Partial<Member>>(list: T[], ops: Op[]): T[] {
   let out = list.slice()
   for (const o of ops) {
@@ -114,7 +117,7 @@ export function applyOps<T extends Partial<Member>>(list: T[], ops: Op[]): T[] {
     else if (o.op === 'set') out = out.map(m => (keyOf(m) === o.key ? merge(m, o.patch) : m))
     else {
       const k = keyOf(o.member)
-      out = out.some(m => keyOf(m) === k) ? out.map(m => (keyOf(m) === k ? merge(m, o.member as Record<string, unknown>) : m)) : [...out, o.member as T]
+      out = out.some(m => keyOf(m) === k) ? out.map(m => (keyOf(m) === k ? ({ ...o.member, ...m } as T) : m)) : [...out, o.member as T]
     }
   }
   return out

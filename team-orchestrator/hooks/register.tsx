@@ -784,8 +784,13 @@ async function writeMemberSettings($: any): Promise<void> {
   }
 }
 
-// The roster as every session sees it: the file plus the change files not yet applied (see share).
+// The roster as every session sees it: the file plus the change files not yet applied (see share). Under the writers'
+// lock: a pull between a change file's read of the roster and its record of it would leave that record behind the
+// roster, and the next change file would send other sessions' rows again as this session's.
 async function pull($: any) {
+  await serial(() => pullNow($))
+}
+async function pullNow($: any) {
   await migrate($)
   const eff = await effective($)
   // an empty list is a real state (the last team was removed), not a missing file
@@ -2040,7 +2045,17 @@ async function refresh($: any) {
       note: withNotes(m.note, notes),
     }
   })
-  await update($, members, old => next.map(n => ({ ...n, sel: old.find(o => o.name === n.name && (o.team || n.team) === n.team)?.sel ?? n.sel })))
+  // onto the roster as it is now, not the snapshot this refresh began with: its Orca calls can take minutes, and a
+  // reopen, a pull or another session's change may have landed meanwhile. Only what this refresh changed is taken, and a
+  // roster-file field only while nobody else changed it since the snapshot (a reopen's new session id stays).
+  await update($, members, old =>
+    old.map(o => {
+      const i = list.findIndex(m => m.name === o.name && (o.team || m.team) === m.team)
+      if (i < 0) return o
+      const [m0, n] = [list[i] as any, next[i] as any]
+      return { ...o, ...Object.fromEntries(Object.keys(n).filter(k => k !== 'sel' && JSON.stringify(n[k]) !== JSON.stringify(m0[k]) && (!(STRUCT as readonly string[]).includes(k) || JSON.stringify(o[k]) === JSON.stringify(m0[k]))).map(k => [k, n[k]])) }
+    }),
+  )
   await share($)
   // a member whose message waits (hung or unsure) and whose tab is now gone: proved dead, it is closed (#65)
   if (writes(role)) await closeTheGone($, firstPass.filter(r => !r.live).map(r => r.m), statuses)
