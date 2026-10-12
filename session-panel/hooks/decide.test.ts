@@ -13,6 +13,7 @@ import {
   JEV_URL,
   TASK_CRITERIA,
   TASK_TYPES,
+  WRONG_QUOTED,
   DIGEST_CHAR_CAP,
   DIGEST_HEAD,
   DIGEST_TAIL,
@@ -20,6 +21,7 @@ import {
   FAIL_TOAST,
   MAX_PER_KIND,
   RULES_TOAST,
+  baseName,
   clampThreshold,
   digestOf,
   filesTouched,
@@ -27,6 +29,7 @@ import {
   jevId,
   jevRequestBody,
   keepJev,
+  keepJevShortlist,
   keepShortlist,
   overlapOf,
   parseRules,
@@ -118,7 +121,7 @@ test('files: an entry naming a file the prompt names scores 1; a folder path mat
 
 // ---------- 2. the keep rule ----------
 
-test('keep: an item is kept at the threshold and above, dropped below it', () => {
+test('keep: the cut is strict, so a score equal to the threshold is dropped', () => {
   const items = scoreAll(
     [
       at({ id: 1, text: 'the bakery page' }),
@@ -127,11 +130,41 @@ test('keep: an item is kept at the threshold and above, dropped below it', () =>
     'build the bakery page',
     NOW,
   )
-  for (const s of items) {
-    expect(keepShortlist([s], s.score).map(k => k.id)).toEqual([s.id])
-    expect(keepShortlist([s], Math.min(1, s.score + 0.01))).toEqual([])
-  }
-  expect(keepShortlist(items, 0).map(k => k.id).sort()).toEqual([1, 2])
+  // item 1 shares words with the prompt, so only the cut decides it
+  const match = items.find(i => i.id === 1)!
+  expect(match.matched).toBe(true)
+  expect(keepShortlist([match], Math.max(0, match.score - 0.01)).map(k => k.id)).toEqual([1])
+  expect(keepShortlist([match], match.score)).toEqual([])
+  // a matching item is kept at any threshold under its score, and the stranger is dropped by must-match whatever it is
+  expect(keepShortlist(items, 0).map(k => k.id)).toEqual([1])
+})
+
+// 1 of the review fixes (0.3.53): the local score only keeps an entry that matches the prompt at all
+test('keep: with the local score, a non-wrong item needs a file or a meaningful word to be kept', () => {
+  // all three are fresh, declared and open, so status, age and kind rank them the same way
+  const stranger = at({ id: 1, text: 'The invoices go out on Fridays' })
+  const sharesWord = at({ id: 2, text: 'The bakery page needs a footer' })
+  const sharesFile = at({ id: 3, kind: 'flagged', text: 'A line about something else', path: 'hooks/decide.ts', paths: ['hooks/decide.ts'] })
+  const items = scoreAll([stranger, sharesWord, sharesFile], 'build the bakery page in hooks/decide.ts', NOW)
+
+  expect(items.find(i => i.id === 1)!.matched).toBe(false)
+  expect(items.find(i => i.id === 2)!.matched).toBe(true)
+  expect(items.find(i => i.id === 3)!.matched).toBe(true)
+
+  const kept = keepShortlist(items, 0.01)
+  expect(kept.map(k => k.id).sort()).toEqual([2, 3])
+  // the stranger is dropped however high its status, age and kind would rank it
+  const fresh = scoreAll([at({ id: 9, kind: 'declared', status: 'open', at: NOW, text: 'A line about something else' })], 'build the bakery page', NOW)
+  expect(fresh[0].parts.status + fresh[0].parts.age + fresh[0].parts.kind).toBeGreaterThan(0.5)
+  expect(keepShortlist(fresh, 0.01)).toEqual([])
+})
+
+test('keep: a wrong item is kept even when it matches nothing at all', () => {
+  const wrong = at({ id: 5, status: 'wrong', text: 'A line about something else' })
+  const items = scoreAll([wrong], 'build the bakery page', NOW)
+  expect(items[0].matched).toBe(false)
+  expect(items[0].isWrong).toBe(true)
+  expect(keepShortlist(items, 1).map(k => k.id)).toEqual([5])
 })
 
 test("keep: a wrong item is always kept, even when its score is under the threshold", () => {
@@ -203,6 +236,52 @@ test('digest: it reads about 60 to 90 tokens', () => {
   const text = digestOf(keepShortlist(kept, 0))
   expect(text.length).toBeGreaterThan(50)
   expect(text.length).toBeLessThan(DIGEST_CHAR_CAP)
+})
+
+// 2 of the review fixes (0.3.53): at most five wrong assumptions are quoted in full
+test('digest: at most five wrong entries are quoted in full, the rest show as ids', () => {
+  const wrong = (id: number) => at({ id, status: 'wrong', text: `Wrong number ${id}.` })
+  const kept = scoreAll([wrong(1), wrong(2), wrong(3), wrong(4), wrong(5), wrong(6), wrong(7)], 'x', NOW)
+  const text = digestOf(keepShortlist(kept, 1))
+  // the five newest are quoted in full
+  for (const id of [3, 4, 5, 6, 7]) expect(text).toContain(`#${id} (wrong: "Wrong number ${id}.")`)
+  // the two oldest are ids only, after the marker
+  expect(text).toContain('also wrong: #2, #1')
+  expect(text).not.toContain('#1 (wrong:')
+  expect(text).not.toContain('#2 (wrong:')
+  // a quoted wrong entry still never counts against the budget, and the skip line is last
+  expect(text.endsWith('Skip the rest.')).toBe(true)
+  expect(WRONG_QUOTED).toBe(5)
+})
+
+test('digest: with five wrong entries or fewer there is no "also wrong" line', () => {
+  const wrong = (id: number) => at({ id, status: 'wrong', text: `Wrong ${id}.` })
+  const five = digestOf(scoreAll([wrong(1), wrong(2), wrong(3), wrong(4), wrong(5)], 'x', NOW))
+  expect(five).toContain('#5 (wrong: "Wrong 5.")')
+  expect(five).not.toContain('also wrong')
+  const six = digestOf(scoreAll([wrong(1), wrong(2), wrong(3), wrong(4), wrong(5), wrong(6)], 'x', NOW))
+  expect(six).toContain('also wrong: #1')
+})
+
+// 4 of the review fixes (0.3.53): how a prompt path matches an entry path
+test('files: a prompt path with a folder matches by full path or path suffix, never by bare name', () => {
+  const entry = (path: string) => at({ id: 1, kind: 'flagged', path, paths: [path] })
+  // full path: a match
+  expect(filesTouched(entry('hooks/decide.ts'), 'work on hooks/decide.ts please')).toBe(1)
+  // path suffix: a match
+  expect(filesTouched(entry('src/hooks/decide.ts'), 'work on hooks/decide.ts please')).toBe(1)
+  // the same bare name in another folder: NOT a match, because the prompt names a folder
+  expect(filesTouched(entry('README/decide.ts'), 'work on hooks/decide.ts please')).toBe(0)
+  expect(filesTouched(entry('src/decide.ts'), 'work on hooks/decide.ts please')).toBe(0)
+  // a deeper folder that still ends in the prompt's path is a suffix match
+  expect(filesTouched(entry('other/place/hooks/decide.ts'), 'work on hooks/decide.ts please')).toBe(1)
+  // a bare file name in the prompt still matches by base name, whatever folder either path sits in
+  expect(filesTouched(entry('src/hooks/decide.ts'), 'work on decide.ts please')).toBe(1)
+  expect(filesTouched(entry('decide.ts'), 'work on decide.ts please')).toBe(1)
+  expect(filesTouched(entry('src/other.ts'), 'work on decide.ts please')).toBe(0)
+  // the comparison ignores case and backslashes
+  expect(filesTouched(entry('Hooks\\Decide.ts'), 'work on hooks/decide.ts please')).toBe(1)
+  expect(baseName('src\\a\\b.ts')).toBe('b.ts')
 })
 
 // ---------- 4. the rules file and the rule order ----------
@@ -568,6 +647,24 @@ test('jev: with the step off, the pass is never asked for anything', async () =>
   expect((await runDecide(io, false)).text).toBe('')
   expect(calls).toEqual([])
   expect(toasts).toEqual([])
+})
+
+// 3 of the review fixes (0.3.53): the Jev path re-cuts with the same strict rule, and Jev's p > 0.8 is its own check
+test('jev: the task-type re-cut is strict too, and a wrong item still stays', () => {
+  const items = scoreAll(
+    [at({ id: 1, text: 'the bakery page' }), at({ id: 2, status: 'wrong', text: 'nothing shared' })],
+    'the bakery page',
+    NOW,
+  )
+  const match = items.find(i => i.id === 1)!
+  expect(keepJevShortlist(items, match.score).map(k => k.id)).toEqual([2])
+  expect(keepJevShortlist(items, Math.max(0, match.score - 0.01)).map(k => k.id).sort()).toEqual([1, 2])
+})
+
+test('jev: Jev relevance is its own check, so a matched item Jev rejects is dropped', async () => {
+  const items = scoreAll([at({ id: 1, text: 'the bakery page' })], 'the bakery page', NOW)
+  expect(keepJev(items, { 1: 0.79 }).map(k => k.id)).toEqual([])
+  expect(keepJev(items, { 1: 0.81 }).map(k => k.id)).toEqual([1])
 })
 
 // ---------- 7. the rule order with the task type (slice 2) ----------

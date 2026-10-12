@@ -17,6 +17,8 @@ export const THRESHOLD_CHOICES = [0.4, 0.5, 0.6, 0.7, 0.8] as const
 /** The digest's character budget: about 60-90 tokens. */
 export const DIGEST_CHAR_CAP = 360
 export const DIGEST_HEAD = 'Read only these assumptions: '
+/** At most this many wrong assumptions are quoted in full; any others are listed as ids after "also wrong:". */
+export const WRONG_QUOTED = 5
 export const DIGEST_TAIL = '\nSkip the rest.'
 /** The per-project rules file, relative to the project root. */
 export const DECIDE_FILE = '.claude/session-panel/decide.json'
@@ -49,6 +51,11 @@ export type Scored = {
   /** every candidate kind is an assumption in slice 1; the field is here so slice 2 can add kinds */
   candidateKind: string
   isWrong: boolean
+  /**
+   * True when the entry shares a file (files > 0) or a meaningful word (overlap > 0) with the prompt. Only a matching
+   * entry can be kept by the local score: status, age and kind rank the matches, they never make one.
+   */
+  matched: boolean
 }
 
 export const clampThreshold = (n: number): number => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : DEFAULT_THRESHOLD)
@@ -78,13 +85,22 @@ export function promptPaths(prompt: string): string[] {
 
 export const pathsOf = (a: Scorable): string[] => [...new Set([...(a.path === undefined ? [] : [a.path]), ...(a.paths ?? [])])]
 
-/** 1 when the entry names a file the prompt also names, 0 otherwise. */
+export const baseName = (p: string) => p.replace(/\\/g, '/').split('/').pop() ?? p
+
+/**
+ * 1 when the entry names a file the prompt also names, 0 otherwise.
+ *
+ * A prompt path that carries a folder (`hooks/decide.ts`) matches only by the full path or by a path suffix, so an
+ * entry for `src/hooks/decide.ts` matches `hooks/decide.ts`. A bare file name in the prompt (`decide.ts`) still
+ * matches by base name, whatever folder either path sits in.
+ */
 export function filesTouched(a: Scorable, prompt: string): number {
   const named = promptPaths(prompt)
   if (named.length === 0) return 0
   const mine = pathsOf(a).map(p => p.replace(/\\/g, '/').toLowerCase())
-  const base = (p: string) => p.split('/').pop() ?? p
-  const hit = mine.some(p => named.includes(p) || named.some(n => base(n) === base(p)))
+  const hit = mine.some(p =>
+    named.some(n => (n.includes('/') ? p === n || p.endsWith(`/${n}`) : baseName(p) === n)),
+  )
   return hit ? 1 : 0
 }
 
@@ -104,21 +120,28 @@ export function scoreAssumption(a: Scorable, prompt: string, now: number): Score
       parts.files * SCORE_WEIGHTS.files +
       parts.overlap * SCORE_WEIGHTS.overlap,
   )
-  return { id: a.id, text: a.text, score, parts, candidateKind: 'assumption', isWrong: a.status === 'wrong' }
+  const isWrong = a.status === 'wrong'
+  return { id: a.id, text: a.text, score, parts, candidateKind: 'assumption', isWrong, matched: parts.files > 0 || parts.overlap > 0 }
 }
 
 export const scoreAll = (entries: readonly Scorable[], prompt: string, now: number): Scored[] =>
   entries.map(a => scoreAssumption(a, prompt, now))
 
 /**
- * The keep rule: a wrong entry is always kept; any other entry is kept when its score reaches the threshold; at most
- * `maxPerKind` scored entries are kept for each kind. Wrong entries come first, then the rest by score, highest first.
+ * The keep rule. A wrong entry is always kept. Any other entry is kept only when BOTH hold:
+ *
+ * - it matches the prompt at all (`matched`: it shares a file or a meaningful word), and
+ * - its score is strictly over the threshold.
+ *
+ * Status, age and kind only rank the matches; they never make one, so a fresh, declared, open assumption about
+ * something else entirely is not kept. At most `maxPerKind` scored entries are kept for each kind. Wrong entries come
+ * first, then the rest by score, highest first.
  */
 export function keepShortlist(items: readonly Scored[], threshold: number, maxPerKind = MAX_PER_KIND): Scored[] {
   const t = clampThreshold(threshold)
   const byKind = new Map<string, Scored[]>()
   for (const i of items) {
-    if (i.isWrong || i.score < t) continue
+    if (i.isWrong || !i.matched || i.score <= t) continue
     const group = byKind.get(i.candidateKind) ?? []
     group.push(i)
     byKind.set(i.candidateKind, group)
@@ -133,21 +156,26 @@ const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 /**
  * The pointer digest: one line naming the assumptions to read this turn, wrong ones quoted in full, then the line that
- * tells the model to skip the rest. Nothing is kept means no digest at all. Wrong entries always fit; a scored entry is
- * dropped once the budget is spent, so the digest stays near 60-90 tokens.
+ * tells the model to skip the rest. Nothing is kept means no digest at all.
+ *
+ * The five newest wrong assumptions are quoted in full; any others are listed as ids only after `also wrong:`. Wrong
+ * entries always fit, however long they are. A scored entry is dropped once the budget is spent, so the digest stays
+ * near 60-90 tokens.
  */
 export function digestOf(kept: readonly Scored[], cap = DIGEST_CHAR_CAP): string {
   if (kept.length === 0) return ''
-  const piece = (i: Scored) => (i.isWrong ? `#${i.id} (wrong: "${oneLine(i.text)}")` : `#${i.id}`)
-  const parts: string[] = []
-  let len = DIGEST_HEAD.length + DIGEST_TAIL.length
-  for (const i of kept.filter(k => k.isWrong)) {
-    const s = piece(i)
-    parts.push(s)
-    len += s.length + 2
+  const wrong = [...kept.filter(k => k.isWrong)].sort((a, b) => b.id - a.id)
+  const quoted = wrong.slice(0, WRONG_QUOTED)
+  const rest = wrong.slice(WRONG_QUOTED)
+  const parts: string[] = quoted.map(i => `#${i.id} (wrong: "${oneLine(i.text)}")`)
+  let len = DIGEST_HEAD.length + DIGEST_TAIL.length + parts.reduce((n, s) => n + s.length + 2, 0)
+  const alsoWrong = rest.length > 0 ? `also wrong: ${rest.map(i => `#${i.id}`).join(', ')}` : ''
+  if (alsoWrong !== '') {
+    parts.push(alsoWrong)
+    len += alsoWrong.length + 2
   }
   for (const i of kept.filter(k => !k.isWrong)) {
-    const s = piece(i)
+    const s = `#${i.id}`
     if (len + s.length > cap) break
     parts.push(s)
     len += s.length + 2
@@ -476,10 +504,11 @@ export async function runDecide(io: DecideIo, warned: boolean): Promise<DecideOu
 }
 
 /**
- * The shortlist the task type re-thresholds before Jev scores it: the local keep rule again, on the same list, with the
- * threshold the task type picked. A wrong assumption still stays.
+ * The shortlist the task type re-thresholds before Jev scores it: the local cut again, on the same list, with the
+ * threshold the task type picked. The cut is strict, as #91 says (`score > threshold`). A wrong assumption still stays,
+ * and Jev's own `p > 0.8` is the relevance check from here on, so nothing else is filtered.
  */
 export function keepJevShortlist(items: readonly Scored[], threshold: number): Scored[] {
   const t = clampThreshold(threshold)
-  return items.filter(i => i.isWrong || i.score >= t)
+  return items.filter(i => i.isWrong || i.score > t)
 }
