@@ -5,8 +5,9 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
 import { joinLaunch, newProblem, purview, requestProblem } from './adding'
+import { fileName } from './changes'
 import { judgeTeamFiles } from './guard'
-import { adopt, ID1, ID2, ID3, mountBand, saved, TEAM, world } from './test-world'
+import { adopt, ID1, ID2, ID3, mountBand, saved, STATUS, TEAM, world } from './test-world'
 
 const m = (team: string, name: string, boss: string, level: number, extra: Partial<Member> = {}): Member => ({
   team, name, role: 'r', level, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
@@ -278,4 +279,35 @@ test('a request file not written by member_add is not applied: its asker must be
   // both are marked declined, so they are not put to the user again
   expect([ghost, outside].map(id => JSON.parse(files.get(`${TEAM}/requests/${id}.json`)!).state)).toEqual(['declined', 'declined'])
   expect(String((await add($, { request: ghost, approve: true })).result)).toContain('declined already')
+})
+
+// 0.5.35: a status file left by an earlier member of the same name does not hand its old session to the new one
+test('a re-added name starts fresh: the old member\'s status file is reset, so refresh has no old session id to take', async ($, on) => {
+  const sid = { id: ID1 }
+  const { files } = await setUp($, on, sid)
+  const old = `${STATUS}/C-W2.json`
+  files.set(old, JSON.stringify({ name: 'C-W2', sessionId: '44444444-4444-4444-8444-444444444444', state: 'idle', heartbeat: Date.now(), ctx: 9 }))
+  await ask($)
+  expect(String((await add($, { team: 'C', name: 'C-W2', boss: 'C-Head' })).result)).toContain('Added C-W2')
+  const st = JSON.parse(files.get([...files.keys()].find(k => k.endsWith('/status/C-W2.json'))!)!)
+  expect([st.sessionId, st.heartbeat]).toEqual(['', 0])
+  const c = saved(files).find((x: any) => x.name === 'C-W2')
+  expect([c.sessionId, c.pending]).toEqual(['', true])
+})
+
+// 0.5.35: a taken name is refused unless replace is asked for; replace swaps the row for a fresh one, same team only
+test('replace: a taken name in the same team is swapped for a fresh member, its queued messages failed', async ($, on) => {
+  const sid = { id: ID1 }
+  const { files } = await setUp($, on, sid)
+  files.set(`${TEAM}/queue/${fileName(Date.now(), 'q1')}`, JSON.stringify({ to: 'C-W1', from: 'C-Head', message: 'old brief', created: Date.now(), state: 'pending', tries: 0 }))
+  await ask($)
+  expect(String((await add($, { team: 'C', name: 'C-W1' })).result)).toContain('replace: true')
+  expect(String((await add($, { team: 'A', name: 'C-W1', replace: true })).result)).toContain('only a member of the same team')
+  const out = String((await add($, { team: 'C', name: 'C-W1', boss: 'C-Head', replace: true })).result)
+  expect(out).toContain('Replaced the old C-W1')
+  const rows = saved(files).filter((x: any) => x.name === 'C-W1')
+  expect(rows.length).toBe(1)
+  expect([rows[0].sessionId, rows[0].pending]).toEqual(['', true])
+  const q = JSON.parse(files.get([...files.keys()].find(k => k.includes('/queue/') && k.includes('q1'))!)!)
+  expect(q.state).toBe('failed')
 })

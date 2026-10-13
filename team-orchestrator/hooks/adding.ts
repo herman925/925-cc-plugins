@@ -19,7 +19,8 @@ const keyOf = (m: Member) => `${m.team}|${m.name}`
  * What a New member is made from. boss '' is the team's head; model and effort 'default' or '' leave it to claude.
  * by: the head or lead that asked for it (member_add); it may be the boss from the team above.
  */
-export type NewSpec = { team: string; name: string; role?: string; boss?: string; model?: string; effort?: string; by?: string }
+/** replace (0.5.35): the name is taken by a member of the same team, which this new member replaces, starting fresh. */
+export type NewSpec = { team: string; name: string; role?: string; boss?: string; model?: string; effort?: string; by?: string; replace?: boolean }
 
 /** A member's boss as the roster names it: the one in its own team first, else the one of that name in any team. */
 export const bossOf = (list: Member[], m: Member): Member | undefined =>
@@ -67,7 +68,11 @@ export function newProblem(list: Member[], s: NewSpec): string {
   const name = clean(String(s.name ?? '').trim())
   if (name === '') return 'Give the new member a name.'
   const taken = list.find(m => m.name === name || m.address === name)
-  if (taken) return `The name "${name}" is taken (team ${taken.team}). Pick another: a name is how teammates reach a session.`
+  if (taken && !s.replace)
+    return `The name "${name}" is taken (team ${taken.team}). Pick another, or replace that member with a fresh one: ask the user, then call member_add again with replace: true.`
+  if (taken && taken.team !== team) return `"${name}" is in team ${taken.team}, not ${team}: only a member of the same team can be replaced.`
+  if (taken && (taken.boss === 'user' || taken.name === s.by)) return `"${name}" is the team top or the one who asks, and cannot be replaced.`
+  if (taken && list.some(m => m.boss === taken.name && m.team === taken.team)) return `Others report to "${name}": move them first, then replace it.`
   const boss = String(s.boss ?? '').trim()
   const asker = boss !== '' && boss === s.by && list.some(m => m.name === boss)
   if (boss !== '' && !asker && !list.some(m => m.team === team && m.name === boss)) return `No member "${boss}" in team "${team}" to be the boss.`

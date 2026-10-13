@@ -1249,6 +1249,10 @@ async function machineDir($: any): Promise<string> {
 }
 const statusPath = async ($: any, name: string) => `${await machineDir($)}/${statusFile(name)}`
 
+// 0.5.35: a new member's status file starts empty. A file left by an earlier member of that name names its old session,
+// and refresh would take that id onto the new row and reopen the old conversation instead of starting fresh.
+const freshStatus = async ($: any, name: string) => putFile($, await statusPath($, name), JSON.stringify({ name, sessionId: '', state: 'idle', heartbeat: 0 }, null, 1))
+
 // A status file of an older version, in the project folder, is read once per member and session and copied here.
 const statusMigrated = new Set<string>()
 async function readStatus($: any, name: string): Promise<Status | undefined> {
@@ -2087,6 +2091,13 @@ async function refresh($: any) {
 }
 
 // Take a team, or one member of it, off the roster. Only the roster changes: no terminal is closed.
+// 0.5.34: a removed member's waiting messages fail now, so a new member given the same name is never started to receive them
+async function failQueued($: any, gone: Member[]) {
+  for (const f of await readQueue($))
+    if ((f.q.state === 'pending' || f.q.state === 'sending') && gone.some(m => m.name === f.q.to || m.address === f.q.to))
+      await writeQ($, { name: f.name, q: { ...f.q, state: 'failed', updated: Date.now(), error: `${f.q.to} was removed from the roster` } })
+}
+
 async function remove($: any, team: string, name?: string): Promise<string> {
   await pull($)
   const all = await readMembers($)
@@ -2094,10 +2105,7 @@ async function remove($: any, team: string, name?: string): Promise<string> {
   const gone = all.filter(m => m.team === t && (name === undefined || m.name === name))
   if (gone.length === 0) return name === undefined ? `No team "${team}" on the roster.` : `No member "${name}" in team "${team}".`
   await update($, members, () => all.filter(m => !gone.includes(m)))
-  // 0.5.34: its waiting messages fail now, so a new member given the same name is never started to receive them
-  for (const f of await readQueue($))
-    if ((f.q.state === 'pending' || f.q.state === 'sending') && gone.some(m => m.name === f.q.to || m.address === f.q.to))
-      await writeQ($, { name: f.name, q: { ...f.q, state: 'failed', updated: Date.now(), error: `${f.q.to} was removed from the roster` } })
+  await failQueued($, gone)
   await share($)
   return `Removed ${name === undefined ? `team "${t}" (${gone.length} member${gone.length === 1 ? '' : 's'})` : `"${name}" from team "${t}"`} from the roster. No terminal was closed.`
 }
@@ -2216,9 +2224,14 @@ async function addNew($: any, s: NewSpec): Promise<string> {
   const here = await machineOf($)
   const m = newMember(all, s)
   const added: Member = { ...m, statusFile: statusFile(m.name), ...(wt ? { worktree: wt } : {}), ...(here ? { machine: here } : {}) }
-  await update($, members, () => [...all.map(x => ({ ...x, sel: false })), added])
+  // replace: the old row goes, with its queued messages; its session and tab are left alone and never resumed
+  const old = s.replace ? all.filter(x => x.team === added.team && (x.name === added.name || x.address === added.name)) : []
+  await freshStatus($, added.name)
+  await update($, members, () => [...all.filter(x => !old.includes(x)).map(x => ({ ...x, sel: false })), added])
+  await failQueued($, old)
   await share($)
   return (
+    `${old.length ? `Replaced the old ${added.name} (its conversation is not resumed; close its tab if it is still open). ` : ''}` +
     `Added ${added.name} to team "${added.team}" under ${added.boss}, saved as not yet with its role file. ` +
     `It starts fresh and briefed on ${added.boss === 'user' ? 'its first message' : `${added.boss}'s first team_message`}.`
   )
@@ -2244,7 +2257,7 @@ const writeRequest = async ($: any, r: AddRequest) => putFile($, `${await reques
 const specLine = (s: NewSpec, list: Member[]) => {
   const boss = s.boss || headOf(list, s.team)?.name || 'user'
   const extra = [s.model && s.model !== 'default' ? `model ${s.model}` : '', s.effort && s.effort !== 'default' ? `effort ${s.effort}` : ''].filter(Boolean)
-  return `${s.name} (${s.role || 'worker'}), reporting to ${boss}${extra.length ? `, ${extra.join(', ')}` : ''}`
+  return `${s.name} (${s.role || 'worker'}), reporting to ${boss}${extra.length ? `, ${extra.join(', ')}` : ''}${s.replace ? `, REPLACING the existing ${s.name} with a fresh session` : ''}`
 }
 const askText = (r: AddRequest, list: Member[]) =>
   `MEMBER REQUEST (Team Orchestrator): ${r.by.member} asks to add a new member to team ${r.add.team}: ${specLine(r.add, list)}. ` +
@@ -2265,7 +2278,7 @@ async function memberAdd($: any, input: any): Promise<any> {
   const boss = String(input.boss ?? '').trim() || (me ? me.name : '')
   const spec: NewSpec = {
     team, name: String(input.name ?? '').trim(), role: String(input.role ?? '').trim(), boss, model: String(input.model ?? '').trim(), effort: String(input.effort ?? '').trim(),
-    ...(me ? { by: me.name } : {}),
+    ...(me ? { by: me.name } : {}), ...(input.replace === true ? { replace: true } : {}),
   }
   // your own session, not on the roster: you may always add
   if (!me) return { result: await addNew($, spec) }
@@ -2693,6 +2706,7 @@ export const register: Register = (on, options) => {
           effort: { type: 'string' },
           request: { type: 'string', description: 'team top only: the request id it was told about' },
           approve: { type: 'boolean', description: 'team top only, with request: the user\'s answer' },
+          replace: { type: 'boolean', description: 'the name is taken in that team: replace that member with a fresh one (its old conversation is not resumed). The user is asked first, as for any add.' },
         },
       },
     })
