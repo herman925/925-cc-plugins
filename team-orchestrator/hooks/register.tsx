@@ -2094,6 +2094,10 @@ async function remove($: any, team: string, name?: string): Promise<string> {
   const gone = all.filter(m => m.team === t && (name === undefined || m.name === name))
   if (gone.length === 0) return name === undefined ? `No team "${team}" on the roster.` : `No member "${name}" in team "${team}".`
   await update($, members, () => all.filter(m => !gone.includes(m)))
+  // 0.5.34: its waiting messages fail now, so a new member given the same name is never started to receive them
+  for (const f of await readQueue($))
+    if ((f.q.state === 'pending' || f.q.state === 'sending') && gone.some(m => m.name === f.q.to || m.address === f.q.to))
+      await writeQ($, { name: f.name, q: { ...f.q, state: 'failed', updated: Date.now(), error: `${f.q.to} was removed from the roster` } })
   await share($)
   return `Removed ${name === undefined ? `team "${t}" (${gone.length} member${gone.length === 1 ? '' : 's'})` : `"${name}" from team "${t}"`} from the roster. No terminal was closed.`
 }
