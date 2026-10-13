@@ -2926,7 +2926,13 @@ export const register: Register = (on, options) => {
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
     if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
     return { result: await deliver($, target, String(input.message ?? ''), input.startHere === true) } as any
-  }))
+  })).catch((_$: any, _e: any, next: any) =>
+    // 0.5.36: on a busy machine the hook can outrun its 10 s budget after the send went out; the engine then said "no
+    // tool.call hook answered", and the sender sent again. Say what is known instead, so nothing is sent twice.
+    next.error?.kind === 'timeout'
+      ? { result: 'team_message ran out of time before it could confirm. The message was most likely delivered: do not send it again. Wait for the reply, or check the member\'s row in the roster.' }
+      : { result: `team_message failed (${next.error?.kind ?? 'unknown'}${next.error?.message ? `: ${String(next.error.message).slice(0, 200)}` : ''}). Check the member's row before sending again.` },
+  )
 
   // the user's answer about moving the team top to this PC (#64): only the team top's session or the user's own (not on the
   // roster), and only after an AskUserQuestion answered in this same turn
