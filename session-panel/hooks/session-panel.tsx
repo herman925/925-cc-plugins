@@ -1313,7 +1313,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         value: prefs.chat,
         options: [
           { value: 'recent', label: 'Haiku + recent' },
-          { value: 'full', label: 'Full chat (session model)' },
+          { value: 'full', label: 'Full chat' },
         ],
         set: v => void setPrefs($, { chat: v === 'full' ? 'full' : 'recent' }),
       },
@@ -1336,46 +1336,53 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       },
     ]
     const labelW = Math.max(...settings.map(s => s.label.length))
-    // One line per setting: the name, then its description on the same line, so the card stays short.
+    const OPTS_W = 32
+    // Fixed columns, so names, options and descriptions line up on every row: state | name | options | description.
     const settingRow = (s: Setting) => {
-      const name = s.label.padEnd(labelW, ' ')
-      const hint = <Text dimColor wrap="truncate-end">{`  ${s.hint}`}</Text>
-      if (s.kind === 'button') {
-        return (
-          <Box key={`row-${s.id}`} flexDirection="row">
-            <Button key={`set-${s.id}`} plain label={name} onPress={s.press} />
-            {hint}
-          </Box>
-        )
-      }
-      if (s.kind === 'toggle') {
-        return (
-          <Box key={`row-${s.id}`} flexDirection="row">
-            {s.isOn ? pillOf(' ON ', 'green') : pillOf(' OFF', 'gray')}
-            <Text> </Text>
-            <Button key={`set-${s.id}`} plain label={name} onPress={() => s.set(!s.isOn)} />
-            {hint}
-          </Box>
-        )
-      }
+      const state = s.kind === 'toggle' ? (s.isOn ? pillOf('ON', 'green') : pillOf('OFF', 'gray')) : <Text> </Text>
+      const name = (
+        <Box width={labelW}>
+          {s.kind === 'choice' ? (
+            <Text bold>{s.label}</Text>
+          ) : (
+            <Button
+              key={`set-${s.id}`}
+              plain
+              label={s.label}
+              onPress={() => (s.kind === 'button' ? s.press() : s.kind === 'toggle' ? s.set(!s.isOn) : undefined)}
+            />
+          )}
+        </Box>
+      )
+      const options = (
+        <Box width={OPTS_W} flexDirection="row">
+          {s.kind === 'choice'
+            ? s.options.map(o =>
+                o.value === s.value ? (
+                  <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                    {pillOf(o.label, 'magenta')}
+                    <Text> </Text>
+                  </Box>
+                ) : (
+                  <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                    <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
+                    <Text> </Text>
+                  </Box>
+                ),
+              )
+            : null}
+        </Box>
+      )
       return (
         <Box key={`row-${s.id}`} flexDirection="row">
-          <Text bold>{name}</Text>
-          <Text>  </Text>
-          {s.options.map(o =>
-            o.value === s.value ? (
-              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                {pillOf(o.label, 'magenta')}
-                <Text> </Text>
-              </Box>
-            ) : (
-              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
-                <Text> </Text>
-              </Box>
-            ),
-          )}
-          {hint}
+          <Box width={6}>{state}</Box>
+          {name}
+          <Box width={2} />
+          {options}
+          <Box width={2} />
+          <Box flexGrow={1}>
+            <Text dimColor wrap="truncate-end">{s.hint}</Text>
+          </Box>
         </Box>
       )
     }
@@ -1559,7 +1566,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           {body}
           {settingsOpen ? (
             <Box position="absolute" top={1} right={0} flexDirection="column">
-              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={Math.min(width, 100)}>
+              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={Math.min(width, 120)}>
                 <Box flexDirection="row" justifyContent="space-between" width={Math.min(width, 100) - 4}><Text bold>Settings</Text>{pageControls}</Box>
                 {tabRow}
                 {tabBody}
