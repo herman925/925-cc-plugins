@@ -1387,23 +1387,42 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       { id: 'setup', title: 'Setup' },
     ]
     const activeGroup = GROUPS.find(g => g.id === settingsTab) ?? GROUPS[0]
+    // Tabs are boxes sitting on a rule: the open tab has no bottom line, so it joins the body under it.
+    const tabText = (title: string) => ` ${title} `
+    const tabsWidth = GROUPS.reduce((n, g) => n + tabText(g.title).length, 0)
+    const cardInner = Math.min(width, 60) - 4
+    // Tabs: the open tab's label is a filled pill and its rule is blank, so it joins the body under it; the others sit on a rule.
     const tabRow = (
-      <Box flexDirection="row" flexWrap="wrap">
-        {GROUPS.map(g => (
-          <Box key={`tab-${g.id}`} flexDirection="row">
-            {g.id === activeGroup.id ? (
-              pillOf(g.title, 'cyan')
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          {GROUPS.map(g =>
+            g.id === activeGroup.id ? (
+              <Box key={`tab-${g.id}`}>{pillOf(g.title, 'cyan')}</Box>
             ) : (
-              <Button key={`tab-btn-${g.id}`} plain label={` ${g.title} `} onPress={() => void update($, settingsTabA, () => g.id)} />
-            )}
-          </Box>
-        ))}
+              <Button key={`tab-btn-${g.id}`} plain label={tabText(g.title)} onPress={() => void update($, settingsTabA, () => g.id)} />
+            ),
+          )}
+        </Box>
+        <Box flexDirection="row">
+          {GROUPS.map(g => {
+            const w = tabText(g.title).length
+            return <Text key={`rule-${g.id}`} dimColor>{g.id === activeGroup.id ? ' '.repeat(w) : '─'.repeat(w)}</Text>
+          })}
+          <Text dimColor>{'─'.repeat(Math.max(0, cardInner - tabsWidth))}</Text>
+        </Box>
       </Box>
+    )
+    // The body has the height of the tallest tab, so switching tabs does not move the text below the card.
+    const settingLines = (s: Setting) => (s.kind === 'choice' ? 3 : 2) + (s.hint.length > 52 ? 1 : 0)
+    const bodyHeight = Math.max(
+      ...GROUPS.filter(g => !g.note).map(g => settings.filter(s => s.group === g.id).reduce((n, s) => n + settingLines(s), 0)),
     )
     const tabBody = activeGroup.note ? (
       <Text dimColor>{activeGroup.note}</Text>
     ) : (
-      <Box flexDirection="column">{settings.filter(s => s.group === activeGroup.id).map(settingRow)}</Box>
+      <Box flexDirection="column" height={bodyHeight} paddingLeft={1}>
+        {settings.filter(s => s.group === activeGroup.id).map(settingRow)}
+      </Box>
     )
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
     // header, a rule, then one line per entry with a light rule between entries. Each line is drawn as pieces, padded to the
