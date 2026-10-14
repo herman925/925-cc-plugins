@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Team Orchestrator</title><style>:root {
+  color-scheme:dark;
+  --bg:var(--background,#12161d);
+  --fg:var(--foreground,#e8edf2);
+  --surface:var(--card,#191f28);
+  --line:var(--border,#303a49);
+  --dim:var(--muted-foreground,#93a3b8);
+  --cyan:#51d5e3;
+  --yellow:#f0c671;
+  --purple:#c8a4fa;
+  --danger:#f59a9a;
+}
+* {
+  box-sizing:border-box;
+}
+body {
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+button,input,textarea,select {
+  font:inherit;
+  color:inherit;
+}
+button {
+  cursor:pointer;
+  border:1px solid var(--line);
+  background:var(--surface);
+  border-radius:5px;
+  padding:7px 11px;
+  line-height:1.4;
+}
+button:hover {
+  border-color:var(--cyan);
+}
+button:disabled {
+  opacity:.5;
+  cursor:not-allowed;
+}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible {
+  outline:2px solid var(--cyan);
+  outline-offset:3px;
+}
+h1,h2,p {
+  margin:0;
+}
+h1 {
+  font-size:19px;
+  font-weight:650;
+  letter-spacing:-.3px;
+}
+h2 {
+  font-size:13px;
+  font-weight:650;
+}
+p {
+  margin:8px 0;
+  color:var(--dim);
+}
+small {
+  font-size:11px;
+  color:var(--dim);
+}
+code,pre {
+  font:inherit;
+}
+main {
+  padding:22px 18px 32px;
+  max-width:1000px;
+  margin:auto;
+  min-height:calc(100vh - 132px);
+}
+.app-header {
+  position:sticky;
+  top:0;
+  background:var(--bg);
+  z-index:2;
+  border-bottom:1px solid var(--line);
+  padding:15px 18px 0;
+}
+.brand {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  font-size:15px;
+  font-weight:650;
+}
+.brand>span {
+  color:var(--cyan);
+}
+.brand small {
+  margin-left:auto;
+  font-weight:400;
+}
+nav {
+  display:flex;
+  gap:16px;
+  margin-top:14px;
+}
+nav button {
+  border:0;
+  border-bottom:2px solid transparent;
+  border-radius:0;
+  padding:7px 0 11px;
+  background:transparent;
+  color:var(--dim);
+}
+nav button.active {
+  border-bottom-color:var(--cyan);
+  color:var(--cyan);
+}
+.welcome {
+  padding:10px 0;
+}
+.welcome>p {
+  margin:8px 0 18px;
+}
+.sketch {
+  margin:20px 0 26px;
+  line-height:1.8;
+  color:var(--dim);
+  font-size:12px;
+  white-space:pre;
+  overflow:auto;
+}
+.head,.org-node.head>.glyph {
+  color:var(--yellow);
+}
+.ceo>.glyph {
+  color:var(--purple);
+}
+.lead>.glyph {
+  color:var(--cyan);
+}
+.worker>.glyph {
+  color:var(--dim);
+}
+.presets {
+  display:grid;
+  gap:8px;
+  margin:10px 0 16px;
+}
+.preset {
+  text-align:left;
+  padding:11px 12px;
+}
+.preset>span {
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+}
+.preset strong {
+  font-size:12px;
+  font-weight:550;
+}
+.preset code {
+  color:var(--cyan);
+  white-space:nowrap;
+}
+.preset small {
+  display:block;
+  margin-top:3px;
+}
+.secondary {
+  background:transparent;
+}
+.primary {
+  background:var(--cyan);
+  color:#0c2027;
+  border-color:var(--cyan);
+  font-weight:650;
+}
+.primary:hover {
+  filter:brightness(1.1);
+}
+.small {
+  font-size:11px;
+  padding:5px 8px;
+}
+.flow {
+  margin-bottom:22px;
+}
+.steps {
+  font-size:11px;
+  margin-top:8px;
+  color:var(--cyan);
+}
+.steps span {
+  color:var(--dim);
+  margin:0 4px;
+}
+.section {
+  border-top:1px solid var(--line);
+  padding:17px 0;
+  margin:12px 0;
+}
+.section h2 {
+  margin-bottom:15px;
+}
+.section h2>span {
+  color:var(--cyan);
+  margin-right:8px;
+}
+.field {
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+  margin:15px 0;
+  font-weight:550;
+}
+.field small {
+  font-weight:400;
+}
+.field .presets {
+  margin:0;
+}
+.field input,.field textarea,.field select,input[data-model],select[data-effort] {
+  width:100%;
+  min-width:0;
+  background:var(--surface);
+  border:1px solid var(--line);
+  padding:8px 10px;
+  border-radius:5px;
+  font-weight:400;
+}
+.field textarea {
+  resize:vertical;
+}
+.segments {
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.segments button {
+  font-size:11px;
+  font-weight:400;
+}
+.segments button[aria-pressed=true] {
+  border-color:var(--cyan);
+  color:var(--cyan);
+  background:color-mix(in srgb,var(--cyan) 8%,var(--surface));
+}
+.subtle {
+  font-size:11px;
+  margin-top:-7px;
+  margin-bottom:13px;
+}
+.table-scroll,.tree-scroll {
+  overflow:auto;
+  max-width:100%;
+}
+table {
+  width:100%;
+  border-collapse:collapse;
+  text-align:left;
+  font-size:11px;
+}
+th {
+  font-weight:550;
+  color:var(--dim);
+}
+th,td {
+  padding:10px 7px;
+  border-bottom:1px solid var(--line);
+  white-space:nowrap;
+}
+.models th:first-child {
+  padding-left:0;
+  width:20%;
+}
+.models td {
+  padding:7px 5px;
+}
+.models input,.models select {
+  font-size:11px;
+  min-width:95px;
+}
+.models input {
+  width:100%;
+}
+.count {
+  font-size:11px;
+  margin-bottom:14px;
+}
+.org-tree {
+  list-style:none;
+  margin:0;
+  padding-left:22px;
+}
+.org-tree.root {
+  padding-left:0;
+}
+.org-tree li {
+  position:relative;
+  padding:5px 0;
+}
+.org-tree:not(.root)>li:before {
+  content:'';
+  position:absolute;
+  left:-13px;
+  top:0;
+  bottom:0;
+  border-left:1px solid var(--line);
+}
+.org-tree:not(.root)>li:last-child:before {
+  height:20px;
+}
+.org-tree:not(.root)>li:after {
+  content:'';
+  position:absolute;
+  left:-13px;
+  top:20px;
+  width:12px;
+  border-top:1px solid var(--line);
+}
+.org-node {
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
+  padding:5px 8px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:4px;
+  white-space:nowrap;
+  font-size:11px;
+}
+.org-node small {
+  font-size:10px;
+  margin-left:8px;
+}
+.tree-scroll {
+  padding-bottom:4px;
+}
+.actions {
+  display:flex;
+  gap:9px;
+  margin-top:14px;
+}
+.notice {
+  border:1px solid var(--line);
+  border-left:3px solid var(--yellow);
+  border-radius:4px;
+  padding:11px 12px;
+  margin:0 0 16px;
+  color:var(--dim);
+  font-size:11px;
+}
+.notice.error {
+  border-left-color:var(--danger);
+  color:var(--danger);
+}
+.notice.error button {
+  margin:8px 0 0;
+  display:block;
+}
+.notice.success {
+  border-left-color:var(--cyan);
+  color:var(--fg);
+}
+.validation {
+  color:var(--danger);
+  font-size:11px;
+}
+.section-heading {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:18px;
+}
+.team-cards {
+  display:grid;
+  gap:20px;
+}
+.team-cards.columns {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));
+}
+.team-card {
+  border:1px solid var(--line);
+  padding:14px;
+  border-radius:6px;
+  min-width:0;
+}
+.team-card>header {
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:12px;
+}
+.team-card h2 {
+  color:var(--cyan);
+}
+.purpose {
+  margin:-4px 0 15px;
+  font-size:11px;
+}
+.team-card .tree-scroll {
+  margin-bottom:14px;
+}
+.name-button {
+  background:transparent;
+  border:0;
+  padding:0;
+  text-align:left;
+  font-size:11px;
+  color:var(--fg);
+}
+.name-button:hover {
+  color:var(--cyan);
+}
+.status-dot {
+  display:inline-block;
+  width:6px;
+  height:6px;
+  border:1px solid var(--dim);
+  border-radius:50%;
+  margin-right:5px;
+}
+.inspector {
+  margin-top:22px;
+  border-top:2px solid var(--cyan);
+  padding:18px 0;
+}
+.inspector h2 {
+  color:var(--cyan);
+}
+dl {
+  display:grid;
+  grid-template-columns:130px 1fr;
+  gap:8px;
+  font-size:12px;
+}
+dt {
+  color:var(--dim);
+}
+dd {
+  margin:0;
+  overflow-wrap:anywhere;
+}
+.inspector p {
+  font-size:12px;
+}
+.check {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:14px 0;
+}
+.check input {
+  accent-color:var(--cyan);
+}
+footer {
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  border-top:1px solid var(--line);
+  padding:12px 18px;
+  font-size:10px;
+  color:var(--dim);
+}
+.loading {
+  padding:20px 0;
+}
+@media(min-width:760px) {
+  main {
+    padding:26px 24px 38px;
+  }
+  .presets {
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+  .preset strong {
+    font-size:11px;
+  }
+  .preset>span {
+    flex-wrap:wrap;
+  }
+}
+@media(max-width:360px) {
+  main {
+    padding:18px 12px;
+  }
+  .steps {
+    font-size:10px;
+  }
+  .org-node small {
+    display:none;
+  }
+  .brand {
+    font-size:13px;
+  }
+  footer {
+    font-size:9px;
+  }
+  .models th,.models td {
+    padding:7px 3px;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  * {
+    scroll-behavior:auto!important;
+  }
+}
+.organisation {
+  border-top:1px solid var(--line);
+  padding:17px 0 20px;
+  margin-bottom:20px;
+}
+.chart-heading {
+  font-size:11px;
+  color:var(--dim);
+  margin:12px 0 4px;
+}
+.org-chart {
+  padding:10px 0 18px;
+}
+.org-chart>.root {
+  display:flex;
+  width:max-content;
+  min-width:100%;
+  justify-content:center;
+}
+.org-chart .org-tree {
+  display:flex;
+  padding:18px 0 0;
+  justify-content:center;
+}
+.org-chart .org-tree.root {
+  padding-top:0;
+}
+.org-chart .org-tree li {
+  padding:0 4px;
+  text-align:center;
+}
+.org-chart .org-node {
+  flex-direction:column;
+  gap:1px;
+  min-width:42px;
+  padding:5px 7px;
+  background:transparent;
+  border-color:transparent;
+  font-size:11px;
+}
+.org-chart .org-node:hover {
+  border-color:var(--cyan);
+}
+.org-chart .glyph {
+  font-size:15px;
+}
+.org-chart .org-node small {
+  display:none;
+}
+.org-chart .org-tree:not(.root)>li:before {
+  left:0;
+  right:0;
+  top:-9px;
+  height:9px;
+  bottom:auto;
+  border-left:0;
+  border-top:1px solid var(--line);
+  width:100%;
+}
+.org-chart .org-tree:not(.root)>li:after {
+  left:50%;
+  top:-9px;
+  width:0;
+  height:9px;
+  border-top:0;
+  border-left:1px solid var(--line);
+}
+.org-chart .org-tree:not(.root)>li:first-child:before {
+  left:50%;
+  width:50%;
+}
+.org-chart .org-tree:not(.root)>li:last-child:before {
+  width:50%;
+  height:9px;
+}
+.org-chart .org-tree:not(.root)>li:only-child:before {
+  border-top:0;
+}
+.org-chart .org-tree li:has(>.org-tree)>.org-node:after {
+  content:'';
+  position:absolute;
+  left:50%;
+  top:48px;
+  height:9px;
+  border-left:1px solid var(--line);
+}
+</style></head><body><div id="app" aria-busy="true"><p>Loading Team Orchestrator…</p></div><script>(() => {
+  // src/team.mjs
+  var PRESETS = [
+    { label: "Squad", sketch: "\u25CF\u252C\u25CB\u25CB\u25CB", hint: "Head + 3 workers", form: { name: "Squad", structure: "team", levels: 2, fan: 3, groups: "" } },
+    { label: "All-Purpose Team", sketch: "\u25A0\u252C\u25CF\u25CF", hint: "CEO + 2 heads, 4 workers each", form: { name: "All-Purpose-Team", structure: "organisation", levels: 3, fan: 4, groups: "Team 1, Team 2" } },
+    { label: "Tech Team", sketch: "\u25A0\u252C\u25CF\u25CF\u25CF\u25CF", hint: "CEO + 4 heads, 4 workers each", form: { name: "Tech-Team", structure: "organisation", levels: 3, fan: 4, groups: "Dev Team, UI Team, Test Team, Security Team" } }
+  ];
+  var DEFAULT_FORM = { ...PRESETS[0].form, purpose: "", models: ["default", "default", "default"], efforts: ["default", "default", "default"] };
+  var SETTINGS = { chart: true, layout: "stacked" };
+  var GLYPHS = { ceo: "\u25A0", head: "\u25CF", lead: "\u25C7", worker: "\u25CB" };
+  function cleanName(value) {
+    return value.trim().replace(/\s+/g, "-");
+  }
+  function nameValid(value) {
+    return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
+  }
+  function planTeam(form2) {
+    const name = cleanName(form2.name);
+    if (!nameValid(name)) throw new Error("Use a team name of 1\u201364 letters, numbers, underscores or dashes, starting with a letter or number.");
+    if (!["team", "organisation"].includes(form2.structure)) throw new Error("Choose a team structure.");
+    if (![1, 2, 3].includes(form2.levels) || ![1, 2, 3, 4, 5].includes(form2.fan)) throw new Error("Choose 1\u20133 levels and 1\u20135 reports per manager.");
+    if (typeof form2.purpose !== "string" || form2.purpose.length > 500) throw new Error("Keep the team function under 500 characters.");
+    for (const values of [form2.models, form2.efforts]) {
+      if (!Array.isArray(values) || values.length !== 3 || values.some((value) => typeof value !== "string" || !value || value.length > 120)) throw new Error("Invalid model or effort selection.");
+    }
+    if (form2.efforts.some((value) => !["default", "low", "medium", "high", "xhigh"].includes(value))) throw new Error("Invalid effort selection.");
+    if (form2.models.some((model, i) => model === "default" && form2.efforts[i] !== "default")) throw new Error("Choose a model before overriding its effort.");
+    const members = [];
+    const add = (memberName, team, role, level, boss) => {
+      const id = `member-${members.length + 1}`;
+      const purpose = form2.purpose.trim() || "the team goal";
+      const brief = role === "worker" ? `Execute tasks from ${boss.name} and report back.` : `Own ${purpose}; plan, delegate to direct reports, review results and report to ${boss?.name || "the user"}.`;
+      const member = { id, name: memberName, team, role, level, boss: boss?.id || null, model: form2.models[level - 1], effort: form2.efforts[level - 1], agent: "codex", state: "unassigned", brief };
+      members.push(member);
+      return member;
+    };
+    if (form2.structure === "organisation") {
+      const groups = form2.groups.split(",").map(cleanName);
+      if (!groups.length || groups.length > 8 || groups.some((group) => !nameValid(group))) throw new Error("Enter 1\u20138 team names separated by commas.");
+      if (new Set(groups.map((group) => group.toLowerCase())).size !== groups.length) throw new Error("Team names must be unique.");
+      if (groups.some((group) => group.toLowerCase() === name.toLowerCase())) throw new Error("Give the organisation and its teams different names.");
+      const ceo = add("CEO", name, "ceo", 1, null);
+      for (const group of groups) {
+        const head = add(`${group}-Head`, group, "head", 2, ceo);
+        for (let i = 1; i <= form2.fan; i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
+      }
+    } else {
+      let tier = [add("Head", name, "head", 1, null)];
+      for (let level = 2; level <= form2.levels; level++) {
+        const next = [];
+        tier.forEach((boss, index) => {
+          for (let i = 1; i <= form2.fan; i++) {
+            const role = level === form2.levels ? "worker" : "lead";
+            const suffix = form2.levels === 2 ? `${i}` : `${index + 1}-${i}`;
+            next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
+          }
+        });
+        tier = next;
+      }
+    }
+    return { name, purpose: form2.purpose.trim(), structure: form2.structure, members };
+  }
+  function addTeam(state2, team) {
+    const incoming = new Set([team.name, ...team.members.map((member) => member.team)].map((name) => name.toLowerCase()));
+    if (state2.teams.some((existing) => [existing.name, ...existing.members.map((member) => member.team)].some((name) => incoming.has(name.toLowerCase())))) throw new Error("A team with this name already exists. Choose a different name; existing teams are never replaced.");
+    return { ...state2, teams: [...state2.teams, team] };
+  }
+  function validateState(value) {
+    if (value === null) return { version: 1, teams: [], settings: { ...SETTINGS } };
+    if (!value || value.version !== 1 || !Array.isArray(value.teams) || value.teams.length > 100) throw new Error("Saved team data has an unsupported format. It has been left untouched.");
+    const string = (s, max = 120) => typeof s === "string" && s.length > 0 && s.length <= max;
+    let validated = { version: 1, teams: [], settings: { ...SETTINGS } };
+    for (const team of value.teams) {
+      if (!team || !nameValid(team.name) || typeof team.purpose !== "string" || team.purpose.length > 500 || !["team", "organisation"].includes(team.structure) || !Array.isArray(team.members) || !team.members.length || team.members.length > 49) throw new Error("Saved team data is invalid. It has been left untouched.");
+      const ids = /* @__PURE__ */ new Set();
+      const names = /* @__PURE__ */ new Set();
+      for (const member of team.members) {
+        if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || member.agent !== "codex" || member.state !== "unassigned" || !string(member.model) || !["default", "low", "medium", "high", "xhigh"].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error("Saved member data is invalid. It has been left untouched.");
+        if (member.boss !== null && !ids.has(member.boss)) throw new Error("Saved reporting relationships are invalid. It has been left untouched.");
+        if (member.boss === null && ids.size !== 0) throw new Error("Saved team has multiple roots. It has been left untouched.");
+        if (member.boss === null && member.level !== 1 || member.boss !== null && team.members.find((boss) => boss.id === member.boss)?.level !== member.level - 1) throw new Error("Saved hierarchy levels are invalid. It has been left untouched.");
+        ids.add(member.id);
+        names.add(member.name.toLowerCase());
+      }
+      validated = addTeam(validated, team);
+    }
+    if (value.settings && typeof value.settings.chart === "boolean" && ["stacked", "columns"].includes(value.settings.layout)) validated.settings = { chart: value.settings.chart, layout: value.settings.layout };
+    return validated;
+  }
+
+  // src/bridge.mjs
+  function createBridge(parentWindow, eventWindow = window, timeoutMs = 5e3) {
+    const pending = /* @__PURE__ */ new Map();
+    let sequence = 0;
+    eventWindow.addEventListener("message", (event) => {
+      if (event.source !== parentWindow || event.data?.type !== "orca-panel-action-result") return;
+      const request = pending.get(event.data.requestId);
+      if (!request) return;
+      pending.delete(event.data.requestId);
+      clearTimeout(request.timer);
+      if (event.data.ok) request.resolve(event.data.value);
+      else {
+        const error = new Error(event.data.error || "Orca rejected the request.");
+        error.code = event.data.errorCode;
+        request.reject(error);
+      }
+    });
+    return (action, params) => new Promise((resolve, reject) => {
+      const requestId = `team-${++sequence}`;
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error("Orca did not answer. Your saved data has not been changed."));
+      }, timeoutMs);
+      pending.set(requestId, { resolve, reject, timer });
+      parentWindow.postMessage({ type: "orca-panel-action", requestId, action, params }, "*");
+    });
+  }
+
+  // src/panel.mjs
+  var app = document.getElementById("app");
+  var call = createBridge(window.parent);
+  var KEY = "team-definitions-v1";
+  var state = validateState(null);
+  var form = structuredClone(DEFAULT_FORM);
+  var view = "roster";
+  var selection = null;
+  var busy = true;
+  var loaded = false;
+  var storageAvailable = false;
+  var message = "";
+  var problem = "";
+  var canRetry = false;
+  var escape = (value) => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  var label = (role) => ({ ceo: "CEO", head: "Head", lead: "Lead", worker: "Worker" })[role];
+  function button(text, action, attrs = "", className = "") {
+    return `<button type="button" data-action="${action}" class="${className}" ${attrs}>${text}</button>`;
+  }
+  function segment(field, choices, value) {
+    return `<div class="segments" role="group" aria-label="${field === "fan" ? "Reports per manager" : field === "levels" ? "Hierarchy levels" : "Structure"}">${choices.map(([id, text]) => button(escape(text), "pick", `data-field="${field}" data-value="${id}" aria-pressed="${String(id) === String(value)}"`)).join("")}</div>`;
+  }
+  function presets() {
+    return `<div class="presets">${PRESETS.map((preset, i) => button(`<span><strong>${preset.label}</strong><code>${preset.sketch}</code></span><small>${preset.hint}</small>`, "preset", `data-index="${i}"`, "preset")).join("")}</div>`;
+  }
+  function empty() {
+    return `<section class="welcome"><h1>No team yet</h1><p>Build a team that reports up a clear chain.</p><pre class="sketch" aria-label="A head reporting to you, with three workers">       <span class="head">\u25CF</span>          Head
+  \u250C\u2500\u2500\u2500\u2500\u253C\u2500\u2500\u2500\u2500\u2510     plans, delegates and reviews
+  \u25CB    \u25CB    \u25CB     Workers execute and report back</pre><h2>Quick start</h2>${presets()}${button("Build a custom team", "new", "", "secondary")}</section>`;
+  }
+  function tree(members, parent = null, clickable = false, teamIndex = 0, compact = false) {
+    const children = members.filter((member) => member.boss === parent);
+    return `<ul class="org-tree ${parent === null ? "root" : ""}">${children.map((member) => {
+      const shortName = compact ? member.role === "ceo" ? "CEO" : member.role === "head" ? member.team : member.name.replace(/^.*Worker-/, "W").replace(/^Lead-/, "L") : member.name;
+      return `<li><${clickable ? 'button type="button"' : "span"} class="org-node ${escape(member.role)}" ${clickable ? `data-action="member" data-team="${teamIndex}" data-member="${escape(member.id)}" aria-label="${escape(member.name)}" title="${escape(member.name)}"` : ""}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></${clickable ? "button" : "span"}>${members.some((child) => child.boss === member.id) ? tree(members, member.id, clickable, teamIndex, compact) : ""}</li>`;
+    }).join("")}</ul>`;
+  }
+  function configRows() {
+    const count = form.structure === "organisation" ? 3 : form.levels;
+    return Array.from({ length: count }, (_, i) => {
+      const name = form.structure === "organisation" ? ["CEO", "Heads", "Workers"][i] : i === 0 ? "Head" : i === count - 1 ? "Workers" : "Leads";
+      return `<tr><th scope="row">${name}</th><td><input aria-label="${name} model" data-model="${i}" list="model-options" value="${escape(form.models[i])}" maxlength="120" placeholder="default or model ID"></td><td><select aria-label="${name} effort" data-effort="${i}" ${form.models[i] === "default" ? "disabled" : ""}>${["default", "low", "medium", "high", "xhigh"].map((value) => `<option value="${value}" ${form.efforts[i] === value ? "selected" : ""}>${{ default: "Default", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" }[value]}</option>`).join("")}</select></td></tr>`;
+    }).join("");
+  }
+  function preview() {
+    try {
+      const plan = planTeam(form);
+      const counts = ["ceo", "head", "lead", "worker"].map((role) => [role, plan.members.filter((member) => member.role === role).length]).filter(([, n]) => n);
+      return `<p class="count">${plan.members.length} members \xB7 ${counts.map(([role, n]) => `${n} ${label(role).toLowerCase()}${n > 1 ? "s" : ""}`).join(", ")}</p><div class="tree-scroll">${tree(plan.members)}</div>`;
+    } catch (error) {
+      return `<p class="validation">${escape(error.message)}</p>`;
+    }
+  }
+  function formView() {
+    return `<div class="flow"><h1>New team</h1><p class="steps">\u2460 Setup <span>\u2192</span> \u2461 Models <span>\u2192</span> \u2462 Preview <span>\u2192</span> Create</p></div>
+    <section class="section"><h2><span>\u2460</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Quick start</span>${presets()}</div><div class="field"><span>Structure</span>${segment("structure", [["team", "One team"], ["organisation", "CEO over several teams"]], form.structure)}</div>
+    ${form.structure === "organisation" ? `<label class="field">Teams<input id="team-groups" data-form="groups" value="${escape(form.groups)}" maxlength="520" placeholder="Team 1, Team 2"><small>Names separated by commas; each gets a head and workers.</small></label>` : `<div class="field"><span>Levels</span>${segment("levels", [[1, "1 \xB7 Head only"], [2, "2 \xB7 Head + workers"], [3, "3 \xB7 Head + leads + workers"]], form.levels)}</div>`}
+    <div class="field"><span>${form.structure === "organisation" ? "Workers each" : "Reports each"}</span>${segment("fan", [1, 2, 3, 4, 5].map((n) => [n, `${n}`]), form.fan)}</div></section>
+    <section class="section"><h2><span>\u2461</span> Model and effort per level</h2><p class="subtle">Codex \xB7 Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option></datalist></section>
+    <section class="section"><h2><span>\u2462</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
+    <div class="actions">${button("Create team", "create", busy || !loaded ? "disabled" : "", "primary")}${button("Cancel", "roster", "", "secondary")}</div>`;
+  }
+  function details() {
+    if (!selection) return "";
+    const team = state.teams[selection.team];
+    const member = team?.members.find((row) => row.id === selection.member);
+    if (!member) return "";
+    const boss = team.members.find((row) => row.id === member.boss);
+    const reports = team.members.filter((row) => row.boss === member.id);
+    return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button("Close details", "close-details", "", "small")}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || "You")}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>Codex</dd><dt>Model</dt><dd>${escape(member.model)}</dd><dt>Effort</dt><dd>${escape(member.effort)}</dd><dt>Assignment</dt><dd>Unassigned</dd></dl><p>${escape(member.brief)}</p></section>`;
+  }
+  function roster() {
+    if (!state.teams.length) return empty();
+    const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join("")}</section>` : "";
+    return `<div class="section-heading"><h1>Team roster</h1>${button("+ New team", "new", "", "primary small")}</div>${charts}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ""}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>Model</th><th>Effort</th><th>Assignment</th></tr></thead><tbody>${team.members.map((member) => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, "member", `data-team="${i}" data-member="${escape(member.id)}"`, "name-button")}</td><td>${label(member.role)}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>Unassigned</td></tr>`).join("")}</tbody></table></div></section>`).join("")}</div>${details()}`;
+  }
+  function settingsView() {
+    return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? "checked" : ""} ${busy || !loaded ? "disabled" : ""}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? "disabled" : ""}><option value="stacked" ${state.settings.layout === "stacked" ? "selected" : ""}>Stacked</option><option value="columns" ${state.settings.layout === "columns" ? "selected" : ""}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team creation</h2><p>Created members stay unassigned. This version saves team definitions; it does not launch agent sessions.</p><p>Model IDs are configurable; availability is checked when runtime integration is added.</p></section>`;
+  }
+  function render() {
+    app.setAttribute("aria-busy", String(busy));
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v0.1.0</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
+    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. This Orca build does not expose panel storage. Teams can be created here, but will be lost when the panel closes.</div>` : ""}
+    ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams\u2026</p>' : view === "new" ? formView() : view === "settings" ? settingsView() : roster()}
+    </main><footer>${storageAvailable ? "Saved in Orca" : loaded ? "Session only" : "Connecting to Orca"}<span>Codex \xB7 Team definitions</span></footer>`;
+  }
+  function updatePreview() {
+    const node = document.getElementById("preview");
+    if (node) node.innerHTML = preview();
+  }
+  async function load() {
+    busy = true;
+    problem = "";
+    canRetry = false;
+    render();
+    try {
+      const result = await call("storage.get", { key: KEY });
+      state = validateState(result?.value ?? null);
+      loaded = true;
+      storageAvailable = true;
+    } catch (error) {
+      if (["panel_forbidden", "unknown_method", "invalid_request"].includes(error.code)) {
+        loaded = true;
+        storageAvailable = false;
+      } else {
+        loaded = false;
+        problem = error.message;
+        canRetry = true;
+      }
+    } finally {
+      busy = false;
+      render();
+    }
+  }
+  async function save(next) {
+    if (!loaded || busy) return false;
+    busy = true;
+    problem = "";
+    canRetry = false;
+    render();
+    try {
+      if (storageAvailable) await call("storage.set", { key: KEY, value: next });
+      state = next;
+      return true;
+    } catch (error) {
+      problem = `Could not save: ${error.message}`;
+      canRetry = true;
+      return false;
+    } finally {
+      busy = false;
+      render();
+    }
+  }
+  app.addEventListener("click", async (event) => {
+    const target = event.target.closest("[data-action]");
+    if (!target || target.disabled || busy) return;
+    const action = target.dataset.action;
+    if (["roster", "new", "settings"].includes(action)) {
+      view = action;
+      message = "";
+      render();
+    } else if (action === "preset") {
+      Object.assign(form, PRESETS[Number(target.dataset.index)].form);
+      view = "new";
+      message = "";
+      render();
+    } else if (action === "pick") {
+      const field = target.dataset.field;
+      form[field] = ["levels", "fan"].includes(field) ? Number(target.dataset.value) : target.dataset.value;
+      if (field === "structure") {
+        form.levels = form.structure === "organisation" ? 3 : 2;
+        if (!form.groups) form.groups = "Team 1, Team 2";
+      }
+      render();
+    } else if (action === "create") {
+      try {
+        const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const next = addTeam(state, team);
+        if (await save(next)) {
+          view = "roster";
+          selection = null;
+          message = `Created @${team.name} with ${team.members.length} members.`;
+          render();
+        }
+      } catch (error) {
+        message = "";
+        problem = error.message;
+        canRetry = false;
+        render();
+      }
+    } else if (action === "member") {
+      selection = { team: Number(target.dataset.team), member: target.dataset.member };
+      render();
+      document.querySelector(".inspector")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } else if (action === "close-details") {
+      selection = null;
+      render();
+    } else if (action === "retry") {
+      await load();
+    }
+  });
+  app.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target.dataset.form) {
+      form[target.dataset.form] = target.value;
+      updatePreview();
+    }
+  });
+  app.addEventListener("change", async (event) => {
+    const target = event.target;
+    if (target.dataset.model !== void 0) {
+      const i = Number(target.dataset.model);
+      form.models[i] = target.value.trim() || "default";
+      if (form.models[i] === "default") form.efforts[i] = "default";
+      render();
+    } else if (target.dataset.effort !== void 0) {
+      form.efforts[Number(target.dataset.effort)] = target.value;
+      updatePreview();
+    } else if (target.dataset.setting) {
+      await save({ ...state, settings: { ...state.settings, [target.dataset.setting]: target.type === "checkbox" ? target.checked : target.value } });
+    }
+  });
+  render();
+  void load();
+})();
+</script></body></html>

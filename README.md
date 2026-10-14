@@ -19,3 +19,7 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod.
 1. Make a folder with `.claude-plugin/plugin.json` and `hooks/hooks.json` (and `hooks/register.tsx`).
 2. Add it to `.claude-plugin/marketplace.json`.
 3. Check it: `claude plugin validate <folder>` and `claude plugin test <folder>`.
+
+## Orca plugins
+
+[Team Orchestrator for Orca](team-orchestrator-orca-plugin/README.md) is a UI-first proof of concept in `team-orchestrator-orca-plugin/`: team creation, an organisation tree, roster and member details inside Orca's plugin panel. Install it through Orca's plugin settings; it is separate from the Claude Code marketplace above. Persistence requires the included Orca storage patch; unpatched builds use explicitly labelled session-only mode.

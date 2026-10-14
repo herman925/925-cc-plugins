@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "id": "team-orchestrator",
+  "publisher": "herman925",
+  "name": "Team Orchestrator",
+  "version": "0.1.0",
+  "description": "Build and inspect team hierarchies in an Orca panel. UI proof of concept; creates definitions, not agent sessions.",
+  "engines": { "orca": ">=1.4.0" },
+  "pluginApi": 1,
+  "contributes": {
+    "panels": [{ "id": "team", "title": "Team Orchestrator", "icon": "network", "entry": "panel.html" }]
+  },
+  "capabilities": [{ "kind": "storage" }]
+}
