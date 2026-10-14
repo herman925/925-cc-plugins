@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { rulesSection } from './logic'
 
 import { DEFAULT_PREFS, buildContext, enhance, githubMap, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
 import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
@@ -47,11 +48,20 @@ async function begin($: any, text = 'Build my landing page') {
   await $.turn.start({ text, turnId: 't1' })
 }
 
-// Settings groups start closed except Enhancer, so the Band rows are opened first.
+// The Band tab is the first one; the other tabs are opened by pressing their tab button.
 async function openBand(ui: any) {
-  if (!(await ui.find({ key: 'toggle-band' }))) return
   if (await ui.find({ key: 'set-details' })) return
-  await ui.press({ key: 'toggle-band' })
+  await ui.press({ key: 'tab-btn-band' })
+}
+
+async function ruleOff($: any) {
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'settings' })
+  await ui.press({ key: 'tab-btn-questions' })
+  await ui.press({ key: 'set-questionbox' })
+  await ui.press({ key: 'tab-btn-band' })
+  await ui.press({ key: 'settings' })
+  await ui.unmount()
 }
 
 async function texts(ui: any): Promise<string> {
@@ -357,6 +367,7 @@ const ASK_CMD = (args: string) => ({ command: 'askchoices', args, origin: { kind
 
 test('ask_choices is off by default and points the model to AskUserQuestion; /askchoices on turns it on', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
   const off = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
@@ -371,10 +382,11 @@ test('ask_choices is off by default and points the model to AskUserQuestion; /as
 
 test('the Ask choices row in Settings flips the setting', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
-  await openBand(ui)
+  await ui.press({ key: 'tab-btn-questions' })
   expect(await ui.find({ key: 'set-ask' })).toBeDefined()
   await ui.press({ key: 'set-ask' })
   const on1 = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
@@ -392,6 +404,7 @@ test('ask_choices shows numbered choices and a press sends the answer', async ($
     sent.push(e.text)
     return { text: e.text }
   })
+  await ruleOff($)
   await begin($)
   await $.command.run(ASK_CMD('on'))
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
@@ -559,6 +572,7 @@ test('bar style: next steps show as numbered choices with 0 to dismiss, and a pr
     sent.push(e.text)
     return { text: e.text }
   })
+  await ruleOff($)
   await begin($)
   await $.command.run(RUN('bars'))
   await $.command.run(ASK_CMD('on'))
@@ -800,6 +814,7 @@ test('clampPercent: a number from 0 to 100, anything else is 0', () => {
 
 test('a subagent ask_choices stays out of the band; the member own ask_choices still shows the picker', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   await $.command.run(ASK_CMD('on')) // the gap only matters when ask_choices is on (off by default)
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
@@ -1116,6 +1131,7 @@ test('enhance key: with no keyboard file, the Settings button creates it with th
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
+  await ui.press({ key: 'tab-btn-enhancer' })
   await ui.press({ key: 'set-key' })
   expect(w.toasts).toContain(ADDED)
   expect(w.writes.map(t => JSON.parse(t))).toEqual([
@@ -2800,7 +2816,7 @@ async function decideRows($: any) {
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
-  if (!(await ui.find({ key: 'set-decide' }))) await ui.press({ key: 'toggle-assumptions' })
+  if (!(await ui.find({ key: 'set-decide' }))) await ui.press({ key: 'tab-btn-assumptions' })
   return ui
 }
 
@@ -2878,4 +2894,21 @@ test('decide: the Keep threshold row offers 0.4 to 0.8, and 0.5 is the default',
   expect(await ui.find({ key: 'set-threshold-0.5' })).toBeDefined()
   expect(MAX_PER_KIND).toBe(5)
   await ui.unmount()
+})
+
+test('the question box is on by default: ask_choices is refused and says to use AskUserQuestion', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(ASK_CMD('on'))
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
+  const r = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
+  expect(r.result).toContain('AskUserQuestion')
+})
+
+test('rulesSection: the question box line replaces the picker line, and the grill skills are named', async ($, on) => {
+  expect(rulesSection(true, true)).toContain('AskUserQuestion')
+  expect(rulesSection(true, true)).not.toContain('ask_choices')
+  expect(rulesSection(false, true)).toContain('ask_choices')
+  expect(rulesSection(false, false)).not.toContain('ask_choices')
+  expect(rulesSection(true, false)).toContain('/grill-with-docs')
 })

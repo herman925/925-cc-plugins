@@ -362,13 +362,25 @@ export function looksLikeUserDenial(text: string): boolean {
   return /doesn.?t want to proceed|rejected|permission (to use|for) .* (was )?denied|user denied|declined to/i.test(text)
 }
 
-export const SECTION_TEXT = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
+const SECTION_BASE = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
 - For EVERY request, even a quick question, call plan_steps first (load it with ToolSearch if it is deferred). Use 1 step for a quick question, 2 to 8 for bigger work.
 - Step names are plain English, under 40 characters, and start with a verb, for example "Build the pricing section". Never put file paths, file names, commands, code or tool names in a step name.
 - Then call report_progress as real progress happens, with the same step name, and call it with percent 100 the moment a step finishes.
 - If you have TodoWrite or TaskCreate you may use that to-do list as the plan instead.
-- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply.
 - Keep written replies short, warm and free of jargon.`
+
+const ASK_CHOICES_LINE =
+  "- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply."
+
+const QUESTION_BOX_LINE =
+  "- Ask with AskUserQuestion, never in prose, whenever you need the person's go-ahead: permission to act (edits, deletes, sends, pushes, installs), or a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Every question from /grilling, /grill-me or /grill-with-docs goes through AskUserQuestion, one call per question, with the recommended option first. Then stop and wait for the reply."
+
+/** The rules section. The question-box rule replaces the picker line when it is on; otherwise the picker is used when it is on. */
+export function rulesSection(questionBox: boolean, picker: boolean): string {
+  if (questionBox) return `${SECTION_BASE}\n${QUESTION_BOX_LINE}`
+  if (picker) return `${SECTION_BASE}\n${ASK_CHOICES_LINE}`
+  return SECTION_BASE
+}
 
 /**
  * The values to copy from the old clean-view settings row into this plugin's store. The row keyed with the

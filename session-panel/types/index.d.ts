@@ -117,14 +117,21 @@ declare module 'claude-code' {
     'session-panel': {
       sessionPanelEnabled: boolean
       askChoicesEnabled: boolean
+      /** the question-box rule: Claude asks with AskUserQuestion, and ask_choices is refused */
+      questionBoxRule: boolean
+      /** warn with a toast when a reply ends with a question that was not asked in the question box */
+      stopCheck: boolean
+      /** whether AskUserQuestion was called in the turn in progress */
+      askedThisTurn: boolean
       settingsOpen: boolean
+      /** the Settings tab that is open */
+      settingsTab: string
       checklist: CleanChecklist
       tick: number
       viewStyle: CleanStyle
       finished: CleanFinished[]
       prefs: Prefs
       enhancer: EnhancerState
-      openGroups: string[]
       gateDenied: number
       assumptionTrack: AssumptionTrack
       /** the plugin's manifest version, read once per load; '' when it cannot be read */
