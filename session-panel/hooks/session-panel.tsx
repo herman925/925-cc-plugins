@@ -106,6 +106,7 @@ const askRuleA = atom({ plugin: 'session-panel', key: 'questionBoxRule' } as con
 const stopCheckA = atom({ plugin: 'session-panel', key: 'stopCheck' } as const, true)
 const askedA = atom({ plugin: 'session-panel', key: 'askedThisTurn' } as const, false)
 const settingsTabA = atom({ plugin: 'session-panel', key: 'settingsTab' } as const, 'band')
+const settingsPageA = atom({ plugin: 'session-panel', key: 'settingsPage' } as const, 0)
 const settingsOpenA = atom({ plugin: 'session-panel', key: 'settingsOpen' } as const, false)
 const checklistA = atom({ plugin: 'session-panel', key: 'checklist' } as const, newChecklist())
 const tickA = atom({ plugin: 'session-panel', key: 'tick' } as const, 0)
@@ -1146,6 +1147,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const stopCheck = await read($, stopCheckA)
     const settingsOpen = await read($, settingsOpenA)
     const settingsTab = await read($, settingsTabA)
+    const settingsPage = await read($, settingsPageA)
     const prefs = await read($, prefsA)
     const enh = await read($, enhancerA)
     const version = await read($, versionA)
@@ -1399,7 +1401,15 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             g.id === activeGroup.id ? (
               <Box key={`tab-${g.id}`}>{pillOf(g.title, 'cyan')}</Box>
             ) : (
-              <Button key={`tab-btn-${g.id}`} plain label={tabText(g.title)} onPress={() => void update($, settingsTabA, () => g.id)} />
+              <Button
+                key={`tab-btn-${g.id}`}
+                plain
+                label={tabText(g.title)}
+                onPress={() => {
+                  void update($, settingsTabA, () => g.id)
+                  void update($, settingsPageA, () => 0)
+                }}
+              />
             ),
           )}
         </Box>
@@ -1412,16 +1422,39 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         </Box>
       </Box>
     )
-    // The body has the height of the tallest tab, so switching tabs does not move the text below the card.
+    // The card holds a fixed number of lines. Longer tabs are paged with Prev and Next, so the card never grows past the band.
+    const SETTINGS_LINES = 14
     const settingLines = (s: Setting) => (s.kind === 'choice' ? 3 : 2) + (s.hint.length > 52 ? 1 : 0)
-    const bodyHeight = Math.max(
-      ...GROUPS.filter(g => !g.note).map(g => settings.filter(s => s.group === g.id).reduce((n, s) => n + settingLines(s), 0)),
-    )
+    const tabSettings = settings.filter(s => s.group === activeGroup.id)
+    const pages: Setting[][] = []
+    {
+      let cur: Setting[] = []
+      let used = 0
+      for (const s of tabSettings) {
+        const n = settingLines(s)
+        if (used + n > SETTINGS_LINES && cur.length > 0) {
+          pages.push(cur)
+          cur = []
+          used = 0
+        }
+        cur.push(s)
+        used += n
+      }
+      if (cur.length > 0) pages.push(cur)
+    }
+    const pageNo = Math.min(settingsPage, Math.max(0, pages.length - 1))
     const tabBody = activeGroup.note ? (
       <Text dimColor>{activeGroup.note}</Text>
     ) : (
-      <Box flexDirection="column" height={bodyHeight} paddingLeft={1}>
-        {settings.filter(s => s.group === activeGroup.id).map(settingRow)}
+      <Box flexDirection="column" height={SETTINGS_LINES + 1} paddingLeft={1}>
+        {(pages[pageNo] ?? []).map(settingRow)}
+        {pages.length > 1 ? (
+          <Box flexDirection="row">
+            {pageNo > 0 ? <Button key="page-prev" plain label="◀ Prev" onPress={() => void update($, settingsPageA, () => pageNo - 1)} /> : <Text> </Text>}
+            <Text dimColor>{`   ${pageNo + 1} / ${pages.length}   `}</Text>
+            {pageNo < pages.length - 1 ? <Button key="page-next" plain label="Next ▶" onPress={() => void update($, settingsPageA, () => pageNo + 1)} /> : null}
+          </Box>
+        ) : null}
       </Box>
     )
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
@@ -1541,7 +1574,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           {body}
           {settingsOpen ? (
             <Box position="absolute" top={1} right={0} flexDirection="column">
-              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1} width={Math.min(width, 60)}>
+              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={Math.min(width, 60)}>
                 <Text bold>Settings</Text>
                 {tabRow}
                 {tabBody}

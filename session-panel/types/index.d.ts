@@ -126,6 +126,8 @@ declare module 'claude-code' {
       settingsOpen: boolean
       /** the Settings tab that is open */
       settingsTab: string
+      /** the page of Settings rows that is open for the tab */
+      settingsPage: number
       checklist: CleanChecklist
       tick: number
       viewStyle: CleanStyle
