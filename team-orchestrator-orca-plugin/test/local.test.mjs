@@ -9,7 +9,7 @@ import { inspectorFuse, packageType } from '../src/local/bootstrap.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { createExecutor } from '../src/local/executor.mjs';
 import { startupCommand } from '../src/local/startup-command.mjs';
-import { createCliRunner, locateCli } from '../src/local/cli.mjs';
+import { createCliRunner, locateCli, cliEnvironment } from '../src/local/cli.mjs';
 import { createWorkerBridge } from '../src/worker-bridge.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 test('inspector fuse refuses disabled, absent, truncated and mixed architecture executables', () => {
@@ -154,4 +154,31 @@ test('adapter binds an already open panel without triggering the refresh that re
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(refreshes, 0);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
+});
+
+test('Windows CLI environment restores actual redirected data paths without guessing a USERPROFILE directory', () => {
+  const scrubbed = { USERPROFILE: 'C:\\Users\\Herman', PATH: 'agent-path', ELECTRON_RUN_AS_NODE: '1' };
+  const paths = { appData: 'D:\\Redirected\\Roaming', userData: 'E:\\Orca Profiles\\active' };
+  const env = cliEnvironment(paths, scrubbed, 'win32');
+  assert.equal(env.APPDATA, paths.appData); assert.equal(env.ORCA_USER_DATA_PATH, paths.userData);
+  assert.equal(scrubbed.APPDATA, undefined); assert.equal(scrubbed.ORCA_USER_DATA_PATH, undefined);
+  assert.equal(env.PATH, scrubbed.PATH);
+  const mixedCase = cliEnvironment(paths, { ...scrubbed, AppData: 'wrong', orca_user_data_path: 'another-instance' }, 'win32');
+  assert.equal(mixedCase.AppData, undefined); assert.equal(mixedCase.orca_user_data_path, undefined);
+  assert.equal(mixedCase.APPDATA, paths.appData);
+  assert.throws(() => cliEnvironment({ userData: '', appData: 'x' }, scrubbed, 'win32'), /runtime data paths/);
+  assert.throws(() => cliEnvironment({ userData: 'x', appData: 'bad\0path' }, scrubbed, 'win32'), /runtime data paths/);
+  assert.equal(cliEnvironment(paths, { XDG_CONFIG_HOME: '/custom-config' }, 'linux').ORCA_USER_DATA_PATH, paths.userData);
+});
+
+test('child CLI resolves the exact desktop runtime profile when worker APPDATA is absent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'orca-env-regression-'));
+  try {
+    await mkdir(join(root, 'out/main'), { recursive: true }); await mkdir(join(root, 'out/cli'));
+    await writeFile(join(root, 'out/cli/index.js'), `const profile=process.env.ORCA_USER_DATA_PATH;if(!profile){console.log(JSON.stringify({ok:false,error:{message:'APPDATA is not set, so the Orca runtime metadata path cannot be resolved.'}}));process.exit(1)}console.log(JSON.stringify({ok:true,result:{profile}}));`);
+    const paths = { appData: join(root, 'redirected-roaming'), userData: join(root, 'separate-profile') };
+    const command = await locateCli(join(root, 'out/main/plugin-host-entry.js'), process.execPath, paths);
+    delete command.env.APPDATA;
+    assert.equal((await createCliRunner(command)(['worktree', 'show'])).profile, paths.userData);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

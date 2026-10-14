@@ -114,7 +114,7 @@ async function targets(port) {
     return [];
   }
 }
-async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.05" } = {}) {
+async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.06" } = {}) {
   const report = { platform: process.platform, packageType: packageType(process.platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
@@ -143,7 +143,7 @@ async function bootstrap({ parentPid = process.ppid, executable = process.execPa
     }
     const source = await readFile(adapterPath, "utf8");
     const digest = createHash("sha256").update(source).digest("hex");
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion()};})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion(),cliPaths:{appData:electron.app.getPath('appData'),userData:electron.app.getPath('userData')}};})()`;
     Object.assign(report, await client.evaluate(expression));
     report.detail = "Local runtime adapter installed; panel-to-worker test is available.";
   } catch (error) {
@@ -166,14 +166,23 @@ import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var execute2 = promisify2(execFile2);
-async function locateCli(entry = process.argv[1], executable = process.execPath) {
+function cliEnvironment(paths, base = process.env, platform = process.platform) {
+  if (typeof paths?.userData !== "string" || !paths.userData || paths.userData.includes("\0") || typeof paths.appData !== "string" || !paths.appData || paths.appData.includes("\0")) throw new Error("The running Orca desktop did not provide its runtime data paths.");
+  const env = { ...base, ELECTRON_RUN_AS_NODE: "1" };
+  for (const key of Object.keys(env)) if (key.toUpperCase() === "ORCA_USER_DATA_PATH" || platform === "win32" && key.toUpperCase() === "APPDATA") delete env[key];
+  env.ORCA_USER_DATA_PATH = paths.userData;
+  if (platform === "win32") env.APPDATA = paths.appData;
+  return env;
+}
+async function locateCli(entry = process.argv[1], executable = process.execPath, paths) {
   if (entry) {
     const candidate = join(dirname(entry), "..", "cli", "index.js");
     try {
       await access(candidate);
-      return { executable, prefix: [candidate], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } };
     } catch {
+      throw new Error("The installed Orca CLI entry was not found beside its plugin worker.");
     }
+    return { executable, prefix: [candidate], env: paths ? cliEnvironment(paths) : { ...process.env, ELECTRON_RUN_AS_NODE: "1" } };
   }
   throw new Error("The installed Orca CLI entry was not found beside its plugin worker.");
 }
@@ -445,13 +454,14 @@ function createExecutor(host, cli) {
 function activate(orca) {
   let ready;
   let initialising = false;
-  const executorPromise = locateCli().then((command) => createExecutor(orca.host, createCliRunner(command)));
+  let executorPromise;
+  const publicReport = ({ cliPaths, ...report }) => report;
   const initialise = () => {
     if (ready) return ready;
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.05" });
+      const report = await bootstrap({ version: "0.1.06" });
       orca.log(report.detail);
       return report;
     }).catch((error) => {
@@ -465,17 +475,18 @@ function activate(orca) {
   };
   orca.commands.register("team.initialise", async () => {
     if (!initialising) ready = null;
-    return initialise();
+    return publicReport(await initialise());
   });
   orca.commands.register("team.control", async (args) => {
     const report = await initialise();
     if (!report.ready) throw new Error(report.detail);
-    if (!args || args.op === "ping") return { nonce: args?.nonce, ...report, workerPid: process.pid };
+    if (!args || args.op === "ping") return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
+    if (!report.cliPaths) throw new Error("Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.");
+    executorPromise ??= locateCli(void 0, void 0, report.cliPaths).then((command) => createExecutor(orca.host, createCliRunner(command)));
     return (await executorPromise).execute(args);
   });
   for (const event of ["worktree.created", "agent.status.changed"]) orca.events.on(event, () => initialise());
   initialise().catch((error) => orca.log(`Bootstrap failed: ${error.message}`));
-  executorPromise.catch((error) => orca.log(`Executor unavailable: ${error.message}`));
 }
 export {
   activate as default

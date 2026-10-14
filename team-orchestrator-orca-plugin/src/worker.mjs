@@ -4,7 +4,8 @@ import { createExecutor } from './local/executor.mjs';
 export default function activate(orca) {
   let ready;
   let initialising = false;
-  const executorPromise = locateCli().then(command => createExecutor(orca.host, createCliRunner(command)));
+  let executorPromise;
+  const publicReport = ({ cliPaths, ...report }) => report;
   // Register immediately: Orca's worker ready deadline is shorter than a bootstrap attempt.
   const initialise = () => {
     if (ready) return ready;
@@ -22,15 +23,16 @@ export default function activate(orca) {
     }).finally(() => { initialising = false; });
     return ready;
   };
-  orca.commands.register('team.initialise', async () => { if (!initialising) ready = null; return initialise(); });
+  orca.commands.register('team.initialise', async () => { if (!initialising) ready = null; return publicReport(await initialise()); });
   orca.commands.register('team.control', async args => {
     const report = await initialise();
     if (!report.ready) throw new Error(report.detail);
-    if (!args || args.op === 'ping') return { nonce: args?.nonce, ...report, workerPid: process.pid };
+    if (!args || args.op === 'ping') return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
+    if (!report.cliPaths) throw new Error('Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.');
+    executorPromise ??= locateCli(undefined, undefined, report.cliPaths).then(command => createExecutor(orca.host, createCliRunner(command)));
     return (await executorPromise).execute(args);
   });
   for (const event of ['worktree.created', 'agent.status.changed']) orca.events.on(event, () => initialise());
   // A subscribed event or the Initialise command starts this lazy worker.
   initialise().catch(error => orca.log(`Bootstrap failed: ${error.message}`));
-  executorPromise.catch(error => orca.log(`Executor unavailable: ${error.message}`));
 }

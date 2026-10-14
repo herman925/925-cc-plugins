@@ -2,7 +2,7 @@
 
 An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://github.com/herman925/925-cc-plugins/tree/main/team-orchestrator), with the organisation tree and Setup → Models → Preview → Launch selection flow.
 
-Release **0.1.05** (strict SemVer `0.1.5`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+Release **0.1.06** (strict SemVer `0.1.6`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
 ## How it works
 
@@ -18,7 +18,9 @@ The worker detects the local OS, application packaging, parent process and Elect
 
 The adapter binds only `herman925.team-orchestrator`'s approved Team panel. It forwards an envelope through the existing `workspace.readContext` action to this plugin's declared commands. It calls Orca's original panel handler first, preserving current session ownership, consent, capability and admission checks, then uses the original command handler. It binds already open panels using Orca's existing owner/panel/revision token, without refreshing plugin discovery. It restores its wrappers on plugin disable/removal. Orca restart also removes the in-memory adapter.
 
-The adapter captures the desktop's selected workspace identity. The worker hashes that identity for the panel and checks it before every new launch. CLI `active` selectors are deliberately avoided because they resolve from cwd, not desktop selection. The local CLI uses Orca's ordinary connection to start agents in an SSH workspace. Initial team creation does not need the server's “Allow this host's orca CLI to control Orca” setting.
+The adapter captures the desktop's selected workspace identity. The worker hashes that identity for the panel and checks it before every new launch. CLI `active` selectors are deliberately avoided because they resolve from cwd, not desktop selection. The worker passes `ORCA_USER_DATA_PATH` from the verified parent Electron application's `getPath('userData')`, and restores Windows `APPDATA` from `getPath('appData')` for its child CLI. It does not guess a profile directory, copy the desktop's full environment or change system environment settings. These internal paths are omitted from panel ping and Initialise results. This also pins macOS/Linux and custom/dev profiles to the same desktop instance.
+
+The local CLI uses Orca's ordinary connection to start agents in an SSH workspace. Initial team creation does not need the server's “Allow this host's orca CLI to control Orca” setting.
 
 For newer CLIs, the worker uses `agent launch --agent ... --worktree ... --prompt ...` with model and effort. For builds such as the 1.4.224 CLI inspected during development, it uses `terminal create --title ... --command ...`, carrying the role brief in the **new** agent's startup arguments. It quotes arguments for POSIX shells or explicitly selects PowerShell on Windows paths. It uses the `codex`/`claude` executables available to that terminal; this compatibility path does not apply a custom Orca agent-launch command. No existing agent receives a create-team instruction or role prompt.
 
@@ -28,14 +30,14 @@ For newer CLIs, the worker uses `agent launch --agent ... --worktree ... --promp
 
 1. Use this folder on the **PC running Orca**, as your existing development plugin path. A checkout on the server alone is not automatically a local PC path.
 2. Refresh **Settings → Plugins** and review/enable Team Orchestrator. Adding `main.mjs` changes Orca's consent to include **trusted Node worker code**. This worker has native process access, beyond the panel's declared host API capabilities.
-3. Open the Team Orchestrator panel and check **v0.1.05**.
+3. Open the Team Orchestrator panel and check **v0.1.06**.
 4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
 5. Click **Test connection**. A successful test verifies a freshly echoed nonce from the worker and displays its actual OS, Orca version and worker PID. Launch stays disabled until that connection and workspace context are verified.
 6. Select the intended workspace, create a team and choose **All at create** or **On demand**. Inspect the named agent tabs for startup/authentication prompts.
 
 The `main.mjs`, `runtime-adapter.cjs` and self-contained `panel.html` artifacts ship in this folder. Installation needs no npm packages or web server. The former manual patches and alternate manifest have been removed from this release; they remain in Git history.
 
-If you see “plugin is not enabled with current consent”, first let any refresh finish and retry **Initialise local adapter**. If Settings → Plugins shows **Review required**, review/enable the plugin there. Version 0.1.05 removes the adapter's self-triggered refresh, checks live worker authority before injection, and avoids the unnecessary startup-status storage write that could poison bootstrap during a refresh. It does not alter or automatically approve consent.
+If you see “plugin is not enabled with current consent”, first let any refresh finish and retry **Initialise local adapter**. If Settings → Plugins shows **Review required**, review/enable the plugin there. Version 0.1.05 removed the adapter's self-triggered refresh, added a live worker authority check before injection, and removed the unnecessary startup-status storage write that could poison bootstrap during a refresh. It does not alter or automatically approve consent.
 
 ## Features and recovery
 

@@ -4,6 +4,8 @@ const { fork } = require('node:child_process');
 const { readFileSync } = require('node:fs');
 const assert = require('node:assert/strict');
 app.setName('Orca');
+app.setPath('appData', __dirname + '/redirected-app-data');
+app.setPath('userData', __dirname + '/redirected-runtime-profile');
 const data = new Map(); const leases = new Map(); const pending = new Map();
 let child; let nextId = 0; let enabled = true; let refreshes = 0;
 const invoke = (commandId, args) => new Promise((resolve, reject) => {
@@ -56,12 +58,13 @@ app.whenReady().then(async () => {
     const ready = await new Promise((resolve, reject) => { child.on('message', m => { if (m.type === 'ready') resolve(m); }); child.once('error', reject); });
     assert.deepEqual(ready.commands.sort(), ['team.control', 'team.initialise']);
     const init = await invoke('team.control', { op: 'ping', nonce: 'initial' });
+    assert.equal(init.cliPaths, undefined);
     assert.equal(init.ready, true); assert.equal(init.platform, process.platform);
     const rpc = async (op, params = {}) => {
       const result = await ipcMain._invokeHandlers.get('plugins:panelAction')(event, { sessionToken: entry.sessionToken, action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'panel-nonce', commandId: 'team.control', args: { op, params } } } });
       if (!result.ok) throw Error(result.error || result.code); return result.value;
     };
-    const ping = await rpc('ping'); assert.equal(ping.nonce, 'panel-nonce'); assert.equal(ping.workerPid, child.pid);
+    const ping = await rpc('ping'); assert.equal(ping.cliPaths, undefined); assert.equal(ping.nonce, 'panel-nonce'); assert.equal(ping.workerPid, child.pid);
     const context = await rpc('context'); assert.equal(context.displayName, 'Remote workspace'); assert.equal(context.selector, undefined);
     const handles = [];
     for (const name of ['Head', 'Worker-1', 'Worker-2', 'Worker-3']) {

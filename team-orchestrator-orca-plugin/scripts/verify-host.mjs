@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cliEnvironment } from '../src/local/cli.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
 const revision = 'dc146c09e2b12c229cc38434b7b1d4d9c012fdc5';
@@ -21,7 +22,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -40,6 +41,24 @@ const bundle = async name => {
 };
 try {
   const before = await bundle('before');
+  const scrubbed = before.buildPluginWorkerEnv({ USERPROFILE: 'C:\\Users\\Herman', APPDATA: 'D:\\Redirected\\Roaming', ORCA_USER_DATA_PATH: 'E:\\custom-profile', DESKTOP_SECRET: 'must-not-copy' }, 'win32');
+  assert.equal(scrubbed.APPDATA, undefined);
+  assert.equal(scrubbed.ORCA_USER_DATA_PATH, undefined);
+  assert.equal(scrubbed.DESKTOP_SECRET, undefined);
+  const cliEnv = cliEnvironment({ appData: 'D:\\Redirected\\Roaming', userData: 'E:\\custom-profile' }, scrubbed, 'win32');
+  assert.equal(cliEnv.APPDATA, 'D:\\Redirected\\Roaming');
+  assert.equal(cliEnv.DESKTOP_SECRET, undefined);
+  const previousAppData = process.env.APPDATA;
+  const previousProfile = process.env.ORCA_USER_DATA_PATH;
+  try {
+    delete process.env.APPDATA; delete process.env.ORCA_USER_DATA_PATH;
+    assert.throws(() => before.getDefaultUserDataPath('win32', 'C:\\Users\\Herman'), /APPDATA is not set/);
+    process.env.ORCA_USER_DATA_PATH = cliEnv.ORCA_USER_DATA_PATH;
+    assert.equal(before.getDefaultUserDataPath('win32', 'C:\\Users\\Herman'), 'E:\\custom-profile');
+  } finally {
+    if (previousAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = previousAppData;
+    if (previousProfile === undefined) delete process.env.ORCA_USER_DATA_PATH; else process.env.ORCA_USER_DATA_PATH = previousProfile;
+  }
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
   assert.equal(before.parsePluginManifest(manifest).ok, true);
   assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.04' }).ok, false);
@@ -83,5 +102,5 @@ try {
   assert.equal((await handlers.get('plugins:panelAction')(event, call)).ok, false);
   assert.equal(invoked, 1);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
-  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, worker storage/audit and revoked authority. No source patch applied.`);
+  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
 } finally { await rm(root, { recursive: true, force: true }); }

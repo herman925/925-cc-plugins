@@ -1,6 +1,8 @@
 const { appendFileSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const args = process.argv.slice(2); const log = join(__dirname, '../../cli-calls.jsonl');
+const expectedProfile = join(__dirname, '../../redirected-runtime-profile');
+if (process.env.ORCA_USER_DATA_PATH !== expectedProfile) { console.log(JSON.stringify({ ok: false, error: { message: 'APPDATA is not set, so the Orca runtime metadata path cannot be resolved.' } })); process.exit(1); }
 appendFileSync(log, JSON.stringify(args) + '\n');
 let result;
 if (args[0] === 'agent-context') { console.log(JSON.stringify({ commands: [{ command: 'terminal create', flags: ['shell'] }] })); process.exit(0); }

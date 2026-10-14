@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 
 test('worker checks consent before injection and recovers from denied host call without caching rejection or writing startup status', async () => {
   const result = await build({ entryPoints: ['src/worker.mjs'], bundle: true, write: false, platform: 'node', format: 'esm', define: { __PLUGIN_DISPLAY_VERSION__: '"test"' }, plugins: [{ name: 'bootstrap-proof', setup(api) {
-    api.onLoad({ filter: /local\/bootstrap\.mjs$/ }, () => ({ contents: 'export let injections = 0; export async function bootstrap() { injections++; return {ready:true, platform:"win32", detail:"injected", injections}; }', loader: 'js' }));
+    api.onLoad({ filter: /local\/bootstrap\.mjs$/ }, () => ({ contents: 'export let injections = 0; export async function bootstrap() { injections++; return {ready:true, platform:"win32", detail:"injected", cliPaths:{appData:"private-app-data",userData:"private-user-data"}, injections}; }', loader: 'js' }));
     api.onLoad({ filter: /local\/cli\.mjs$/ }, () => ({ contents: 'export async function locateCli() { return {}; } export function createCliRunner() { return async () => {}; }', loader: 'js' }));
   } }] });
   const activate = (await import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text).toString('base64'))).default;
@@ -20,7 +20,10 @@ test('worker checks consent before injection and recovers from denied host call 
   await assert.rejects(commands.get('team.control')({ op: 'ping' }), /permission check/);
   approved = true;
   const report = await commands.get('team.control')({ op: 'ping', nonce: 'after-review' });
+  assert.equal(report.cliPaths, undefined);
+  assert.equal(JSON.stringify(report).includes('private-user-data'), false);
+  assert.equal((await commands.get('team.initialise')()).cliPaths, undefined);
   assert.equal(report.ready, true); assert.equal(report.injections, 1); assert.equal(report.nonce, 'after-review');
   assert.ok(calls.every(call => call.method === 'storage.get'));
-  assert.equal((await commands.get('team.control')({ op: 'ping' })).injections, 1);
+  assert.equal((await commands.get('team.control')({ op: 'ping' })).injections, 2);
 });

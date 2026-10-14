@@ -40,7 +40,7 @@ async function targets(port) {
     return Array.isArray(items) ? items.filter(item => item.type === 'node' && item.webSocketDebuggerUrl) : [];
   } catch { return []; }
 }
-export async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.05' } = {}) {
+export async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.06' } = {}) {
   const report = { platform: process.platform, packageType: packageType(process.platform, executable, entry), parentPid, ready: false };
   let client; let owned = false;
   try {
@@ -61,7 +61,7 @@ export async function bootstrap({ parentPid = process.ppid, executable = process
     if (identity?.pid !== parentPid || !identity.electron) { owned = false; throw new Error('Inspector belongs to another process; nothing was injected.'); }
     const source = await readFile(adapterPath, 'utf8');
     const digest = createHash('sha256').update(source).digest('hex');
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion()};})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion(),cliPaths:{appData:electron.app.getPath('appData'),userData:electron.app.getPath('userData')}};})()`;
     Object.assign(report, await client.evaluate(expression));
     report.detail = 'Local runtime adapter installed; panel-to-worker test is available.';
   } catch (error) { report.detail = error.message; }
