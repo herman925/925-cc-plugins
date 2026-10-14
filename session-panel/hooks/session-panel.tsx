@@ -1536,6 +1536,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             </Box>
             {settingsButton}
           </Box>
+          {enhancerBar}
+          {assumptionsBlock}
+          {body}
           {settingsOpen ? (
             <Box position="absolute" top={1} right={0} flexDirection="column">
               <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1} width={Math.min(width, 60)}>
@@ -1545,9 +1548,6 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
               </Box>
             </Box>
           ) : null}
-          {enhancerBar}
-          {assumptionsBlock}
-          {body}
         </Box>,
       )
 

@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.56. The version is shown dim beside the band title, as ` v0.3.56`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.57. The version is shown dim beside the band title, as ` v0.3.57`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
