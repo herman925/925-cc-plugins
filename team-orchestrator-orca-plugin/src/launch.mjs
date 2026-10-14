@@ -17,7 +17,7 @@ export function memberLaunch(team, member, workspaceKey) {
 }
 
 export async function launchMembers(call, team, mode, context, record) {
-  if (context?.nativeAgentLaunch !== true || !context.workspaceKey) throw new Error('This Orca host does not expose native agent launching. Apply the included Orca host patch on the PC running Orca.');
+  if (context?.nativeAgentLaunch !== true || !context.workspaceKey) throw new Error('The bundled local executor is not connected. Use Test connection before launching.');
   for (const member of initialMembers(team, mode)) {
     // Record intent before mutation; an ambiguous create must never be automatically repeated.
     await record(member.id, { status: 'starting' });

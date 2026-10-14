@@ -1,86 +1,80 @@
 # Team Orchestrator — Orca plugin
 
-A proof of concept inspired by the team builder and organisation tree in [925-cc-plugins / team-orchestrator](https://github.com/herman925/925-cc-plugins/tree/main/team-orchestrator). The interface runs inside Orca's plugin panel.
+An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://github.com/herman925/925-cc-plugins/tree/main/team-orchestrator), with the organisation tree and Setup → Models → Preview → Launch selection flow.
 
-Release **0.1.03** (`0.1.3` in the strict SemVer manifest). This release replaces the 0.1.01 coordinator-prompt workaround with a **native host launch bridge**. The default `orca-plugin.json` requests only capabilities supported by stock Orca, so the panel can load there. Native launching requires the included patches in the Orca build on your local PC and the explicit `orca-plugin.native.json` opt-in below. Installing this plugin alone does not enable native launching.
+Release **0.1.04** (strict SemVer `0.1.4`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
-## Launch architecture
+## How it works
 
 ```text
-Create and launch team (plugin panel on local PC)
-  → terminal.createAgent (native plugin host on local PC)
-  → Orca's existing createTerminal(workspace, typed agent options)
-  → Codex / Claude processes on the workspace's execution host
+Plugin panel on your PC
+  → scoped runtime IPC adapter (in memory)
+  → this plugin's Node worker on your PC
+  → the CLI bundled with that same Orca installation
+  → new agent tabs on the workspace's execution host
 ```
 
-Orca controls the launch directly. No existing agent receives instructions to create the team. A workspace on SSH still uses Orca's normal connection to start its processes on the server; a server-side Orca CLI does not call back into the desktop to launch them. Initial team creation does not require enabling SSH-host CLI control.
+The worker detects the local OS, application packaging, parent process and Electron inspector fuse. It activates its own parent Orca's loopback inspector, verifies the PID, application name and supported 1.4.x version, then installs an in-memory adapter. It closes the inspector it activated after injection; an existing developer inspector is left alone. Disabled fuses, another process on the inspector port, incompatible handlers or unsupported versions stop injection. The installed application files are never rewritten.
 
-**All at create** starts exactly the roster: a Squad has one Head and three Workers, with no extra CEO. **On demand** initially starts only CEO/Heads. The user is outside the roster. Each member receives its CLI/model/effort, named Orca tab, role brief, boss and complete reporting roster. Native launch uses Orca's typed `startupAgent` and `launchPreferences` options and its host-aware startup-prompt quoting, rather than building shell commands in HTML.
+The adapter binds only `herman925.team-orchestrator`'s approved Team panel. It forwards an envelope through the existing `workspace.readContext` action to this plugin's declared commands. It calls Orca's original panel handler first, preserving current session ownership, consent, capability and admission checks, then uses the original command handler. It restores its wrappers on plugin disable/removal. Orca restart also removes the in-memory adapter.
 
-The host captures the focused workspace and checks an opaque workspace key on every create. Request IDs are journaled in plugin-private storage before spawning; completed receipts replay without spawning twice. Unknown launches and partial failures stop further creation. A created tab and a carried startup brief do not prove agent readiness or task completion.
+The adapter captures the desktop's selected workspace identity. The worker hashes that identity for the panel and checks it before every new launch. CLI `active` selectors are deliberately avoided because they resolve from cwd, not desktop selection. The local CLI uses Orca's ordinary connection to start agents in an SSH workspace. Initial team creation does not need the server's “Allow this host's orca CLI to control Orca” setting.
 
-## Features
+For newer CLIs, the worker uses `agent launch --agent ... --worktree ... --prompt ...` with model and effort. For builds such as the 1.4.224 CLI inspected during development, it uses `terminal create --title ... --command ...`, carrying the role brief in the **new** agent's startup arguments. It quotes arguments for POSIX shells or explicitly selects PowerShell on Windows paths. It uses the `codex`/`claude` executables available to that terminal; this compatibility path does not apply a custom Orca agent-launch command. No existing agent receives a create-team instruction or role prompt.
 
-- Roster, New team and Settings tabs.
-- Original quick starts: Squad (4 members), All-Purpose Team (11), Tech Team (21).
-- Setup → Models → Preview → Launch selection flow.
+“All at create” starts exactly the roster: Squad is one Head and three Workers. “On demand” initially starts only CEO/Heads. Every initial member gets its chosen CLI/model/effort, role, boss and reporting roster. The worker names Orca tabs and records actual returned handles and execution hosts. Provider conversation names are not changed. Supplying a startup prompt does not prove that an agent authenticated, acknowledged the brief or became ready.
+
+## Install or update
+
+1. Use this folder on the **PC running Orca**, as your existing development plugin path. A checkout on the server alone is not automatically a local PC path.
+2. Refresh **Settings → Plugins** and review/enable Team Orchestrator. Adding `main.mjs` changes Orca's consent to include **trusted Node worker code**. This worker has native process access, beyond the panel's declared host API capabilities.
+3. Open the Team Orchestrator panel and check **v0.1.04**.
+4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
+5. Click **Test connection**. A successful test verifies a freshly echoed nonce from the worker and displays its actual OS, Orca version and worker PID. Launch stays disabled until that connection and workspace context are verified.
+6. Select the intended workspace, create a team and choose **All at create** or **On demand**. Inspect the named agent tabs for startup/authentication prompts.
+
+The `main.mjs`, `runtime-adapter.cjs` and self-contained `panel.html` artifacts ship in this folder. Installation needs no npm packages or web server. The former manual patches and alternate manifest have been removed from this release; they remain in Git history.
+
+## Features and recovery
+
+- Roster, New team and Settings views; organisation tree and clickable member details.
+- Squad (4), All-Purpose Team (11), Tech Team (21), and custom team hierarchies.
 - Head only; Head → Workers; Head → Leads → Workers; CEO → named Heads → Workers.
-- One to five reports per manager, Codex or Claude Code, model and effort per hierarchy level.
-- Immediate organisation tree, clickable member details and reporting relationships.
-- Persistent roster and actual created-tab receipts: title, handle, execution host and startup-brief outcome.
-- Duplicate-name protection, validated restored data and failure-safe saves.
+- One to five reports per manager, Codex or Claude Code, model and effort by level.
+- Persistent team definitions in Orca's plugin-private storage, including legacy definitions.
+- Background launch jobs and persisted request journals: intent before spawn, actual handle before naming follow-ups, completed receipts replayed without another spawn.
+- Partial failure stops later members. Unknown transport delivery is never automatically retried. Reload merges already saved handles into the roster. Legacy coordinator requests are not silently relaunched.
 
-There is no coordinator-tab picker: the per-level CLI selection determines which new agent Orca starts. The host patch also preserves real tab titles and CLI identities in workspace context, instead of projecting anonymous handles alone.
-
-## Prepare Orca on the local PC
-
-Apply both patches to a source checkout of the **Orca build handling the panel on your local PC**, then build/run it using that repository's instructions. They were checked against Orca commit `dc146c09e2b12c229cc38434b7b1d4d9c012fdc5`. A different version may need its patch adapted.
-
-```sh
-git -C /path/to/orca apply --check /path/to/plugin/patches/orca-panel-storage.patch
-git -C /path/to/orca apply /path/to/plugin/patches/orca-panel-storage.patch
-git -C /path/to/orca apply --check /path/to/plugin/patches/orca-native-agent-launch.patch
-git -C /path/to/orca apply /path/to/plugin/patches/orca-native-agent-launch.patch
-```
-
-Skip the storage patch if it has already been applied. After running that patched Orca build, replace this plugin folder's `orca-plugin.json` with the contents of `orca-plugin.native.json`, then refresh plugins and review the updated capability consent. Do not use the native manifest with an unpatched Orca build: its `terminal:create` capability is unsupported there. The native patch adds one explicit `terminal:create` capability, one validated `terminal.createAgent` method, and workspace/tab metadata. It uses the existing panel admission, plugin identity, consent, mutation audit and runtime launcher; it does not expose raw RPC, arbitrary commands, environment changes or filesystem access. The storage patch exposes only the existing scoped `storage.get` and `storage.set` methods to panels.
-
-These files are host source patches, not code a plugin can apply automatically. This server workspace cannot replace your local PC's installed Orca binary.
-
-## Install and use
-
-1. Use this folder on the PC running Orca; no clone is needed if that development checkout already exists there.
-2. Enable experimental plugins under **Settings → Plugins**, and add this folder's absolute path under **Development**.
-3. Review and enable Team Orchestrator. The default manifest requests storage and focused workspace metadata. Native terminal creation is requested only after the patched-host manifest opt-in.
-4. Open Team Orchestrator in the right sidebar and check **v0.1.03**.
-5. Activate the workspace where the agents should run. Choose a preset, CLI/model/effort and launch mode, then **Create and launch team**.
-6. Follow each created-tab receipt. Inspect those tabs for readiness, authentication or permission prompts.
-
-Stock Orca can validate and display the panel with the default manifest. The panel blocks launching when the host does not advertise native launch support. It never substitutes a coordinator prompt or asks you to guess terminal UUIDs. Older saved coordinator requests remain visibly marked as legacy and unverified; they are not silently relaunched.
+After an unknown launch, inspect Orca before creating another team. A worker interrupted between spawning and saving its receipt cannot establish whether that spawn succeeded; its existing journal remains unresolved. There is no automatic recovery/relaunch button for that case.
 
 ## Verification
 
-Run inside this folder with Node.js 22 or newer:
+With Node.js 22 or newer, inside this folder:
 
 ```sh
 npm ci
 npm run build
 npm test
-npm run test:ui -- --output=/tmp/orca-native-ui-results
+npm run test:ui -- --output=/tmp/orca-worker-ui-results
 npm run test:host
 ```
 
-The host check downloads pinned Orca sources into a temporary directory, applies both patches, compiles the actual manifest/gate/handlers/service binding, and exercises consent, metadata, workspace fencing, native launch options, prompt-carry receipts and persisted replay protection. Native spawning is an injected runtime delegate; OS encryption is stubbed and not tested. It does not claim a full Orca desktop build or live agent launch.
+`test:host` downloads unmodified Orca sources pinned at `dc146c09e2b12c229cc38434b7b1d4d9c012fdc5`, compiles its actual manifest, panel envelope, consent fingerprint, capability gates and host handlers, and exercises the adapter against those gates. It applies no source patch. OS secret encryption is stubbed.
 
-`npm run preview` runs a local development fixture on `http://127.0.0.1:4173`, with an opaque sandbox and Orca's network-blocking panel policy. It emulates host receipts and storage; it does not start agents. Modes `unpatched`, `no-tabs`, `write-error`, `partial` and `no-workspace` cover relevant failures. Browser storage belongs only to the fixture, never the shipped plugin.
+For a separate native Electron test executable:
 
-Edit `src/`, build, and commit the self-contained `panel.html`. No external dashboard, web server or runtime npm dependencies are part of installation.
+```sh
+ELECTRON_TEST_BINARY=/absolute/path/to/electron npm run test:electron
+```
 
-## Limits
+That test creates a disposable Electron application, forks the **shipped worker**, verifies automatic injection, panel-to-worker nonce round trip, desktop workspace targeting, four named launch receipts, persisted duplicate prevention, inspector cleanup and disable. Its CLI records arguments and returns fixture receipts; it never starts coding agents. Linux QA used Electron 43.7.5 under Xvfb. Windows/macOS OS/package detection and quoting have unit coverage; native injection on those systems is not verified here.
 
-- Live launch in the user's local Orca desktop and a complete Orca build remain unverified here.
-- The bridge names Orca tabs. Provider conversation names and provider session IDs are not renamed or fabricated.
-- Agents are asked to save their role file after startup; there is no host filesystem API for those files. Readiness is checked in the actual agent tab.
-- This release launches and briefs initial members. Later on-demand worker creation, task dispatch, messaging, status refresh and recovery UI are not implemented. Managers using the remote orchestration CLI later still need SSH-host CLI control permission.
-- Model and effort preferences are passed to Orca's launcher; the runtime decides whether the selected CLI supports them. Defaults inherit agent configuration.
-- Browser validation uses Playwright because the Browser plugin is unavailable.
+`npm run preview` serves an opaque, network-blocked panel fixture for Playwright. Modes `unpatched`, `no-tabs`, `write-error`, `partial` and `no-workspace` cover failures. Browser storage is fixture-only, never used by the shipped panel. Browser QA uses Playwright because the Browser plugin is unavailable.
+
+## Compatibility limits
+
+- Live launching in your PC's installed Orca remains unverified from this server session. The runtime adapter uses private Electron IPC handlers and Orca's experimental plugin interface; an Orca update can break it.
+- Injection currently targets the main-process inspector's default loopback port 9229. A disabled inspector fuse or an incompatible debugger setup cannot be repaired by this plugin.
+- Role-file creation is requested in the startup brief; the worker does not write files in the execution workspace itself.
+- Later on-demand workers, task dispatch, cross-session messaging, questions, live status and recovery UI are outside this launch proof of concept. Managers calling the remote orchestration CLI later still need the corresponding SSH-host CLI permission.
+- CLI/provider model and effort availability is determined by the installed versions. The compatibility launcher refuses Claude's unsupported `xhigh` effort.

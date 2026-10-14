@@ -3,6 +3,8 @@ import { build } from 'esbuild';
 const metadata = JSON.parse(await readFile('package.json', 'utf8'));
 const manifest = JSON.parse(await readFile('orca-plugin.json', 'utf8'));
 if (manifest.version !== metadata.version || metadata.displayVersion.split('.').map(Number).join('.') !== metadata.version) throw new Error('Manifest, package and display versions must match.');
+await build({ entryPoints: ['src/worker.mjs'], outfile: 'main.mjs', bundle: true, format: 'esm', platform: 'node', target: 'node22', define: { __PLUGIN_DISPLAY_VERSION__: JSON.stringify(metadata.displayVersion) } });
+await build({ entryPoints: ['src/local/adapter.mjs'], outfile: 'runtime-adapter.cjs', bundle: true, format: 'cjs', platform: 'node', target: 'node22' });
 const result = await build({ entryPoints: ['src/panel.mjs'], bundle: true, write: false, format: 'iife', target: 'es2022', define: { __PLUGIN_DISPLAY_VERSION__: JSON.stringify(metadata.displayVersion) } });
 const css = await readFile('src/panel.css', 'utf8');
 const script = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');

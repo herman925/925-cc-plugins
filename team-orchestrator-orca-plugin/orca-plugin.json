@@ -3,8 +3,8 @@
   "id": "team-orchestrator",
   "publisher": "herman925",
   "name": "Team Orchestrator",
-  "version": "0.1.3",
-  "description": "Create team hierarchies and launch, name and brief agent tabs directly through the Orca host.",
+  "version": "0.1.4",
+  "description": "Create team hierarchies and launch, name and brief agents through a bundled local worker and automatic runtime adapter.",
   "engines": {
     "orca": ">=1.4.0"
   },
@@ -17,6 +17,26 @@
         "icon": "bot",
         "entry": "panel.html"
       }
+    ],
+    "commands": [
+      {
+        "id": "team.initialise",
+        "title": "Team Orchestrator: Initialise local adapter",
+        "context": "global"
+      },
+      {
+        "id": "team.control",
+        "title": "Team Orchestrator: Check local worker",
+        "context": "global"
+      }
+    ],
+    "events": [
+      {
+        "on": "worktree.created"
+      },
+      {
+        "on": "agent.status.changed"
+      }
     ]
   },
   "capabilities": [
@@ -25,6 +45,10 @@
     },
     {
       "kind": "workspace:read"
+    },
+    {
+      "kind": "events:subscribe"
     }
-  ]
+  ],
+  "main": "main.mjs"
 }

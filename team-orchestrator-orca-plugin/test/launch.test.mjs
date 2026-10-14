@@ -29,7 +29,7 @@ test('all-at-create returns four created handles without sending to an existing 
 });
 test('unsupported host performs no mutations; ambiguous partial creation stops later members', async () => {
   let calls = 0;
-  await assert.rejects(launchMembers(async () => calls++, team(), 'all', {}, async () => {}), /host patch/);
+  await assert.rejects(launchMembers(async () => calls++, team(), 'all', {}, async () => {}), /bundled local executor/);
   assert.equal(calls, 0);
   const receipts = {};
   await assert.rejects(launchMembers(async (_, params) => {

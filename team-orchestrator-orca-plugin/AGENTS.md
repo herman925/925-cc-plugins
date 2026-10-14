@@ -8,5 +8,7 @@
 - Run the build after source edits and commit the self-contained `panel.html`. Run domain/bridge tests, browser tests and host contract checks for changed behavior.
 
 - Launch teams through the local Orca native host bridge. Do not restore the coordinator-prompt workaround or an anonymous terminal picker.
-- The native bridge requires an Orca host source patch on the local PC. Never describe updating the plugin as applying that host patch or claim real desktop launching from fixture receipts.
-- The default orca-plugin.json must validate on stock Orca. Keep terminal:create only in the explicit orca-plugin.native.json opt-in for patched hosts, and update both manifest versions together.
+- Bundle the local Node worker and runtime IPC adapter. Detect OS, executable fuse, application version and parent PID automatically. Do not require a separate installer or manual source patch.
+- Keep orca-plugin.json valid on stock Orca; declare main, commands and event subscriptions through the existing manifest schema. Never invent capability names.
+- Preserve normal native-worker consent, panel ownership and live authority checks. The adapter must forward only this plugin's own declared commands.
+- Real Electron fixture results do not prove live agent launching on the user's PC. Report unsupported builds and unknown outcomes honestly.

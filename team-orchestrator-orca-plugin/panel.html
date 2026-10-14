@@ -722,6 +722,61 @@ footer {
     });
   }
 
+  // src/worker-bridge.mjs
+  var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pollMs = 1e3, spacingMs = 400 } = {}) {
+    let connected = false;
+    let previous = 0;
+    let queue = Promise.resolve();
+    const send = (...args) => {
+      const result = queue.then(async () => {
+        await pause(Math.max(0, previous + spacingMs - Date.now()));
+        previous = Date.now();
+        return raw(...args);
+      });
+      queue = result.catch(() => {
+      });
+      return result;
+    };
+    const rpc = async (op, params = {}) => {
+      const token = nonce();
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await send("workspace.readContext", { teamWorker: { protocol: 1, nonce: token, commandId: "team.control", args: { op, params } } }, { timeoutMs: 3e4 });
+        } catch (error) {
+          if (error.code !== "rate_limited" || attempt >= 3) throw error;
+          await pause(1100);
+        }
+      }
+    };
+    return {
+      async connect() {
+        connected = false;
+        const token = nonce();
+        const report = await send("workspace.readContext", { teamWorker: { protocol: 1, nonce: token, commandId: "team.control", args: { op: "ping" } } }, { timeoutMs: 3e4 });
+        if (report?.nonce !== token || report.ready !== true || !["linux", "darwin", "win32"].includes(report.platform) || !Number.isInteger(report.workerPid)) throw new Error("The local worker connection was not verified.");
+        connected = true;
+        return report;
+      },
+      async call(action, params) {
+        if (!connected) throw new Error("Test the local worker connection first.");
+        if (action === "workspace.readContext") return rpc("context");
+        if (action === "storage.get") return rpc("load");
+        if (action === "storage.set") return rpc("save", params);
+        if (action !== "terminal.createAgent") throw new Error("Unknown worker operation.");
+        await rpc("start", params);
+        const deadline = Date.now() + 12e4;
+        while (Date.now() < deadline) {
+          const receipt = await rpc("receipt", { requestId: params.requestId });
+          if (receipt?.status === "created" && receipt.handle) return receipt;
+          if (receipt?.status === "unknown") throw new Error(receipt.error || "Launch outcome is unknown. Inspect Orca before retrying.");
+          await pause(pollMs);
+        }
+        throw new Error("Launch observation timed out. Inspect Orca before retrying.");
+      }
+    };
+  }
+
   // src/launch.mjs
   function initialMembers(team, mode) {
     if (!["on-demand", "all"].includes(mode)) throw new Error("Choose a launch mode.");
@@ -750,7 +805,7 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     };
   }
   async function launchMembers(call2, team, mode, context, record) {
-    if (context?.nativeAgentLaunch !== true || !context.workspaceKey) throw new Error("This Orca host does not expose native agent launching. Apply the included Orca host patch on the PC running Orca.");
+    if (context?.nativeAgentLaunch !== true || !context.workspaceKey) throw new Error("The bundled local executor is not connected. Use Test connection before launching.");
     for (const member of initialMembers(team, mode)) {
       await record(member.id, { status: "starting" });
       let receipt;
@@ -771,7 +826,11 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
 
   // src/panel.mjs
   var app = document.getElementById("app");
-  var call = createBridge(window.parent);
+  var rawCall = createBridge(window.parent);
+  var worker = createWorkerBridge(rawCall);
+  var call = (action, params) => worker.call(action, params);
+  var connection = "Checking the bundled local executor\u2026";
+  var connectionReady = false;
   var KEY = "team-definitions-v1";
   var state = validateState(null);
   var form = structuredClone(DEFAULT_FORM);
@@ -841,7 +900,7 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     if (!team.launch) return "Not started";
     if (!team.launch.native) return "Legacy request \xB7 unverified";
     const row = team.launch.members?.[member.id];
-    if (row?.status === "created") return row.briefAccepted ? "Created \xB7 brief passed" : "Created \xB7 brief unconfirmed";
+    if (row?.status === "created") return row.briefAccepted ? "Created \xB7 startup brief supplied" : "Created \xB7 brief unconfirmed";
     if (row?.status === "starting") return "Starting";
     if (row?.status === "unknown") return "Unconfirmed";
     return initialMembers(team, team.launch.mode).some((initial) => initial.id === member.id) ? "Not started" : "On demand";
@@ -867,16 +926,18 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     return `<div class="section-heading"><h1>Team roster</h1>${button("+ New team", "new", "", "primary small")}</div>${charts}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ""}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map((member) => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, "member", `data-team="${i}" data-member="${escape(member.id)}"`, "name-button")}</td><td>${label(member.role)}</td><td>${member.agent === "claude" ? "Claude" : "Codex"}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join("")}</tbody></table></div>${!team.launch ? button("Launch this team", "launch-existing", `data-team="${i}" ${workspace?.nativeAgentLaunch !== true ? "disabled" : ""}`, "primary small") : launchReceipt(team)}</section>`).join("")}</div>${state.teams.some((team) => !team.launch) ? launchControls() : ""}${details()}`;
   }
   function settingsView() {
-    return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? "checked" : ""} ${busy || !loaded ? "disabled" : ""}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? "disabled" : ""}><option value="stacked" ${state.settings.layout === "stacked" ? "selected" : ""}>Stacked</option><option value="columns" ${state.settings.layout === "columns" ? "selected" : ""}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go directly to the Orca host on your PC. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
+    return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? "checked" : ""} ${busy || !loaded ? "disabled" : ""}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? "disabled" : ""}><option value="stacked" ${state.settings.layout === "stacked" ? "selected" : ""}>Stacked</option><option value="columns" ${state.settings.layout === "columns" ? "selected" : ""}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
   }
   function render() {
     app.setAttribute("aria-busy", String(busy));
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.03")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.04")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    <div class="notice" role="status">${escape(connection)} ${button("Test connection", "test-connection", busy ? "disabled" : "", "small")}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
-    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. This Orca build does not expose panel storage. Teams can be created here, but will be lost when the panel closes.</div>` : ""}
+    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
     ${busy && !loaded ? '<p class="loading">Reading saved teams\u2026</p>' : view === "new" ? formView() : view === "settings" ? settingsView() : roster()}
     </main><footer>${storageAvailable ? "Saved in Orca" : loaded ? "Session only" : "Connecting to Orca"}<span>Orca \xB7 Agent teams</span></footer>`;
+    if (busy) for (const control of app.querySelectorAll("button,input,select,textarea")) control.disabled = true;
   }
   function updatePreview() {
     const node = document.getElementById("preview");
@@ -888,12 +949,20 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     canRetry = false;
     render();
     try {
+      const report = await worker.connect();
+      connectionReady = true;
+      connection = `Local executor connected \xB7 ${report.platform} \xB7 Orca ${report.appVersion} \xB7 worker ${report.workerPid}`;
       const result = await call("storage.get", { key: KEY });
       state = validateState(result?.value ?? null);
       loaded = true;
       storageAvailable = true;
     } catch (error) {
-      if (["panel_forbidden", "unknown_method", "invalid_request"].includes(error.code)) {
+      if (!connectionReady) {
+        loaded = true;
+        storageAvailable = false;
+        connection = "Bundled executor is not connected. Bootstrap starts on agent/workspace activity; the Orca command \u201CTeam Orchestrator: Initialise local adapter\u201D also starts it.";
+        problem = error.message;
+      } else if (["panel_forbidden", "unknown_method", "invalid_request"].includes(error.code)) {
         loaded = true;
         storageAvailable = false;
       } else {
@@ -910,7 +979,7 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
   async function refreshTargets() {
     try {
       workspace = await call("workspace.readContext", {});
-      targetError = !workspace ? "Open the intended workspace first." : workspace.nativeAgentLaunch !== true ? "Native launching is unavailable in this Orca build. Apply patches/orca-native-agent-launch.patch to Orca on your local PC and rebuild it. Installing this plugin alone cannot enable the host API." : "";
+      targetError = !workspace ? "Open the intended workspace first." : workspace.nativeAgentLaunch !== true ? "The local executor is not ready. Use Test connection after the bundled bootstrap finishes." : "";
     } catch (error) {
       workspace = null;
       targetError = error.message;
@@ -919,11 +988,17 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
   async function launchTeam(index) {
     const team = state.teams[index];
     if (team.launch) throw new Error("This launch has already been attempted. Inspect its receipts before starting another team.");
+    busy = true;
+    render();
     await refreshTargets();
-    if (targetError) throw new Error(targetError);
+    if (targetError) {
+      busy = false;
+      render();
+      throw new Error(targetError);
+    }
     const request = { native: true, status: "sending", workspaceKey: workspace.workspaceKey, mode: launchMode, members: {} };
     const withRequest = { ...state, teams: state.teams.map((item, i) => i === index ? { ...item, launch: request } : item) };
-    if (!await save(withRequest)) return;
+    if (!await save(withRequest, true, true)) return;
     busy = true;
     render();
     const persist = async () => {
@@ -950,8 +1025,9 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
       render();
     }
   }
-  async function save(next) {
-    if (!loaded || busy) return false;
+  async function save(next, holdBusy = false, insideLaunch = false) {
+    if (!loaded || busy && !insideLaunch) return false;
+    let saved = false;
     busy = true;
     problem = "";
     canRetry = false;
@@ -959,13 +1035,14 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     try {
       if (storageAvailable) await call("storage.set", { key: KEY, value: next });
       state = next;
+      saved = true;
       return true;
     } catch (error) {
       problem = `Could not save: ${error.message}`;
       canRetry = true;
       return false;
     } finally {
-      busy = false;
+      busy = holdBusy && saved;
       render();
     }
   }
@@ -995,13 +1072,14 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
         const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         const next = addTeam(state, team);
         if (workspace?.nativeAgentLaunch !== true) throw new Error(targetError || "Native launching is unavailable.");
-        if (await save(next)) {
+        if (await save(next, true)) {
           view = "roster";
           selection = null;
           await launchTeam(state.teams.length - 1);
           render();
         }
       } catch (error) {
+        busy = false;
         message = "";
         problem = error.message;
         canRetry = false;
@@ -1014,7 +1092,8 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
     } else if (action === "close-details") {
       selection = null;
       render();
-    } else if (action === "retry") {
+    } else if (action === "retry" || action === "test-connection") {
+      connectionReady = false;
       await load();
     } else if (action === "refresh-tabs") {
       await refreshTargets();

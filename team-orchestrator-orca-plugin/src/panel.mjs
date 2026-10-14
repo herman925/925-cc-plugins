@@ -1,9 +1,14 @@
 import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, addTeam, validateState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
+import { createWorkerBridge } from './worker-bridge.mjs';
 import { initialMembers, launchMembers } from './launch.mjs';
 
 const app = document.getElementById('app');
-const call = createBridge(window.parent);
+const rawCall = createBridge(window.parent);
+const worker = createWorkerBridge(rawCall);
+const call = (action, params) => worker.call(action, params);
+let connection = 'Checking the bundled local executor…';
+let connectionReady = false;
 const KEY = 'team-definitions-v1';
 let state = validateState(null);
 let form = structuredClone(DEFAULT_FORM);
@@ -70,7 +75,7 @@ function launchStatus(team, member) {
   if (!team.launch) return 'Not started';
   if (!team.launch.native) return 'Legacy request · unverified';
   const row = team.launch.members?.[member.id];
-  if (row?.status === 'created') return row.briefAccepted ? 'Created · brief passed' : 'Created · brief unconfirmed';
+  if (row?.status === 'created') return row.briefAccepted ? 'Created · startup brief supplied' : 'Created · brief unconfirmed';
   if (row?.status === 'starting') return 'Starting';
   if (row?.status === 'unknown') return 'Unconfirmed';
   return initialMembers(team, team.launch.mode).some(initial => initial.id === member.id) ? 'Not started' : 'On demand';
@@ -96,43 +101,50 @@ function roster() {
   return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${workspace?.nativeAgentLaunch !== true ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
 }
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go directly to the Orca host on your PC. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
+  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
   app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+    <div class="notice" role="status">${escape(connection)} ${button('Test connection', 'test-connection', busy ? 'disabled' : '', 'small')}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
-    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. This Orca build does not expose panel storage. Teams can be created here, but will be lost when the panel closes.</div>` : ''}
+    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
     ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'settings' ? settingsView() : roster()}
     </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
+  if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
 function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
 async function load() {
   busy = true; problem = ''; canRetry = false; render();
   try {
+    const report = await worker.connect();
+    connectionReady = true;
+    connection = `Local executor connected · ${report.platform} · Orca ${report.appVersion} · worker ${report.workerPid}`;
     const result = await call('storage.get', { key: KEY });
     state = validateState(result?.value ?? null);
     loaded = true; storageAvailable = true;
   } catch (error) {
-    if (['panel_forbidden', 'unknown_method', 'invalid_request'].includes(error.code)) { loaded = true; storageAvailable = false; }
+    if (!connectionReady) { loaded = true; storageAvailable = false; connection = 'Bundled executor is not connected. Bootstrap starts on agent/workspace activity; the Orca command “Team Orchestrator: Initialise local adapter” also starts it.'; problem = error.message; }
+    else if (['panel_forbidden', 'unknown_method', 'invalid_request'].includes(error.code)) { loaded = true; storageAvailable = false; }
     else { loaded = false; problem = error.message; canRetry = true; }
   } finally { busy = false; await refreshTargets(); render(); }
 }
 async function refreshTargets() {
   try {
     workspace = await call('workspace.readContext', {});
-    targetError = !workspace ? 'Open the intended workspace first.' : workspace.nativeAgentLaunch !== true ? 'Native launching is unavailable in this Orca build. Apply patches/orca-native-agent-launch.patch to Orca on your local PC and rebuild it. Installing this plugin alone cannot enable the host API.' : '';
+    targetError = !workspace ? 'Open the intended workspace first.' : workspace.nativeAgentLaunch !== true ? 'The local executor is not ready. Use Test connection after the bundled bootstrap finishes.' : '';
   } catch (error) { workspace = null; targetError = error.message; }
 }
 async function launchTeam(index) {
   const team = state.teams[index];
   if (team.launch) throw new Error('This launch has already been attempted. Inspect its receipts before starting another team.');
+  busy = true; render();
   await refreshTargets();
-  if (targetError) throw new Error(targetError);
+  if (targetError) { busy = false; render(); throw new Error(targetError); }
   const request = { native: true, status: 'sending', workspaceKey: workspace.workspaceKey, mode: launchMode, members: {} };
   const withRequest = { ...state, teams: state.teams.map((item, i) => i === index ? { ...item, launch: request } : item) };
-  if (!await save(withRequest)) return;
+  if (!await save(withRequest, true, true)) return;
   busy = true; render();
   const persist = async () => { if (storageAvailable) await call('storage.set', { key: KEY, value: state }); };
   try {
@@ -149,15 +161,17 @@ async function launchTeam(index) {
     busy = false; render();
   }
 }
-async function save(next) {
-  if (!loaded || busy) return false;
+async function save(next, holdBusy = false, insideLaunch = false) {
+  if (!loaded || (busy && !insideLaunch)) return false;
+  let saved = false;
   busy = true; problem = ''; canRetry = false; render();
   try {
     if (storageAvailable) await call('storage.set', { key: KEY, value: next });
     state = next;
+    saved = true;
     return true;
   } catch (error) { problem = `Could not save: ${error.message}`; canRetry = true; return false; }
-  finally { busy = false; render(); }
+  finally { busy = holdBusy && saved; render(); }
 }
 
 app.addEventListener('click', async event => {
@@ -176,11 +190,11 @@ app.addEventListener('click', async event => {
       const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: new Date().toISOString() };
       const next = addTeam(state, team);
       if (workspace?.nativeAgentLaunch !== true) throw new Error(targetError || 'Native launching is unavailable.');
-      if (await save(next)) { view = 'roster'; selection = null; await launchTeam(state.teams.length - 1); render(); }
-    } catch (error) { message = ''; problem = error.message; canRetry = false; render(); }
+      if (await save(next, true)) { view = 'roster'; selection = null; await launchTeam(state.teams.length - 1); render(); }
+    } catch (error) { busy = false; message = ''; problem = error.message; canRetry = false; render(); }
   } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
-  else if (action === 'retry') { await load(); }
+  else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(); }
   else if (action === 'refresh-tabs') { await refreshTargets(); render(); }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }

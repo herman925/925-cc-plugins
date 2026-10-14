@@ -13,22 +13,27 @@ window.addEventListener('message',event=>{
  window.bridgeCalls.push({action,params});
  const mode=new URLSearchParams(location.search).get('mode');
  const reply=(value,ok=true,errorCode,error)=>frame.contentWindow.postMessage({type:'orca-panel-action-result',requestId,ok,value,errorCode,error},'*');
- if(action==='workspace.readContext')return reply(mode==='no-workspace'?null:{displayName:'Demo workspace',branch:'main',workspaceKey:'a'.repeat(64),nativeAgentLaunch:mode!=='unpatched',terminals:mode==='no-tabs'?[]:[{id:'existing-codex',title:'Investigate Orca plugin orchestras',agentIdentity:'codex'},{id:'existing-claude',title:'Codex CLI update',agentIdentity:'claude'}]});
- if(action==='terminal.createAgent'){
-  if(params?.workspaceKey!=='a'.repeat(64)||!['codex','claude'].includes(params.agent)||!params.title||!params.brief)return reply(null,false,'invalid_params','Invalid native launch request');
-  if(mode==='create-timeout')return;
-  if(mode==='partial'&&creates===1)return reply(null,false,'action_failed','Agent launch outcome unknown');
-  creates++;
-  return reply({handle:'created-member-'+creates,title:params.title,executionHostId:'ssh:demo',briefAccepted:true});
- }
- if(action==='terminal.sendText')return reply(null,false,'invalid_params','No existing agent should receive a launch request');
- if(mode==='unpatched')return reply(null,false,'panel_forbidden','Storage is not panel-callable.');
+ const message=params?.teamWorker;
+ if(action!=='workspace.readContext'||message?.protocol!==1||message.commandId!=='team.control')return reply(null,false,'invalid_params','Unsupported worker envelope');
+ if(mode==='unpatched')return reply({displayName:'Stock context'});
  if(mode==='timeout')return;
- if(!['storage.get','storage.set'].includes(action)||params?.key!=='team-definitions-v1')return reply(null,false,'invalid_params','Unsupported request.');
+ const {op,params:input={}}=message.args;
+ if(op==='ping')return reply({nonce:message.nonce,ready:true,platform:'linux',appVersion:'1.4.224',workerPid:1234});
+ if(op==='context')return reply(mode==='no-workspace'?null:{displayName:'Demo workspace',branch:'main',workspaceKey:'a'.repeat(64),nativeAgentLaunch:true});
+ if(op==='start'){
+  if(input.workspaceKey!=='a'.repeat(64)||!['codex','claude'].includes(input.agent)||!input.title||!input.brief)return reply(null,false,'invalid_params','Invalid launch request');
+  if(mode==='create-timeout')return;
+  creates++;
+  const record=mode==='partial'&&creates===2?{status:'unknown',error:'Agent launch outcome unknown'}:{status:'created',handle:'created-member-'+creates,title:input.title,executionHostId:'ssh:demo',briefAccepted:true};
+  localStorage.setItem('launch:'+input.requestId,JSON.stringify(record));
+  return reply({status:'starting'});
+ }
+ if(op==='receipt')return reply(JSON.parse(localStorage.getItem('launch:'+input.requestId)||'null'));
  try{
-  if(action==='storage.get')reply({value:JSON.parse(localStorage.getItem(params.key)||'null')});
+  if(op==='load')reply({value:JSON.parse(localStorage.getItem('team-definitions-v1')||'null')});
+  else if(op!=='save')reply(null,false,'invalid_params','Unknown operation');
   else if(mode==='write-error')reply(null,false,'action_failed','Disk full');
-  else{localStorage.setItem(params.key,JSON.stringify(params.value));reply({ok:true});}
+  else{localStorage.setItem('team-definitions-v1',JSON.stringify(input.value));reply({ok:true});}
  }catch(error){reply(null,false,'action_failed',error.message);}
 });
 fetch('/panel.html').then(r=>r.text()).then(html=>{frame.srcdoc=html.replace('<head>',${JSON.stringify(`<head><meta http-equiv="Content-Security-Policy" content="${csp}">`)});});
