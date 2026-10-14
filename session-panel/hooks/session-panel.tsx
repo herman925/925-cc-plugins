@@ -1537,7 +1537,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             {settingsButton}
           </Box>
           {settingsOpen ? (
-            <Box flexDirection="row" justifyContent="flex-end" width={width}>
+            <Box position="absolute" top={1} right={0} flexDirection="column">
               <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1} width={Math.min(width, 60)}>
                 <Text bold>Settings</Text>
                 {tabRow}
