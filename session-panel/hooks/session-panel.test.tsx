@@ -54,6 +54,25 @@ async function openBand(ui: any) {
   await ui.press({ key: 'tab-btn-band' })
 }
 
+// The Settings card pages its rows; this shows the page that holds a control, from the first page on.
+async function reveal(ui: any, key: string) {
+  while (await ui.find({ key: 'page-prev' })) await ui.press({ key: 'page-prev' })
+  while (!(await ui.find({ key })) && (await ui.find({ key: 'page-next' }))) await ui.press({ key: 'page-next' })
+}
+
+// A mounted band whose find and press first page the Settings card to the control they name.
+function paged(ui: any) {
+  const wrap: any = {}
+  for (const p of Object.keys(ui)) wrap[p] = typeof ui[p] === 'function' ? (...a: any[]) => ui[p](...a) : ui[p]
+  for (const p of ['find', 'press']) {
+    wrap[p] = async (q: any) => {
+      if (typeof q?.key === 'string') await reveal(ui, q.key)
+      return ui[p](q)
+    }
+  }
+  return wrap
+}
+
 async function ruleOff($: any) {
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
@@ -1132,6 +1151,7 @@ test('enhance key: with no keyboard file, the Settings button creates it with th
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
   await ui.press({ key: 'tab-btn-enhancer' })
+  await reveal(ui, 'set-key')
   await ui.press({ key: 'set-key' })
   expect(w.toasts).toContain(ADDED)
   expect(w.writes.map(t => JSON.parse(t))).toEqual([
@@ -2816,8 +2836,8 @@ async function decideRows($: any) {
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
-  if (!(await ui.find({ key: 'set-decide' }))) await ui.press({ key: 'tab-btn-assumptions' })
-  return ui
+  await ui.press({ key: 'tab-btn-assumptions' })
+  return paged(ui)
 }
 
 const decideSection = (out: any) => out.sections.find((s: any) => s.id === 'session-panel:decide')
@@ -2912,3 +2932,75 @@ test('rulesSection: the question box line replaces the picker line, and the gril
   expect(rulesSection(false, false)).not.toContain('ask_choices')
   expect(rulesSection(true, false)).toContain('/grill-with-docs')
 })
+
+
+// A small text layout of the drawn Settings rows: a Box with a width pads its lines to that width, a row Box sets its
+// children side by side, a column Box stacks them. It shows what each cell holds, so a cell too narrow for its content
+// is caught here and not on screen.
+type Lines = string[]
+function layout(el: any, overflow: string[]): Lines {
+  if (el == null) return []
+  if (typeof el === 'string') return [el]
+  if (Array.isArray(el)) return el.flatMap(c => layout(c, overflow))
+  if (el.type === 'Text') return [(el.children ?? []).map((c: any) => (typeof c === 'string' ? c : layout(c, overflow).join(''))).join('')]
+  if (el.type === 'Button') return [el.props.plain ? el.props.label : `[ ${el.props.label} ]`]
+  const kids: any[] = el.children ?? []
+  const pad = el.props?.paddingLeft ?? 0
+  let lines: Lines
+  if (el.props?.flexDirection === 'row') {
+    const parts = kids.map(c => layout(c, overflow))
+    const widths = parts.map(p => Math.max(0, ...p.map(l => l.length)))
+    const h = Math.max(1, ...parts.map(p => p.length))
+    lines = Array.from({ length: h }, (_, i) => parts.map((p, j) => (p[i] ?? '').padEnd(widths[j], ' ')).join(''))
+  } else {
+    lines = kids.flatMap(c => layout(c, overflow))
+  }
+  lines = lines.map(l => ' '.repeat(pad) + l)
+  const w = el.props?.width
+  if (typeof w === 'number') {
+    for (const l of lines) if (l.length > w) overflow.push(`${JSON.stringify(l)} is wider than its cell (${w})`)
+    lines = lines.map(l => l.padEnd(w, ' '))
+    if (lines.length === 0) lines = [' '.repeat(w)]
+  }
+  return lines
+}
+
+function findRows(el: any, out: any[] = []): any[] {
+  if (el == null || typeof el !== 'object') return out
+  if (Array.isArray(el)) {
+    el.forEach(c => findRows(c, out))
+    return out
+  }
+  if (el.type === 'Box' && typeof el.props?.key === 'string' && el.props.key.startsWith('row-')) out.push(el)
+  else (el.children ?? []).forEach((c: any) => findRows(c, out))
+  return out
+}
+
+async function settingsPages(ui: any): Promise<{ text: string[]; overflow: string[] }> {
+  const text: string[] = []
+  const overflow: string[] = []
+  for (const tab of ['band', 'enhancer', 'questions', 'assumptions', 'setup']) {
+    if (await ui.find({ key: `tab-btn-${tab}` })) await ui.press({ key: `tab-btn-${tab}` })
+    for (let page = 0; ; page++) {
+      text.push(`--- ${tab} page ${page + 1}`)
+      for (const row of findRows(await ui.drawn())) text.push(...layout(row, overflow).map(l => l.trimEnd()))
+      if (!(await ui.find({ key: 'page-next' }))) break
+      await ui.press({ key: 'page-next' })
+    }
+  }
+  return { text, overflow }
+}
+
+for (const columns of [140, 80]) {
+  test(`settings table at ${columns} columns: every cell holds its content, and the columns start in the same place on every row`, async ($, on) => {
+    world(on)
+    await begin($)
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: columns }, surface: 'terminal' })
+    await ui.press({ key: 'settings' })
+    const { text, overflow } = await settingsPages(ui)
+    expect(overflow).toEqual([])
+    const rows = text.filter(l => !l.startsWith('---'))
+    expect(rows.every(l => l.length <= columns - 8)).toBe(true)
+    expect(text.some(l => l.includes('Jev pass'))).toBe(true)
+  })
+}
