@@ -1,6 +1,6 @@
 import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, addTeam, validateState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
-import { initialMembers, launchInstructions, prepareLaunch } from './launch.mjs';
+import { initialMembers, launchMembers } from './launch.mjs';
 
 const app = document.getElementById('app');
 const call = createBridge(window.parent);
@@ -16,7 +16,6 @@ let message = '';
 let problem = '';
 let canRetry = false;
 let workspace = null;
-let coordinator = '';
 let launchMode = 'on-demand';
 let targetError = '';
 
@@ -62,16 +61,25 @@ function formView() {
     <div class="field"><span>${form.structure === 'organisation' ? 'Workers each' : 'Reports each'}</span>${segment('fan', [1, 2, 3, 4, 5].map(n => [n, `${n}`]), form.fan)}</div></section>
     <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option><option value="opus"></option><option value="sonnet"></option><option value="haiku"></option></datalist></section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
-    ${launchControls()}<div class="actions">${button('Create and launch team', 'create', busy || !loaded || !coordinator ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+    ${launchControls()}<div class="actions">${button('Create and launch team', 'create', busy || !loaded || workspace?.nativeAgentLaunch !== true ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
 }
 function launchControls() {
-  return `<section class="section launch-controls"><h2>Launch</h2><label class="field">Coordinator agent tab<select data-coordinator aria-label="Coordinator agent tab"><option value="">Choose an existing coding-agent tab</option>${(workspace?.terminals ?? []).map((terminal, i) => `<option value="${escape(terminal.id)}" ${coordinator === terminal.id ? 'selected' : ''}>Tab ${i + 1} · ${escape(terminal.id)}</option>`).join('')}</select><small>${escape(workspace?.displayName ?? 'Open a workspace to select its tabs.')} · Choose a tab running Codex or Claude, not a shell.</small></label>${button('Refresh tabs', 'refresh-tabs', '', 'small')}<label class="field">Launch mode<select data-launch-mode><option value="on-demand" ${launchMode === 'on-demand' ? 'selected' : ''}>On demand · start CEO and heads</option><option value="all" ${launchMode === 'all' ? 'selected' : ''}>All at create · start every member</option></select></label><p class="subtle">The coordinator opens tabs, names sessions and delivers role briefings. On-demand workers start when assigned work.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
+  return `<section class="section launch-controls"><h2>Launch</h2><p><strong>${escape(workspace?.displayName ?? 'No active workspace')}</strong> · Orca opens new tabs on this workspace's execution host.</p>${button('Refresh workspace', 'refresh-tabs', '', 'small')}<label class="field">Launch mode<select data-launch-mode><option value="on-demand" ${launchMode === 'on-demand' ? 'selected' : ''}>On demand · start CEO and heads</option><option value="all" ${launchMode === 'all' ? 'selected' : ''}>All at create · start every member</option></select></label><p class="subtle">Orca launches each selected CLI, names its tab and passes its role briefing directly. No existing agent tab receives a launch request.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
 }
 function launchStatus(team, member) {
   if (!team.launch) return 'Not started';
-  if (team.launch.status === 'unknown') return 'Unconfirmed';
-  if (team.launch.status === 'rejected') return 'Not sent';
-  return initialMembers(team, team.launch.mode).some(initial => initial.id === member.id) ? team.launch.status === 'sending' ? 'Sending' : 'Requested' : 'On demand';
+  if (!team.launch.native) return 'Legacy request · unverified';
+  const row = team.launch.members?.[member.id];
+  if (row?.status === 'created') return row.briefAccepted ? 'Created · brief passed' : 'Created · brief unconfirmed';
+  if (row?.status === 'starting') return 'Starting';
+  if (row?.status === 'unknown') return 'Unconfirmed';
+  return initialMembers(team, team.launch.mode).some(initial => initial.id === member.id) ? 'Not started' : 'On demand';
+}
+function launchReceipt(team) {
+  if (!team.launch) return '';
+  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request. Inspect that agent for any existing resources before recreating this team.</p>';
+  const created = Object.values(team.launch.members ?? {}).filter(row => row.terminalId);
+  return `<p class="subtle">${created.length} actual tab receipt${created.length === 1 ? '' : 's'}. Input delivery does not prove agent readiness.</p>${created.length ? `<ul>${created.map(row => `<li>${escape(row.title)} · ${escape(row.executionHostId ?? 'execution host unreported')}<br><small>${escape(row.terminalId)}</small>${row.error ? `<p>${escape(row.error)}</p>` : ''}</li>`).join('')}</ul>` : ''}`;
 }
 function details() {
   if (!selection) return '';
@@ -85,10 +93,10 @@ function details() {
 function roster() {
   if (!state.teams.length) return empty();
   const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join('')}</section>` : '';
-  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${!team.launch || team.launch.status === 'rejected' ? button('Launch this team', 'launch-existing', `data-team="${i}"`, 'primary small') : `<p class="subtle">${team.launch.status === 'accepted' ? 'Request accepted by coordinator; see its session for actual launch results.' : 'Delivery unconfirmed. Inspect the coordinator before trying to launch again.'}</p>`}</section>`).join('')}</div>${state.teams.some(team => !team.launch || team.launch.status === 'rejected') ? launchControls() : ''}${details()}`;
+  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${workspace?.nativeAgentLaunch !== true ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
 }
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch requests go to your selected coordinator agent. It creates and briefs the sessions through Orca. The panel reports request delivery; actual readiness and session IDs are reported by the coordinator.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
+  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go directly to the Orca host on your PC. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
@@ -114,30 +122,30 @@ async function load() {
 async function refreshTargets() {
   try {
     workspace = await call('workspace.readContext', {});
-    if (!workspace?.terminals?.some(terminal => terminal.id === coordinator)) coordinator = '';
-    targetError = workspace?.terminals?.length ? '' : 'No terminal tabs found. Open a coding-agent tab in this workspace first.';
-  } catch (error) { workspace = null; coordinator = ''; targetError = error.message; }
+    targetError = !workspace ? 'Open the intended workspace first.' : workspace.nativeAgentLaunch !== true ? 'Native launching is unavailable in this Orca build. Apply patches/orca-native-agent-launch.patch to Orca on your local PC and rebuild it. Installing this plugin alone cannot enable the host API.' : '';
+  } catch (error) { workspace = null; targetError = error.message; }
 }
 async function launchTeam(index) {
   const team = state.teams[index];
-  if (!coordinator) throw new Error('Choose the coordinator agent tab first.');
-  if (team.launch && team.launch.status !== 'rejected') throw new Error('This launch has already been submitted. Inspect the coordinator to avoid duplicate sessions.');
-  const text = await prepareLaunch(call, team, launchMode, coordinator);
-  const request = { status: 'sending', terminalId: coordinator, mode: launchMode };
+  if (team.launch) throw new Error('This launch has already been attempted. Inspect its receipts before starting another team.');
+  await refreshTargets();
+  if (targetError) throw new Error(targetError);
+  const request = { native: true, status: 'sending', workspaceKey: workspace.workspaceKey, mode: launchMode, members: {} };
   const withRequest = { ...state, teams: state.teams.map((item, i) => i === index ? { ...item, launch: request } : item) };
   if (!await save(withRequest)) return;
   busy = true; render();
+  const persist = async () => { if (storageAvailable) await call('storage.set', { key: KEY, value: state }); };
   try {
-    const receipt = await call('terminal.sendText', { terminalId: coordinator, text, enter: true });
-    request.status = receipt?.accepted === true ? 'accepted' : receipt?.accepted === false ? 'rejected' : 'unknown';
-    const count = initialMembers(team, launchMode).length;
-    message = request.status === 'accepted' ? `Launch request sent for @${team.name}. The coordinator will open and brief ${count} session${count === 1 ? '' : 's'}; check its tab for results.` : 'Launch delivery was not confirmed. Inspect the coordinator before retrying.';
-  } catch (error) { request.status = 'unknown'; problem = `${error.message} Inspect the coordinator before retrying; this request may have arrived.`; }
+    await launchMembers(call, team, launchMode, workspace, async (id, receipt) => {
+      request.members[id] = receipt;
+      render();
+      await persist();
+    });
+    request.status = 'accepted';
+    message = `Orca created ${initialMembers(team, launchMode).length} tab(s) for @${team.name} and passed their role briefs. Check those tabs for agent readiness.`;
+  } catch (error) { request.status = 'unknown'; problem = `${error.message} Any partial tab receipts are retained below; no automatic retry occurs.`; }
   finally {
-    if (storageAvailable) {
-      try { await call('storage.set', { key: KEY, value: state }); }
-      catch (error) { problem = `Launch receipt could not be saved: ${error.message} Inspect the coordinator before retrying.`; }
-    }
+    try { await persist(); } catch (error) { problem = `Could not save the latest launch receipt: ${error.message}`; }
     busy = false; render();
   }
 }
@@ -167,8 +175,7 @@ app.addEventListener('click', async event => {
     try {
       const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: new Date().toISOString() };
       const next = addTeam(state, team);
-      if (!coordinator) throw new Error('Choose the coordinator agent tab first.');
-      launchInstructions(team, launchMode);
+      if (workspace?.nativeAgentLaunch !== true) throw new Error(targetError || 'Native launching is unavailable.');
       if (await save(next)) { view = 'roster'; selection = null; await launchTeam(state.teams.length - 1); render(); }
     } catch (error) { message = ''; problem = error.message; canRetry = false; render(); }
   } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
@@ -186,8 +193,7 @@ app.addEventListener('input', event => {
 });
 app.addEventListener('change', async event => {
   const target = event.target;
-  if (target.hasAttribute('data-coordinator')) { coordinator = target.value; render(); }
-  else if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
+  if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);

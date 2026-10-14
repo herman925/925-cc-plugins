@@ -1,0 +1,239 @@
+diff --git a/src/shared/plugins/plugin-capabilities.ts b/src/shared/plugins/plugin-capabilities.ts
+--- a/src/shared/plugins/plugin-capabilities.ts
++++ b/src/shared/plugins/plugin-capabilities.ts
+@@ -15,6 +15,7 @@
+ export const PLUGIN_CAPABILITY_KINDS = [
+   'workspace:read',
+   'terminal:send',
++  'terminal:create',
+   'notifications:show',
+   'storage',
+   'secrets',
+@@ -34,6 +35,7 @@
+  *  preview / consent dialog; keep each line honest about what is enforced. */
+ export const PLUGIN_CAPABILITY_DESCRIPTIONS: Record<PluginCapabilityKind, string> = {
+   'workspace:read': 'Read the name, branch, and terminal list of your focused worktree',
++  'terminal:create': 'Launch Codex or Claude Code in new tabs on your focused workspace execution host',
+   'terminal:send': 'Type text into a terminal you can see (always a specific terminal)',
+   'notifications:show': 'Show desktop notifications labeled with the plugin name',
+   storage: "Store data in the plugin's own storage folder",
+diff --git a/src/shared/plugins/plugin-host-api.ts b/src/shared/plugins/plugin-host-api.ts
+--- a/src/shared/plugins/plugin-host-api.ts
++++ b/src/shared/plugins/plugin-host-api.ts
+@@ -25,6 +25,8 @@
+ const workspaceReadContextParams = z.object({}).strict().optional()
+ const workspaceReadContextResult = z
+   .object({
++    workspaceKey: z.string().regex(/^[a-f0-9]{64}$/).optional(),
++    nativeAgentLaunch: z.boolean().optional(),
+     branch: z.string().max(PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
+     displayName: z.string().max(PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
+     /** Terminals of the focused worktree, so callers can address a specific
+@@ -33,7 +35,9 @@
+       .array(
+         z
+           .object({
+-            id: z.string().min(1).max(PLUGIN_TERMINAL_ID_MAX_LENGTH)
++            id: z.string().min(1).max(PLUGIN_TERMINAL_ID_MAX_LENGTH),
++            title: z.string().max(PLUGIN_WORKSPACE_LABEL_MAX_LENGTH).nullable().optional(),
++            agentIdentity: z.string().max(128).nullable().optional()
+           })
+           .strict()
+       )
+@@ -50,6 +54,23 @@
+   enter: z.boolean().default(false)
+ })
+ const terminalSendTextResult = z.object({ accepted: z.boolean() })
++
++const terminalCreateAgentParams = z.object({
++  requestId: z.string().regex(/^[a-zA-Z0-9-]{1,120}$/),
++  workspaceKey: z.string().regex(/^[a-f0-9]{64}$/),
++  title: z.string().min(1).max(160),
++  agent: z.enum(['codex', 'claude']),
++  model: z.string().min(1).max(120).optional(),
++  effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
++  brief: z.string().min(1).max(16384)
++}).strict().refine((value) => !value.effort || value.model, 'effort requires model')
++const terminalCreateAgentResult = z.object({
++  handle: z.string().min(1).max(PLUGIN_TERMINAL_ID_MAX_LENGTH),
++  title: z.string().min(1).max(PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
++  executionHostId: z.string().max(256).optional(),
++  briefAccepted: z.boolean(),
++  warning: z.string().max(1000).optional()
++}).strict()
+
+ const notificationsShowParams = z.object({
+   title: z.string().min(1).max(120),
+@@ -141,6 +162,16 @@
+     result: terminalSendTextResult
+   }),
+   spec({
++    name: 'terminal.createAgent',
++    since: '1.0',
++    scope: 'active-worktree',
++    capability: 'terminal:create',
++    mutation: true,
++    panel: true,
++    params: terminalCreateAgentParams,
++    result: terminalCreateAgentResult
++  }),
++  spec({
+     name: 'notifications.show',
+     since: '1.0',
+     scope: 'desktop',
+diff --git a/src/main/plugins/plugin-host-method-bindings.ts b/src/main/plugins/plugin-host-method-bindings.ts
+--- a/src/main/plugins/plugin-host-method-bindings.ts
++++ b/src/main/plugins/plugin-host-method-bindings.ts
+@@ -1,3 +1,4 @@
++import { createPluginAgentTerminal, pluginWorkspaceKey, type PluginAgentLaunch, type PluginAgentLaunchReceipt } from './plugin-native-agent-launch'
+ import {
+   getPluginHostMethodSpec,
+   PLUGIN_HOST_API_V0,
+@@ -18,7 +19,8 @@
+  *  over runtime services; relay policy and conformance tests bind fakes. */
+ export type PluginHostServices = {
+   resolveActiveWorktreeContext(): Promise<PluginWorktreeContext | null>
+-  listWorktreeTerminals(worktreeId: string): Promise<{ id: string }[]>
++  listWorktreeTerminals(worktreeId: string): Promise<{ id: string; title?: string | null; agentIdentity?: string | null }[]>
++  createAgentTerminal?(worktreeId: string, input: PluginAgentLaunch): Promise<PluginAgentLaunchReceipt>
+   sendTerminalText(
+     terminalId: string,
+     action: { text: string; enter: boolean }
+@@ -78,6 +80,8 @@
+     // Why: Orca worktree ids embed provider paths, so the public projection
+     // must select safe fields instead of spreading the internal context.
+     return {
++      workspaceKey: pluginWorkspaceKey(context.worktreeId),
++      nativeAgentLaunch: Boolean(services.createAgentTerminal),
+       branch: context.branch.slice(0, PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
+       displayName: context.displayName.slice(0, PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
+       terminals: terminals
+@@ -86,9 +90,16 @@
+             terminal.id.length > 0 && terminal.id.length <= PLUGIN_TERMINAL_ID_MAX_LENGTH
+         )
+         .slice(0, PLUGIN_WORKSPACE_TERMINAL_LIMIT)
+-        .map((terminal) => ({ id: terminal.id }))
++        .map((terminal) => ({
++          id: terminal.id,
++          ...(terminal.title !== undefined ? { title: terminal.title?.slice(0, PLUGIN_WORKSPACE_LABEL_MAX_LENGTH) ?? null } : {}),
++          ...(terminal.agentIdentity !== undefined ? { agentIdentity: terminal.agentIdentity?.slice(0, 128) ?? null } : {})
++        }))
+     }
+   }),
++  definePluginMethod('terminal.createAgent', async (params, { pluginId, services }) =>
++    createPluginAgentTerminal(pluginId, params as PluginAgentLaunch, services)
++  ),
+   definePluginMethod('terminal.sendText', async (params, { services }) => {
+     const { terminalId, text, enter } = params as {
+       terminalId: string
+diff --git a/src/main/plugins/plugin-host-service-bindings.ts b/src/main/plugins/plugin-host-service-bindings.ts
+--- a/src/main/plugins/plugin-host-service-bindings.ts
++++ b/src/main/plugins/plugin-host-service-bindings.ts
+@@ -1,5 +1,6 @@
++import type { PluginAgentLaunch } from './plugin-native-agent-launch'
+ import type { PluginEventName } from '../../shared/plugins/plugin-manifest'
+-import { PLUGIN_WORKSPACE_TERMINAL_LIMIT } from '../../shared/plugins/plugin-host-api'
++import { PLUGIN_WORKSPACE_TERMINAL_LIMIT, PLUGIN_WORKSPACE_LABEL_MAX_LENGTH } from '../../shared/plugins/plugin-host-api'
+ import type { PluginHostServices } from './plugin-host-methods'
+ import { PluginSecretsStore } from './plugin-secrets-store'
+ import { PluginKvStore } from './plugin-storage-store'
+@@ -17,7 +18,16 @@
+     worktreeSelector?: string,
+     limit?: number,
+     opts?: { includeVisualLayouts?: boolean }
+-  ): Promise<{ terminals: { handle: string; title: string | null }[] }>
++  ): Promise<{ terminals: { handle: string; title: string | null; agentIdentity?: string }[] }>
++  createTerminal?(
++    selector: string,
++    options: {
++      startupAgent: 'codex' | 'claude'; startupPrompt: string; title: string;
++      launchPreferences?: { model?: string; effort?: string };
++      onStartupPromptCarry: (carried: boolean) => void;
++      viewMode: 'terminal'; activate: boolean; presentation: 'background'; launchSource: string
++    }
++  ): Promise<{ handle: string; title: string | null; executionHostId?: string; warning?: string }>
+   sendTerminal(
+     handle: string,
+     action: { text?: string; enter?: boolean },
+@@ -36,7 +46,28 @@
+   subscribeEvents: (pluginKey: string, events: PluginEventName[]) => PluginEventName[]
+ }): PluginHostServices {
+   const { delegate, pluginsDataDir, subscribeEvents } = input
++  const createTerminal = delegate.createTerminal?.bind(delegate)
+   return {
++    ...(createTerminal ? {
++      createAgentTerminal: async (worktreeId: string, params: PluginAgentLaunch) => {
++        let carried = false
++        const terminal = await createTerminal(`id:${worktreeId}`, {
++          startupAgent: params.agent,
++          startupPrompt: params.brief.replace(/\s*\n\s*/g, ' '),
++          title: params.title,
++          ...(params.model ? { launchPreferences: { model: params.model, ...(params.effort ? { effort: params.effort } : {}) } } : {}),
++          onStartupPromptCarry: (value) => { carried = value },
++          viewMode: 'terminal', activate: false, presentation: 'background', launchSource: 'plugin'
++        })
++        return {
++          handle: terminal.handle,
++          title: (terminal.title || params.title).slice(0, PLUGIN_WORKSPACE_LABEL_MAX_LENGTH),
++          ...(terminal.executionHostId ? { executionHostId: terminal.executionHostId } : {}),
++          briefAccepted: carried,
++          ...(terminal.warning || !carried ? { warning: (terminal.warning || 'Agent tab created, but its runtime did not carry the startup brief. Inspect the tab before continuing.').slice(0, 1000) } : {})
++        }
++      }
++    } : {}),
+     resolveActiveWorktreeContext: async () => {
+       const context = await delegate.resolveActiveWorktreeContext()
+       if (!context) {
+@@ -58,7 +89,7 @@
+       )
+       return result.terminals
+         .slice(0, PLUGIN_WORKSPACE_TERMINAL_LIMIT)
+-        .map((terminal) => ({ id: terminal.handle }))
++        .map((terminal) => ({ id: terminal.handle, title: terminal.title, agentIdentity: terminal.agentIdentity ?? null }))
+     },
+     sendTerminalText: async (terminalId, action) => {
+       const result = await delegate.sendTerminal(terminalId, action, { inputKind: 'driving' })
+diff --git a/src/main/plugins/plugin-native-agent-launch.ts b/src/main/plugins/plugin-native-agent-launch.ts
+new file mode 100644
+--- /dev/null
++++ b/src/main/plugins/plugin-native-agent-launch.ts
+@@ -0,0 +1,39 @@
++import { createHash } from 'node:crypto'
++import type { PluginHostServices } from './plugin-host-method-bindings'
++
++export type PluginAgentLaunch = {
++  requestId: string; workspaceKey: string; title: string; agent: 'codex' | 'claude';
++  model?: string; effort?: string; brief: string
++}
++export type PluginAgentLaunchReceipt = {
++  handle: string; title: string; executionHostId?: string; briefAccepted: boolean; warning?: string
++}
++export const pluginWorkspaceKey = (worktreeId: string): string =>
++  createHash('sha256').update(worktreeId).digest('hex')
++
++/** Native desktop launch; never delegates authority to an SSH-host CLI. */
++export async function createPluginAgentTerminal(
++  pluginId: string, params: PluginAgentLaunch, services: PluginHostServices
++): Promise<PluginAgentLaunchReceipt> {
++  const context = await services.resolveActiveWorktreeContext()
++  if (!context || pluginWorkspaceKey(context.worktreeId) !== params.workspaceKey) {
++    throw new Error('The focused workspace changed. No terminal was created by this call.')
++  }
++  if (!services.createAgentTerminal) throw new Error('Native agent launching is unavailable.')
++  const key = `native-launch:${params.requestId}`
++  const fingerprint = createHash('sha256').update(JSON.stringify(params)).digest('hex')
++  const existing = services.storage.get(pluginId, key) as
++    { fingerprint: string; receipt?: PluginAgentLaunchReceipt } | null
++  if (existing) {
++    if (existing.fingerprint !== fingerprint) throw new Error('Launch request identity conflicts with an existing request.')
++    if (existing.receipt) return existing.receipt
++    throw new Error('Earlier launch outcome is unknown. Inspect Orca; do not launch a duplicate.')
++  }
++  const intent = services.storage.set(pluginId, key, { fingerprint })
++  if (!intent.ok) throw new Error(intent.error)
++  // The journal intent is synchronous and precedes the first awaited mutation, fencing concurrent duplicates.
++  const receipt = await services.createAgentTerminal(context.worktreeId, params)
++  const saved = services.storage.set(pluginId, key, { fingerprint, receipt })
++  if (!saved.ok) return { ...receipt, warning: `Tab created, but its receipt could not be saved: ${saved.error}`.slice(0, 1000) }
++  return receipt
++}

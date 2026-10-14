@@ -3,12 +3,31 @@
   "id": "team-orchestrator",
   "publisher": "herman925",
   "name": "Team Orchestrator",
-  "version": "0.1.1",
-  "description": "Build team hierarchies and dispatch tab creation, session naming and role briefing to an Orca coordinator agent.",
-  "engines": { "orca": ">=1.4.0" },
+  "version": "0.1.2",
+  "description": "Create team hierarchies and launch, name and brief agent tabs directly through the Orca host.",
+  "engines": {
+    "orca": ">=1.4.0"
+  },
   "pluginApi": 1,
   "contributes": {
-    "panels": [{ "id": "team", "title": "Team Orchestrator", "icon": "bot", "entry": "panel.html" }]
+    "panels": [
+      {
+        "id": "team",
+        "title": "Team Orchestrator",
+        "icon": "bot",
+        "entry": "panel.html"
+      }
+    ]
   },
-  "capabilities": [{ "kind": "storage" }, { "kind": "workspace:read" }, { "kind": "terminal:send" }]
+  "capabilities": [
+    {
+      "kind": "storage"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "terminal:create"
+    }
+  ]
 }

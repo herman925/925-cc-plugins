@@ -6,3 +6,6 @@
 - The shipped surface is an Orca plugin panel, not a CLI UI or external dashboard. Preserve the original Claude mod's hierarchy and selection flow.
 - Never present accepted launch input as proof of live/ready child sessions. Unknown delivery must not trigger automatic duplicate launches.
 - Run the build after source edits and commit the self-contained `panel.html`. Run domain/bridge tests, browser tests and host contract checks for changed behavior.
+
+- Launch teams through the local Orca native host bridge. Do not restore the coordinator-prompt workaround or an anonymous terminal picker.
+- The native bridge requires an Orca host source patch on the local PC. Never describe updating the plugin as applying that host patch or claim real desktop launching from fixture receipts.

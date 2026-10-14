@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 const panel = page => page.frameLocator('#panel');
-const chooseCoordinator = ui => ui.getByRole('combobox', { name: 'Coordinator agent tab' }).selectOption('coordinator-demo');
 test('create, inspect and restore a team inside the opaque sandbox', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -13,7 +12,6 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   await ui.locator('#team-purpose').fill('Audit checkout');
   await ui.getByRole('button', { name: '3 · Head + leads + workers' }).click();
   await expect(ui.locator('#preview')).toContainText('13 members');
-  await chooseCoordinator(ui);
   await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
   await expect(ui.getByRole('heading', { name: '@QA' })).toBeVisible();
   await ui.getByRole('button', { name: 'Lead-1-1', exact: true }).click();
@@ -24,7 +22,7 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   expect(await page.locator('#panel').getAttribute('sandbox')).toBe('allow-scripts');
   const sends = await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.sendText'));
   expect(sends).toHaveLength(0); // Reload resets the test host's call log; the persisted request remains accepted.
-  await expect(panel(page).locator('.team-card')).toContainText('Request accepted');
+  await expect(panel(page).locator('.team-card')).toContainText('actual tab receipt');
   expect(errors).toEqual([]);
 });
 test('CEO flow, per-level choices, duplicate prevention and settings persistence', async ({ page }) => {
@@ -38,7 +36,6 @@ test('CEO flow, per-level choices, duplicate prevention and settings persistence
   await ui.getByRole('combobox', { name: 'CEO model' }).press('Tab');
   await ui.getByRole('combobox', { name: 'CEO effort' }).selectOption('high');
   await ui.getByRole('combobox', { name: 'Heads CLI' }).selectOption('claude');
-  await chooseCoordinator(ui);
   await ui.locator('[data-launch-mode]').selectOption('all');
   await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
   await expect(ui.getByRole('heading', { name: '@Organisation' })).toBeVisible();
@@ -52,23 +49,19 @@ test('CEO flow, per-level choices, duplicate prevention and settings persistence
   await panel(page).getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(panel(page).getByRole('checkbox', { name: 'Show organisation tree' })).not.toBeChecked();
 });
-test('unpatched Orca remains honest about session-only creation', async ({ page }) => {
+test('unpatched host blocks launching instead of sending a coordinator workaround', async ({ page }) => {
   await page.goto('/?mode=unpatched');
   const ui = panel(page);
   await expect(ui.getByRole('status')).toContainText('Session-only');
   await ui.getByRole('button', { name: /Squad/ }).click();
-  await chooseCoordinator(ui);
-  await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
-  await expect(ui.getByRole('heading', { name: '@Squad' })).toBeVisible();
-  expect(await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.sendText').length)).toBe(1);
-  await page.reload();
-  await expect(panel(page).getByRole('heading', { name: 'No team yet' })).toBeVisible();
+  await expect(ui.getByRole('button', { name: 'Create and launch team', exact: true })).toBeDisabled();
+  await expect(ui.getByRole('alert')).toContainText('Native launching is unavailable');
+  expect(await page.evaluate(() => bridgeCalls.filter(call => call.action.startsWith('terminal.')).length)).toBe(0);
 });
 test('save failure retains existing data and stays on the form', async ({ page }) => {
   await page.goto('/?mode=write-error');
   const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
-  await chooseCoordinator(ui);
   await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
   await expect(ui.getByRole('alert')).toContainText('Disk full');
   await expect(ui.getByRole('heading', { name: 'New team' })).toBeVisible();
@@ -90,46 +83,43 @@ for (const width of [320, 960]) {
     await page.goto('/');
     const ui = panel(page);
     await ui.getByRole('button', { name: /Tech Team/ }).click();
-    await chooseCoordinator(ui);
-    await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
+      await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
     await expect(ui.getByRole('heading', { name: '@Tech-Team' })).toBeVisible();
     const frame = page.frames().find(frame => frame.url() === 'about:srcdoc');
     expect(await frame.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
     await expect(ui.locator('.org-chart .org-node')).toHaveCount(21);
   });
 }
-test('launch submits one scoped request with CLI configuration and does not auto-repeat', async ({ page }) => {
-  await page.goto('/');
-  const ui = panel(page);
+test('all-at-create opens four named Codex tabs without selecting or messaging a coordinator', async ({ page }) => {
+  await page.goto('/'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
-  await ui.getByRole('combobox', { name: 'Head CLI' }).selectOption('claude');
-  await chooseCoordinator(ui);
+  await expect(ui.getByRole('combobox', { name: 'Coordinator agent tab' })).toHaveCount(0);
+  await ui.locator('[data-launch-mode]').selectOption('all');
   await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
-  await expect(ui.getByRole('status')).toContainText('Launch request sent');
-  const sends = await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.sendText'));
-  expect(sends).toHaveLength(1);
-  expect(sends[0].params.terminalId).toBe('coordinator-demo');
-  expect(sends[0].params.enter).toBe(true);
-  const spec = JSON.parse(sends[0].params.text.split('\n').at(-1));
-  expect(spec.agents).toEqual(['claude', 'codex', 'codex']);
-  expect(spec.launch).toBe('on-demand');
-  expect(spec.coordinatorTerminalId).toBe('coordinator-demo');
+  await expect(ui.getByRole('status')).toContainText('Orca created 4 tab(s)');
+  const calls = await page.evaluate(() => bridgeCalls.filter(call => call.action.startsWith('terminal.')));
+  expect(calls).toHaveLength(4);
+  expect(calls.every(call => call.action === 'terminal.createAgent')).toBe(true);
+  expect(calls.map(call => call.params.title)).toEqual(['Squad/Head', 'Squad/Worker-1', 'Squad/Worker-2', 'Squad/Worker-3']);
+  expect(calls.every(call => call.params.agent === 'codex')).toBe(true);
+  await expect(ui.locator('.team-card')).toContainText('4 actual tab receipts');
   await expect(ui.getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
 });
-test('no coordinator tab prevents sending', async ({ page }) => {
-  await page.goto('/?mode=no-tabs');
-  const ui = panel(page);
+test('native launch requires no pre-existing agent tabs', async ({ page }) => {
+  await page.goto('/?mode=no-tabs'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
-  await expect(ui.getByRole('button', { name: 'Create and launch team', exact: true })).toBeDisabled();
-  await expect(ui.getByRole('alert')).toContainText('No terminal tabs found');
-});
-test('unknown delivery blocks duplicate launch', async ({ page }) => {
-  await page.goto('/?mode=send-timeout');
-  const ui = panel(page);
-  await ui.getByRole('button', { name: /Squad/ }).click();
-  await chooseCoordinator(ui);
   await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
-  await expect(ui.getByRole('alert')).toContainText('Inspect the coordinator', { timeout: 10000 });
-  await expect(ui.getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
-  expect(await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.sendText').length)).toBe(1);
+  await expect(ui.getByRole('status')).toContainText('Orca created 1 tab(s)');
+});
+test('partial launch preserves the head handle and stops the remaining workers', async ({ page }) => {
+  await page.goto('/?mode=partial'); const ui = panel(page);
+  await ui.getByRole('button', { name: /Squad/ }).click();
+  await ui.locator('[data-launch-mode]').selectOption('all');
+  await ui.getByRole('button', { name: 'Create and launch team', exact: true }).click();
+  await expect(ui.getByRole('alert')).toContainText('no automatic retry');
+  await expect(ui.locator('.team-card')).toContainText('created-member-1');
+  expect(await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.createAgent').length)).toBe(2);
+  await page.reload();
+  await expect(panel(page).locator('.team-card')).toContainText('created-member-1');
+  await expect(panel(page).getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
 });

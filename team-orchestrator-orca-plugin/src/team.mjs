@@ -84,7 +84,16 @@ export function validateState(value) {
       const planned = planTeam(team.configuration);
       if (JSON.stringify(planned.members) !== JSON.stringify(team.members) || planned.name !== team.name || planned.purpose !== team.purpose || planned.structure !== team.structure) throw new Error('Saved launch configuration does not match its roster. It has been left untouched.');
     }
-    if (team.launch && (!['sending', 'accepted', 'rejected', 'unknown'].includes(team.launch.status) || !string(team.launch.terminalId, 1024) || !['on-demand', 'all'].includes(team.launch.mode))) throw new Error('Saved launch request is invalid. It has been left untouched.');
+    if (team.launch) {
+      const request = team.launch;
+      if (!['sending', 'accepted', 'rejected', 'unknown'].includes(request.status) || !['on-demand', 'all'].includes(request.mode)) throw new Error('Saved launch request is invalid. It has been left untouched.');
+      if (request.native === true) {
+        if (!/^[a-f0-9]{64}$/.test(request.workspaceKey) || !request.members || typeof request.members !== 'object' || Array.isArray(request.members)) throw new Error('Saved native launch is invalid. It has been left untouched.');
+        for (const [id, receipt] of Object.entries(request.members)) {
+          if (!ids.has(id) || !receipt || !['starting', 'created', 'unknown'].includes(receipt.status) || (receipt.error !== undefined && !string(receipt.error, 1500)) || (receipt.status === 'created' && (!string(receipt.terminalId, 1024) || !string(receipt.title, 512) || typeof receipt.briefAccepted !== 'boolean' || (receipt.executionHostId !== null && !string(receipt.executionHostId, 256))))) throw new Error('Saved launch receipt is invalid. It has been left untouched.');
+        }
+      } else if (!string(request.terminalId, 1024)) throw new Error('Saved launch request is invalid. It has been left untouched.');
+    }
     validated = addTeam(validated, team);
   }
   if (value.settings && typeof value.settings.chart === 'boolean' && ['stacked', 'columns'].includes(value.settings.layout)) validated.settings = { chart: value.settings.chart, layout: value.settings.layout };
