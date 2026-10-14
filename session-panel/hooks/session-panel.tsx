@@ -1335,47 +1335,46 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         press: () => void runSetup($),
       },
     ]
-    // Narrow card: each setting is its label on one line and its hint, dim, under it, so nothing runs past the card edge.
+    const labelW = Math.max(...settings.map(s => s.label.length))
+    // One line per setting: the name, then its description on the same line, so the card stays short.
     const settingRow = (s: Setting) => {
-      const hint = <Text dimColor wrap="wrap">{`    ${s.hint}`}</Text>
+      const name = s.label.padEnd(labelW, ' ')
+      const hint = <Text dimColor wrap="truncate-end">{`  ${s.hint}`}</Text>
       if (s.kind === 'button') {
         return (
-          <Box key={`row-${s.id}`} flexDirection="column">
-            <Button key={`set-${s.id}`} plain label={s.label} onPress={s.press} />
+          <Box key={`row-${s.id}`} flexDirection="row">
+            <Button key={`set-${s.id}`} plain label={name} onPress={s.press} />
             {hint}
           </Box>
         )
       }
       if (s.kind === 'toggle') {
         return (
-          <Box key={`row-${s.id}`} flexDirection="column">
-            <Box flexDirection="row">
-              {s.isOn ? pillOf(' ON ', 'green') : pillOf(' OFF', 'gray')}
-              <Text> </Text>
-              <Button key={`set-${s.id}`} plain label={s.label} onPress={() => s.set(!s.isOn)} />
-            </Box>
+          <Box key={`row-${s.id}`} flexDirection="row">
+            {s.isOn ? pillOf(' ON ', 'green') : pillOf(' OFF', 'gray')}
+            <Text> </Text>
+            <Button key={`set-${s.id}`} plain label={name} onPress={() => s.set(!s.isOn)} />
             {hint}
           </Box>
         )
       }
       return (
-        <Box key={`row-${s.id}`} flexDirection="column">
-          <Text bold>{s.label}</Text>
-          <Box flexDirection="row">
-            {s.options.map(o =>
-              o.value === s.value ? (
-                <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                  {pillOf(o.label, 'magenta')}
-                  <Text> </Text>
-                </Box>
-              ) : (
-                <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                  <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
-                  <Text> </Text>
-                </Box>
-              ),
-            )}
-          </Box>
+        <Box key={`row-${s.id}`} flexDirection="row">
+          <Text bold>{name}</Text>
+          <Text>  </Text>
+          {s.options.map(o =>
+            o.value === s.value ? (
+              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                {pillOf(o.label, 'magenta')}
+                <Text> </Text>
+              </Box>
+            ) : (
+              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
+                <Text> </Text>
+              </Box>
+            ),
+          )}
           {hint}
         </Box>
       )
@@ -1422,41 +1421,27 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         </Box>
       </Box>
     )
-    // The card holds a fixed number of lines. Longer tabs are paged with Prev and Next, so the card never grows past the band.
-    const SETTINGS_LINES = 14
-    const settingLines = (s: Setting) => (s.kind === 'choice' ? 3 : 2) + (s.hint.length > 52 ? 1 : 0)
+    // The card holds a fixed number of rows. Longer tabs are paged; Prev and Next sit on the title line, so they stay visible.
+    const SETTINGS_ROWS = 6
     const tabSettings = settings.filter(s => s.group === activeGroup.id)
     const pages: Setting[][] = []
-    {
-      let cur: Setting[] = []
-      let used = 0
-      for (const s of tabSettings) {
-        const n = settingLines(s)
-        if (used + n > SETTINGS_LINES && cur.length > 0) {
-          pages.push(cur)
-          cur = []
-          used = 0
-        }
-        cur.push(s)
-        used += n
-      }
-      if (cur.length > 0) pages.push(cur)
-    }
+    for (let i = 0; i < tabSettings.length; i += SETTINGS_ROWS) pages.push(tabSettings.slice(i, i + SETTINGS_ROWS))
     const pageNo = Math.min(settingsPage, Math.max(0, pages.length - 1))
+    const pageControls = pages.length > 1 ? (
+      <Box flexDirection="row">
+        {pageNo > 0 ? <Button key="page-prev" plain label="◀ Prev" onPress={() => void update($, settingsPageA, () => pageNo - 1)} /> : <Text dimColor>{'       '}</Text>}
+        <Text dimColor>{`  ${pageNo + 1} / ${pages.length}  `}</Text>
+        {pageNo < pages.length - 1 ? <Button key="page-next" plain label="Next ▶" onPress={() => void update($, settingsPageA, () => pageNo + 1)} /> : null}
+      </Box>
+    ) : null
     const tabBody = activeGroup.note ? (
       <Text dimColor>{activeGroup.note}</Text>
     ) : (
-      <Box flexDirection="column" height={SETTINGS_LINES + 1} paddingLeft={1}>
+      <Box flexDirection="column" height={SETTINGS_ROWS} paddingLeft={1}>
         {(pages[pageNo] ?? []).map(settingRow)}
-        {pages.length > 1 ? (
-          <Box flexDirection="row">
-            {pageNo > 0 ? <Button key="page-prev" plain label="◀ Prev" onPress={() => void update($, settingsPageA, () => pageNo - 1)} /> : <Text> </Text>}
-            <Text dimColor>{`   ${pageNo + 1} / ${pages.length}   `}</Text>
-            {pageNo < pages.length - 1 ? <Button key="page-next" plain label="Next ▶" onPress={() => void update($, settingsPageA, () => pageNo + 1)} /> : null}
-          </Box>
-        ) : null}
       </Box>
     )
+
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
     // header, a rule, then one line per entry with a light rule between entries. Each line is drawn as pieces, padded to the
     // column widths, so every header sits above its contents; the buttons sit in the last column, beside their row.
@@ -1574,8 +1559,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           {body}
           {settingsOpen ? (
             <Box position="absolute" top={1} right={0} flexDirection="column">
-              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={Math.min(width, 60)}>
-                <Text bold>Settings</Text>
+              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={Math.min(width, 100)}>
+                <Box flexDirection="row" justifyContent="space-between" width={Math.min(width, 100) - 4}><Text bold>Settings</Text>{pageControls}</Box>
                 {tabRow}
                 {tabBody}
               </Box>
