@@ -2,7 +2,7 @@
 
 A proof of concept inspired by the team builder and organisation tree in [925-cc-plugins / team-orchestrator](https://github.com/herman925/925-cc-plugins/tree/main/team-orchestrator). The interface runs inside Orca's plugin panel.
 
-Release **0.1.02** (`0.1.2` in the strict SemVer manifest). This release replaces the 0.1.01 coordinator-prompt workaround with a **native host launch bridge**. It requires the included patches in the Orca build running on your local PC. An unchanged Orca release will reject the new `terminal:create` capability; installing this plugin alone does not enable it.
+Release **0.1.03** (`0.1.3` in the strict SemVer manifest). This release replaces the 0.1.01 coordinator-prompt workaround with a **native host launch bridge**. The default `orca-plugin.json` requests only capabilities supported by stock Orca, so the panel can load there. Native launching requires the included patches in the Orca build on your local PC and the explicit `orca-plugin.native.json` opt-in below. Installing this plugin alone does not enable native launching.
 
 ## Launch architecture
 
@@ -43,7 +43,7 @@ git -C /path/to/orca apply --check /path/to/plugin/patches/orca-native-agent-lau
 git -C /path/to/orca apply /path/to/plugin/patches/orca-native-agent-launch.patch
 ```
 
-Skip the storage patch if it has already been applied. The native patch adds one explicit `terminal:create` capability, one validated `terminal.createAgent` method, and workspace/tab metadata. It uses the existing panel admission, plugin identity, consent, mutation audit and runtime launcher; it does not expose raw RPC, arbitrary commands, environment changes or filesystem access. The storage patch exposes only the existing scoped `storage.get` and `storage.set` methods to panels.
+Skip the storage patch if it has already been applied. After running that patched Orca build, replace this plugin folder's `orca-plugin.json` with the contents of `orca-plugin.native.json`, then refresh plugins and review the updated capability consent. Do not use the native manifest with an unpatched Orca build: its `terminal:create` capability is unsupported there. The native patch adds one explicit `terminal:create` capability, one validated `terminal.createAgent` method, and workspace/tab metadata. It uses the existing panel admission, plugin identity, consent, mutation audit and runtime launcher; it does not expose raw RPC, arbitrary commands, environment changes or filesystem access. The storage patch exposes only the existing scoped `storage.get` and `storage.set` methods to panels.
 
 These files are host source patches, not code a plugin can apply automatically. This server workspace cannot replace your local PC's installed Orca binary.
 
@@ -51,12 +51,12 @@ These files are host source patches, not code a plugin can apply automatically. 
 
 1. Use this folder on the PC running Orca; no clone is needed if that development checkout already exists there.
 2. Enable experimental plugins under **Settings → Plugins**, and add this folder's absolute path under **Development**.
-3. Review and enable Team Orchestrator. Review the new capability set when updating: storage, focused workspace metadata and native terminal creation.
-4. Open Team Orchestrator in the right sidebar and check **v0.1.02**.
+3. Review and enable Team Orchestrator. The default manifest requests storage and focused workspace metadata. Native terminal creation is requested only after the patched-host manifest opt-in.
+4. Open Team Orchestrator in the right sidebar and check **v0.1.03**.
 5. Activate the workspace where the agents should run. Choose a preset, CLI/model/effort and launch mode, then **Create and launch team**.
 6. Follow each created-tab receipt. Inspect those tabs for readiness, authentication or permission prompts.
 
-The panel blocks launching when the host does not advertise native launch support. It never substitutes a coordinator prompt or asks you to guess terminal UUIDs. Older saved coordinator requests remain visibly marked as legacy and unverified; they are not silently relaunched.
+Stock Orca can validate and display the panel with the default manifest. The panel blocks launching when the host does not advertise native launch support. It never substitutes a coordinator prompt or asks you to guess terminal UUIDs. Older saved coordinator requests remain visibly marked as legacy and unverified; they are not silently relaunched.
 
 ## Verification
 

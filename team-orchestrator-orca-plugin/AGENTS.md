@@ -9,3 +9,4 @@
 
 - Launch teams through the local Orca native host bridge. Do not restore the coordinator-prompt workaround or an anonymous terminal picker.
 - The native bridge requires an Orca host source patch on the local PC. Never describe updating the plugin as applying that host patch or claim real desktop launching from fixture receipts.
+- The default orca-plugin.json must validate on stock Orca. Keep terminal:create only in the explicit orca-plugin.native.json opt-in for patched hosts, and update both manifest versions together.

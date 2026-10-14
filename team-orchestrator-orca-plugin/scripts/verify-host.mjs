@@ -41,7 +41,9 @@ const bundle = async name => {
 try {
   const before = await bundle('before');
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
-  assert.equal(before.parsePluginManifest(manifest).ok, false); // terminal:create is a new, explicitly consented host capability.
+  const nativeManifest = JSON.parse(await readFile(join(project, 'orca-plugin.native.json'), 'utf8'));
+  assert.equal(before.parsePluginManifest(manifest).ok, true);
+  assert.equal(before.parsePluginManifest(nativeManifest).ok, false); // Patched-host opt-in is never the default.
   assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.01' }).ok, false);
   assert.equal(before.gatePluginHostCall({ viaPanel: true, grantedCapabilities: ['storage'] }, 'storage.get').granted, false);
   execFileSync('git', ['apply', '--check', join(project, 'patches/orca-panel-storage.patch')], { cwd: root });
@@ -69,6 +71,9 @@ try {
   execFileSync('git', ['apply', join(project, 'patches/orca-native-agent-launch.patch')], { cwd: root });
   const native = await bundle('native');
   assert.equal(native.parsePluginManifest(manifest).ok, true);
+  assert.equal(native.parsePluginManifest(nativeManifest).ok, true);
+  assert.equal(nativeManifest.version, manifest.version);
+  assert.deepEqual(manifest.capabilities.map(capability => capability.kind), ['storage', 'workspace:read']);
   assert.equal(native.parsePluginManifest({ ...manifest, version: '0.1.02' }).ok, false);
   const creates = [];
   let currentWorkspace = 'workspace';
@@ -131,5 +136,5 @@ try {
   const simultaneous = await Promise.all([launch({ params: { ...params, requestId: 'concurrent-request' } }), launch({ params: { ...params, requestId: 'concurrent-request' } })]);
   assert.equal(simultaneous.filter(result => result.ok).length, 1);
   assert.equal(creates.length, 4);
-  console.log(`PASS: Orca ${revision}: storage and native-launch patches, consent, tab names/CLI identities, workspace fencing, typed host-side create, startup briefing receipts and durable duplicate prevention. No SSH CLI is invoked. OS secret encryption is stubbed; native runtime spawning is injected.`);
+  console.log(`PASS: Orca ${revision}: stock/default and patched/native manifests, storage and native-launch patches, consent, tab names/CLI identities, workspace fencing, typed host-side create, startup briefing receipts and durable duplicate prevention. No SSH CLI is invoked. OS secret encryption is stubbed; native runtime spawning is injected.`);
 } finally { await rm(root, { recursive: true, force: true }); }

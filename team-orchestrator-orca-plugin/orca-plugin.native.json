@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 1,
+  "id": "team-orchestrator",
+  "publisher": "herman925",
+  "name": "Team Orchestrator",
+  "version": "0.1.3",
+  "description": "Create team hierarchies and launch, name and brief agent tabs directly through the Orca host.",
+  "engines": {
+    "orca": ">=1.4.0"
+  },
+  "pluginApi": 1,
+  "contributes": {
+    "panels": [
+      {
+        "id": "team",
+        "title": "Team Orchestrator",
+        "icon": "bot",
+        "entry": "panel.html"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "storage"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "terminal:create"
+    }
+  ]
+}
