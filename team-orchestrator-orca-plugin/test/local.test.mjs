@@ -33,8 +33,8 @@ test('adapter binds only its panel, preserves consent/owner gates, captures desk
   handlers.set('session:get', async () => ({ activeWorktreeId: 'repo::/server/project' }));
   const original = handlers.get('plugins:panelAction'); const event = { sender: { id: 7 } };
   const options = { version: 'test', identity: 'test-digest' };
-  assert.equal(installAdapter({ ipcMain }, options).ready, true);
-  assert.equal(installAdapter({ ipcMain }, options).reused, true);
+  assert.equal((await installAdapter({ ipcMain }, options)).ready, true);
+  assert.equal((await installAdapter({ ipcMain }, options)).reused, true);
   const action = (sender = event, commandId = 'team.control') => handlers.get('plugins:panelAction')(sender, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, commandId, nonce: 'nonce', args: { op: 'context', workspaceId: 'forged' } } } });
   assert.equal((await action()).ok, false);
   await handlers.get('plugins:readPanelEntry')(event, { pluginKey: 'foreign.plugin', panelId: 'team' });
@@ -132,4 +132,26 @@ test('worker bridge requires echoed nonce, polls persisted receipt, and never re
   let mutations = 0;
   const lost = createWorkerBridge(async (_, { teamWorker: m }) => { if (m.args.op === 'ping') return { nonce: m.nonce, ready: true, platform: 'linux', workerPid: 7 }; mutations++; throw Error('unknown transport'); }, { nonce: () => 'n', spacingMs: 0 });
   await lost.connect(); await assert.rejects(lost.call('terminal.createAgent', { requestId: 'id' }), /unknown transport/); assert.equal(mutations, 1);
+});
+
+test('adapter binds an already open panel without triggering the refresh that revokes worker calls', async () => {
+  globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore();
+  let refreshes = 0; let invocations = 0;
+  const handlers = new Map();
+  const ipcMain = { _invokeHandlers: handlers, handle: (key, fn) => handlers.set(key, fn), removeHandler: key => handlers.delete(key) };
+  const sender = { id: 55, isDestroyed: () => false };
+  handlers.set('plugins:readPanelEntry', async (event, args) => {
+    assert.equal(event.sender, sender); assert.equal(args.pluginKey, 'herman925.team-orchestrator');
+    return { sessionToken: 'already-open-token' };
+  });
+  handlers.set('plugins:panelAction', async (_, args) => { assert.deepEqual(args.params, {}); return { ok: true }; });
+  handlers.set('plugins:invokeCommand', async (_, args) => { invocations++; return { nonce: args.args.nonce }; });
+  handlers.set('plugins:refresh', async () => { refreshes++; throw Error('plugin is not enabled with current consent'); });
+  const electron = { ipcMain, BrowserWindow: { getAllWindows: () => [{ webContents: sender }] } };
+  await installAdapter(electron, { version: 'test', identity: 'open-panel-regression' });
+  const result = await handlers.get('plugins:panelAction')({ sender }, { sessionToken: 'already-open-token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'existing-panel', commandId: 'team.control', args: { op: 'ping' } } } });
+  assert.equal(result.value.nonce, 'existing-panel'); assert.equal(invocations, 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(refreshes, 0);
+  globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
 });

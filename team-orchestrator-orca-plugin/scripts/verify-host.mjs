@@ -21,7 +21,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -68,7 +68,12 @@ try {
   handlers.set('plugins:readPanelEntry', async () => ({ sessionToken: 'approved-token' }));
   handlers.set('plugins:panelAction', async (_, args) => before.executePluginHostCall({ ...base, grantedCapabilities: enabled ? base.grantedCapabilities : null, viaPanel: true, method: args.action, params: args.params }));
   handlers.set('plugins:invokeCommand', async (_, args) => { invoked++; assert.equal(args.pluginKey, base.pluginId); return { nonce: args.args.nonce }; });
-  const installed = installAdapter({ ipcMain }, { version: 'contract', identity: 'contract' });
+  const sessions = new before.PluginPanelSessions();
+  const binding = { pluginKey: base.pluginId, panelId: 'team', rootDir: project, manifestRevision: 'current' };
+  const existingToken = sessions.issue('renderer:20', binding);
+  assert.equal(sessions.issue('renderer:20', binding), existingToken);
+  assert.equal(sessions.resolve('renderer:21', existingToken), null);
+  const installed = await installAdapter({ ipcMain }, { version: 'contract', identity: 'contract' });
   assert.equal(installed.ready, true);
   const event = { sender: { id: 20 } };
   await handlers.get('plugins:readPanelEntry')(event, { pluginKey: base.pluginId, panelId: 'team' });

@@ -114,7 +114,7 @@ async function targets(port) {
     return [];
   }
 }
-async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.04" } = {}) {
+async function bootstrap({ parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.05" } = {}) {
   const report = { platform: process.platform, packageType: packageType(process.platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
@@ -143,7 +143,7 @@ async function bootstrap({ parentPid = process.ppid, executable = process.execPa
     }
     const source = await readFile(adapterPath, "utf8");
     const digest = createHash("sha256").update(source).digest("hex");
-    const expression = `(()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion()};})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');if(electron.app.getName().toLowerCase()!=='orca'||!/^1\\.4\\.\\d+$/.test(electron.app.getVersion()))throw Error('Unsupported Orca application/version');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}}),appVersion:electron.app.getVersion()};})()`;
     Object.assign(report, await client.evaluate(expression));
     report.detail = "Local runtime adapter installed; panel-to-worker test is available.";
   } catch (error) {
@@ -449,10 +449,15 @@ function activate(orca) {
   const initialise = () => {
     if (ready) return ready;
     initialising = true;
-    ready = bootstrap({ version: "0.1.04" }).then(async (report) => {
-      await orca.host.call("storage.set", { key: "bootstrap-status", value: report });
+    ready = Promise.resolve().then(async () => {
+      await orca.host.call("storage.get", { key: "team-definitions-v1" });
+      const report = await bootstrap({ version: "0.1.05" });
       orca.log(report.detail);
       return report;
+    }).catch((error) => {
+      ready = null;
+      if (/not enabled|current consent|no longer approved/i.test(error.message)) throw new Error("Orca denied the local worker permission check. Let any plugin refresh finish, then retry Initialise local adapter. If Orca marks Team Orchestrator as needing review, review and enable it in Settings > Plugins.");
+      throw error;
     }).finally(() => {
       initialising = false;
     });

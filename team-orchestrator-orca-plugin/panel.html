@@ -930,7 +930,7 @@ Save your role and this roster in .orca/team-orchestrator/${team.name}/roles/${m
   }
   function render() {
     app.setAttribute("aria-busy", String(busy));
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.04")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.05")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
     <div class="notice" role="status">${escape(connection)} ${button("Test connection", "test-connection", busy ? "disabled" : "", "small")}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ""}

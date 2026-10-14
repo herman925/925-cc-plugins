@@ -1,12 +1,12 @@
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
-export function installAdapter(electron, { version, identity }) {
+export async function installAdapter(electron, { version, identity }) {
   const ipc = electron.ipcMain;
   const handlers = ipc?._invokeHandlers;
   if (!(handlers instanceof Map)) throw new Error('This Electron build has no compatible IPC handler registry.');
   const existing = globalThis[SLOT];
-  if (existing?.identity === identity && existing.isCurrent()) return { ready: true, version, reused: true };
+  if (existing?.identity === identity && existing.isCurrent()) { await existing.bindOpenPanels(); return { ready: true, version, reused: true }; }
   existing?.restore();
   const names = ['plugins:readPanelEntry', 'plugins:panelAction', 'plugins:invokeCommand'];
   const originals = new Map(names.map(name => [name, handlers.get(name)]));
@@ -59,9 +59,15 @@ export function installAdapter(electron, { version, identity }) {
       return result;
     });
   }
-  globalThis[SLOT] = { identity, restore, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
-  // Rotate existing panel leases through Orca's normal refresh notification.
-  const refresh = handlers.get('plugins:refresh');
-  if (typeof refresh === 'function') setTimeout(() => Promise.resolve(refresh({})).catch(() => {}), 0);
+  const bindOpenPanels = async () => {
+    // Orca reuses the token for the same owner/panel/revision; no discovery refresh is needed.
+    for (const window of electron.BrowserWindow?.getAllWindows() ?? []) {
+      if (window.webContents.isDestroyed()) continue;
+      try { await wrappers.get(names[0])({ sender: window.webContents }, { pluginKey: KEY, panelId: 'team' }); }
+      catch {} // A closed/unapproved window remains unbound; the original gate still decides authority.
+    }
+  };
+  globalThis[SLOT] = { identity, restore, bindOpenPanels, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
+  await bindOpenPanels();
   return { ready: true, version, reused: false };
 }

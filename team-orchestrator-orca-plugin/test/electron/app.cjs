@@ -1,11 +1,11 @@
 // Separate Electron host fixture. Its CLI records launches; it never starts coding agents.
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, BrowserWindow } = require('electron');
 const { fork } = require('node:child_process');
 const { readFileSync } = require('node:fs');
 const assert = require('node:assert/strict');
 app.setName('Orca');
 const data = new Map(); const leases = new Map(); const pending = new Map();
-let child; let nextId = 0; let enabled = true;
+let child; let nextId = 0; let enabled = true; let refreshes = 0;
 const invoke = (commandId, args) => new Promise((resolve, reject) => {
   const id = nextId++; pending.set(id, { resolve, reject }); child.send({ type: 'command', id, commandId, args });
 });
@@ -21,16 +21,25 @@ ipcMain.handle('plugins:panelAction', async (event, args) => {
 ipcMain.handle('plugins:invokeCommand', async (_, args) => {
   assert.equal(args.pluginKey, 'herman925.team-orchestrator'); if (!enabled) throw Error('Consent revoked'); return invoke(args.commandId, args.args);
 });
-ipcMain.handle('plugins:refresh', async () => []);
+ipcMain.handle('plugins:refresh', async () => {
+  refreshes++; enabled = false;
+  await new Promise(resolve => setTimeout(resolve, 100)); enabled = true;
+  return [];
+});
 ipcMain.handle('plugins:setEnabled', async (_, args) => { enabled = args.enabled; return []; });
 ipcMain.handle('plugins:remove', async () => { enabled = false; return []; });
 app.whenReady().then(async () => {
+  const window = new BrowserWindow({ show: false });
+  const event = { sender: window.webContents };
+  // The user's panel already exists when the worker starts. Keep that exact token.
+  const entry = await ipcMain._invokeHandlers.get('plugins:readPanelEntry')(event, { pluginKey: 'herman925.team-orchestrator', panelId: 'team' });
   const watchdog = setTimeout(() => { console.error('Electron proof timed out'); child?.kill(); app.exit(1); }, 35000);
   child = fork(__dirname + '/out/main/plugin-host-entry.cjs', [], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   child.stdout.pipe(process.stdout); child.stderr.pipe(process.stderr);
   child.on('message', message => {
     if (message.type === 'host') {
       try {
+        if (!enabled) throw Error('plugin is not enabled with current consent');
         const { key, value } = message.params;
         let result;
         if (message.method === 'storage.get') result = { value: data.get(key) ?? null };
@@ -48,8 +57,6 @@ app.whenReady().then(async () => {
     assert.deepEqual(ready.commands.sort(), ['team.control', 'team.initialise']);
     const init = await invoke('team.control', { op: 'ping', nonce: 'initial' });
     assert.equal(init.ready, true); assert.equal(init.platform, process.platform);
-    const event = { sender: { id: 101 } };
-    const entry = await ipcMain._invokeHandlers.get('plugins:readPanelEntry')(event, { pluginKey: 'herman925.team-orchestrator', panelId: 'team' });
     const rpc = async (op, params = {}) => {
       const result = await ipcMain._invokeHandlers.get('plugins:panelAction')(event, { sessionToken: entry.sessionToken, action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'panel-nonce', commandId: 'team.control', args: { op, params } } } });
       if (!result.ok) throw Error(result.error || result.code); return result.value;
@@ -76,6 +83,7 @@ app.whenReady().then(async () => {
     let inspectorOpen = true;
     try { await fetch('http://127.0.0.1:9229/json/list', { signal: AbortSignal.timeout(500) }); } catch { inspectorOpen = false; }
     assert.equal(inspectorOpen, false, 'temporary inspector must close');
+    assert.equal(refreshes, 0, 'bootstrap must not invalidate host authority with a self-refresh');
     await ipcMain._invokeHandlers.get('plugins:setEnabled')(event, { pluginKey: 'herman925.team-orchestrator', enabled: false });
     assert.equal((await rpc('ping').catch(error => ({ error: error.message }))).error, 'consent_required');
     console.log('REAL_ELECTRON_WORKER_PASS: automatic injection, own worker nonce, desktop workspace, four named launch receipts, replay fencing, inspector cleanup and disable. CLI execution is a fixture.');

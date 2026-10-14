@@ -9,10 +9,16 @@ export default function activate(orca) {
   const initialise = () => {
     if (ready) return ready;
     initialising = true;
-    ready = bootstrap({ version: __PLUGIN_DISPLAY_VERSION__ }).then(async report => {
-      await orca.host.call('storage.set', { key: 'bootstrap-status', value: report });
+    ready = Promise.resolve().then(async () => {
+      // Check live worker authority before touching the parent process.
+      await orca.host.call('storage.get', { key: 'team-definitions-v1' });
+      const report = await bootstrap({ version: __PLUGIN_DISPLAY_VERSION__ });
       orca.log(report.detail);
       return report;
+    }).catch(error => {
+      ready = null;
+      if (/not enabled|current consent|no longer approved/i.test(error.message)) throw new Error('Orca denied the local worker permission check. Let any plugin refresh finish, then retry Initialise local adapter. If Orca marks Team Orchestrator as needing review, review and enable it in Settings > Plugins.');
+      throw error;
     }).finally(() => { initialising = false; });
     return ready;
   };
