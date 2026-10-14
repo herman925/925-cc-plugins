@@ -1336,51 +1336,51 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       },
     ]
     const labelW = Math.max(...settings.map(s => s.label.length))
-    const OPTS_W = 32
-    // Fixed columns, so names, options and descriptions line up on every row: state | name | options | description.
+    const OPTS_W = 34
+    // Every column is a fixed-width piece that does not shrink: state | name | options | description.
     const settingRow = (s: Setting) => {
-      const state = s.kind === 'toggle' ? (s.isOn ? pillOf('ON', 'green') : pillOf('OFF', 'gray')) : <Text> </Text>
-      const name = (
-        <Box width={labelW}>
-          {s.kind === 'choice' ? (
-            <Text bold>{s.label}</Text>
-          ) : (
-            <Button
-              key={`set-${s.id}`}
-              plain
-              label={s.label}
-              onPress={() => (s.kind === 'button' ? s.press() : s.kind === 'toggle' ? s.set(!s.isOn) : undefined)}
-            />
-          )}
-        </Box>
-      )
-      const options = (
-        <Box width={OPTS_W} flexDirection="row">
-          {s.kind === 'choice'
-            ? s.options.map(o =>
-                o.value === s.value ? (
-                  <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                    {pillOf(o.label, 'magenta')}
-                    <Text> </Text>
-                  </Box>
-                ) : (
-                  <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                    <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
-                    <Text> </Text>
-                  </Box>
-                ),
-              )
-            : null}
-        </Box>
-      )
+      const state = s.kind === 'toggle' ? pillOf(s.isOn ? 'ON ' : 'OFF', s.isOn ? 'green' : 'gray') : <Text>{'     '}</Text>
+      const name =
+        s.kind === 'choice' ? (
+          <Text bold>{s.label.padEnd(labelW, ' ')}</Text>
+        ) : (
+          <Button
+            key={`set-${s.id}`}
+            plain
+            label={s.label.padEnd(labelW, ' ')}
+            onPress={() => (s.kind === 'button' ? s.press() : s.kind === 'toggle' ? s.set(!s.isOn) : undefined)}
+          />
+        )
+      const used = s.kind === 'choice' ? s.options.reduce((n, o) => n + o.label.length + 3, 0) : 0
+      const options =
+        s.kind === 'choice' ? (
+          <Box flexDirection="row">
+            {s.options.map(o =>
+              o.value === s.value ? (
+                <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                  {pillOf(o.label, 'magenta')}
+                  <Text> </Text>
+                </Box>
+              ) : (
+                <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
+                  <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
+                  <Text> </Text>
+                </Box>
+              ),
+            )}
+            <Text>{' '.repeat(Math.max(0, OPTS_W - used))}</Text>
+          </Box>
+        ) : (
+          <Text>{' '.repeat(OPTS_W)}</Text>
+        )
       return (
         <Box key={`row-${s.id}`} flexDirection="row">
-          <Box width={6}>{state}</Box>
-          {name}
-          <Box width={2} />
-          {options}
-          <Box width={2} />
-          <Box flexGrow={1}>
+          <Box flexShrink={0}>{state}</Box>
+          <Box flexShrink={0}>{name}</Box>
+          <Text>{'  '}</Text>
+          <Box flexShrink={0}>{options}</Box>
+          <Text>{'  '}</Text>
+          <Box flexGrow={1} flexShrink={1}>
             <Text dimColor wrap="truncate-end">{s.hint}</Text>
           </Box>
         </Box>
