@@ -17,7 +17,7 @@ A UI-first proof of concept inspired by the team builder and roster in [925-cc-p
 
 This folder includes the manifest and prebuilt, self-contained `panel.html`. No web server, runtime npm dependencies or external dashboard is required.
 
-1. Clone `herman925/925-cc-plugins` **on the computer running the Orca desktop UI**. A folder only on an SSH workspace is not a desktop plugin path.
+1. Use your existing `team-orchestrator-orca-plugin/` folder **on the computer running the Orca desktop UI**. Clone `herman925/925-cc-plugins` only if you do not already have it there. A folder only on an SSH workspace is not a desktop plugin path.
 2. Enable the experimental plugin system in **Settings → Plugins**.
 3. Under **Development**, add the absolute path to the `team-orchestrator-orca-plugin/` folder inside that checkout.
 4. Review and enable **Team Orchestrator**. Its only requested capability is plugin-private storage.
