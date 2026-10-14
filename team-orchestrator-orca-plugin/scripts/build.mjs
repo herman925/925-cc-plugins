@@ -1,6 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { build } from 'esbuild';
-const result = await build({ entryPoints: ['src/panel.mjs'], bundle: true, write: false, format: 'iife', target: 'es2022' });
+const metadata = JSON.parse(await readFile('package.json', 'utf8'));
+const manifest = JSON.parse(await readFile('orca-plugin.json', 'utf8'));
+if (manifest.version !== metadata.version || metadata.displayVersion.split('.').map(Number).join('.') !== metadata.version) throw new Error('Manifest, package and display versions must match.');
+const result = await build({ entryPoints: ['src/panel.mjs'], bundle: true, write: false, format: 'iife', target: 'es2022', define: { __PLUGIN_DISPLAY_VERSION__: JSON.stringify(metadata.displayVersion) } });
 const css = await readFile('src/panel.css', 'utf8');
 const script = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 await writeFile('panel.html', `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Team Orchestrator</title><style>${css}</style></head><body><div id="app" aria-busy="true"><p>Loading Team Orchestrator…</p></div><script>${script}</script></body></html>\n`);

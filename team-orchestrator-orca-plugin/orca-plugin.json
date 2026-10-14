@@ -3,12 +3,12 @@
   "id": "team-orchestrator",
   "publisher": "herman925",
   "name": "Team Orchestrator",
-  "version": "0.1.0",
-  "description": "Build and inspect team hierarchies in an Orca panel. UI proof of concept; creates definitions, not agent sessions.",
+  "version": "0.1.1",
+  "description": "Build team hierarchies and dispatch tab creation, session naming and role briefing to an Orca coordinator agent.",
   "engines": { "orca": ">=1.4.0" },
   "pluginApi": 1,
   "contributes": {
-    "panels": [{ "id": "team", "title": "Team Orchestrator", "icon": "network", "entry": "panel.html" }]
+    "panels": [{ "id": "team", "title": "Team Orchestrator", "icon": "bot", "entry": "panel.html" }]
   },
-  "capabilities": [{ "kind": "storage" }]
+  "capabilities": [{ "kind": "storage" }, { "kind": "workspace:read" }, { "kind": "terminal:send" }]
 }

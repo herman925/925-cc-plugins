@@ -40,6 +40,7 @@ try {
   const before = await bundle('before');
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
   assert.equal(before.parsePluginManifest(manifest).ok, true);
+  assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.01' }).ok, false);
   assert.equal(before.gatePluginHostCall({ viaPanel: true, grantedCapabilities: ['storage'] }, 'storage.get').granted, false);
   execFileSync('git', ['apply', '--check', join(project, 'patches/orca-panel-storage.patch')], { cwd: root });
   execFileSync('git', ['apply', join(project, 'patches/orca-panel-storage.patch')], { cwd: root });
@@ -57,5 +58,10 @@ try {
   assert.deepEqual((await after.executePluginHostCall({ ...base, method: 'storage.get', params: { key: 'teams' } })).value, { value: { version: 1 } });
   assert.equal((await after.executePluginHostCall({ ...base, method: 'storage.set', params: { key: '__proto__', value: 1 } })).code, 'invalid_params');
   assert.equal((await after.executePluginHostCall({ ...base, audit: undefined, method: 'storage.set', params: { key: 'teams', value: 2 } })).ok, false);
-  console.log(`PASS: Orca ${revision}: manifest, patch application, panel storage, consent, key validation and mutation auditing.`);
+  const terminalBase = { ...base, grantedCapabilities: ['workspace:read', 'terminal:send'], services: { resolveActiveWorktreeContext: async () => ({ worktreeId: 'workspace', branch: 'main', displayName: 'Demo' }), listWorktreeTerminals: async () => [{ id: 'coordinator' }], sendTerminalText: async () => ({ accepted: true }) } };
+  assert.equal((await before.executePluginHostCall({ ...terminalBase, method: 'terminal.sendText', params: { terminalId: 'coordinator', text: 'Launch the configured team', enter: true } })).value.accepted, true);
+  assert.equal((await before.executePluginHostCall({ ...terminalBase, method: 'terminal.sendText', params: { terminalId: 'foreign', text: 'Launch', enter: true } })).ok, false);
+  assert.equal((await before.executePluginHostCall({ ...terminalBase, grantedCapabilities: ['workspace:read'], method: 'terminal.sendText', params: { terminalId: 'coordinator', text: 'Launch', enter: true } })).code, 'capability_denied');
+  assert.equal((await before.executePluginHostCall({ ...terminalBase, method: 'terminal.sendText', params: { terminalId: 'coordinator', text: 'x'.repeat(4097), enter: true } })).code, 'invalid_params');
+  console.log(`PASS: Orca ${revision}: manifest/version, panel storage patch, consent, scoped terminal delivery, text limit and mutation auditing.`);
 } finally { await rm(root, { recursive: true, force: true }); }

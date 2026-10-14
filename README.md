@@ -22,4 +22,4 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod.
 
 ## Orca plugins
 
-[Team Orchestrator for Orca](team-orchestrator-orca-plugin/README.md) is a UI-first proof of concept in `team-orchestrator-orca-plugin/`: team creation, an organisation tree, roster and member details inside Orca's plugin panel. Install it through Orca's plugin settings; it is separate from the Claude Code marketplace above. Persistence requires the included Orca storage patch; unpatched builds use explicitly labelled session-only mode.
+[Team Orchestrator for Orca](team-orchestrator-orca-plugin/README.md) (0.1.01) lives in `team-orchestrator-orca-plugin/`: team creation, an organisation tree, roster and member details inside Orca's plugin panel. Its launch action asks a selected coordinator agent to open tabs, name sessions and brief members, with Codex/Claude Code choices per level. Install it through Orca's plugin settings; it is separate from the Claude Code marketplace above. Launching uses existing Orca panel APIs. Persistence requires the included storage patch; unpatched builds use explicitly labelled session-only mode.

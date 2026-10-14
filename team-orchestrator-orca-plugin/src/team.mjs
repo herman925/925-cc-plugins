@@ -3,7 +3,7 @@ export const PRESETS = [
   { label: 'All-Purpose Team', sketch: '■┬●●', hint: 'CEO + 2 heads, 4 workers each', form: { name: 'All-Purpose-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Team 1, Team 2' } },
   { label: 'Tech Team', sketch: '■┬●●●●', hint: 'CEO + 4 heads, 4 workers each', form: { name: 'Tech-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Dev Team, UI Team, Test Team, Security Team' } }
 ];
-export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
+export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', agents: ['codex', 'codex', 'codex'], models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
 export const SETTINGS = { chart: true, layout: 'stacked' };
 export const GLYPHS = { ceo: '■', head: '●', lead: '◇', worker: '○' };
 
@@ -20,12 +20,14 @@ export function planTeam(form) {
   }
   if (form.efforts.some(value => !['default', 'low', 'medium', 'high', 'xhigh'].includes(value))) throw new Error('Invalid effort selection.');
   if (form.models.some((model, i) => model === 'default' && form.efforts[i] !== 'default')) throw new Error('Choose a model before overriding its effort.');
+  const agents = form.agents ?? ['codex', 'codex', 'codex'];
+  if (!Array.isArray(agents) || agents.length !== 3 || agents.some(agent => !['codex', 'claude'].includes(agent))) throw new Error('Choose Codex or Claude Code for each level.');
   const members = [];
   const add = (memberName, team, role, level, boss) => {
     const id = `member-${members.length + 1}`;
     const purpose = form.purpose.trim() || 'the team goal';
     const brief = role === 'worker' ? `Execute tasks from ${boss.name} and report back.` : `Own ${purpose}; plan, delegate to direct reports, review results and report to ${boss?.name || 'the user'}.`;
-    const member = { id, name: memberName, team, role, level, boss: boss?.id || null, model: form.models[level - 1], effort: form.efforts[level - 1], agent: 'codex', state: 'unassigned', brief };
+    const member = { id, name: memberName, team, role, level, boss: boss?.id || null, model: form.models[level - 1], effort: form.efforts[level - 1], agent: agents[level - 1], state: 'unassigned', brief };
     members.push(member);
     return member;
   };
@@ -53,7 +55,7 @@ export function planTeam(form) {
       tier = next;
     }
   }
-  return { name, purpose: form.purpose.trim(), structure: form.structure, members };
+  return { name, purpose: form.purpose.trim(), structure: form.structure, members, configuration: { ...form, agents } };
 }
 
 export function addTeam(state, team) {
@@ -72,12 +74,17 @@ export function validateState(value) {
     const ids = new Set();
     const names = new Set();
     for (const member of team.members) {
-      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || member.agent !== 'codex' || member.state !== 'unassigned' || !string(member.model) || !['default', 'low', 'medium', 'high', 'xhigh'].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
+      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !['default', 'low', 'medium', 'high', 'xhigh'].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
       if (member.boss !== null && !ids.has(member.boss)) throw new Error('Saved reporting relationships are invalid. It has been left untouched.');
       if (member.boss === null && ids.size !== 0) throw new Error('Saved team has multiple roots. It has been left untouched.');
       if ((member.boss === null && member.level !== 1) || (member.boss !== null && team.members.find(boss => boss.id === member.boss)?.level !== member.level - 1)) throw new Error('Saved hierarchy levels are invalid. It has been left untouched.');
       ids.add(member.id); names.add(member.name.toLowerCase());
     }
+    if (team.configuration) {
+      const planned = planTeam(team.configuration);
+      if (JSON.stringify(planned.members) !== JSON.stringify(team.members) || planned.name !== team.name || planned.purpose !== team.purpose || planned.structure !== team.structure) throw new Error('Saved launch configuration does not match its roster. It has been left untouched.');
+    }
+    if (team.launch && (!['sending', 'accepted', 'rejected', 'unknown'].includes(team.launch.status) || !string(team.launch.terminalId, 1024) || !['on-demand', 'all'].includes(team.launch.mode))) throw new Error('Saved launch request is invalid. It has been left untouched.');
     validated = addTeam(validated, team);
   }
   if (value.settings && typeof value.settings.chart === 'boolean' && ['stacked', 'columns'].includes(value.settings.layout)) validated.settings = { chart: value.settings.chart, layout: value.settings.layout };

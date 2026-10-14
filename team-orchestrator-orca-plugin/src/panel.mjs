@@ -1,5 +1,6 @@
-import { PRESETS, DEFAULT_FORM, SETTINGS, GLYPHS, planTeam, addTeam, validateState } from './team.mjs';
+import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, addTeam, validateState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
+import { initialMembers, launchInstructions, prepareLaunch } from './launch.mjs';
 
 const app = document.getElementById('app');
 const call = createBridge(window.parent);
@@ -14,6 +15,10 @@ let storageAvailable = false;
 let message = '';
 let problem = '';
 let canRetry = false;
+let workspace = null;
+let coordinator = '';
+let launchMode = 'on-demand';
+let targetError = '';
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const label = role => ({ ceo: 'CEO', head: 'Head', lead: 'Lead', worker: 'Worker' })[role];
@@ -40,7 +45,7 @@ function configRows() {
   const count = form.structure === 'organisation' ? 3 : form.levels;
   return Array.from({ length: count }, (_, i) => {
     const name = form.structure === 'organisation' ? ['CEO', 'Heads', 'Workers'][i] : i === 0 ? 'Head' : i === count - 1 ? 'Workers' : 'Leads';
-    return `<tr><th scope="row">${name}</th><td><input aria-label="${name} model" data-model="${i}" list="model-options" value="${escape(form.models[i])}" maxlength="120" placeholder="default or model ID"></td><td><select aria-label="${name} effort" data-effort="${i}" ${form.models[i] === 'default' ? 'disabled' : ''}>${['default', 'low', 'medium', 'high', 'xhigh'].map(value => `<option value="${value}" ${form.efforts[i] === value ? 'selected' : ''}>${({ default: 'Default', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high' })[value]}</option>`).join('')}</select></td></tr>`;
+    return `<tr><th scope="row">${name}</th><td><select aria-label="${name} CLI" data-agent="${i}">${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${form.agents[i] === value ? 'selected' : ''}>${text}</option>`).join('')}</select></td><td><input aria-label="${name} model" data-model="${i}" list="model-options" value="${escape(form.models[i])}" maxlength="120" placeholder="default or model ID"></td><td><select aria-label="${name} effort" data-effort="${i}" ${form.models[i] === 'default' ? 'disabled' : ''}>${['default', 'low', 'medium', 'high', 'xhigh'].map(value => `<option value="${value}" ${form.efforts[i] === value ? 'selected' : ''}>${({ default: 'Default', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high' })[value]}</option>`).join('')}</select></td></tr>`;
   }).join('');
 }
 function preview() {
@@ -51,13 +56,22 @@ function preview() {
   } catch (error) { return `<p class="validation">${escape(error.message)}</p>`; }
 }
 function formView() {
-  return `<div class="flow"><h1>New team</h1><p class="steps">① Setup <span>→</span> ② Models <span>→</span> ③ Preview <span>→</span> Create</p></div>
+  return `<div class="flow"><h1>New team</h1><p class="steps">① Setup <span>→</span> ② Models <span>→</span> ③ Preview <span>→</span> Launch</p></div>
     <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Quick start</span>${presets()}</div><div class="field"><span>Structure</span>${segment('structure', [['team', 'One team'], ['organisation', 'CEO over several teams']], form.structure)}</div>
     ${form.structure === 'organisation' ? `<label class="field">Teams<input id="team-groups" data-form="groups" value="${escape(form.groups)}" maxlength="520" placeholder="Team 1, Team 2"><small>Names separated by commas; each gets a head and workers.</small></label>` : `<div class="field"><span>Levels</span>${segment('levels', [[1, '1 · Head only'], [2, '2 · Head + workers'], [3, '3 · Head + leads + workers']], form.levels)}</div>`}
     <div class="field"><span>${form.structure === 'organisation' ? 'Workers each' : 'Reports each'}</span>${segment('fan', [1, 2, 3, 4, 5].map(n => [n, `${n}`]), form.fan)}</div></section>
-    <section class="section"><h2><span>②</span> Model and effort per level</h2><p class="subtle">Codex · Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option></datalist></section>
+    <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option><option value="opus"></option><option value="sonnet"></option><option value="haiku"></option></datalist></section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
-    <div class="actions">${button('Create team', 'create', busy || !loaded ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+    ${launchControls()}<div class="actions">${button('Create and launch team', 'create', busy || !loaded || !coordinator ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+}
+function launchControls() {
+  return `<section class="section launch-controls"><h2>Launch</h2><label class="field">Coordinator agent tab<select data-coordinator aria-label="Coordinator agent tab"><option value="">Choose an existing coding-agent tab</option>${(workspace?.terminals ?? []).map((terminal, i) => `<option value="${escape(terminal.id)}" ${coordinator === terminal.id ? 'selected' : ''}>Tab ${i + 1} · ${escape(terminal.id)}</option>`).join('')}</select><small>${escape(workspace?.displayName ?? 'Open a workspace to select its tabs.')} · Choose a tab running Codex or Claude, not a shell.</small></label>${button('Refresh tabs', 'refresh-tabs', '', 'small')}<label class="field">Launch mode<select data-launch-mode><option value="on-demand" ${launchMode === 'on-demand' ? 'selected' : ''}>On demand · start CEO and heads</option><option value="all" ${launchMode === 'all' ? 'selected' : ''}>All at create · start every member</option></select></label><p class="subtle">The coordinator opens tabs, names sessions and delivers role briefings. On-demand workers start when assigned work.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
+}
+function launchStatus(team, member) {
+  if (!team.launch) return 'Not started';
+  if (team.launch.status === 'unknown') return 'Unconfirmed';
+  if (team.launch.status === 'rejected') return 'Not sent';
+  return initialMembers(team, team.launch.mode).some(initial => initial.id === member.id) ? team.launch.status === 'sending' ? 'Sending' : 'Requested' : 'On demand';
 }
 function details() {
   if (!selection) return '';
@@ -66,24 +80,24 @@ function details() {
   if (!member) return '';
   const boss = team.members.find(row => row.id === member.boss);
   const reports = team.members.filter(row => row.boss === member.id);
-  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>Codex</dd><dt>Model</dt><dd>${escape(member.model)}</dd><dt>Effort</dt><dd>${escape(member.effort)}</dd><dt>Assignment</dt><dd>Unassigned</dd></dl><p>${escape(member.brief)}</p></section>`;
+  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Model</dt><dd>${escape(member.model)}</dd><dt>Effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>${escape(member.brief)}</p></section>`;
 }
 function roster() {
   if (!state.teams.length) return empty();
   const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join('')}</section>` : '';
-  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>Model</th><th>Effort</th><th>Assignment</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>Unassigned</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>${details()}`;
+  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${!team.launch || team.launch.status === 'rejected' ? button('Launch this team', 'launch-existing', `data-team="${i}"`, 'primary small') : `<p class="subtle">${team.launch.status === 'accepted' ? 'Request accepted by coordinator; see its session for actual launch results.' : 'Delivery unconfirmed. Inspect the coordinator before trying to launch again.'}</p>`}</section>`).join('')}</div>${state.teams.some(team => !team.launch || team.launch.status === 'rejected') ? launchControls() : ''}${details()}`;
 }
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team creation</h2><p>Created members stay unassigned. This version saves team definitions; it does not launch agent sessions.</p><p>Model IDs are configurable; availability is checked when runtime integration is added.</p></section>`;
+  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch requests go to your selected coordinator agent. It creates and briefs the sessions through Orca. The panel reports request delivery; actual readiness and session IDs are reported by the coordinator.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
-  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v0.1.0</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. This Orca build does not expose panel storage. Teams can be created here, but will be lost when the panel closes.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
     ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'settings' ? settingsView() : roster()}
-    </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Codex · Team definitions</span></footer>`;
+    </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
 }
 function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
 async function load() {
@@ -95,7 +109,37 @@ async function load() {
   } catch (error) {
     if (['panel_forbidden', 'unknown_method', 'invalid_request'].includes(error.code)) { loaded = true; storageAvailable = false; }
     else { loaded = false; problem = error.message; canRetry = true; }
-  } finally { busy = false; render(); }
+  } finally { busy = false; await refreshTargets(); render(); }
+}
+async function refreshTargets() {
+  try {
+    workspace = await call('workspace.readContext', {});
+    if (!workspace?.terminals?.some(terminal => terminal.id === coordinator)) coordinator = '';
+    targetError = workspace?.terminals?.length ? '' : 'No terminal tabs found. Open a coding-agent tab in this workspace first.';
+  } catch (error) { workspace = null; coordinator = ''; targetError = error.message; }
+}
+async function launchTeam(index) {
+  const team = state.teams[index];
+  if (!coordinator) throw new Error('Choose the coordinator agent tab first.');
+  if (team.launch && team.launch.status !== 'rejected') throw new Error('This launch has already been submitted. Inspect the coordinator to avoid duplicate sessions.');
+  const text = await prepareLaunch(call, team, launchMode, coordinator);
+  const request = { status: 'sending', terminalId: coordinator, mode: launchMode };
+  const withRequest = { ...state, teams: state.teams.map((item, i) => i === index ? { ...item, launch: request } : item) };
+  if (!await save(withRequest)) return;
+  busy = true; render();
+  try {
+    const receipt = await call('terminal.sendText', { terminalId: coordinator, text, enter: true });
+    request.status = receipt?.accepted === true ? 'accepted' : receipt?.accepted === false ? 'rejected' : 'unknown';
+    const count = initialMembers(team, launchMode).length;
+    message = request.status === 'accepted' ? `Launch request sent for @${team.name}. The coordinator will open and brief ${count} session${count === 1 ? '' : 's'}; check its tab for results.` : 'Launch delivery was not confirmed. Inspect the coordinator before retrying.';
+  } catch (error) { request.status = 'unknown'; problem = `${error.message} Inspect the coordinator before retrying; this request may have arrived.`; }
+  finally {
+    if (storageAvailable) {
+      try { await call('storage.set', { key: KEY, value: state }); }
+      catch (error) { problem = `Launch receipt could not be saved: ${error.message} Inspect the coordinator before retrying.`; }
+    }
+    busy = false; render();
+  }
 }
 async function save(next) {
   if (!loaded || busy) return false;
@@ -123,11 +167,18 @@ app.addEventListener('click', async event => {
     try {
       const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: new Date().toISOString() };
       const next = addTeam(state, team);
-      if (await save(next)) { view = 'roster'; selection = null; message = `Created @${team.name} with ${team.members.length} members.`; render(); }
+      if (!coordinator) throw new Error('Choose the coordinator agent tab first.');
+      launchInstructions(team, launchMode);
+      if (await save(next)) { view = 'roster'; selection = null; await launchTeam(state.teams.length - 1); render(); }
     } catch (error) { message = ''; problem = error.message; canRetry = false; render(); }
   } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
   else if (action === 'retry') { await load(); }
+  else if (action === 'refresh-tabs') { await refreshTargets(); render(); }
+  else if (action === 'launch-existing') {
+    try { await launchTeam(Number(target.dataset.team)); }
+    catch (error) { problem = error.message; canRetry = false; render(); }
+  }
 });
 app.addEventListener('input', event => {
   const target = event.target;
@@ -135,7 +186,10 @@ app.addEventListener('input', event => {
 });
 app.addEventListener('change', async event => {
   const target = event.target;
-  if (target.dataset.model !== undefined) {
+  if (target.hasAttribute('data-coordinator')) { coordinator = target.value; render(); }
+  else if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
+  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
+  else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);
     form.models[i] = target.value.trim() || 'default';
     if (form.models[i] === 'default') form.efforts[i] = 'default';

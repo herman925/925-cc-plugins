@@ -12,6 +12,12 @@ window.addEventListener('message',event=>{
  window.bridgeCalls.push({action,params});
  const mode=new URLSearchParams(location.search).get('mode');
  const reply=(value,ok=true,errorCode,error)=>frame.contentWindow.postMessage({type:'orca-panel-action-result',requestId,ok,value,errorCode,error},'*');
+ if(action==='workspace.readContext')return reply({displayName:'Demo workspace',branch:'main',terminals:mode==='no-tabs'?[]:[{id:'coordinator-demo'}]});
+ if(action==='terminal.sendText'){
+  if(params?.terminalId!=='coordinator-demo'||typeof params.text!=='string'||params.text.length>4096||params.enter!==true)return reply(null,false,'invalid_params','Invalid terminal request');
+  if(mode==='send-timeout')return;
+  return reply({accepted:mode!=='send-reject'});
+ }
  if(mode==='unpatched')return reply(null,false,'panel_forbidden','Storage is not panel-callable.');
  if(mode==='timeout')return;
  if(!['storage.get','storage.set'].includes(action)||params?.key!=='team-definitions-v1')return reply(null,false,'invalid_params','Unsupported request.');

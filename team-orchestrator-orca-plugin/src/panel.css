@@ -215,7 +215,7 @@ nav button.active {
 .field .presets {
   margin:0;
 }
-.field input,.field textarea,.field select,input[data-model],select[data-effort] {
+.field input,.field textarea,.field select,input[data-model],select[data-effort],select[data-agent] {
   width:100%;
   min-width:0;
   background:var(--surface);

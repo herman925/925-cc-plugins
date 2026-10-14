@@ -16,7 +16,7 @@ export function createBridge(parentWindow, eventWindow = window, timeoutMs = 500
   });
   return (action, params) => new Promise((resolve, reject) => {
     const requestId = `team-${++sequence}`;
-    const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Orca did not answer. Your saved data has not been changed.')); }, timeoutMs);
+    const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Orca did not answer. The outcome is unconfirmed.')); }, timeoutMs);
     pending.set(requestId, { resolve, reject, timer });
     parentWindow.postMessage({ type: 'orca-panel-action', requestId, action, params }, '*');
   });
