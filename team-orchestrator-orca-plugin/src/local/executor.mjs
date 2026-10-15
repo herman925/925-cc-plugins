@@ -1,3 +1,4 @@
+import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
 import { createWorkService } from './teamwork.mjs';
 import { readNativeLaunchLedger } from './native-launch-ledger.mjs';
@@ -9,7 +10,9 @@ import { parseTeamTemplate } from '../templates.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc } = {}) {
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
-  const works = createWorkService({ store, userData, consent, rpc: nativeRpc ?? createNativeRpc({ userData, parentPid, consent }) });
+  const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
+  const works = createWorkService({ store, userData, consent, rpc });
+  const dispatches = createDispatchService({ store, userData, consent, rpc, works });
   let workTimer, polling = false, stopped = false;
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
@@ -17,7 +20,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     polling = true;
     try {
       if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
-      await consent(); await works.reconcile(); scheduleWork();
+      await consent(); await works.reconcile(); await dispatches.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
   }
@@ -157,6 +160,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
+        await dispatches.check(work.id);
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
