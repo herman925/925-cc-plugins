@@ -1,3 +1,4 @@
+import { wakeStore, publicWake } from './wake-store.mjs';
 import { questionStore } from './questions-store.mjs';
 import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
@@ -117,6 +118,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     let closed = false;
     return {
       ...questions,
+      ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation}),
       readOperation,
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
       isActiveOperation(operation){const pointer=readPrivate(`binding:${operation.memberId}`);return pointer?.requestId===operation.requestId&&(pointer.instanceGeneration??1)===(operation.instanceGeneration??1)&&readSnapshot().teams.some(team=>team.id===operation.teamId&&team.members.some(member=>member.id===operation.memberId));},
