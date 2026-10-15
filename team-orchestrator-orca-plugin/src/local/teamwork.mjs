@@ -11,7 +11,7 @@ export function createWorkService({store,rpc,userData,consent}){
  const queue=new Map();
  const serial=(id,fn)=>{const promise=(queue.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queue.set(id,promise);promise.finally(()=>{if(queue.get(id)===promise)queue.delete(id);}).catch(()=>{});return promise;};
  const save=(work,patch)=>store.updateWork(work.id,work.version,patch);
- async function verify(work){
+ async function verify(work,forSend=false){
   await consent();
   const binding=store.readOperation(work.binding.requestId);
   if(!binding||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
@@ -36,6 +36,10 @@ export function createWorkService({store,rpc,userData,consent}){
   }
   const shown=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;
   if(shown?.handle!==binding.handle||shown.worktreeId!==work.scope.workspaceId||shown.executionHostId!==work.scope.executionHostId||!shown.connected||!shown.writable||!shown.incarnationId||shown.agentIdentity!==binding.nativeRequest.agent||`${shown.tabId}:${shown.leafId}`!==binding.paneKey)throw Error('The prepared terminal agent, host or execution instance is unverified. Open its native session and resolve login or permission issues.');
+  if (forSend) {
+   const activity=(await rpc('terminal.agentStatus',{terminal:binding.handle}))?.agentStatus;
+   if(activity?.handle!==binding.handle||activity.isRunningAgent!==true||activity.status==='permission')throw Error('The supervisor is not ready for user input or is waiting for permission. Resolve its native session first.');
+  }
   const instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,incarnationId:shown.incarnationId};
   if(work.instance&&work.instance.incarnationId!==instance.incarnationId)throw Error('Supervisor terminal incarnation changed; the existing work remains reserved.');
   if(!status.capabilities.includes('terminal.prompt-delivery.v1'))throw Error('This host does not support durable terminal prompt delivery. Update the owning Orca host before submitting.');
@@ -44,27 +48,30 @@ export function createWorkService({store,rpc,userData,consent}){
  async function observe(work,verified){
   if(work.run.state==='fenced')return work;
   verified??=await verify(work);
-  let input=work.input,processing=work.processing;
+  let input=work.input.state==='sending'?{...work.input,state:'unknown',detail:'The original submission has no settled receipt. Checking never sends it again.'}:work.input,processing=work.processing;
   if(verified.history&&work.nativeSend){
    const submission=verified.history.submissions?.find(row=>row.clientMessageId===work.nativeSend.params.envelope.clientOperationId);
    if(submission){
-    if(submission.dispatchState==='accepted')input={...input,state:'accepted',messageId:submission.clientMessageId,detail:'Native provider accepted this exact user message; processing is separate.'};
-    if(submission.dispatchState==='rejected')input={...input,state:'rejected',detail:'Native provider rejected the saved objective. Inspect the supervisor session.'};
+    if(submission.dispatchState==='accepted')input={...input,state:'accepted',source:'native-host-journal',dispatchState:'accepted',providerItemId:submission.providerItemId??null,messageId:submission.clientMessageId,detail:'Native provider accepted this exact user message; processing is separate.'};
+    if(submission.dispatchState==='rejected')input={...input,state:'rejected',source:'native-host-journal',dispatchState:'rejected',detail:'Native provider rejected the saved objective. Inspect the supervisor session.'};
     // Pinned agentJournalSubmissionKey uses the orca:<encoded clientMessageId> key.
     const userItemId=`orca:${encodeURIComponent(submission.clientMessageId)}`;
     const turn=verified.history.latestTurn?.turn;
     if(submission.dispatchState==='accepted'&&turn?.userItemId===userItemId&&['running','completed','interrupted'].includes(turn.state))processing={state:'observed',detail:'A native turn is linked to this exact objective message; total-work acceptance is separate.',turnId:turn.turnId};
    }
   }
-  const run=await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:verified.instance,runId:work.run.id});
+  let run=await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:verified.instance,runId:work.run.id});
   if(work.run.consumerGeneration&&run.state==='verified'&&run.consumerGeneration!==work.run.consumerGeneration)return save(work,{run:{...work.run,state:'fenced',detail:'Native Run consumer generation changed. Earlier work authority is not reused.'},status:'needs_attention'});
-  let snapshot;
+  if (run.state !== 'verified' && work.run.id) run = { ...work.run, state: 'unverified', detail: run.detail };
+  let snapshot = work.snapshot ? { ...work.snapshot, stale: true } : undefined;
   if(run.state==='verified'){
    const current=(await rpc('orchestration.runShow',{id:run.id}))?.run;
    if(current?.id!==run.id||current.consumer_generation!==run.consumerGeneration||current.objective!==work.nativeObjective)throw Error('Native Run changed while observing its snapshot.');
    const result=await rpc('orchestration.taskList',{run:run.id,brief:true});
    if(!Array.isArray(result?.tasks)||result.tasks.some(task=>task.run_id!==run.id))throw Error('Native Task snapshot does not match the confirmed Run.');
-   snapshot={observedAt:new Date().toISOString(),tasks:result.tasks.map(task=>({id:task.id,status:task.status,title:task.task_title??task.display_name??'Task',...(task.dispatch_id?{dispatchId:task.dispatch_id}:{})}))};
+   const finalOwner = await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:verified.instance,runId:run.id});
+   if(finalOwner.state!=='verified'||finalOwner.consumerGeneration!==run.consumerGeneration)throw Error('Native Run ownership changed during snapshot read; prior generation remains fenced.');
+   snapshot={stale:false,observedAt:new Date().toISOString(),tasks:result.tasks.map(task=>({id:task.id,status:task.status,title:task.task_title??task.display_name??'Task',...(task.dispatch_id?{dispatchId:task.dispatch_id}:{})}))};
   }
   return save(work,{input,processing,run,...(snapshot?{snapshot}:{}),instance:verified.instance,status:run.state==='verified'?'active':input.state==='not_sent'||input.state==='rejected'?'needs_attention':'awaiting_run',error:undefined});
  }
@@ -72,7 +79,7 @@ export function createWorkService({store,rpc,userData,consent}){
   if(work.input.state!=='not_sent'||work.nativeSend)return work;
   let attempted=false;
   try{
-   const verified=await verify(work),team=store.readTeamVersion(work.teamId,work.configVersion),body={kind:'message',role:'user',blocks:[{type:'text',text:objectiveInstructions(work,team)}]};
+   const verified=await verify(work,true),team=store.readTeamVersion(work.teamId,work.configVersion),body={kind:'message',role:'user',blocks:[{type:'text',text:objectiveInstructions(work,team)}]};
    let nativeSend;
    if(work.binding.kind==='structured'){
     const sessionId=work.binding.sessionId;
@@ -85,7 +92,14 @@ export function createWorkService({store,rpc,userData,consent}){
     if(receipt?.ok!==true)throw Error(`Native supervisor input refused: ${receipt?.refusal?.message??receipt?.refusal?.code??'unverified result'}`);
     const value=receipt.value;
     if(value?.clientMessageId!==nativeSend.params.envelope.clientOperationId||!Number.isSafeInteger(receipt.fence))throw Error('Native objective message identity is unverified.');
-    input={state:value.queued?'queued':value.submission?.dispatchState==='rejected'?'rejected':value.submission?'accepted':'unknown',messageId:value.clientMessageId,detail:value.queued?'Native host queued this user input.':'Native host recorded this exact user input; provider processing is separate.'};
+    if (value.queued) {
+     if (!['waiting','dispatched','returned','withdrawn'].includes(value.queued.state) || typeof value.queued.messageId !== 'string') throw Error('Native queued objective receipt is unverified.');
+     input={state:'queued',source:'native-queue',messageId:value.clientMessageId,queued:{messageId:value.queued.messageId,state:value.queued.state,position:value.queued.position},detail:'Native host queued this user input; queueing is not provider processing.'};
+    } else {
+     const submission=value.submission;
+     if(submission?.clientMessageId!==value.clientMessageId||!['pending','accepted','rejected','unknown'].includes(submission.dispatchState)) throw Error('Native objective dispatch evidence is unverified.');
+     input={state:submission.dispatchState==='unknown'?'unknown':submission.dispatchState==='rejected'?'rejected':'accepted',source:'native-host-journal',dispatchState:submission.dispatchState,messageId:value.clientMessageId,providerItemId:submission.providerItemId??null,fence:receipt.fence,...(submission.handedOverAt?{handedOverAt:submission.handedOverAt}:{}),detail:`Native journal dispatch: ${submission.dispatchState}. Host acceptance and provider processing are separate.`};
+    }
    }else{
     const send=receipt?.send;
     if(send?.handle!==work.binding.handle||send.accepted!==true||send.prompt?.requestId!==nativeSend.envelope.orchestrationRequestId||send.prompt.processIncarnation!==verified.instance.incarnationId)throw Error('Terminal objective receipt or execution instance is unconfirmed. Do not resend.');
@@ -98,7 +112,7 @@ export function createWorkService({store,rpc,userData,consent}){
  }
  return {
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
-  async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',error:String(error.message).slice(0,1500)}));}});},
+  async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readWork(id);if(!work||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},
   async reconcile(){for(const work of store.listWorks())if(work.input.state!=='not_sent'&&work.run.state!=='fenced')await this.check(work.id);}
  };
