@@ -193,3 +193,11 @@ test('SSH generation rotation during supervisor observation prevents sending the
  const work=await createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}).submit({teamId:f.team.id,requestId:'ssh-rotate',expectedRevision:f.store.readSnapshot().revision,objective:'Keep remote scope'});
  assert.equal(sends,0);assert.equal(work.input.state,'not_sent');assert.match(work.error,/SSH.*generation|SSH.*changed/i);
 });
+test('queued goals are durable, idempotent and do not consume a preparation session or start another Work',async t=>{
+ const f=await fixture(t),input={teamId:f.team.id,requestId:'queue-one',expectedRevision:f.store.readSnapshot().revision,objective:'Second goal'};
+ const first=f.store.enqueueGoal(input);assert.equal(first.status,'queued');assert.equal(f.store.enqueueGoal(input).id,first.id);
+ assert.equal(f.store.listWorks().length,0);assert.equal(f.store.readOperation('launch').status,'created');
+ const second=f.store.enqueueGoal({...input,requestId:'queue-two',expectedRevision:f.store.readSnapshot().revision,objective:'Third goal'});
+ await f.restart();assert.deepEqual(f.store.listGoals(f.team.id).map(row=>row.objective),['Second goal','Third goal']);assert.notEqual(second.id,first.id);
+ assert.throws(()=>f.store.enqueueGoal({...input,objective:'Conflicting goal'}),/conflict/);
+});

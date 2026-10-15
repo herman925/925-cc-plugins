@@ -68,14 +68,15 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%' ORDER BY rowid").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
     const dispatchProjection = workId => ({dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
+    const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id)})) };
+      return { ...validatePersistentState(value), goals: listGoals(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id)})) };
     };
     readSnapshot();
-    const write = ({ works, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const write = ({ works, goals, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -126,6 +127,15 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const next=readSnapshot(),team=next.teams.find(row=>row.members.some(member=>member.id===memberId));
         if(team?.launch?.members?.[memberId]?.requestId===requestId){delete team.launch.members[memberId];next.revision++;write(next);}
         return true;
+      });},
+      listGoals,
+      enqueueGoal(input){workInput(input);return atomicDispatch(()=>{
+        const key=`goal-request:${input.requestId}`,digest=fingerprint(input),prior=readPrivate(key);
+        if(prior){if(prior.fingerprint!==digest)fail('Queued goal request identity conflicts.');return readPrivate(`goal:${prior.id}`);}
+        const state=readSnapshot(),team=state.teams.find(row=>row.id===input.teamId);
+        if(!team||state.revision!==input.expectedRevision)fail('Team changed; reload before queueing a goal.');
+        const goal={id:randomUUID(),teamId:team.id,objective:input.objective,status:'queued',createdAt:new Date().toISOString()};
+        putPrivate(`goal:${goal.id}`,goal);putPrivate(key,{id:goal.id,fingerprint:digest});state.revision++;write(state);return goal;
       });},
       readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
