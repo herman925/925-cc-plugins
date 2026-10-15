@@ -1,3 +1,4 @@
+import { discoverCapabilities } from '../src/local/capabilities.mjs';
 // Development/test host only: real plugin persistence/service, fake Orca boundary.
 import http from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -12,7 +13,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let creates = 0; let title = ''; let host = 'ssh:demo';
+    let creates = 0; let title = ''; let host = mode === 'capabilities-local' ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'agent-context') return { commands: [{ command: 'agent launch' }] };
@@ -20,7 +21,23 @@ async function fixture(id, mode) {
       if (args[1] === 'rename') title = args[5];
       return { terminal: { title, executionHostId: host } };
     };
-    return { profile, store, executor: createExecutor({}, cli, { store }) };
+    const internalKey = `fixture-${id}`;
+    const executor = createExecutor({}, cli, { store, internalKey });
+    const runtime = async (method, params) => {
+      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
+      if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
+      if (method.startsWith('preflight.')) return ['codex', 'claude'];
+      if (method === 'agentSession.agents') return { agents: [] };
+      if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };
+      if (method === 'agentSession.modelCatalog') return { origin: 'probe', fetchedAt: Date.now(), models: [{ id: params.agent === 'claude' ? 'claude-model' : 'my-model', label: 'Fixture host model', isDefault: false, efforts: (params.agent === 'claude' ? ['low', 'max'] : ['high', 'ultra']).map(value => ({ value, label: value })) }] };
+      throw Error('Unknown fixture read');
+    };
+    return { profile, store, executor, async capabilities(params) {
+      const prepared = await executor.execute({ op: '_capabilityScope', internalKey, params });
+      const value = await discoverCapabilities(runtime, prepared.scope);
+      return executor.execute({ op: '_capabilityResult', internalKey, params: { observationId: prepared.observationId, value } });
+    } };
   })());
   return fixtures.get(id);
 }
@@ -57,6 +74,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
+      if (op === 'capabilities') return reply(await f.capabilities(params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {

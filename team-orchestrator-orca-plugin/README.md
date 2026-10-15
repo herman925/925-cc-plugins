@@ -99,3 +99,13 @@ Diagnostics distinguish `fuse_file_missing`, `fuse_disabled`, `port_conflict`, `
 - Role persistence is confirmed by the plugin's SQLite transaction. A model's claim to have written a role file is not used as persistence evidence.
 - Later on-demand workers, task dispatch, cross-session messaging, questions, live status and recovery UI are outside this launch proof of concept. Managers calling the remote orchestration CLI later still need the corresponding SSH-host CLI permission.
 - CLI/provider model and effort availability is determined by the installed versions. The compatibility launcher refuses Claude's unsupported `xhigh` effort.
+
+### Host-based agent preferences (#109)
+
+Models now come from the saved project's native Orca capability reads. Level defaults and individual member overrides are saved as versioned requested preferences; changing a level leaves individual overrides intact. Member details can return to the level default. Model IDs and effort choices follow each model's host catalog. Effective model, effort and context usage remain unknown until native session evidence is available; a saved selection is not an observation of a running provider.
+
+The adapter retains the genuine main-frame event for a fixed set of native reads, rechecks the original panel gate, and authenticates internal observation phases with a worker-instance secret. Panel input cannot provide capability proof or choose arbitrary runtime methods. Refresh failures invalidate older evidence, and rate-limit refusals retain the original host code. Normal plugin consent and frame/owner checks still apply.
+
+Default model/effort inherit Orca settings without clearing launch arguments. SSH executable detection uses the saved target, with a separate connectivity check. The pinned host does not expose a trustworthy remote model catalog through the desktop model-catalog method: SSH catalog availability stays unknown, inherited defaults remain usable, and explicit model/effort overrides stay gated until verified. TUI picker visibility is displayed as configuration, not treated as a blanket structured-provider prohibition. Configuration and role collaboration rules do not intercept provider tools.
+
+Evidence: source/service tests, opaque-frame browser tests, pinned source-schema checks, and a separate Electron fixture exercise these paths. They do not establish actual provider, SSH, or Windows acceptance. Native launch effect admission and later effective-value observation continue in the following implementation tickets.

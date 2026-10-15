@@ -22,7 +22,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -60,6 +60,10 @@ try {
     if (previousAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = previousAppData;
     if (previousProfile === undefined) delete process.env.ORCA_USER_DATA_PATH; else process.env.ORCA_USER_DATA_PATH = previousProfile;
   }
+  assert.equal(before.PreflightDetectRemoteAgents.safeParse({ connectionId: 'fixture' }).success, true);
+  assert.equal(before.CreateSupportParams.safeParse({ worktree: 'folder:/fixture', agent: 'codex' }).success, true);
+  assert.equal(before.ModelCatalogParams.safeParse({ worktree: 'folder:/fixture', agent: 'claude' }).success, true);
+  assert.equal(before.ModelCatalogParams.safeParse({ agent: 'claude', executionHost: 'made-up' }).success, false);
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
   assert.equal(before.parsePluginManifest(manifest).ok, true);
   assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.04' }).ok, false);
@@ -103,5 +107,5 @@ try {
   assert.equal((await handlers.get('plugins:panelAction')(event, call)).ok, false);
   assert.equal(invoked, 1);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
-  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
+  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, pinned capability read schemas, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
 } finally { await rm(root, { recursive: true, force: true }); }

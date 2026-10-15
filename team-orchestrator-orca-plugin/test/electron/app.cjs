@@ -34,6 +34,18 @@ function startWorker() {
     });
   });
 }
+const runtimeReads = [];
+ipcMain.handle('runtime:call', async (event, { method, params }) => {
+  mainFrame(event); runtimeReads.push({ method, params });
+  const result = method === 'status.get' ? { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.registered-agents.v1'] }
+    : method === 'settings.get' ? { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } }
+    : method === 'ssh.getState' ? { state: { status: 'connected', connectionGeneration: 1 } }
+    : method === 'preflight.detectRemoteAgents' ? ['codex', 'claude']
+    : method === 'agentSession.agents' ? { agents: [] }
+    : method === 'agentSession.createSupport' ? { supported: false, reason: 'remote' }
+    : (() => { throw Error('Unexpected runtime read ' + method); })();
+  return { id: 'desktop-ipc', ok: true, result };
+});
 ipcMain.handle('session:get', async event => { mainFrame(event); return { activeWorktreeId: 'repo::/remote/project' }; });
 ipcMain.handle('plugins:readPanelEntry', async (event, args) => {
   mainFrame(event); assert.equal(args.pluginKey, KEY); assert.equal(args.panelId, 'team');
@@ -87,6 +99,16 @@ app.whenReady().then(async () => {
     assert.equal(readFileSync(__dirname + '/cli-calls.jsonl','utf8').trim().split('\n').map(JSON.parse).every(args => args[0] === 'worktree'), true, 'save must not launch');
     let edited = (await control('updateRole', { requestId: 'electron-role', expectedRevision: 1, teamId: saved.teams[0].id, memberId: saved.teams[0].members[0].id, brief: 'Review evidence', habits: 'Read results first', collaboration: 'Escalate blockers' })).value;
     assert.equal(edited.teams[0].members[0].roleVersion, 2);
+    const capabilities = await control('capabilities', { teamId: saved.teams[0].id });
+    assert.equal(capabilities.executionHostId, 'ssh:fixture');
+    assert.equal(capabilities.agents.codex.availability, 'detected');
+    assert.equal(capabilities.agents.codex.catalogStatus, 'unknown');
+    assert.equal(JSON.stringify(capabilities).includes('must-not-leak'), false);
+    assert.equal(runtimeReads.find(row => row.method === 'preflight.detectRemoteAgents').params.connectionId, 'fixture');
+    assert.equal(runtimeReads.some(row => row.method === 'agentSession.modelCatalog'), false);
+    assert.equal((await ipc('plugins:panelAction', envelope('team.control', '_capabilityResult'))).code, 'invalid_params');
+    await assert.rejects(ipc('plugins:invokeCommand', { pluginKey: KEY, commandId: 'team.control', args: { op: '_capabilityResult', internalKey: 'forged', params: {} } }), /authority/);
+
     const exported = await control('exportTemplate', { teamId: saved.teams[0].id });
     assert.equal(JSON.stringify(exported.template).includes(saved.teams[0].id), false);
     const preview = await control('previewTemplate', { template: exported.template });
@@ -123,7 +145,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC and authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); app.exit(1); }
 });

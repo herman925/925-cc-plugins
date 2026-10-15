@@ -120,6 +120,24 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           archive(team); next.teams.push(team);
         });
       },
+      updateAgentPreferences(input) {
+        return mutate('updateAgentPreferences', input, next => {
+          const team = next.teams.find(row => row.id === input.teamId);
+          if (!team) fail('Choose a saved team.');
+          const member = input.memberId ? team.members.find(row => row.id === input.memberId) : null;
+          if (input.memberId ? !member || input.level !== undefined : ![1, 2, 3].includes(input.level) || !team.members.some(row => row.level === input.level)) fail('Choose a member or hierarchy level.');
+          const preferences = input.inherit === true && member
+            ? { agent: team.configuration.agents[member.level - 1], model: team.configuration.models[member.level - 1], effort: team.configuration.efforts[member.level - 1] }
+            : { agent: input.agent, model: input.model, effort: input.effort };
+          if (!['codex', 'claude'].includes(preferences.agent) || [preferences.model, preferences.effort].some(value => typeof value !== 'string' || !value.trim() || value.length > 120) || (preferences.model === 'default' && preferences.effort !== 'default')) fail('Choose a valid agent, model and effort; default model inherits its effort.');
+          if (member) Object.assign(member, preferences, { preferenceOverride: input.inherit !== true });
+          else {
+            for (const [key, values] of [['agent', 'agents'], ['model', 'models'], ['effort', 'efforts']]) team.configuration[values][input.level - 1] = preferences[key];
+            for (const row of team.members) if (row.level === input.level && !row.preferenceOverride) Object.assign(row, preferences);
+          }
+          team.configVersion++; archive(team);
+        });
+      },
       exportTemplate(teamId) {
         const team = readSnapshot().teams.find(row => row.id === teamId);
         if (!team) fail('Saved team was not found.');

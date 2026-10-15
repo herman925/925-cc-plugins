@@ -1,13 +1,14 @@
+import { discoverCapabilities } from './capabilities.mjs';
 import { MAX_TEMPLATE_BYTES } from '../templates.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
-export async function installAdapter(electron, { version, identity }) {
+export async function installAdapter(electron, { version, identity, internalKey }) {
   const ipc = electron.ipcMain;
   const handlers = ipc?._invokeHandlers;
   if (!(handlers instanceof Map)) throw new Error('This Electron build has no compatible IPC handler registry.');
   const existing = globalThis[SLOT];
-  if (existing?.identity === identity && existing.isCurrent()) { return { ready: true, version, reused: true }; }
+  if (existing?.identity === identity && existing.internalKey === internalKey && existing.isCurrent()) { return { ready: true, version, reused: true }; }
   existing?.restore();
   const names = ['plugins:readPanelEntry', 'plugins:panelAction', 'plugins:invokeCommand'];
   const originals = new Map(names.map(name => [name, handlers.get(name)]));
@@ -41,7 +42,28 @@ export async function installAdapter(electron, { version, identity }) {
       const message = call.params.teamWorker;
       const envelopeLimit = ['previewTemplate', 'importTemplate'].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 60000;
       if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'exportTemplate', 'previewTemplate', 'importTemplate', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      if (Object.keys(message.args ?? {}).some(key => !['op', 'params', 'workspaceId'].includes(key))) throw Error('Invalid public worker arguments.');
+      if (message.commandId === 'team.control' && message.args?.op === 'capabilities') {
+        if (!internalKey) throw Error('Native capability authority is unavailable; initialise the adapter again.');
+        const invoke = args => originals.get(names[2])(event, { pluginKey: KEY, commandId: 'team.control', args: { ...args, internalKey } });
+        const prepared = await invoke({ op: '_capabilityScope', params: message.args.params });
+        const runtime = handlers.get('runtime:call');
+        if (typeof runtime !== 'function') throw Error('The pinned runtime read channel is unavailable.');
+        const rpc = async (method, params) => {
+          if (!isMainFrame(event) || leases.get(call.sessionToken) !== event.sender.id || handlers.get('runtime:call') !== runtime || ![...wrappers].every(([name, handler]) => handlers.get(name) === handler)) throw Object.assign(Error('Native capability authority expired.'), { code: 'authority_expired', authority: true });
+          const authority = await originals.get(names[1])(event, { ...call, params: {} });
+          if (!authority.ok) throw Object.assign(Error(authority.error || 'Native capability authority was refused.'), { code: authority.code ?? 'permission_denied', authority: true });
+          const response = await runtime(event, { method, ...(params === undefined ? {} : { params }) });
+          if (!response?.ok) throw Error('Host capability read unavailable.');
+          return response.result;
+        };
+        const value = await discoverCapabilities(rpc, prepared.scope);
+        const finalGate = await originals.get(names[1])(event, { ...call, params: {} });
+        if (!finalGate.ok) throw Object.assign(Error(finalGate.error || 'Native capability read was refused.'), { code: finalGate.code ?? 'permission_denied', authority: true });
+        if (!isMainFrame(event) || leases.get(call.sessionToken) !== event.sender.id || handlers.get('runtime:call') !== runtime || ![...wrappers].every(([name, handler]) => handlers.get(name) === handler)) throw Object.assign(Error('Native capability authority expired.'), { code: 'authority_expired', authority: true });
+        return { ok: true, value: await invoke({ op: '_capabilityResult', params: { observationId: prepared.observationId, value } }) };
+      }
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;
       if (message.args?.op === 'context' && !message.args?.params?.teamId) {
@@ -52,7 +74,7 @@ export async function installAdapter(electron, { version, identity }) {
       }
       const value = await originals.get(names[2])(event, { pluginKey: KEY, commandId: message.commandId, args: { ...message.args, workspaceId, nonce: message.nonce } });
       return { ok: true, value };
-    } catch (error) { return { ok: false, code: 'action_failed', error: String(error.message ?? error).slice(0, 1500) }; }
+    } catch (error) { return { ok: false, code: error.code ?? 'action_failed', error: String(error.message ?? error).slice(0, 1500) }; }
   });
   const restore = () => {
     for (const [name, wrapper] of wrappers) if (handlers.get(name) === wrapper) { ipc.removeHandler(name); ipc.handle(name, originals.get(name)); }
@@ -69,6 +91,6 @@ export async function installAdapter(electron, { version, identity }) {
       return result;
     });
   }
-  globalThis[SLOT] = { identity, restore, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
+  globalThis[SLOT] = { identity, internalKey, restore, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
   return { ready: true, version, reused: false };
 }

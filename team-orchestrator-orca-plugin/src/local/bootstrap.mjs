@@ -43,7 +43,7 @@ async function targets(port) {
   } catch { return []; }
 }
 const failure = (code, message) => Object.assign(new Error(message), { code });
-export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.06' } = {}) {
+export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.06', internalKey } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client; let owned = false;
   try {
@@ -72,7 +72,7 @@ export async function bootstrap({ platform = process.platform, parentPid = proce
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure('profile_missing', 'Orca did not resolve its actual runtime profile.');
     const source = await readFile(adapterPath, 'utf8');
     const digest = createHash('sha256').update(source).digest('hex');
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)}});})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)},internalKey:${JSON.stringify(internalKey)}});})()`;
     Object.assign(report, await client.evaluate(expression), { cliPaths: runtime.cliPaths });
     report.detail = 'Local runtime adapter installed; panel-to-worker test is available.';
   } catch (error) { report.code = error.code ?? 'initialisation_failed'; report.detail = error.message; }
