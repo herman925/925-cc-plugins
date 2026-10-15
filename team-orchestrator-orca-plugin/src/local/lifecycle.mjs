@@ -4,9 +4,9 @@ import { userMessage,accepted } from './dispatch.mjs';
 import { notifyQuestionEvent } from './questions.mjs';
 export function createLifecycleService({store,rpc,userData,consent,works,notify}){
  const queues=new Map();
- const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
+ const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
  async function evidence(id){
-  const work=store.readWork(id);if(!work||work.status==='completed')return null;
+  const work=store.readCurrentWork(id);if(!work||work.status==='completed')return null;
   const verified=await works.verifyWork(id,true),protocol=store.readDispatchProtocol(id);
   if(!protocol||protocol.generation!==work.run.consumerGeneration)throw Error('Supervisor delivery protocol is unavailable.');
   const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id)});
@@ -15,7 +15,7 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
  }
  async function check(id){
   const row=await evidence(id);if(!row)return;
-  if(store.readWork(id).version!==row.work.version)throw Error('Work changed during delivery observation.');
+  if(store.readCurrentWork(id).version!==row.work.version)throw Error('Work changed during delivery observation.');
   for(const proposal of row.native.deliveries??[]){let d;try{d=store.recordDelivery(id,proposal);}catch{continue;}
    if(d?.status==='pending')await notifyQuestionEvent(store,notify,{workId:id,id:`delivery-${d.id}`,kind:'goal-delivery',title:'Total objective ready for your review',body:d.summary.slice(0,1000)});
   }
@@ -40,6 +40,6 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
    }
    return event;
   }),
-  async reconcile(){for(const w of store.listWorks())if(w.status!=='completed'&&w.run.state==='verified')try{await this.check(w.id);}catch{}}
+  async reconcile(){for(const w of store.listCurrentWorks())if(w.status!=='completed'&&w.run.state==='verified')try{await this.check(w.id);}catch{}}
  };
 }

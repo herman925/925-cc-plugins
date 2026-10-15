@@ -1,4 +1,5 @@
 import {createStaffingService} from './staffing.mjs';
+import {createWakeService} from './wake.mjs';
 import {createStopService} from './stop.mjs';
 import { createLifecycleService } from './lifecycle.mjs';
 import { createQuestionService } from './questions.mjs';
@@ -19,10 +20,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing=createStaffingService({store,userData,consent,rpc,works});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
-  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
+  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: input => wake.wake(input) });
   const stops = createStopService({store,rpc,userData,consent});
   const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   const recovery = createRecoveryService({ store, rpc, userData, consent });
+  const wake = createWakeService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   let workTimer, polling = false, stopped = false;
   const reconcileExisting=async()=>{await recovery.reconcile();await stops.reconcile();};
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
@@ -30,8 +32,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     if (polling || stopped) return;
     polling = true;
     try {
-      await consent(); await recovery.reconcile(); await stops.reconcile();
-      if (!store.listWorks().some(work => work.status!=='completed' && work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
+      await consent(); await recovery.reconcile(); await stops.reconcile();for(const row of store.listWakes()){await wake.check(row.requestId);await wake.bind(row.requestId);}
+      if (!store.listCurrentWorks().some(work => work.status!=='completed' && (work.recoveryRequestId||work.input.state !== 'not_sent') && work.run.state !== 'fenced')) return;
       await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
@@ -100,6 +102,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const result=store.saveStaffing(params);await staffing.check(work.id);stopped=false;scheduleWork();
           return {staffing:result,value:store.readSnapshot()};
         }
+        if(op==='_wakeFreshPrepare'){
+          const row=store.readWake(params.input.requestId);if(!row||row.teamId!==params.input.teamId)throw Error('Saved handoff recovery not found.');
+          const observed=capabilities.get(row.oldBinding.scope.workspaceKey),member=store.readSnapshot().teams.find(t=>t.id===row.teamId)?.members.find(m=>m.id===row.memberId);
+          if(latestObservation.get(row.oldBinding.scope.workspaceKey)!==params.observationId||!observed||Date.now()-observed.observedAt>30000||observed.runtimeId!==row.proof.runtimeId)throw Error('Fresh authenticated recovery capability admission is required.');
+          const issue=preferenceIssue(member,observed,{requireCore:true});if(issue)throw Error(issue);
+          const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
+        }
         if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
         if (op === '_stopValidate') return stops.validate(params.requestId);
         if (op === '_stopSettle') return stops.settle(params.requestId,params.receipt,params.error);
@@ -152,6 +161,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved execution scope changed before launch.');
+          if(saved.wakeRequestId)await wake.validateFresh(saved.wakeRequestId);
           // Commit the may-have-executed boundary before the adapter can call the native effect.
           settled(saved,{effectState:'submitted',recovery:undefined});
           return { valid: true };
@@ -208,6 +218,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
+      if(op==='resolveRecoveryQuestion')return {value:await wake.resolveQuestion(params)};
+      if(op==='wakeMember'){await stops.reconcile();return {value:await wake.wake(params)};}
+      if(op==='checkWake'){await wake.check(params.requestId);return {value:await wake.bind(params.requestId)};}
+      if(op==='decideWake')return {value:await wake.decide(params)};
+      if(op==='checkHandoff')return {value:await wake.handoff(params.requestId)};
       if (op === 'setAdmission') { await consent(); await reconcileExisting(); const value=store.setAdmission(params); stopped=false;scheduleWork();return {value}; }
       if (op === 'checkStop') { await stops.check(params.requestId); return {value:store.readSnapshot()}; }
       if (op === 'answerQuestion') { await reconcileExisting(); return { value: await questions.answer(params) }; }
