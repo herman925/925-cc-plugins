@@ -29,3 +29,15 @@ test('invalid trees and stale acceptance leave the entire current roster intact'
  s.cancelOrganization({requestId:s.readSnapshot().organizationChanges[0].requestId,expectedRevision:s.readSnapshot().revision});
  s.decideWork({...decision,expectedWorkVersion:s.readWork(w.id).version});assert.equal(s.readWork(w.id).status,'completed');
 });
+import {questionFixture} from './questions-fixture.mjs';
+import {createDispatchService} from '../src/local/dispatch.mjs';
+test('removed members keep their original accepted Task and reviewer when late old evidence arrives',async t=>{
+ const f=await questionFixture(t),s=f.store,dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});
+ await dispatch.check(f.work.id);f.createIntent(s.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await dispatch.check(f.work.id);
+ let a=s.listDispatches(f.work.id)[0];f.complete(a);await dispatch.check(f.work.id);a=s.listDispatches(f.work.id)[0];f.review(a);await dispatch.check(f.work.id);a=s.listDispatches(f.work.id)[0];assert.equal(a.status,'accepted');
+ s.scheduleOrganization({requestId:'remove-accepted',teamId:f.team.id,workId:f.work.id,expectedRevision:s.readSnapshot().revision,configVersion:1,changes:[{memberId:f.member.id,remove:true}]});
+ s.recordDelivery(f.work.id,{id:'removed-delivery',summary:'Done',evidenceRefs:[a.evidenceId],attemptIds:[a.id],generation:1,proof:{requestId:'proof',payloadHash:'a'.repeat(64)}});
+ s.decideWork({workId:f.work.id,requestId:'remove-accept',deliveryId:'removed-delivery',expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'});
+ assert.equal(s.readSnapshot().teams[0].members.some(m=>m.id===f.member.id),false);assert.equal(s.readMemberDispatch(f.member.id),null);
+ assert.throws(()=>s.updateDispatch(a.id,a.version,{status:'running'}),/sealed/);const old=s.listDispatches(f.work.id)[0];assert.equal(old.supervisorMemberId,f.team.members[0].id);assert.equal(old.configVersion,1);assert.deepEqual(old.review,a.review);assert.equal(old.status,'accepted');
+});

@@ -125,9 +125,9 @@ test('active supervisor idle retirement rechecks its original native authority b
  const input={requestId:'active-idle',teamId:f.team.id,memberId:f.team.members[0].id,bindingRequestId:'launch',expectedRevision:f.store.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Review the existing native Run and preserve the objective.',evidenceRefs:['run-head']};
  await service.requestReplacement(input);await service.prepareFresh(input.requestId);await service.validateFresh(input.requestId);
  await assert.rejects(f.works.verifyWork(f.work.id,true),/binding changed/);assert.throws(()=>f.store.assertAdmission(f.team.id,f.member.id),/replacement/);
- assert.equal(f.store.readWork(f.work.id).binding.requestId,'launch');assert.equal(f.store.readWake(input.requestId).state,'replacing');
+ assert.equal(f.store.readWork(f.work.id).configVersion,1);assert.equal(f.store.effectiveTeamForWork(f.work.id).configVersion,2);assert.equal(f.store.readWork(f.work.id).binding.requestId,'launch');assert.equal(f.store.readWake(input.requestId).state,'replacing');
 });
-test('unknown Stop and queued or unreviewed attempts cannot be discharged by idle replacement',async t=>{
+test('unknown Stop cannot be discharged by idle replacement',async t=>{
  const f=await fixture(t);f.store.prepareStop({requestId:'unknown-stop'},{memberId:f.member.id,teamId:f.team.id,operationRequestId:'launch',instanceGeneration:1});
  const rpc=async(method,params)=>method==='agentSession.history'?{ok:true,page:{sessionId:f.op.sessionId,fence:7,latestTurn:{turn:{state:'completed'}},backgroundTasks:null,queuedMessages:[],submissions:[]}}:f.rpc(method,params),service=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
  await assert.rejects(service.requestReplacement({...f.input,expectedRevision:f.store.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'A requested change',evidenceRefs:['history']}),/Unresolved Stop/);

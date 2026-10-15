@@ -49,7 +49,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  const verifyIdle=(op,retirementRequestId)=>verifyIdleReplacement({store,rpc,userData,works,operation:op,retirementRequestId});
  return {
  async requestReplacement(input){
-  if(!input||Object.keys(input).some(k=>!['requestId','teamId','memberId','bindingRequestId','expectedRevision','agent','model','effort','summary','evidenceRefs'].includes(k))||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('An explicit replacement decision, handoff summary and evidence references are required.');
+  if(!input||Object.keys(input).some(k=>!['requestId','teamId','memberId','bindingRequestId','expectedRevision','agent','model','effort','summary','evidenceRefs'].includes(k))||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.length>100||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('An explicit replacement decision, handoff summary and evidence references are required.');
   const prior=store.readWake(input.requestId);if(prior){if(prior.mode!=='idle-replacement'||!store.replay('reserveIdleReplacement',input))throw Error('Replacement request conflicts with saved input.');return publicWake(prior);}
   const op=bindingFor(input);if(!op||op.teamId!==input.teamId||op.memberId!==input.memberId||op.status!=='created'||!active(op))throw Error('Choose the current exact member binding.');
   await consent();return withNativeRuntime(rpc,op.runtimeId,async()=>{
@@ -58,7 +58,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
    store.reserveIdleReplacement(input,op,{idle,runtimeId:op.runtimeId,hostGeneration:generation});return publicWake(store.readWake(input.requestId));
   });
  },
- async validateFresh(id){const row=store.readWake(id);if(row?.state!=='replacing'||!(row.mode==='idle-replacement'?await verifyIdle(row.oldBinding,row.requestId):await stopped(row)))throw Error('Previous execution stopped proof changed before fresh replacement.');await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);},
+ async validateFresh(id){const row=store.readWake(id);if(row?.state!=='replacing')throw Error('Replacement reservation changed.');return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{if(!(row.mode==='idle-replacement'?await verifyIdle(row.oldBinding,row.requestId):await stopped(row)))throw Error('Previous execution proof changed before fresh replacement.');await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);});},
  async resolveQuestion(input){
   const row=store.readWake(input?.requestId),work=store.readCurrentWork(input?.workId),question=work&&store.listQuestions(work.id).find(q=>q.id===input.questionId);
   if(row?.state!=='bound'||row.newInstance?.workId!==work?.id||work.recoveryRequestId!==row.requestId||!question||(question.epoch??0)>=(work.epoch??0)||typeof input.note!=='string'||!input.note.trim()||input.note.length>4000)throw Error('Review the exact superseded question and provide a resolution note.');
@@ -105,7 +105,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   const row=store.readWake(input?.requestId),member=row&&memberFor(row);
   if(!member||member.boss)throw Error('Only the highest supervisor replacement is decided here by the user. A subordinate needs its actual direct manager handoff.');
   if(row.state!=='needs_decision'||input.version!==row.version)throw Error('Recovery decision changed; reopen pending evidence.');
-  if(!['replace','wait'].includes(input.decision)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('A bounded handoff summary and evidence references are required.');
+  if(!['replace','wait'].includes(input.decision)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.length>100||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('A bounded handoff summary and evidence references are required.');
   await consent();return publicWake(store.updateWake(row.requestId,row.version,{state:input.decision==='replace'?'approved':'needs_decision',handoff:{reviewer:'user',decision:input.decision,summary:input.summary,evidenceRefs:input.evidenceRefs,oldRequestId:row.oldBinding.requestId,recordedAt:new Date().toISOString()}}));
  },
  async prepareFresh(id){
