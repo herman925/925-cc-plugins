@@ -1,3 +1,4 @@
+import {verifyIdleReplacement} from './idle-replacement.mjs';
 import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import {notifyQuestionEvent} from './questions.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
@@ -45,8 +46,19 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   }catch(error){const current=store.readWake(row.requestId);if(current.managerRequest?.state==='submitted')row=store.updateWake(row.requestId,current.version,{managerRequest:{...current.managerRequest,state:'unknown'}});}
   return row;
  }
+ const verifyIdle=(op,retirementRequestId)=>verifyIdleReplacement({store,rpc,userData,works,operation:op,retirementRequestId});
  return {
- async validateFresh(id){const row=store.readWake(id);if(row?.state!=='replacing'||!await stopped(row))throw Error('Previous execution stopped proof changed before fresh replacement.');await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);},
+ async requestReplacement(input){
+  if(!input||Object.keys(input).some(k=>!['requestId','teamId','memberId','bindingRequestId','expectedRevision','agent','model','effort','summary','evidenceRefs'].includes(k))||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.length>100||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('An explicit replacement decision, handoff summary and evidence references are required.');
+  const prior=store.readWake(input.requestId);if(prior){if(prior.mode!=='idle-replacement'||!store.replay('reserveIdleReplacement',input))throw Error('Replacement request conflicts with saved input.');return publicWake(prior);}
+  const op=bindingFor(input);if(!op||op.teamId!==input.teamId||op.memberId!==input.memberId||op.status!=='created'||!active(op))throw Error('Choose the current exact member binding.');
+  await consent();return withNativeRuntime(rpc,op.runtimeId,async()=>{
+   if((await rpc('status.get'))?.runtimeId!==op.runtimeId)throw Error('Replacement runtime changed.');
+   const generation=await hostGeneration(op.scope,op.hostGeneration),idle=await verifyIdle(op);await consent();
+   store.reserveIdleReplacement(input,op,{idle,runtimeId:op.runtimeId,hostGeneration:generation});return publicWake(store.readWake(input.requestId));
+  });
+ },
+ async validateFresh(id){const row=store.readWake(id);if(row?.state!=='replacing')throw Error('Replacement reservation changed.');return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{if(!(row.mode==='idle-replacement'?await verifyIdle(row.oldBinding,row.requestId):await stopped(row)))throw Error('Previous execution proof changed before fresh replacement.');await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);});},
  async resolveQuestion(input){
   const row=store.readWake(input?.requestId),work=store.readCurrentWork(input?.workId),question=work&&store.listQuestions(work.id).find(q=>q.id===input.questionId);
   if(row?.state!=='bound'||row.newInstance?.workId!==work?.id||work.recoveryRequestId!==row.requestId||!question||(question.epoch??0)>=(work.epoch??0)||typeof input.note!=='string'||!input.note.trim()||input.note.length>4000)throw Error('Review the exact superseded question and provide a resolution note.');
@@ -55,7 +67,9 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  async bind(id){
   const row=store.readWake(id);if(!row||!['resumed','replacing'].includes(row.state))return publicWake(row);
   const binding=store.readOperation(row.newInstance.requestId),work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.supervisorMemberId===row.memberId&&w.status!=='completed');
-  if(!work||binding?.status!=='created')return publicWake(row);
+  if(!work||binding?.status!=='created')return publicWake(!work&&row.mode==='idle-replacement'?store.finishIdleReplacement(id):row);
+  if(row.mode==='idle-replacement'&&work.parent&&['accepted','rework'].includes(store.listDispatches(work.parent.workId).find(a=>a.id===work.parent.attemptId)?.status))return publicWake(store.finishIdleReplacement(id));
+
   await consent();return withNativeRuntime(rpc,binding.runtimeId,async()=>{
    await hostGeneration(binding.scope,row.proof.hostGeneration);
    if((await rpc('status.get'))?.runtimeId!==binding.runtimeId||!store.isActiveOperation(binding))throw Error('Recovered supervisor runtime or recipient changed.');
@@ -92,20 +106,20 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   const row=store.readWake(input?.requestId),member=row&&memberFor(row);
   if(!member||member.boss)throw Error('Only the highest supervisor replacement is decided here by the user. A subordinate needs its actual direct manager handoff.');
   if(row.state!=='needs_decision'||input.version!==row.version)throw Error('Recovery decision changed; reopen pending evidence.');
-  if(!['replace','wait'].includes(input.decision)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('A bounded handoff summary and evidence references are required.');
+  if(!['replace','wait'].includes(input.decision)||typeof input.summary!=='string'||!input.summary.trim()||input.summary.length>4000||!Array.isArray(input.evidenceRefs)||!input.evidenceRefs.length||input.evidenceRefs.length>100||input.evidenceRefs.some(v=>typeof v!=='string'||!v||v.length>1000))throw Error('A bounded handoff summary and evidence references are required.');
   await consent();return publicWake(store.updateWake(row.requestId,row.version,{state:input.decision==='replace'?'approved':'needs_decision',handoff:{reviewer:'user',decision:input.decision,summary:input.summary,evidenceRefs:input.evidenceRefs,oldRequestId:row.oldBinding.requestId,recordedAt:new Date().toISOString()}}));
  },
  async prepareFresh(id){
   const row=store.readWake(id);if(row?.newInstance?.requestId)return {operation:store.readOperation(row.newInstance.requestId),fresh:false};
   if(row?.state!=='approved'||row.handoff?.decision!=='replace')throw Error('A checked handoff decision is required before fresh replacement.');
   await consent();return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{
-   if((await rpc('status.get'))?.runtimeId!==row.proof.runtimeId||!await stopped(row))throw Error('Previous execution is not proven stopped in this recovery runtime.');
+   if((await rpc('status.get'))?.runtimeId!==row.proof.runtimeId||!(row.mode==='idle-replacement'?await verifyIdle(row.oldBinding,row.requestId):await stopped(row)))throw Error('Previous execution is not proven stopped in this recovery runtime.');
    await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);
-   const team=store.readSnapshot().teams.find(t=>t.id===row.teamId),member=memberFor(row);if(!member||team.configVersion!==row.oldBinding.configVersion)throw Error('Saved recovery member configuration changed.');
+   const root=store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed'),team=root&&store.effectiveTeamForWork?store.effectiveTeamForWork(root.id):store.readSnapshot().teams.find(t=>t.id===row.teamId),member=team?.members.find(m=>m.id===row.memberId);if(!member)throw Error('Saved recovery member configuration changed.');
    const nativeRequest=nativeLaunchIntent(team,member,row.oldBinding.scope);
-   const work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed');
+   const work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed'&&!(row.mode==='idle-replacement'&&w.parent&&['accepted','rework'].includes(store.listDispatches(w.parent.workId).find(a=>a.id===w.parent.attemptId)?.status)));
    nativeRequest.prompt.text+=`\nTEAM_RECOVERY_HANDOFF\nOriginal member ${row.memberId}; original instance ${row.oldBinding.requestId}.\n${row.handoff.summary}\nEvidence: ${row.handoff.evidenceRefs.join(', ')}\nPreserve all original Task/Dispatch identities. ${work?`As your own native identity, run-use ${work.run.id} with the installed Orca CLI; the exact objective remains ${JSON.stringify(work.nativeObjective)}. Never impersonate the old supervisor.`:''} Await verified Run ownership and admission before work.`;
-   return store.prepareWakeReplacement(id,row.version,{scope:row.oldBinding.scope,nativeRequest,roleVersion:member.roleVersion,title:row.oldBinding.title,executionHostId:row.oldBinding.executionHostId,runtimeId:row.proof.runtimeId,hostGeneration:row.proof.hostGeneration??null});
+   return store.prepareWakeReplacement(id,row.version,{scope:row.oldBinding.scope,nativeRequest,configVersion:team.configVersion,roleVersion:member.roleVersion,title:row.oldBinding.title,executionHostId:row.oldBinding.executionHostId,runtimeId:row.proof.runtimeId,hostGeneration:row.proof.hostGeneration??null});
   });
  },
  async check(id){
