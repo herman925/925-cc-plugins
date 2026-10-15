@@ -23,7 +23,7 @@ test('invalid trees and stale acceptance leave the entire current roster intact'
  const decision={workId:w.id,requestId:'org-stale-accept',deliveryId:'org-stale-delivery',expectedWorkVersion:w.version,decision:'accept'};
  s.scheduleOrganization(input([{memberId:f.team.members[2].id,boss:f.team.members[1].id}]));
  assert.throws(()=>s.decideWork(decision),/changed|superseded/);
- s.updateRole({teamId:f.team.id,memberId:f.head.id,requestId:'role-race',expectedRevision:s.readSnapshot().revision,brief:'Updated role',habits:'',collaboration:''});
+ s.updateAgentPreferences({teamId:f.team.id,memberId:f.head.id,requestId:'preferences-race',expectedRevision:s.readSnapshot().revision,agent:'claude',model:'default',effort:'default'});
  assert.throws(()=>s.decideWork({...decision,expectedWorkVersion:s.readWork(w.id).version}),/configuration changed/);
  assert.equal(s.readWork(w.id).status,'awaiting_acceptance');assert.equal(s.nextGoal(f.team.id),null);assert.equal(s.readSnapshot().teams[0].members[2].boss,f.head.id);
  s.cancelOrganization({requestId:s.readSnapshot().organizationChanges[0].requestId,expectedRevision:s.readSnapshot().revision});
