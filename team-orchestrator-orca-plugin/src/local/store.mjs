@@ -1,3 +1,4 @@
+import { stopStore } from './stop-store.mjs';
 import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
 import { initialMembers } from '../launch.mjs';
 import { questionStore } from './questions-store.mjs';
@@ -72,15 +73,16 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
     const dispatchProjection = workId => ({queuedTasks:queuedTasks(workId),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
+    const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const questions = questionStore({db,readPrivate,putPrivate,readWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id)})) };
     };
     readSnapshot();
-    const write = ({ works, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const write = ({ works, stops: ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -120,6 +122,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     let closed = false;
     return {
       ...questions,
+      ...stops,
       readOperation,
       readMemberOperation(memberId) { const pointer=readPrivate(`binding:${memberId}`); return pointer?readOperation(pointer.requestId):null; },
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
@@ -134,6 +137,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(team?.launch?.members?.[memberId]?.requestId===requestId){delete team.launch.members[memberId];next.revision++;write(next);}
         return true;
       });},
+      setAdmission(input) { return mutate('setAdmission',input,next=>{
+        const team=next.teams.find(row=>row.id===input.teamId);
+        if(!team||typeof input.paused!=='boolean'||input.memberId&&!team.members.some(row=>row.id===input.memberId))fail('Choose a saved team or member.');
+        team.admission??={paused:false,members:{}};
+        if(input.memberId)team.admission.members[input.memberId]=input.paused;else team.admission.paused=input.paused;
+      }); },
+      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.'); },
       readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
         const work=readWork(workId); if(work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
@@ -154,6 +164,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
         const key=`dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId?`:${intent.spec.previousAttemptId}`:''}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
+        this.assertAdmission(work.teamId,intent.spec.memberId);
         questions.questionTaskGate(workId,intent.spec.taskKey,intent.nativeTaskId);
         const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
         if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');

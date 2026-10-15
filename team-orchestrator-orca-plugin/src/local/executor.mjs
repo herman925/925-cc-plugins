@@ -1,3 +1,4 @@
+import {createStopService} from './stop.mjs';
 import { initialMembers } from '../launch.mjs';
 import { createQuestionService } from './questions.mjs';
 import { createRecoveryService } from './recovery.mjs';
@@ -16,14 +17,16 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const works = createWorkService({ store, userData, consent, rpc });
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
+  const stops = createStopService({store,rpc,userData,consent});
   const recovery = createRecoveryService({ store, rpc, userData, consent });
   let workTimer, polling = false, stopped = false;
+  const reconcileExisting=async()=>{await recovery.reconcile();await stops.reconcile();};
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
     if (polling || stopped) return;
     polling = true;
     try {
-      await consent(); await recovery.reconcile();
+      await consent(); await recovery.reconcile(); await stops.reconcile();
       if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
       await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); scheduleWork();
     } catch { stopped = true; }
@@ -79,6 +82,9 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
+        if (op === '_stopValidate') return stops.validate(params.requestId);
+        if (op === '_stopSettle') return stops.settle(params.requestId,params.receipt,params.error);
         if (op === '_launchLookup') {
           const saved = savedLaunch(params.input);
           if (!saved) return null;
@@ -86,6 +92,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           return { receipt: publicOperation(saved) };
         }
         if (op === '_launchPrepare') {
+          await reconcileExisting();
           const previous = savedLaunch(params.input);
           if (previous) return { receipt: publicOperation(previous) };
           const input = params.input, team = store.readSnapshot().teams.find(row => row.id === input.teamId);
@@ -157,13 +164,16 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         throw Error('Unknown internal observation phase.');
       }
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
+        if(op!=='checkWork')await reconcileExisting();
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
         await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id);
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
-      if (op === 'answerQuestion') return { value: await questions.answer(params) };
+      if (op === 'setAdmission') { await consent(); return {value:store.setAdmission(params)}; }
+      if (op === 'checkStop') { await stops.check(params.requestId); return {value:store.readSnapshot()}; }
+      if (op === 'answerQuestion') { await reconcileExisting(); return { value: await questions.answer(params) }; }
       if (op === 'updateAgentPreferences') {
         const replay = store.replay(op, params); if (replay) return { value: replay };
         const scope = store.readScope(params.teamId);
@@ -174,7 +184,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         return { value: store.updateAgentPreferences(params) };
       }
       if (op === 'context') return context(workspaceId, params.teamId);
-      if (op === 'load') { await recovery.reconcile(); return { value: store.readSnapshot() }; }
+      if (op === 'load') { await recovery.reconcile(); await stops.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {
         const previous = store.replay('createTeam', params);
         if (previous) return { value: previous };
