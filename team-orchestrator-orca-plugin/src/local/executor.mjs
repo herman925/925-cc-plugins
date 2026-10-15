@@ -222,6 +222,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         return { value: store.updateAgentPreferences(params) };
       }
       if (op === 'context') return context(workspaceId, params.teamId);
+      if(op==='previewHistoryCleanup')return store.previewHistoryCleanup(params);
+      if(op==='applyHistoryCleanup')return {cleanup:store.applyHistoryCleanup(params),value:store.readSnapshot()};
       if (op === 'load') { await recovery.reconcile(); await stops.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {
         const previous = store.replay('createTeam', params);

@@ -1,3 +1,4 @@
+import {inspectTeamStorage} from './local/storage-maintenance.mjs';
 import { randomBytes } from 'node:crypto';
 import { bootstrap } from './local/bootstrap.mjs';
 import { locateCli, createCliRunner } from './local/cli.mjs';
@@ -44,6 +45,7 @@ export default function activate(orca) {
     if (!args || args.op === 'ping') return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
     if (!report.ready) throw new Error(report.detail);
     if (!report.cliPaths) throw new Error('Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.');
+    if(args.op==='storageRecovery')return inspectTeamStorage({userData:report.cliPaths.userData});
     return (await executorFor(report)).execute(args);
   });
   for (const event of ['worktree.created', 'agent.status.changed']) orca.events.on(event, () => initialise());
