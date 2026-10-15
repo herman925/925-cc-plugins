@@ -1,3 +1,4 @@
+import { withNativeRuntime } from './native-runtime.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { sendFingerprint } from './teamwork.mjs';
 import { readNativeDispatchEvidence } from './native-dispatch.mjs';
@@ -20,14 +21,14 @@ function accepted(receipt,send,instance){
 }
 export function createDispatchService({store,rpc,userData,consent,works}) {
  const queues=new Map();
- const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
+ const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
  const project=id=>store.dispatchProjection(id);
  async function evidence(work,protocol,team,verified){return readNativeDispatchEvidence(userData,{work,protocol,team,owner:verified.instance,admitted:store.listDispatches(work.id)});}
  async function sendProtocol(work,team,protocol,verified){
   if(protocol.state!=='not_sent')return protocol;
   const nativeSend=userMessage(work,verified.instance,dispatchInstructions(work,team,protocol));
   await consent();protocol=store.updateDispatchProtocol(work.id,protocol.version,{state:'sending',nativeSend});
-  try { const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope); if(!accepted(receipt,nativeSend,verified.instance))throw Error('Protocol input was not confirmed; no automatic resend.'); return store.updateDispatchProtocol(work.id,protocol.version,{state:'accepted',detail:'Native host accepted dispatch instructions; the real supervisor must create Task intents.'}); }
+  try { await works.verifyHost(work.id,verified.hostGeneration);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope); if(!accepted(receipt,nativeSend,verified.instance))throw Error('Protocol input was not confirmed; no automatic resend.'); return store.updateDispatchProtocol(work.id,protocol.version,{state:'accepted',detail:'Native host accepted dispatch instructions; the real supervisor must create Task intents.'}); }
   catch(error){return store.updateDispatchProtocol(work.id,protocol.version,{state:'unknown',detail:String(error.message).slice(0,1200)});}
  }
  async function preparedSession(work,member,saved){
@@ -90,7 +91,7 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
   const text='TEAM_DISPATCH_PERMIT\n'+JSON.stringify({workId:work.id,attemptId:attempt.id,memberId:attempt.memberId,roleVersion:attempt.roleVersion,configVersion:attempt.configVersion,nativeTaskId:attempt.nativeTaskId,generation:attempt.generation,reviewToken:attempt.reviewToken,reviewProtocol:'team-review/v1',startParams:attempt.startParams,instruction:'Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker.'});
   const nativeSend=userMessage(work,verified.instance,text);
   await consent();attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
-  try { const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
+  try { await works.verifyHost(work.id,verified.hostGeneration);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
   catch(error){store.updateDispatch(attempt.id,attempt.version,{status:'unknown',permit:{state:'unknown',nativeSend},detail:String(error.message).slice(0,1200)});}
  }
  async function check(workId){

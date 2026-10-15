@@ -1,8 +1,8 @@
 import { initialMembers } from '../launch.mjs';
+import { createRecoveryService } from './recovery.mjs';
 import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
 import { createWorkService } from './teamwork.mjs';
-import { readNativeLaunchLedger } from './native-launch-ledger.mjs';
 import { preferenceIssue } from '../capabilities.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
@@ -14,12 +14,14 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const works = createWorkService({ store, userData, consent, rpc });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works });
+  const recovery = createRecoveryService({ store, rpc, userData, consent });
   let workTimer, polling = false, stopped = false;
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
     if (polling || stopped) return;
     polling = true;
     try {
+      await consent(); await recovery.reconcile();
       if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
       await consent(); await works.reconcile(); await dispatches.reconcile(); scheduleWork();
     } catch { stopped = true; }
@@ -67,7 +69,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   }
   const settled = (operation, patch) => {
     const publicValue = publicOperation({ ...operation, ...patch });
-    return store.settleOperation(operation.requestId, operation.nativeRequest.operationId, { ...patch, public: publicValue });
+    return store.settleOperation(operation.requestId, operation.nativeRequest.operationId, { ...patch, public: publicValue }, operation.version??1);
   };
   return {
     resumeWork,
@@ -78,15 +80,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if (op === '_launchLookup') {
           const saved = savedLaunch(params.input);
           if (!saved) return null;
-          if (params.recover && saved.status === 'unknown') {
-            const evidence = await readNativeLaunchLedger(userData, saved.nativeRequest);
-            let patch = { status: 'unknown', error: evidence.detail };
-            if (evidence.state === 'succeeded') {
-              try { patch = { ...launchReceipt(evidence.result, saved), error: undefined, warning: 'Recovered from the original native ledger. Current provider liveness and naming remain unverified.' }; }
-              catch (error) { patch.error = error.message; }
-            }
-            return { receipt: publicOperation(settled(saved, patch)) };
-          }
+          if (params.recover) return { receipt: publicOperation(await recovery.checkOperation(saved.requestId)) };
           return { receipt: publicOperation(saved) };
         }
         if (op === '_launchPrepare') {
@@ -112,6 +106,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved execution scope changed before launch.');
+          // Commit the may-have-executed boundary before the adapter can call the native effect.
+          settled(saved,{effectState:'submitted',recovery:undefined});
           return { valid: true };
         }
         if (op === '_launchSettle' || op === '_launchFollowup') {
@@ -125,7 +121,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
             try { if (params.error) throw Error(params.error); patch = launchReceipt(params.result, operation); }
             catch (error) { patch = { status: 'unknown', error: error.message.slice(0, 1200) }; }
             const saved = settled(operation, patch);
-            return saved.status === 'created' ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };
+            return saved.status === 'created' && store.isActiveOperation(saved) ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };
           }
           launchPlans.delete(params.phaseId);
           if (operation.status !== 'created') throw Error('A verified created identity is required.');
@@ -134,7 +130,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if (op === '_memberBinding') {
           if (Object.keys(params).some(key => !['teamId', 'memberId', 'requestId'].includes(key))) throw Error('Invalid member selection.');
           const saved = store.readOperation(params.requestId);
-          if (!saved || saved.teamId !== params.teamId || saved.memberId !== params.memberId || saved.status !== 'created') throw Error('A verified saved member binding is required.');
+          if (!saved || !store.isActiveOperation(saved) || saved.teamId !== params.teamId || saved.memberId !== params.memberId || saved.status !== 'created') throw Error('A verified saved member binding is required.');
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved member execution scope changed.');
           return saved;
         }
@@ -161,7 +157,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id);
+        await dispatches.check(work.id); await recovery.checkWork(work.id);
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
@@ -175,7 +171,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         return { value: store.updateAgentPreferences(params) };
       }
       if (op === 'context') return context(workspaceId, params.teamId);
-      if (op === 'load') return { value: store.readSnapshot() };
+      if (op === 'load') { await recovery.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {
         const previous = store.replay('createTeam', params);
         if (previous) return { value: previous };

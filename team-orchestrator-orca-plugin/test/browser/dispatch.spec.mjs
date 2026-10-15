@@ -77,6 +77,12 @@ test('native failed execution also awaits supervisor review', async ({ page }) =
   await expect(tasks).toContainText('Checkout verification failed');
   await expect(tasks.getByRole('button', { name: /retry|launch|accept/i })).toHaveCount(0);
 });
+test('reopened task shows scoped recovery evidence and incomplete archive warnings as escaped text',async({page})=>{
+ const ui=await preparedDispatch(page,'dispatch-running');await expect(ui.getByRole('region',{name:'Team tasks',exact:true})).toContainText('Native assignment observed');await page.reload();const tasks=panel(page).getByRole('region',{name:'Team tasks',exact:true});
+ await expect(tasks).toContainText('Recovery: confirmed_effect');await expect(tasks).toContainText('Last observed:');await expect(tasks).toContainText('Observation or output is incomplete');await expect(tasks).toContainText('Output source is archived');await expect(tasks).toContainText('SSH output clipped <img src=x onerror=alert(1)>');await expect(tasks.locator('img,script')).toHaveCount(0);
+ await expect(tasks.getByRole('button',{name:/retry|restart|replace/i})).toHaveCount(0);
+ await tasks.getByRole('button',{name:'View member'}).click();await expect(panel(page).getByRole('region',{name:'Member details'})).toContainText('Recovery: confirmed_effect');
+});
 
 for(const [mode,label] of [['dispatch-accepted','Accepted by direct supervisor'],['dispatch-rework','Rework requested'],['dispatch-missing-review','Supervisor review evidence missing']])test(`${mode}: review and original evidence remain readable in task and member views`,async({page})=>{
  const ui=await preparedDispatch(page,mode),tasks=ui.getByRole('region',{name:'Team tasks',exact:true});

@@ -1,10 +1,12 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createConnection } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { realpath,readFile } from 'node:fs/promises';
 import { join,relative,isAbsolute,sep } from 'node:path';
-const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.send','agentSession.history','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow']);
+const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.send','agentSession.history','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow','orchestration.workerRead']);
 export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxBytes=2*1024*1024}) {
- return async (method,params,envelope={})=>{
+ const context=new AsyncLocalStorage();
+ const rpc=async (method,params,envelope={})=>{
   if(!METHODS.has(method))throw Error('Native method is not allowed for team work.');
   if(Object.keys(envelope).some(key=>!['orchestrationRequestId'].includes(key)))throw Error('Native caller overrides are not allowed.');
   await consent();
@@ -17,17 +19,20 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
    transport=(metadata.transports??[metadata.transport]).find(item=>['unix','named-pipe'].includes(item?.kind));
    if(metadata.pid!==parentPid||typeof metadata.runtimeId!=='string'||!metadata.runtimeId||typeof metadata.authToken!=='string'||!metadata.authToken||!transport||typeof transport.endpoint!=='string'||(transport.kind==='unix'?!isAbsolute(transport.endpoint):!transport.endpoint.startsWith('\\\\.\\pipe\\')))throw Error();
   }catch{throw Error('Verified Orca runtime metadata is unavailable or belongs to another process. Reconnect the plugin.');}
+  const expectedRuntimeId=context.getStore();
+  if(expectedRuntimeId&&metadata.runtimeId!==expectedRuntimeId)throw Error('Native runtime epoch changed during observation; intent remains reserved.');
+  const verifyMetadata=async()=>{const current=JSON.parse(await readFile(join(profile,'orca-runtime.json'),'utf8'));if(current.runtimeId!==metadata.runtimeId||current.pid!==parentPid||current.authToken!==metadata.authToken)throw Error('Native runtime epoch changed before effect or observation settlement.');};
   await consent();
   return new Promise((resolve,reject)=>{
-   const id=randomUUID(),socket=createConnection(transport.endpoint);let buffer='',finished=false;
+   const id=randomUUID(),socket=createConnection(transport.endpoint);let buffer='',finished=false,validating=false;
    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(result);};
    const timer=setTimeout(()=>finish(Error('Native runtime timed out; any submitted objective remains unconfirmed.')),timeoutMs);
    socket.setEncoding('utf8');
-   socket.on('connect',async()=>{try{await consent();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope})+'\n');}catch(error){finish(error);}});
+   socket.on('connect',async()=>{try{await consent();await verifyMetadata();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope})+'\n');}catch(error){finish(error);}});
    socket.on('error',()=>finish(Error('Native runtime connection failed; delivery is unconfirmed.')));
-   socket.on('close',()=>finish(Error('Native runtime closed before a receipt; delivery is unconfirmed.')));
+   socket.on('close',()=>{if(!validating)finish(Error('Native runtime closed before a receipt; delivery is unconfirmed.'));});
    const publicError = value => [metadata.authToken,transport.endpoint,profile,userData].reduce((message,secret)=>secret?message.split(secret).join('[private runtime data]'):message,String(value||'Native operation refused')).slice(0,1500);
-   socket.on('data',chunk=>{
+   socket.on('data',async chunk=>{
     buffer+=chunk;if(Buffer.byteLength(buffer)>maxBytes)return finish(Error('Native runtime response exceeded its bounded limit.'));
     for(let index;(index=buffer.indexOf('\n'))>=0;){
      const line=buffer.slice(0,index);buffer=buffer.slice(index+1);if(!line.trim())continue;
@@ -35,9 +40,12 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
      if(response?._keepalive===true)continue;
      if(response?.id!==id||response?._meta?.runtimeId!==metadata.runtimeId)return finish(Error('Native response identity or runtime changed; evidence is unverified.'));
      if(response.ok!==true)return finish(Object.assign(Error(publicError(response.error?.message)),{code:response.error?.code,native:true}));
-     finish(null,response.result);return;
+     validating=true;try{await verifyMetadata();finish(null,response.result);}catch(error){finish(error);}return;
     }
    });
   });
  };
+ rpc.withRuntime=(runtimeId,action)=>{if(typeof runtimeId!=='string'||!runtimeId)throw Error('Expected native runtime identity is required.');const prior=context.getStore();if(prior&&prior!==runtimeId)throw Error('Native runtime epoch changed inside observation.');return context.run(runtimeId,action);};
+ return rpc;
 }
+export const withNativeRuntime=(rpc,runtimeId,action)=>rpc.withRuntime?rpc.withRuntime(runtimeId,action):action();

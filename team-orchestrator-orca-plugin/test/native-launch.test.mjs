@@ -14,7 +14,7 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  let store = await openTeamStore({ userData: profile });
  const calls = [], cliCalls = []; const internalKey = 'private-launch-key';
  const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', displayName: 'Saved' } }; };
- let executor = createExecutor({}, cli, { store, internalKey, userData: profile });
+ let executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile });
  const selected = await executor.execute({ op: 'context', workspaceId: 'folder:/saved' });
  const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
  const team = state.teams[0], member = team.members.find(row => !row.boss);
@@ -56,7 +56,7 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  await installAdapter({ ipcMain: { _invokeHandlers: handlers, removeHandler: name => handlers.delete(name), handle: (name, fn) => handlers.set(name, fn) } }, { identity: profile, internalKey, version: 'test' });
  t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); store.close(); await rm(profile, { recursive: true, force: true }); });
  const send = (op, params = input) => handlers.get('plugins:panelAction')(event, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'nonce', commandId: 'team.control', args: { op, params } } } });
- return { send, calls, cliCalls, input, team, profile, handlers, recordNative, budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({}, cli, { store, internalKey, userData: profile }); } };
+ return { send, calls, cliCalls, input, team, profile, handlers, recordNative, budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
 }
 test('saved supervisor launches through genuine native IPC after durable intent, inherits configuration and persists identity before followups', async t => {
  const f = await fixture(t);
