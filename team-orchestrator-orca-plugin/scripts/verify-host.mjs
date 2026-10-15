@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cliEnvironment } from '../src/local/cli.mjs';
+import { nativeLaunchFingerprint, readNativeLaunchLedger } from '../src/local/native-launch-ledger.mjs';
+import { DatabaseSync } from 'node:sqlite';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
 const revision = '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
@@ -22,7 +24,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -42,6 +44,20 @@ const bundle = async name => {
 };
 try {
   const before = await bundle('before');
+  const nativeInput = { operationId: `${Date.now()}-0123456789abcdef0123456789abcdef`, agent: 'claude', target: { kind: 'existing', worktree: 'folder:/verified' }, prompt: { text: 'role brief', delivery: 'submit' }, sessionOptions: { model: 'opaque-model', effort: 'max' } };
+  assert.equal(before.AgentLaunchReplay.safeParse(nativeInput).success, true);
+  assert.equal(before.AgentLaunchReplay.safeParse({ ...nativeInput, operationId: 'plain-uuid' }).success, false);
+  assert.equal(before.AgentLaunchReplay.safeParse({ ...nativeInput, operationId: undefined }).success, false);
+  assert.equal(before.AgentLaunch.safeParse({ ...nativeInput, operationId: undefined }).success, true);
+  for (const variant of [nativeInput, { ...nativeInput, agentArgs: null }, { ...nativeInput, agentArgs: '--configured', presentation: 'background' }]) assert.equal(nativeLaunchFingerprint(variant), before.computeAgentLaunchFingerprint(variant));
+  assert.notEqual(nativeLaunchFingerprint(nativeInput), nativeLaunchFingerprint({ ...nativeInput, agentArgs: null }));
+  const nativeDb = new DatabaseSync(join(root, 'agent-session-journal.db'));
+  nativeDb.exec('PRAGMA user_version=4; CREATE TABLE agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
+  const originalReceipt = { worktreeId: 'folder:/verified', outcome: { kind: 'structured', sessionId: 'claude:fixture', handle: 'host-handle' }, receipt: { mode: 'structured', preferred: 'structured', reason: 'user_default', detail: 'fixture' }, prompt: { delivery: 'submit', outcome: 'unconfirmed' } };
+  nativeDb.prepare('INSERT INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${nativeInput.operationId}`, JSON.stringify({ callerKey: 'trusted-local:desktop', operationId: nativeInput.operationId, fingerprint: before.computeAgentLaunchFingerprint(nativeInput), operationTimestamp: Number(nativeInput.operationId.split('-')[0]), recordedAt: Date.now(), expiresAt: Date.now() + 60000, outcome: { status: 'succeeded', sessionId: 'claude:fixture', launch: originalReceipt } }));
+  nativeDb.close();
+  assert.deepEqual((await readNativeLaunchLedger(root, nativeInput)).result, originalReceipt);
+
   const scrubbed = before.buildPluginWorkerEnv({ USERPROFILE: 'C:\\Users\\Herman', APPDATA: 'D:\\Redirected\\Roaming', ORCA_USER_DATA_PATH: 'E:\\custom-profile', DESKTOP_SECRET: 'must-not-copy' }, 'win32');
   assert.equal(scrubbed.APPDATA, undefined);
   assert.equal(scrubbed.ORCA_USER_DATA_PATH, undefined);

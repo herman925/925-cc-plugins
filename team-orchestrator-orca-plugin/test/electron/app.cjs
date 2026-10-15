@@ -2,6 +2,8 @@
 const { app, ipcMain, BrowserWindow } = require('electron');
 const { fork } = require('node:child_process');
 const assert = require('node:assert/strict');
+const { DatabaseSync } = require('node:sqlite');
+const { join } = require('node:path');
 const { readFileSync } = require('node:fs');
 app.setName('Orca');
 app.setPath('appData', __dirname + '/redirected-app-data');
@@ -34,16 +36,42 @@ function startWorker() {
     });
   });
 }
-const runtimeReads = [];
+const runtimeReads = [], launched = new Map();
+function savedOperation(nativeId) {
+  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
+  try { const row = db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%' AND json_extract(json,'$.nativeRequest.operationId')=?").get(nativeId); return row && JSON.parse(row.json); } finally { db.close(); }
+}
 ipcMain.handle('runtime:call', async (event, { method, params }) => {
   mainFrame(event); runtimeReads.push({ method, params });
-  const result = method === 'status.get' ? { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.registered-agents.v1'] }
-    : method === 'settings.get' ? { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } }
-    : method === 'ssh.getState' ? { state: { status: 'connected', connectionGeneration: 1 } }
-    : method === 'preflight.detectRemoteAgents' ? ['codex', 'claude']
-    : method === 'agentSession.agents' ? { agents: [] }
-    : method === 'agentSession.createSupport' ? { supported: false, reason: 'remote' }
-    : (() => { throw Error('Unexpected runtime read ' + method); })();
+  let result;
+  if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+  else if (method === 'settings.get') result = { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } };
+  else if (method === 'ssh.getState') result = { state: { status: 'connected', connectionGeneration: 1 } };
+  else if (method === 'preflight.detectRemoteAgents') result = ['codex', 'claude'];
+  else if (method === 'agentSession.agents') result = { agents: [] };
+  else if (method === 'agentSession.createSupport') result = { supported: false, reason: 'remote' };
+  else if (method === 'agent.launchReplay') {
+    const operation = savedOperation(params.operationId);
+    assert.equal(operation.status, 'unknown', 'intent must commit before native launch');
+    assert.equal(operation.roleVersion > 0, true); assert.equal(Object.hasOwn(params, 'agentArgs'), false);
+    if (launched.has(params.operationId)) result = launched.get(params.operationId);
+    else {
+      const n = launched.size + 1, kind = n === 1 ? 'terminal' : 'structured';
+      result = { worktreeId: 'repo::/remote/project', outcome: kind === 'terminal' ? { kind, handle: 'fixture-terminal', paneKey: 'fixture-tab:fixture-leaf' } : { kind, handle: 'fixture-chat', sessionId: 'codex:fixture-chat', tabId: 'chat-tab' }, receipt: { mode: kind, preferred: kind, reason: 'user_default', detail: 'Fixture native choice' }, prompt: { delivery: 'submit', outcome: kind === 'terminal' ? 'handed-to-terminal' : 'journaled', ...(kind === 'structured' ? { messageId: 'fixture-message' } : {}) } };
+      launched.set(params.operationId, result);
+    }
+    const { nativeLaunchFingerprint } = await import(process.env.ORCA_TEST_PLUGIN + '/src/local/native-launch-ledger.mjs');
+    const db = new DatabaseSync(join(app.getPath('userData'), 'agent-session-journal.db'));
+    db.exec('PRAGMA user_version=4; CREATE TABLE IF NOT EXISTS agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${params.operationId}`, JSON.stringify({ callerKey: 'trusted-local:desktop', operationId: params.operationId, fingerprint: nativeLaunchFingerprint(params), operationTimestamp: Number(params.operationId.split('-')[0]), recordedAt: Date.now(), expiresAt: Date.now() + 86400000, outcome: { status: 'succeeded', sessionId: result.outcome.sessionId ?? '', launch: result } })); db.close();
+  } else if (method === 'terminal.show') result = { terminal: { handle: 'fixture-terminal', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', tabId: 'fixture-tab', leafId: 'fixture-leaf' } };
+  else if (method === 'terminal.rename') { const nativeId = [...launched.keys()][0]; assert.equal(savedOperation(nativeId).status, 'created', 'identity commit must precede rename'); result = { rename: { handle: params.terminal, tabId: 'fixture-tab', title: params.title } }; }
+  else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: 'permission' } };
+  else if (method === 'terminal.focus') result = { focus: { handle: params.terminal } };
+  else if (method === 'orchestration.sessionAddress') result = { orcaSessionId: 'orca_session_id:fixture-chat' };
+  else if (method === 'orchestration.partyLocation') result = { location: { kind: 'chat', sessionId: 'codex:fixture-chat', worktreeId: 'repo::/remote/project' } };
+  else if (method === 'agentSession.reveal') result = { ok: true, sessionId: params.sessionId, workspaceId: 'repo::/remote/project', agent: 'codex', readable: true };
+  else throw Error('Unexpected runtime read ' + method);
   return { id: 'desktop-ipc', ok: true, result };
 });
 ipcMain.handle('session:get', async event => { mainFrame(event); return { activeWorktreeId: 'repo::/remote/project' }; });
@@ -117,6 +145,18 @@ app.whenReady().then(async () => {
     assert.equal(edited.teams.length, 2); assert.notEqual(edited.teams[0].id, edited.teams[1].id);
     assert.equal(edited.teams[1].members[0].brief, 'Review evidence');
     assert.equal(edited.teams[1].members[0].roleVersion, 1); assert.equal(edited.teams[1].launch, undefined);
+    const imported = edited;
+    const launchInputs = edited.teams.map((team, index) => ({ requestId: `electron-launch-${index}`, teamId: team.id, memberId: team.members[0].id, configVersion: team.configVersion }));
+    const first = await control('launchSupervisor', launchInputs[0]);
+    assert.equal(first.kind, 'terminal'); assert.equal(first.observation.state, 'permission');
+    const second = await control('launchSupervisor', launchInputs[1]);
+    assert.equal(second.kind, 'structured'); assert.equal(second.prompt.outcome, 'journaled'); assert.equal(second.observation.state, 'unknown');
+    for (const input of launchInputs) { const { configVersion, ...binding } = input; assert.equal((await control('openMember', binding)).opened, true); }
+    assert.equal(launched.size, 2);
+    assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle); assert.equal(launched.size, 2);
+    assert.equal(runtimeReads.filter(row => row.method === 'terminal.rename').length, 1, 'structured rename must not use terminal methods');
+    edited = (await control('load', {})).value;
+
     assert.equal((await ipc('plugins:panelAction', envelope('foreign.command'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'arbitrary.runtime'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'ping', 'foreign-token'))).code, 'invalid_request');
@@ -135,8 +175,10 @@ app.whenReady().then(async () => {
     start = undefined;
     assert.deepEqual((await control('load', {})).value, edited);
     assert.deepEqual((await control('createTeam', create)).value, saved, 'recover completed save after worker restart');
-    assert.deepEqual((await control('importTemplate', importRequest)).value, edited, 'recover completed import after worker restart');
+    assert.deepEqual((await control('importTemplate', importRequest)).value, imported, 'recover completed import after worker restart');
     assert.deepEqual((await control('load', {})).value, edited, 'replay never overwrites the latest snapshot');
+    assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle);
+    assert.equal(launched.size, 2, 'worker restart cannot relaunch a bound member');
     assert.equal(data.size, 0, 'new format must not write legacy KV');
     await new Promise(resolve => setTimeout(resolve, 800));
     let inspectorOpen = true;
@@ -145,7 +187,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC and authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus, durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); app.exit(1); }
 });

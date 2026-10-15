@@ -12,8 +12,8 @@ Release **0.1.06** (strict SemVer `0.1.6`). The plugin now includes its local No
 Plugin panel on your PC
   → scoped runtime IPC adapter (in memory)
   → this plugin's Node worker on your PC
-  → the CLI bundled with that same Orca installation
-  → new agent tabs on the workspace's execution host
+  → durable worker preparation → genuine native runtime IPC → durable settlement
+  → Orca chooses the supervisor's terminal or structured session
 ```
 
 The worker detects the local OS, application packaging, parent process and Electron inspector fuse. It activates its own parent Orca's loopback inspector, verifies the PID, application name and exact pinned build metadata, architecture, Electron/Node versions and SQLite capability, then installs an in-memory adapter. It closes the inspector it activated after injection; an existing developer inspector is left alone. Disabled fuses, another process on the inspector port, incompatible handlers or unsupported versions stop injection. The installed application files are never rewritten.
@@ -22,11 +22,9 @@ The adapter binds only `herman925.team-orchestrator`'s approved Team panel. It f
 
 The adapter captures the desktop's selected workspace identity. The worker resolves its actual `hostId`, presents a project/host selection for confirmation, and persists that binding with the team. Later launches check the saved identity and host, independently of desktop focus. Missing host evidence is reported instead of being assumed local. CLI `active` selectors are deliberately avoided because they resolve from cwd, not desktop selection. The worker passes `ORCA_USER_DATA_PATH` from the verified parent Electron application's `getPath('userData')`, and restores Windows `APPDATA` from `getPath('appData')` for its child CLI. It does not guess a profile directory, copy the desktop's full environment or change system environment settings. These internal paths are omitted from panel ping and Initialise results. This also pins macOS/Linux and custom/dev profiles to the same desktop instance.
 
-The local CLI uses Orca's ordinary connection to start agents in an SSH workspace. Initial team creation does not need the server's “Allow this host's orca CLI to control Orca” setting.
+Launch invokes native `agent.launchReplay` through the retained genuine main-frame event. The worker first commits a frozen role/configuration/scope, stable native operation ID and exclusive member reservation to SQLite. Fresh host capabilities and saved scope are checked before the effect. Orca applies custom command/argument/environment settings itself and chooses terminal or structured mode; the plugin does not construct provider shell commands. Omitted model/effort and `agentArgs` inherit native settings, while an explicit null argument override remains distinct.
 
-For newer CLIs, the worker uses `agent launch --agent ... --worktree ... --prompt ...` with model and effort. For builds such as the 1.4.224 CLI inspected during development, it uses `terminal create --title ... --command ...`, carrying the role brief in the **new** agent's startup arguments. It quotes arguments for POSIX shells or explicitly selects PowerShell on Windows paths. It uses the `codex`/`claude` executables available to that terminal; this compatibility path does not apply a custom Orca agent-launch command. No existing agent receives a create-team instruction or role prompt.
-
-“All at create” starts exactly the roster: Squad is one Head and three Workers. “On demand” initially starts only CEO/Heads. Every initial member gets its chosen CLI/model/effort, role, boss and reporting roster. The worker names Orca tabs and records actual returned handles and execution hosts. Provider conversation names are not changed. Supplying a startup prompt does not prove that an agent authenticated, acknowledged the brief or became ready.
+Launch opens only the roster's highest supervisor. Its brief describes the team's persistent function and role, explicitly waits for a separate TeamWork objective, and does not instruct other members to start. Native returned identity is committed before optional terminal naming. Structured naming has no verified method in the pinned build, so the plugin keeps its own label and reports that limitation. Prompt journal/terminal handoff, provider observation and permission waits are separate facts. Structured provider observation remains unknown without a supported live stream; **Open verified session** opens the exact corroborated native session.
 
 ## Install or update
 
@@ -35,7 +33,7 @@ For newer CLIs, the worker uses `agent launch --agent ... --worktree ... --promp
 3. Open the Team Orchestrator panel and check **v0.1.06**.
 4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
 5. Click **Test connection**. A successful test verifies a freshly echoed nonce from the worker and displays its actual OS, Orca version and worker PID. Launch stays disabled until that connection and workspace context are verified.
-6. In the current source flow, select the intended Git or folder workspace in Orca, use **Refresh workspace** and **Confirm project and host**, then **Save team**. Saving does not launch agents or submit a total objective. Later choose **Launch this team** with **All at create** or **On demand** and inspect the named tabs. Source changes for issue #106 are bundled together once after its agent tickets merge.
+6. In the current source flow, select the intended Git or folder workspace in Orca, use **Refresh workspace** and **Confirm project and host**, then **Save team**. Saving does not launch agents or submit a total objective. Later choose **Launch this team** to open the highest supervisor, then inspect its native session for login or permission prompts. Source changes for issue #106 are bundled together once after its agent tickets merge.
 
 The `main.mjs`, `runtime-adapter.cjs` and self-contained `panel.html` artifacts ship in this folder. Installation needs no npm packages or web server. The former manual patches and alternate manifest have been removed from this release; they remain in Git history.
 
@@ -51,10 +49,10 @@ If you see “plugin is not enabled with current consent”, first let any refre
 - Edit role descriptions, work habits and collaboration rules from member details. A new role version does not rewrite previous launch inputs.
 - Version-checked semantic saves reject stale panels instead of overwriting another window. Same-name teams have independent identities.
 - Read/schema/corruption errors block writes and preserve data. Legacy KV and mod data stay isolated; no automatic import occurs.
-- Background launch jobs and persisted request journals: intent before spawn, actual handle before naming follow-ups, completed receipts replayed without another spawn.
-- Partial failure stops later members. Unknown transport delivery is never automatically retried. Reload reads worker-saved handles from SQLite. Legacy coordinator requests are not imported or relaunched.
+- Durable launch Operations and member reservations: intent before native effect, actual identity before naming, completed receipts reread without another launch.
+- Unknown transport delivery retains the member reservation and is never automatically retried. Reload reads worker-saved handles from SQLite. Legacy coordinator requests are not imported or relaunched.
 
-After an unknown launch, inspect Orca before creating another team. A worker interrupted between spawning and saving its receipt cannot establish whether that spawn succeeded; its existing journal remains unresolved. There is no automatic recovery/relaunch button for that case.
+**Check saved launch** is an observation, not a second native launch. It reads only the pinned original `agent-session-journal.db` schema-4 operation row from the verified profile, under the desktop caller namespace, and validates operation ID, native fingerprint and expiry. A genuine succeeded launch receipt can repair missing plugin settlement. Missing, pending, unknown, expired, mismatched or unavailable rows remain unknown/reserved; no call to effectful `agent.launchReplay` is used as a query. Existing success is returned independently of current preferences. A native failure remains reserved for explicit later recovery; this ticket does not create a new session automatically.
 
 ## New-format team templates
 
@@ -76,7 +74,7 @@ npm run test:ui -- --output=/tmp/orca-worker-ui-results
 npm run test:host
 ```
 
-`test:host` downloads unmodified Orca sources pinned at `9fdd90ffa7721e145f1353ad9fb9df2f70c31f43`, compiles its actual manifest, panel envelope, consent fingerprint, capability gates and host handlers, and exercises the adapter against those gates. It applies no source patch. OS secret encryption is stubbed.
+`test:host` downloads unmodified Orca sources pinned at `9fdd90ffa7721e145f1353ad9fb9df2f70c31f43`, compiles its actual manifest, panel envelope, consent fingerprint, capability gates, launch schemas/native fingerprint and host handlers, and exercises the adapter against those gates. It applies no source patch. OS secret encryption is stubbed.
 
 For a separate native Electron test executable:
 
@@ -84,13 +82,13 @@ For a separate native Electron test executable:
 ELECTRON_TEST_BINARY=/absolute/path/to/electron npm run test:electron
 ```
 
-That test creates a disposable Electron 43.7.5 application on macOS arm64 and forks the **built worker**. Real renderer `ipcRenderer.invoke` events exercise SQLite save/role editing/template copy/reload/replay after worker restart with confirmed SSH scope, lazy activation, the nonce round trip, subframe/foreign-command/token rejection, live consent and admission gates, retry without duplicate wrappers, inspector cleanup and disable restoration. Its explicit fixture metadata mirrors the pinned 1.4.222 package; it is not the actual Orca build and never starts a provider. The browser/host tests also use fixtures; they do not establish live provider readiness.
+That test creates a disposable Electron 43.7.5 application on macOS arm64 and forks the **built worker**. Real renderer `ipcRenderer.invoke` events exercise native launch/focus/reveal with durable intent-before-effect and identity-before-naming assertions, plus SQLite save/role editing/template copy/reload/replay after worker restart with confirmed SSH scope, lazy activation, the nonce round trip, subframe/foreign-command/token rejection, live consent and admission gates, retry without duplicate wrappers, inspector cleanup and disable restoration. Its explicit fixture metadata mirrors the pinned 1.4.222 package; it is not the actual Orca build and never starts a provider. The browser/host tests also use fixtures; they do not establish live provider readiness.
 
 The current experimental contract is restricted to macOS arm64 Orca `1.4.222`, build `1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64`, Electron `43.7.5`, Node `24.21.0`. This is pinned source-contract and read-only package evidence plus separate Electron fixture validation, not installed-Orca/provider acceptance. Windows and other builds are explicitly unverified and refused until their contracts are validated. macOS resolves the outer application framework even when a forked worker runs from a nested Helper.app. Windows fuse inspection uses its actual executable.
 
 Diagnostics distinguish `fuse_file_missing`, `fuse_disabled`, `port_conflict`, `invalid_parent_pid`, `parent_pid_mismatch`, `unsupported_build`, `platform_unverified`, and missing Node/profile capabilities. A panel load does not activate the worker. The panel displays panel-loaded, worker-activation and adapter status separately; a nonce never proves agent readiness. **Test connection** retries the declared initialise command when a bridge is available. If bootstrap fails before the bridge exists, run **Team Orchestrator: Initialise local adapter** and inspect its return/log diagnostics; the stock panel cannot bypass its absent command transport to retrieve those failures.
 
-`npm run preview` serves an opaque, network-blocked panel fixture for Playwright. Its backend uses the real SQLite store and executor with a fake Orca CLI boundary. Modes `unsupported-build`, `unpatched`, `no-tabs`, `write-error`, `read-error`, `partial`, `folder` and `no-workspace` cover behavior and failures. Browser localStorage only identifies a disposable fixture profile; product persistence never uses browser storage. Browser QA uses Playwright because the Browser plugin is unavailable.
+`npm run preview` serves an opaque, network-blocked panel fixture for Playwright. Its backend uses the real SQLite store and executor with fake Orca CLI/runtime boundaries. Native mediation and SQLite operations are the same source used by the adapter. Modes `unsupported-build`, `unpatched`, `no-tabs`, `write-error`, `read-error`, `launch-unknown`, `structured`, `permission`, `folder` and `no-workspace` cover behavior and failures. Browser localStorage only identifies a disposable fixture profile; product persistence never uses browser storage. Browser QA uses Playwright because the Browser plugin is unavailable.
 
 ## Compatibility limits
 
@@ -98,7 +96,7 @@ Diagnostics distinguish `fuse_file_missing`, `fuse_disabled`, `port_conflict`, `
 - Injection currently targets the main-process inspector's default loopback port 9229. A disabled inspector fuse or an incompatible debugger setup cannot be repaired by this plugin.
 - Role persistence is confirmed by the plugin's SQLite transaction. A model's claim to have written a role file is not used as persistence evidence.
 - Later on-demand workers, task dispatch, cross-session messaging, questions, live status and recovery UI are outside this launch proof of concept. Managers calling the remote orchestration CLI later still need the corresponding SSH-host CLI permission.
-- CLI/provider model and effort availability is determined by the installed versions. The compatibility launcher refuses Claude's unsupported `xhigh` effort.
+- Model/effort validity comes from the actual target catalog and native launch validation; no shared static provider effort list is assumed.
 
 ### Host-based agent preferences (#109)
 

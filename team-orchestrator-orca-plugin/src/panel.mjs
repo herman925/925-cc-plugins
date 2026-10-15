@@ -2,7 +2,7 @@ import { preferenceIssue } from './capabilities.mjs';
 import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, emptyTeamState, validatePersistentState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
 import { createWorkerBridge } from './worker-bridge.mjs';
-import { initialMembers, launchMembers } from './launch.mjs';
+import { initialMembers } from './launch.mjs';
 import { parseTeamTemplate, MAX_TEMPLATE_BYTES } from './templates.mjs';
 
 const app = document.getElementById('app');
@@ -22,7 +22,6 @@ let message = '';
 let problem = '';
 let canRetry = false;
 let workspace = null;
-let launchMode = 'on-demand';
 let targetError = '';
 let confirmedWorkspace = null;
 const capabilityViews = new Map();
@@ -96,7 +95,7 @@ function projectControls() {
   return `<section class="section"><h2>Project and execution host</h2><p>${escape(target?.displayName || 'No selected workspace')} · ${escape(target?.kind || 'unknown kind')} · ${escape(target?.executionHostId || 'unknown host')}</p>${button('Refresh workspace', 'refresh-tabs', '', 'small')} ${button('Confirm project and host', 'confirm-project', !workspace?.selectionToken ? 'disabled' : '', 'small')}<p class="subtle">${confirmedWorkspace ? 'Project confirmed. Changing Orca focus will not change this binding.' : 'Open the intended project in Orca, refresh here, then confirm it before saving.'}</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
 }
 function launchControls() {
-  return `<section class="section launch-controls"><h2>Launch</h2><p><strong>Saved team project</strong> · Each team launches on its confirmed execution host.</p><label class="field">Launch mode<select data-launch-mode><option value="on-demand" ${launchMode === 'on-demand' ? 'selected' : ''}>On demand · start CEO and heads</option><option value="all" ${launchMode === 'all' ? 'selected' : ''}>All at create · start every member</option></select></label><p class="subtle">Orca launches each selected CLI, names its tab and passes its role briefing directly. No existing agent tab receives a launch request.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
+  return `<section class="section launch-controls"><h2>Launch</h2><p>Launch opens only the highest supervisor from the saved roster on its confirmed project. Orca chooses terminal or native chat and applies its saved launch configuration. The supervisor receives its role and waits for the total objective.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
 }
 function launchStatus(team, member) {
   if (!team.launch) return 'Not started';
@@ -109,9 +108,9 @@ function launchStatus(team, member) {
 }
 function launchReceipt(team) {
   if (!team.launch) return '';
-  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request. Inspect that agent for any existing resources before recreating this team.</p>';
-  const created = Object.values(team.launch.members ?? {}).filter(row => row.terminalId);
-  return `<p class="subtle">${created.length} actual tab receipt${created.length === 1 ? '' : 's'}. Input delivery does not prove agent readiness.</p>${created.length ? `<ul>${created.map(row => `<li>${escape(row.title)} · ${escape(row.executionHostId ?? 'execution host unreported')}<br><small>${escape(row.terminalId)}</small>${row.error ? `<p>${escape(row.error)}</p>` : ''}</li>`).join('')}</ul>` : ''}`;
+  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request · unverified.</p>';
+  const rows = Object.entries(team.launch.members ?? {});
+  return `<p class="subtle">${rows.filter(([, row]) => row.terminalId).length} actual session receipt(s). Input acceptance does not prove agent readiness.</p><ul>${rows.map(([memberId, row]) => `<li>${escape(row.title || team.members.find(member => member.id === memberId)?.name || 'Supervisor')} · ${escape(row.status)}${row.kind ? ` · ${escape(row.kind)}` : ''}<br><small>Input: ${escape(row.prompt?.outcome || 'unconfirmed')} · Observation: ${escape(row.observation?.state || 'unknown')}</small>${row.error || row.warning ? `<p>${escape(row.error || row.warning)}</p>` : ''}${row.terminalId ? button('Open verified session', 'open-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : row.requestId ? button('Check saved launch', 'recover-launch', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}</li>`).join('')}</ul>`;
 }
 function details() {
   if (!selection) return '';
@@ -133,7 +132,7 @@ function templatesView() {
   ${preview ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview.name)}</h2><p>${preview.members.length} members · ${escape(preview.structure)}</p><p>${escape(preview.purpose)}</p><div class="tree-scroll">${tree(preview.members.map(member => ({ ...member, id: member.ref })))}</div>${preview.members.map(member => `<details><summary>${escape(member.name)} · ${escape(member.agent)} · ${escape(member.model)} · ${escape(member.effort)} · ${member.preferenceOverride ? 'Member override' : 'Level preference'}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || 'None specified')}</p><p>Collaboration rules: ${escape(member.collaboration || 'None specified')}</p></details>`).join('')}</section>${projectControls()}<div class="actions">${button('Import as new team', 'import-template', !confirmedWorkspace || !loaded || !storageAvailable ? 'disabled' : '', 'primary')}</div>` : ''}`;
 }
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
+  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. Launch starts only the saved highest supervisor. Later supervised work admits other members separately.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
@@ -187,20 +186,13 @@ async function submit(action, params, request) {
   finally { busy = false; render(); }
 }
 async function launchTeam(index) {
-  const team = state.teams[index];
-  if (team.launch) throw new Error('This launch has already been attempted. Inspect its receipts before starting another team.');
-  await refreshCapabilities({ teamId: team.id }, team.scope, true);
-  const capabilities = capabilityViews.get(team.scope.workspaceKey);
-  for (const member of team.members) { const issue = preferenceIssue(member, capabilities, { requireCore: true }); if (issue) throw Error(issue); }
-  if (!await submit('beginLaunch', { teamId: team.id, mode: launchMode })) return;
+  const team = state.teams[index], member = initialMembers(team)[0];
+  if (!member) throw Error('No highest supervisor exists in this saved roster.');
   busy = true; render();
   try {
-    const target = await call('workspace.readContext', { teamId: team.id });
-    await launchMembers(call, team, launchMode, target, async () => {
-      state = validatePersistentState((await call('storage.get', {})).value); render();
-    });
-    message = `Orca created ${initialMembers(team, launchMode).length} tab(s) for @${team.name} and passed their role briefs. Check those tabs for agent readiness.`;
-  } catch (error) { problem = `${error.message} Any partial tab receipts are retained below; no automatic retry occurs.`; }
+    const receipt = await call('launchSupervisor', { teamId: team.id, memberId: member.id, requestId: `${team.id}-${member.id}`, configVersion: team.configVersion });
+    message = receipt.status === 'created' ? `Orca created ${member.name}'s ${receipt.kind} session. Input: ${receipt.prompt?.outcome ?? 'unconfirmed'}. Provider readiness remains a separate observation.` : 'Launch outcome is unknown. Check the saved operation; no new launch is automatically attempted.';
+  } catch (error) { problem = `${error.message} Saved launch intents remain reserved; no automatic retry occurs.`; }
   finally {
     try { state = validatePersistentState((await call('storage.get', {})).value); }
     catch (error) { problem = `Could not read saved launch receipts: ${error.message}`; storageAvailable = false; canRetry = true; }
@@ -272,6 +264,17 @@ app.addEventListener('click', async event => {
       message = 'Imported as an independent team. No members were launched and no work history was copied.'; render();
     }
   }
+  else if (action === 'open-member' || action === 'recover-launch') {
+    busy = true; render();
+    try {
+      const team = state.teams.find(row => row.id === target.dataset.team);
+      const params = { teamId: team.id, memberId: target.dataset.member, requestId: target.dataset.request };
+      if (action === 'recover-launch') params.configVersion = team.launch.configVersion;
+      const result = await call(action === 'open-member' ? 'openMember' : 'recoverLaunch', params);
+      message = action === 'open-member' ? 'Opened the verified native session.' : `Saved launch: ${result.status}.`;
+    } catch (error) { problem = error.message; }
+    finally { try { state = validatePersistentState((await call('storage.get', {})).value); } catch (error) { problem = error.message; } busy = false; render(); }
+  }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }
     catch (error) { problem = error.message; canRetry = false; render(); }
@@ -293,7 +296,6 @@ app.addEventListener('change', async event => {
     } catch (error) { problem = error.message; }
     render();
   }
-  else if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
   else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
   else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }

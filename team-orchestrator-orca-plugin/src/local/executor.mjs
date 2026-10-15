@@ -1,18 +1,15 @@
+import { readNativeLaunchLedger } from './native-launch-ledger.mjs';
 import { preferenceIssue } from '../capabilities.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
-import { startupCommand } from './startup-command.mjs';
-import { memberLaunch } from '../launch.mjs';
+import { launchInput, nativeLaunchIntent, launchReceipt, publicOperation } from './native-launch.mjs';
 import { parseTeamTemplate } from '../templates.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-export function createExecutor(host, cli, { store, internalKey } = {}) {
+export function createExecutor(host, cli, { store, internalKey, userData } = {}) {
   const selections = new Map();
   const observations = new Map(), capabilities = new Map(), latestObservation = new Map();
   const previews = new Map();
-  const starts = new Map();
-  const jobs = new Set();
-  const get = async key => store.readReceipt(key);
-  const set = async (key, value) => store.writeReceipt(key, value);
+  const launchPlans = new Map();
   async function workspaceRecord(workspaceId) {
     if (typeof workspaceId !== 'string' || !workspaceId || workspaceId.length > 4096) throw new Error('No verified desktop workspace selection.');
     const selector = workspaceId.startsWith('folder:') ? workspaceId : `id:${workspaceId}`;
@@ -35,79 +32,91 @@ export function createExecutor(host, cli, { store, internalKey } = {}) {
     selections.set(selectionToken, scope);
     return { ...publicScope(scope), selectionToken };
   }
-  function validateLaunch(value) {
-    if (!value || !/^[a-zA-Z0-9-]{1,120}$/.test(value.requestId) || !/^[a-f0-9]{64}$/.test(value.workspaceKey) || !['codex', 'claude'].includes(value.agent) || typeof value.title !== 'string' || !value.title || value.title.length > 160 || typeof value.brief !== 'string' || !value.brief || value.brief.length > 16384) throw new Error('Invalid member launch request.');
-    for (const field of ['model', 'effort']) if (value[field] !== undefined && (typeof value[field] !== 'string' || !value[field] || value[field].length > 120)) throw new Error('Invalid model or effort.');
-    if (value.effort && !value.model) throw new Error('Effort requires a model.');
-  }
-  async function start(params, workspaceId) {
-    validateLaunch(params);
-    const team = store.readSnapshot().teams.find(row => row.id === params.teamId);
-    if (!team?.launch) throw new Error('Begin launching a saved team first.');
-    const frozen = store.readTeamVersion(team.id, team.launch.configVersion);
-    const member = frozen.members.find(row => row.id === params.memberId);
-    if (!member) throw new Error('Member does not belong to the saved team.');
-    const expected = memberLaunch(frozen, member, team.scope.workspaceKey);
-    if (Object.keys(params).length !== Object.keys(expected).length || Object.keys(expected).some(key => params[key] !== expected[key])) throw new Error('Launch input conflicts with the saved role/configuration version.');
-    const scope = store.readScope(team.id);
-    workspaceId = scope.workspaceId;
-    const fingerprint = hash(JSON.stringify(params));
-    const active = starts.get(params.requestId);
-    if (active) { if (active.fingerprint !== fingerprint) throw new Error('Request identity conflicts with an existing launch.'); return active.promise; }
-    const promise = (async () => {
-      const key = `launch:${params.requestId}`;
-      const saved = await get(key);
-      if (saved) {
-        if (saved.fingerprint !== fingerprint) throw new Error('Request identity conflicts with an existing launch.');
-        return { requestId: params.requestId, status: saved.status };
-      }
-      const workspace = await workspaceRecord(workspaceId);
-      if (verifiedScope(workspace).workspaceKey !== scope.workspaceKey) throw new Error('The bound workspace or execution host changed. No new agent was launched.');
-      const schema = await cli(['agent-context']);
-      const commands = schema.commands ?? [];
-      const modern = commands.some(value => value.command === 'agent launch');
-      if (!modern && !commands.some(value => value.command === 'terminal create')) throw new Error('The local Orca CLI has no agent or terminal launcher.');
-      const windowsPath = /^[a-z]:[\\/]|^\\\\/i.test(workspace.path ?? workspace.git?.path ?? '');
-      const powershell = windowsPath || (process.platform === 'win32' && !workspace.executionHostId?.startsWith('ssh:') && !(workspace.path ?? workspace.git?.path ?? '').startsWith('/'));
-      if (!modern && powershell && !commands.find(value => value.command === 'terminal create')?.flags?.includes('shell')) throw new Error('This Orca CLI cannot select the Windows shell safely.');
-      const command = modern ? null : startupCommand(params, powershell ? 'powershell' : 'posix');
-      await set(key, { fingerprint, status: 'starting' });
-      const job = run(key, fingerprint, params, workspaceId.startsWith('folder:') ? workspaceId : `id:${workspaceId}`, { command, powershell });
-      jobs.add(job); job.finally(() => jobs.delete(job)).catch(() => {});
-      return { requestId: params.requestId, status: 'starting' };
-    })();
-    starts.set(params.requestId, { fingerprint, promise });
-    try { return await promise; } catch (error) { starts.delete(params.requestId); throw error; }
-  }
-  async function run(key, fingerprint, params, selector, { command, powershell }) {
-    let record = { fingerprint, status: 'unknown' };
-    try {
-      let argv = ['agent', 'launch', '--agent', params.agent, '--worktree', selector, '--prompt', params.brief];
-      if (params.model) argv.push('--model', params.model);
-      if (params.effort) argv.push('--effort', params.effort);
-      if (command) argv = ['terminal', 'create', '--worktree', selector, '--title', params.title, '--command', command, ...(powershell ? ['--shell', 'powershell.exe'] : [])];
-      const result = await cli(argv);
-      const handle = command ? result?.terminal?.handle : result?.outcome?.handle;
-      if (!handle) throw new Error('Orca returned no agent handle; inspect the workspace before retrying.');
-      const warning = result.warning || result.terminal?.warning;
-      record = { fingerprint, status: 'naming', handle, title: params.title, briefAccepted: Boolean(command) || ['handed-to-terminal', 'journaled'].includes(result.prompt?.outcome), ...(result.outcome?.sessionId ? { sessionId: result.outcome?.sessionId } : {}), ...(warning ? { warning } : {}) };
-      await set(key, record); // Save the actual handle before any naming/inspection follow-up.
-      await cli(['terminal', 'rename', '--terminal', record.handle, '--title', params.title]);
-      const shown = await cli(['terminal', 'show', '--terminal', record.handle]);
-      record.title = shown.terminal?.title || params.title;
-      if (shown.terminal?.executionHostId) record.executionHostId = shown.terminal.executionHostId;
-      if (!record.briefAccepted) record.warning = 'Agent created, but Orca did not confirm role briefing delivery. Inspect its tab.';
-    } catch (error) {
-      if (record.handle) record.warning = error.message.slice(0, 1000);
-      else record.error = error.message.slice(0, 1000);
+  function savedLaunch(input) {
+    launchInput(input);
+    const saved = store.readOperation(input.requestId);
+    if (saved) {
+      if (['teamId', 'memberId', 'configVersion'].some(key => saved[key] !== input[key])) throw Error('Request identity conflicts with an existing launch.');
+      return saved;
     }
-    if (record.handle) record.status = 'created';
-    await set(key, record);
+    return null;
   }
+  function plan(operation) {
+    if (launchPlans.size >= 128) launchPlans.delete(launchPlans.keys().next().value);
+    const phaseId = randomUUID(); launchPlans.set(phaseId, { requestId: operation.requestId, operationId: operation.nativeRequest.operationId });
+    return { phaseId, operation };
+  }
+  const settled = (operation, patch) => {
+    const publicValue = publicOperation({ ...operation, ...patch });
+    return store.settleOperation(operation.requestId, operation.nativeRequest.operationId, { ...patch, public: publicValue });
+  };
   return {
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if (op === '_launchLookup') {
+          const saved = savedLaunch(params.input);
+          if (!saved) return null;
+          if (params.recover && saved.status === 'unknown') {
+            const evidence = await readNativeLaunchLedger(userData, saved.nativeRequest);
+            let patch = { status: 'unknown', error: evidence.detail };
+            if (evidence.state === 'succeeded') {
+              try { patch = { ...launchReceipt(evidence.result, saved), error: undefined, warning: 'Recovered from the original native ledger. Current provider liveness and naming remain unverified.' }; }
+              catch (error) { patch.error = error.message; }
+            }
+            return { receipt: publicOperation(settled(saved, patch)) };
+          }
+          return { receipt: publicOperation(saved) };
+        }
+        if (op === '_launchPrepare') {
+          const previous = savedLaunch(params.input);
+          if (previous) return { receipt: publicOperation(previous) };
+          const input = params.input, team = store.readSnapshot().teams.find(row => row.id === input.teamId);
+          const member = team?.members.find(row => row.id === input.memberId);
+          if (!member || member.boss || team.configVersion !== input.configVersion) throw Error('Launch requires the current saved highest supervisor configuration.');
+          const scope = store.readScope(team.id), observed = capabilities.get(scope.workspaceKey);
+          if (!params.observationId || latestObservation.get(scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 30000) throw Error('Fresh authenticated launch capability admission is required.');
+          if (typeof observed.runtimeId !== 'string' || !observed.runtimeId.trim()) throw Error('Native runtime identity is unavailable; no member was reserved.');
+          const issue = preferenceIssue(member, observed, { requireCore: true }); if (issue) throw Error(issue);
+          if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error('The bound workspace or execution host changed.');
+          if (latestObservation.get(scope.workspaceKey) !== params.observationId) throw Error('Launch capability admission was superseded.');
+          const prepared = store.prepareOperation(input, { scope, nativeRequest: nativeLaunchIntent(team, member, scope), roleVersion: member.roleVersion, title: `${team.name}/${member.name}`, executionHostId: scope.executionHostId, runtimeId: observed.runtimeId, hostGeneration: observed.hostGeneration });
+          return prepared.fresh ? plan(prepared.operation) : { receipt: publicOperation(prepared.operation) };
+        }
+        if (op === '_launchValidate') {
+          const phase = launchPlans.get(params.phaseId), saved = phase && store.readOperation(phase.requestId);
+          if (!saved || latestObservation.get(saved.scope.workspaceKey) !== params.observationId) throw Error('Launch admission is stale.');
+          const observed = capabilities.get(saved.scope.workspaceKey);
+          if (!saved.runtimeId || observed?.runtimeId !== saved.runtimeId) throw Error('Native runtime identity changed; the unknown launch remains reserved until its original ledger can be corroborated.');
+          const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
+          if (issue) throw Error(issue);
+          if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved execution scope changed before launch.');
+          return { valid: true };
+        }
+        if (op === '_launchSettle' || op === '_launchFollowup') {
+          const phase = launchPlans.get(params.phaseId);
+          if (!phase) throw Error('Launch phase is stale or was already settled.');
+          const operation = store.readOperation(phase.requestId);
+          if (operation.nativeRequest.operationId !== phase.operationId) throw Error('Launch phase identity changed.');
+          if (op === '_launchSettle') {
+            launchPlans.delete(params.phaseId);
+            let patch;
+            try { if (params.error) throw Error(params.error); patch = launchReceipt(params.result, operation); }
+            catch (error) { patch = { status: 'unknown', error: error.message.slice(0, 1200) }; }
+            const saved = settled(operation, patch);
+            return saved.status === 'created' ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };
+          }
+          launchPlans.delete(params.phaseId);
+          if (operation.status !== 'created') throw Error('A verified created identity is required.');
+          return publicOperation(settled(operation, { ...(params.warning ? { warning: String(params.warning).slice(0, 1200) } : {}), ...(params.observation ? { observation: params.observation } : {}) }));
+        }
+        if (op === '_memberBinding') {
+          if (Object.keys(params).some(key => !['teamId', 'memberId', 'requestId'].includes(key))) throw Error('Invalid member selection.');
+          const saved = store.readOperation(params.requestId);
+          if (!saved || saved.teamId !== params.teamId || saved.memberId !== params.memberId || saved.status !== 'created') throw Error('A verified saved member binding is required.');
+          if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved member execution scope changed.');
+          return saved;
+        }
         if (op === '_capabilityScope') {
           const scope = params.teamId ? store.readScope(params.teamId) : selections.get(params.selectionToken);
           if (!scope) throw Error('Confirm a saved team or selected project before reading capabilities.');
@@ -173,21 +182,8 @@ export function createExecutor(host, cli, { store, internalKey } = {}) {
       }
       if (op === 'updateRole') return { value: store.updateRole(params) };
       if (op === 'updateSettings') return { value: store.updateSettings(params) };
-      if (op === 'beginLaunch') {
-        const scope = store.readScope(params.teamId), observed = capabilities.get(scope.workspaceKey);
-        if (observed) {
-          const team = store.readSnapshot().teams.find(row => row.id === params.teamId);
-          for (const member of team.members) { const issue = preferenceIssue(member, observed, { requireCore: true }); if (issue) throw Error(issue); }
-        }
-        return { value: store.beginLaunch(params) };
-      }
-      if (op === 'start') return start(params, workspaceId);
-      if (op === 'receipt') {
-        if (!/^[a-zA-Z0-9-]{1,120}$/.test(params.requestId)) throw new Error('Invalid request identity.');
-        return get(`launch:${params.requestId}`);
-      }
+      if (op === 'receipt') return publicOperation(store.readOperation(params.requestId));
       throw new Error('Unknown team operation.');
-    },
-    async settle() { await Promise.allSettled([...jobs]); }
+    }
   };
 }
