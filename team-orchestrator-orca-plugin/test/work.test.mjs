@@ -33,7 +33,7 @@ test('objective user input is durably journaled once and only native owner evide
  const {createWorkService}=await import('../src/local/teamwork.mjs');const {DatabaseSync}=await import('node:sqlite');const f=await fixture(t);
  const native=new DatabaseSync(join(f.profile,'orchestration.db'));t.after(()=>native.close());
  native.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER); PRAGMA user_version=43');
- const calls=[];let sends=0;
+ const calls=[];let sends=0,snapshotRace=false;
  const rpc=async(method,params)=>{
   calls.push(method);
   if(method==='status.get')return {runtimeId:'runtime-one',capabilities:['orchestration.contract.v1','agent-session.structured.v1']};
@@ -47,7 +47,7 @@ test('objective user input is durably journaled once and only native owner evide
    return {ok:true,fence:7,value:{clientMessageId:params.envelope.clientOperationId,submission:{clientMessageId:params.envelope.clientOperationId,dispatchState:'pending',providerItemId:null}}};
   }
   if(method==='orchestration.runShow')return {run:{id:'run-head',objective:f.store.listWorks()[0].nativeObjective,consumer_generation:1}};
-  if(method==='orchestration.taskList')return {tasks:[]};
+  if(method==='orchestration.taskList'){if(snapshotRace)native.exec('UPDATE runs SET consumer_generation=2,coordinator_orca_session_id_generation=2');return {tasks:[]};}
   throw Error('Unexpected native method '+method);
  };
  const service=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
@@ -57,7 +57,10 @@ test('objective user input is durably journaled once and only native owner evide
  native.exec("UPDATE runs SET coordinator_orca_session_id='session-head'");
  const observed=await service.check(work.id);assert.equal(observed.run.state,'verified');assert.equal(observed.run.id,'run-head');assert.deepEqual(observed.snapshot.tasks,[]);
  assert.ok(!calls.some(method=>/runCreate|runUse|check|ack/.test(method)));assert.equal(JSON.stringify(observed).includes(f.store.readWork(work.id).protocolToken),false);
- native.exec('UPDATE runs SET consumer_generation=2,coordinator_orca_session_id_generation=2');
+ snapshotRace=true;const raced=await service.check(work.id);assert.equal(raced.run.state,'unverified');assert.equal(raced.run.consumerGeneration,1);assert.equal(raced.snapshot.stale,true);snapshotRace=false;
+ native.exec('UPDATE runs SET consumer_generation=3');
+ assert.equal((await service.check(work.id)).run.state,'unverified');
+ native.exec('UPDATE runs SET coordinator_orca_session_id_generation=3');
  assert.equal((await service.check(work.id)).run.state,'fenced');
 });
 test('first objective delivers updated role text as a handoff but cannot silently change the prepared agent',async t=>{
@@ -70,13 +73,14 @@ test('first objective delivers updated role text as a handoff but cannot silentl
  other.store.updateAgentPreferences({requestId:'different-agent',expectedRevision:other.store.readSnapshot().revision,teamId:other.team.id,memberId:other.head.id,agent:'claude',model:'default',effort:'default'});
  assert.throws(()=>other.store.prepareWork({teamId:other.team.id,requestId:'wrong-prepared',expectedRevision:other.store.readSnapshot().revision,objective:'Goal'}),/prepared.*preferences|preparation.*preferences/i);
 });
-function userRpc(f,{send,kind='structured',incarnation=()=> 'instance-one',afterHistory=()=>{}}={}){
+function userRpc(f,{send,kind='structured',incarnation=()=> 'instance-one',afterHistory=()=>{},permission=false}={}){
  return async(method,params,envelope)=>{
   if(method==='status.get')return {runtimeId:'runtime-one',capabilities:['orchestration.contract.v1','agent-session.structured.v1','terminal.prompt-delivery.v1']};
   if(method==='worktree.show')return {worktree:{id:'folder:/work',hostId:'local'}};
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:session-head'};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'session-head',worktreeId:'folder:/work'}};
   if(method==='agentSession.history'){afterHistory();return {ok:true,page:{sessionId:'session-head',fence:7,submissions:[],items:[]}};}
+  if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:permission?'permission':'idle'}};
   if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:'folder:/work',executionHostId:'local',connected:true,writable:true,incarnationId:incarnation(),agentIdentity:'codex',tabId:'tab',leafId:'leaf'}};
   if(method==='agentSession.send'||method==='terminal.send')return send(method,params,envelope);
   throw Error('Unexpected native method '+method);
@@ -119,4 +123,26 @@ test('nested TeamWork scope corruption blocks reads without replacing evidence',
  db.prepare('UPDATE receipts SET json=? WHERE id=?').run(JSON.stringify(corrupted),`work:${work.id}`);
  assert.throws(()=>f.store.readSnapshot(),/TeamWork evidence is damaged/);assert.throws(()=>f.store.readWork(work.id),/TeamWork evidence is damaged/);
  assert.equal(db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${work.id}`).json,JSON.stringify(corrupted));
+});
+test('structured unknown dispatch evidence is retained without claiming input or processing acceptance',async t=>{
+ const {createWorkService}=await import('../src/local/teamwork.mjs');const f=await fixture(t);
+ const rpc=userRpc(f,{send:async(_,params)=>({ok:true,fence:7,value:{clientMessageId:params.envelope.clientOperationId,submission:{clientMessageId:params.envelope.clientOperationId,dispatchState:'unknown',providerItemId:null}}})});
+ const service=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ const work=await service.submit({teamId:f.team.id,requestId:'native-unknown',expectedRevision:f.store.readSnapshot().revision,objective:'Audit'});
+ assert.equal(work.input.state,'unknown');assert.equal(f.store.readWork(work.id).input.dispatchState,'unknown');assert.equal(work.processing.state,'unknown');
+});
+test('a prepared terminal waiting for permission receives no objective input',async t=>{
+ const {createWorkService}=await import('../src/local/teamwork.mjs');const f=await fixture(t,'terminal');let sends=0;
+ const rpc=userRpc(f,{permission:true,send:async()=>{sends++;}}),service=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ const work=await service.submit({teamId:f.team.id,requestId:'permission-work',expectedRevision:f.store.readSnapshot().revision,objective:'Audit'});
+ assert.equal(work.input.state,'not_sent');assert.match(work.error,/permission/);assert.equal(sends,0);
+});
+test('failed durable submission intent prevents native input and preserves the original work',async t=>{
+ const {createWorkService}=await import('../src/local/teamwork.mjs');const {DatabaseSync}=await import('node:sqlite');const f=await fixture(t);let sends=0;
+ const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));t.after(()=>db.close());
+ db.exec("CREATE TRIGGER refuse_send BEFORE UPDATE ON receipts WHEN NEW.id LIKE 'work:%' AND json_extract(NEW.json,'$.input.state')='sending' BEGIN SELECT RAISE(ABORT, 'write failure fixture'); END");
+ const service=createWorkService({store:f.store,userData:f.profile,consent:async()=>{},rpc:userRpc(f,{send:async()=>{sends++;}})});
+ const work=await service.submit({teamId:f.team.id,requestId:'write-fail',expectedRevision:f.store.readSnapshot().revision,objective:'Audit'});
+ assert.equal(work.input.state,'not_sent');assert.match(work.error,/write failure/);assert.equal(sends,0);
+ assert.equal(f.store.readWork(work.id).nativeSend,undefined);
 });
