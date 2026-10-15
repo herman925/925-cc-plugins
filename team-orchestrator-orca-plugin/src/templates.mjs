@@ -36,7 +36,7 @@ export function parseTeamTemplate(value) {
   const team = value.team;
   only(team, ['name', 'purpose', 'structure', 'configuration', 'members']);
   if (!name(team.name) || !text(team.purpose, 500, true) || !['team', 'organisation'].includes(team.structure) || !Array.isArray(team.members) || !team.members.length || team.members.length > 49) reject('choose a supported team name, structure and roster of 1–49 members.');
-  const config = team.configuration;
+  const config = {...team.configuration,launchMode:team.configuration?.launchMode??'on-demand'};
   only(config, formFields);
   if (!text(config.name, 64) || !text(config.purpose, 500, true) || config.structure !== team.structure || ![1, 2, 3].includes(config.levels) || ![1, 2, 3, 4, 5].includes(config.fan) || !text(config.groups, 520, true)) reject('the saved setup configuration is invalid.');
   if(config.launchMode!==undefined&&!['on-demand','all'].includes(config.launchMode))reject('unsupported launch mode.');

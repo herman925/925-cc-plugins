@@ -102,3 +102,9 @@ test('overlap queue reason is visible alongside independent active tasks and sur
  await expect(tasks).toContainText('not filesystem isolation');await page.reload();
  await expect(panel(page).getByRole('region',{name:'Team tasks',exact:true})).toContainText('Write scope conflicts with edit-source');
 });
+
+test('busy supervisor queue is distinct from member execution and never resends permits on check',async({page})=>{
+ const ui=await preparedDispatch(page,'dispatch-queued'),tasks=ui.getByRole('region',{name:'Team tasks',exact:true});
+ await expect(tasks).toContainText('Native host queued the permit for the busy supervisor');await expect(tasks).toContainText('Awaiting native start');await expect(tasks).not.toContainText('Native assignment observed');
+ await ui.getByRole('button',{name:'Check work evidence'}).click();await expect(tasks.getByRole('article')).toHaveCount(1);await expect(tasks).toContainText('Native host queued');
+});

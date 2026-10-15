@@ -107,6 +107,9 @@ try {
   const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'A separate total objective' }] };
   const sendEnvelope = { sessionId: 'head-session', clientOperationId: `${Date.now()}-0123456789abcdef0123456789abcdef`, expectedRuntimeFence: 7, payloadFingerprint: sendFingerprint('head-session', body) };
   assert.equal(before.SendParams.safeParse({ envelope: sendEnvelope, body }).success, true);
+  const queuedEnvelope={...sendEnvelope,payloadFingerprint:sendFingerprint('head-session',body,'queue-if-active')};
+  assert.equal(before.SendParams.safeParse({envelope:queuedEnvelope,body,delivery:'queue-if-active'}).success,true);
+  assert.equal(queuedEnvelope.payloadFingerprint,before.computeAgentSessionPayloadFingerprint({method:'agentSession.send',sessionId:'head-session',fields:{body,delivery:'queue-if-active'}}));
   assert.equal(before.SendParams.safeParse({ envelope: sendEnvelope, body: { ...body, role: 'assistant' } }).success, false);
   assert.equal(sendEnvelope.payloadFingerprint, before.computeAgentSessionPayloadFingerprint({ method: 'agentSession.send', sessionId: 'head-session', fields: { body } }));
   assert.deepEqual(before.resolveRpcCallerIdentity(undefined), { kind: 'local-cli' });

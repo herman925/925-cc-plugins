@@ -144,7 +144,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       }); },
       queueDispatch(workId,intent,detail) { return atomicDispatch(()=>{
         if(listDispatches(workId).some(row=>row.nativeTaskId===intent.nativeTaskId))return;
-        putPrivate(`dispatch-queue:${workId}:${intent.nativeTaskId}`,{workId,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,memberId:intent.member.id,memberName:intent.member.name,status:'queued',instruction:intent.spec.instruction,dependencies:intent.spec.dependencies??[],writeScope:intent.spec.writeScope,detail:String(detail).slice(0,1200)});
+        putPrivate(`dispatch-queue:${workId}:${intent.nativeTaskId}`,{workId,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,memberId:intent.member.id,memberName:intent.member.name,supervisorMemberId:readWork(workId).supervisorMemberId,configVersion:intent.spec.configVersion,roleVersion:intent.spec.roleVersion,status:'queued',instruction:intent.spec.instruction,dependencies:intent.spec.dependencies??[],writeScope:intent.spec.writeScope,detail:String(detail).slice(0,1200)});
       }); },
       prepareDispatch(workId,intent,startParams,reuse) { return atomicDispatch(()=>{
         const work=readWork(workId),protocol=readDispatchProtocol(workId);
@@ -164,7 +164,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(dependencies.some(key=>history.filter(row=>row.taskKey===key).at(-1)?.status!=='accepted'))fail('Application dependencies await direct supervisor acceptance.');
         const reservation=readPrivate(`dispatch-member:${member.id}`),retained=reservation&&history.find(row=>row.id===reservation.id);
         const preparedPointer=readPrivate(`binding:${member.id}`),prepared=preparedPointer&&readOperation(preparedPointer.requestId);
-        if(preparedPointer&&(!reuse||reuse.kind==='prepared'&&(reuse.requestId!==preparedPointer.requestId||prepared?.status!=='created'||prepared.memberId!==member.id||prepared.teamId!==work.teamId||prepared.scope?.workspaceKey!==work.scope.workspaceKey)))fail('This member already has an active launch binding; verify it before reuse.');
+        if(preparedPointer&&(!reuse||reuse.kind==='prepared'&&(reuse.requestId!==preparedPointer.requestId||(reuse.instanceGeneration??1)!==(preparedPointer.instanceGeneration??1)||prepared?.status!=='created'||prepared.memberId!==member.id||prepared.teamId!==work.teamId||prepared.scope?.workspaceKey!==work.scope.workspaceKey)))fail('This member already has an active launch binding; verify it before reuse.');
         if(reuse?.kind==='prepared'&&(!prepared||reservation||startParams.terminal!==reuse.terminal))fail('Prepared member reservation changed.');
         if(reservation&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
         if(reuse&&reuse.kind!=='prepared'&&!reservation)fail('Retained member reservation changed.');
@@ -237,7 +237,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const member = team?.members.find(row => row.id === input.memberId);
           if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
           const bindingKey = `binding:${input.memberId}`;
-          if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
+          if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || readPrivate(`dispatch-member:${member.id}`) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
           const instanceGeneration=(readPrivate(`binding-generation:${input.memberId}`)?.generation??0)+1;
           const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', effectState:'intent', instanceGeneration, version:1, createdAt: new Date().toISOString() };
           db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId, instanceGeneration }));

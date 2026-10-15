@@ -19,7 +19,7 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   await expect(ui.getByRole('heading', { name: '@QA' })).toBeVisible();
   await ui.getByRole('button', { name: 'Lead-1-1', exact: true }).click();
   await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Head');
-  await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Session created');
+  await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Created · startup brief supplied');
   await page.reload();
   await expect(panel(page).getByRole('heading', { name: '@QA' })).toBeVisible();
   expect(await page.locator('#panel').getAttribute('sandbox')).toBe('allow-scripts');

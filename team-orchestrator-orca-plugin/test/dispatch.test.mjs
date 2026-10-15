@@ -12,7 +12,7 @@ import { createWorkService } from '../src/local/teamwork.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
 // Scripted native-host boundary, separate from the product's proof reader.
 const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured'}={}) {
+async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured',queuedPermits=false}={}) {
  const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
  const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,launchMode:prestarted?'all':'on-demand',agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
@@ -22,7 +22,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  store.settleOperation('launch',op.nativeRequest.operationId,{...binding,public:publicOperation({...op,...binding})});
  if(prestarted){
   const input={teamId:team.id,memberId:member.id,configVersion:1,requestId:'prepared-child'},op=store.prepareOperation(input,{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;
-  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf'}),briefAccepted:true};
+  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf',observation:{incarnationId:'child-instance'}}),briefAccepted:true};
   store.settleOperation(input.requestId,op.nativeRequest.operationId,{...value,public:publicOperation({...op,...value})});
  }
  const db=new DatabaseSync(join(profile,'orchestration.db'));
@@ -40,7 +40,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  const messages=[],calls=[];let onInput=()=>{};
  const rpc=async(method,params,envelope)=>{
   calls.push(method);
-  if(method==='status.get')return {runtimeId:'runtime-one',capabilities:['orchestration.contract.v1','agent-session.structured.v1','terminal.prompt-delivery.v1','agent.launch.v2','agent.launch.replay-required.v1']};
+  if(method==='status.get')return {runtimeId:'runtime-one',capabilities:[...(queuedPermits?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1','agent-session.structured.v1','terminal.prompt-delivery.v1','agent.launch.v2','agent.launch.replay-required.v1']};
   if(method==='worktree.show')return {worktree:{id:scope.workspaceId,hostId:'local'}};
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
@@ -59,6 +59,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
    const work=store.listWorks()[0];
    if(!db.prepare('SELECT id FROM runs').get())db.prepare('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)').run('run-head',work.nativeObjective,'this_database',kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,kind==='structured'?1:null,1,0);
    await onInput(text);
+   if(queuedPermits&&text.startsWith('TEAM_DISPATCH_PERMIT')){assert.equal(params.delivery,'queue-if-active');return {ok:true,value:{clientMessageId:params.envelope.clientOperationId,queued:{messageId:'queued-'+params.envelope.clientOperationId,state:'waiting',position:1}}};}
    return method==='agentSession.send'?{ok:true,fence:7,value:{clientMessageId:params.envelope.clientOperationId,submission:{clientMessageId:params.envelope.clientOperationId,dispatchState:'accepted'}}}:{send:{handle:'term-head',accepted:true,prompt:{requestId:envelope.orchestrationRequestId,processIncarnation:'head-instance',stages:['input_accepted'],observation:'supported'}}};
   }
   if(method==='orchestration.workerShow'){
@@ -385,4 +386,31 @@ test('prepared PTY preserves native process identity and reuses without model ov
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
  await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
+});
+
+test('one confirmed failed member task holds its dependents but permits independent nonconflicting work',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT')){const permit=JSON.parse(text.split('\n').slice(1).join('\n'));if(permit.nativeTaskId==='task-one')f.start(permit);}});
+ f.createIntent(protocol,{writeScope:[{path:'src',kind:'directory'}]});await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];f.complete(first);
+ f.db.prepare("UPDATE dispatch_contexts SET status='failed'").run();f.db.prepare("UPDATE worker_dispatches SET state='failed'").run();f.db.prepare("UPDATE tasks SET status='failed'").run();
+ f.db.prepare("UPDATE attempt_observation_facts SET payload=json_set(payload,'$.outcome','failed')").run();f.db.prepare("UPDATE messages SET payload=json_set(payload,'$.outcome','failed')").run();
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].outcome,'failed');
+ f.createIntent(protocol,{taskId:'blocked',taskKey:'blocked',memberId:f.team.members[2].id,dependencies:[first.taskKey]});
+ f.createIntent(protocol,{taskId:'independent',taskKey:'independent',memberId:f.team.members[3].id,writeScope:[{path:'docs',kind:'directory'}]});await service.check(f.work.id);
+ assert.deepEqual(f.store.listDispatches(f.work.id).map(row=>row.taskKey),[first.taskKey,'independent']);assert.match(f.store.dispatchProjection(f.work.id).queuedTasks[0].detail,/dependencies/);
+});
+
+test('retiring a preparation pointer cannot authorize a second session while its Dispatch remains reserved',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));await service.check(f.work.id);
+ const prior=f.store.readMemberOperation(f.member.id);f.store.retireBinding({memberId:f.member.id,requestId:prior.requestId,instanceGeneration:prior.instanceGeneration});
+ assert.throws(()=>f.store.prepareOperation({teamId:f.team.id,memberId:f.member.id,configVersion:1,requestId:'second-session'},{...prior,nativeRequest:nativeLaunchIntent(f.team,f.member,prior.scope)}),/reserved|binding/);
+});
+
+test('busy structured supervisor queues independent permits under negotiated native queue support',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{queuedPermits:true}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);f.createIntent(protocol,{taskId:'other',taskKey:'other',memberId:f.team.members[2].id});
+ await service.check(f.work.id);assert.deepEqual(f.store.listDispatches(f.work.id).map(row=>row.status),['awaiting_start','awaiting_start']);
+ assert.ok(f.store.listDispatches(f.work.id).every(row=>row.detail.includes('queued')));await service.check(f.work.id);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,2);
 });
