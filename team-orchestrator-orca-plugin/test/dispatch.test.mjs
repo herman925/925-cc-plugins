@@ -180,3 +180,34 @@ test('unverifiable native worker observation preserves identity but does not cla
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
  await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.status,'unknown');assert.equal(row.binding.handle,'structworker_child');
 });
+test('corrupt stored completion or protocol evidence blocks reads without inventing acceptance',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));await service.check(f.work.id);
+ const row=f.store.listDispatches(f.work.id)[0],fault=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));t.after(()=>fault.close());
+ const corrupt={...row,status:'pending_acceptance'};fault.prepare('UPDATE receipts SET json=? WHERE id=?').run(JSON.stringify(corrupt),`dispatch:${row.id}`);
+ assert.throws(()=>f.store.readSnapshot(),/damaged/);
+ assert.equal(fault.prepare('SELECT json FROM receipts WHERE id=?').get(`dispatch:${row.id}`).json,JSON.stringify(corrupt));
+ fault.prepare('UPDATE receipts SET json=? WHERE id=?').run(JSON.stringify(row),`dispatch:${row.id}`);
+ const protocol=f.store.readDispatchProtocol(f.work.id);fault.prepare('UPDATE receipts SET json=? WHERE id=?').run(JSON.stringify({...protocol,state:'not_sent'}),`dispatch-protocol:${f.work.id}`);
+ assert.throws(()=>f.store.readSnapshot(),/protocol is damaged/);
+});
+test('unavailable native evidence reports a bounded diagnostic without exposing the verified profile path',async()=>{
+ const {readNativeDispatchEvidence}=await import('../src/local/native-dispatch.mjs');
+ const result=await readNativeDispatchEvidence('/private/nonexistent-sensitive-orca-profile',{work:{}});
+ assert.equal(result.state,'unverified');assert.equal(result.detail.includes('/private/'),false);
+});
+test('native start arriving during capability reads is not retroactively admitted from an older Task snapshot',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);let inject=false;
+ const rpc=async(method,...args)=>{if(inject&&method==='preflight.detectAgents'){inject=false;f.start({nativeTaskId:'task-one',startParams:{task:'task-one',worktree:'folder:/work',agent:'claude',run:'run-head'}});}return f.rpc(method,...args);};
+ const service=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));inject=true;
+ await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+});
+test('an observed native start after app reservation but before permit is fenced without issuing the permit',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);let inject=false;
+ const works={...f.works,async verifyWork(...args){const value=await f.works.verifyWork(...args);if(inject&&f.store.listDispatches(f.work.id).length){inject=false;f.start({nativeTaskId:'task-one',startParams:{task:'task-one',worktree:'folder:/work',agent:'claude',run:'run-head'}});}return value;}};
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));inject=true;await service.check(f.work.id);
+ const row=f.store.listDispatches(f.work.id)[0];assert.equal(inject,false);assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+});

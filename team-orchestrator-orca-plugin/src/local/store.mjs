@@ -1,4 +1,4 @@
-import { validateDispatch, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
+import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -64,7 +64,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`work:${work.id}`, JSON.stringify(work));
     const readPrivate = key => { const row=db.prepare('SELECT json FROM receipts WHERE id=?').get(key); return row?JSON.parse(row.json):null; };
     const putPrivate = (key,value) => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(key,JSON.stringify(value));
-    const readDispatchProtocol = workId => readPrivate(`dispatch-protocol:${workId}`);
+    const readDispatchProtocol = workId => { const row=readPrivate(`dispatch-protocol:${workId}`); return row?validateDispatchProtocol(row):null; };
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%'").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
     const dispatchProjection = workId => ({dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
@@ -118,12 +118,12 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
         const work=readWork(workId); if(work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
         const prior=readDispatchProtocol(workId); if(prior) { if(prior.generation!==work.run.consumerGeneration)fail('Dispatch protocol belongs to an older Run generation.'); return prior; }
-        const protocol={workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
+        const protocol={format:'team-dispatch-protocol-v1',workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
       }); },
       updateDispatchProtocol(workId,version,patch) { return atomicDispatch(()=>{
         const row=readDispatchProtocol(workId);if(!row||row.version!==version)fail('Dispatch protocol changed while observing evidence.');
         if(Object.keys(patch).some(key=>!['state','detail','nativeSend'].includes(key)))fail('Immutable dispatch protocol cannot change.');
-        Object.assign(row,patch,{version:version+1});putPrivate(`dispatch-protocol:${workId}`,row);return row;
+        Object.assign(row,patch,{version:version+1});validateDispatchProtocol(row);putPrivate(`dispatch-protocol:${workId}`,row);return row;
       }); },
       prepareDispatch(workId,intent,startParams) { return atomicDispatch(()=>{
         const work=readWork(workId),protocol=readDispatchProtocol(workId);
@@ -133,12 +133,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
         if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
         if(readPrivate(`dispatch-member:${member.id}`)||readPrivate(`binding:${member.id}`))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
-        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
         validateDispatch(attempt);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
       updateDispatch(id,version,patch) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`));if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
-        if(Object.keys(patch).some(key=>!['status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail'].includes(key)))fail('Immutable Dispatch identity cannot change.');
+        if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail'].includes(key)))fail('Immutable Dispatch identity cannot change.');
+        if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
         if(row.evidenceId&&patch.evidenceId&&row.evidenceId!==patch.evidenceId)fail('Execution result already has immutable native evidence.');
         if(patch.binding&&listDispatches().some(other=>other.memberId!==row.memberId&&other.binding&&(patch.binding.sessionId?other.binding.sessionId===patch.binding.sessionId:other.binding.handle===patch.binding.handle&&other.binding.incarnationId===patch.binding.incarnationId)))fail('Native session is already bound to another member.');

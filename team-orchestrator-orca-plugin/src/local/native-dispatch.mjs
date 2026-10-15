@@ -73,6 +73,6 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    observations.push({id:attempt.id,state:'verified',dispatchId:d.id,binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
   }
   return {state:'verified',intents,rejected,observations};
- }catch(error){return {state:'unverified',detail:String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
+ }catch(error){return {state:'unverified',detail:error.code?'Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime.':String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
  finally{if(db){try{db.exec('ROLLBACK');}catch{}db.close();}}
 }

@@ -44,14 +44,14 @@ let terminalStatus = 'permission', nativeDb, nativeSocket, objectiveAttempts = 0
 const nativeToken = 'fixture-private-runtime-token';
 const history = new Map();
 function savedWorks() {
-  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true, timeout: 1000 });
   try { return db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row => JSON.parse(row.json)); } finally { db.close(); }
 }
 // Fixture supervisor/member writes native evidence; plugin may only observe it.
 const protocolInputs = new Map(), permitInputs = new Map(), nativeStarts = new Set();
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().filter(key => value[key] !== undefined).map(key => [key, canonical(value[key])])) : value;
 function savedPrivate(prefix) {
-  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true, timeout: 1000 });
   try { return db.prepare('SELECT json FROM receipts WHERE id LIKE ?').all(prefix + ':%').map(row => JSON.parse(row.json)); } finally { db.close(); }
 }
 function nativeReceipt(work, requestId, method, params, value) {
@@ -144,7 +144,7 @@ async function startNativeSocket() {
   writeFileSync(join(app.getPath('userData'), 'orca-runtime.json'), JSON.stringify({ runtimeId: 'fixture-runtime', pid: process.pid, transports: [{ kind: 'unix', endpoint }], authToken: nativeToken, startedAt: Date.now() }));
 }
 function savedOperation(nativeId) {
-  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true, timeout: 1000 });
   try { const row = db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%' AND json_extract(json,'$.nativeRequest.operationId')=?").get(nativeId); return row && JSON.parse(row.json); } finally { db.close(); }
 }
 async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
@@ -221,7 +221,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   else if (method === 'orchestration.workerShow') {
     const d = nativeDb.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(params.dispatch);
     const w = nativeDb.prepare('SELECT * FROM worker_dispatches WHERE dispatch_id=?').get(params.dispatch);
-    result = { dispatch: { id: d.id, runId: d.run_id, taskId: d.task_id, assigneeHandle: d.assignee_handle, assigneePaneKey: d.assignee_pane_key, processIncarnation: d.process_incarnation, hostScope: JSON.parse(d.host_scope), status: d.status }, worker: { dispatchId: d.id, worktreeId: w.worktree_id, agentTerminalHandle: w.agent_terminal_handle, state: w.state, runtimeEpoch: w.runtime_epoch, startOptions: JSON.parse(w.start_options) }, observation: { status: 'live', exact: true }, projection: {} };
+    result = { dispatch: { id: d.id, runId: d.run_id, taskId: d.task_id, assigneeHandle: d.assignee_handle, assigneePaneKey: d.assignee_pane_key, processIncarnation: d.process_incarnation, hostScope: JSON.parse(d.host_scope), status: d.status }, worker: { dispatchId: d.id, worktreeId: w.worktree_id, agentTerminalHandle: w.agent_terminal_handle, state: w.state, runtimeEpoch: w.runtime_epoch, startOptions: JSON.parse(w.start_options) }, observation: { status: 'live', exactWorker: true }, projection: {} };
   }
   else if (method === 'orchestration.taskList') { assert.ok(nativeDb.prepare('SELECT id FROM runs WHERE id=?').get(params.run)); assert.equal(params.from, undefined); result = { tasks: [{ id: 'task-' + params.run, run_id: params.run, status: 'pending', task_title: 'Fixture native task' }] }; }
   else throw Error('Unexpected runtime read ' + method);

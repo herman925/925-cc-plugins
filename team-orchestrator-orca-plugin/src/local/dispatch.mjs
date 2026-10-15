@@ -33,8 +33,15 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
  async function permit(work,attempt){
   if(attempt.permit.state!=='not_sent')return;
   const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.readTeamVersion(work.teamId,work.configVersion);
+  const member=team.members.find(row=>row.id===attempt.memberId);
+  if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==attempt.roleVersion||attempt.startParams.agent!==member.agent||(attempt.startParams.model??'default')!==member.model||(attempt.startParams.effort??'default')!==member.effort)throw Error('Saved permit preferences or direct supervisor do not match the frozen member.');
   const checked=await evidence(store.readWork(work.id),protocol,team,verified);
   if(checked.state!=='verified')throw Error(checked.detail);
+  const existing=checked.observations.find(row=>row.id===attempt.id);
+  if(existing?.state!=='absent') {
+   store.updateDispatch(attempt.id,attempt.version,{admission:'unadmitted',status:'unknown',permit:{state:'unknown'},detail:'Native work appeared before the user-input permit. It is retained unadmitted; no permit or replacement was sent.'});
+   return;
+  }
   const text='TEAM_DISPATCH_PERMIT\n'+JSON.stringify({workId:work.id,attemptId:attempt.id,memberId:attempt.memberId,roleVersion:attempt.roleVersion,configVersion:attempt.configVersion,nativeTaskId:attempt.nativeTaskId,generation:attempt.generation,startParams:attempt.startParams,instruction:'Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker.'});
   const nativeSend=userMessage(work,verified.instance,text);
   await consent();attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
@@ -55,9 +62,10 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
     try{
      if(!intent.unadmitted){const caps=await discoverCapabilities(rpc,work.scope),issue=preferenceIssue(intent.member,caps,{requireCore:true});if(issue)throw Error(issue);}
      const current=await works.verifyWork(workId),fresh=await evidence(store.readWork(workId),protocol,team,current);
-     if(fresh.state!=='verified'||!fresh.intents.some(row=>row.nativeTaskId===intent.nativeTaskId&&row.payloadHash===intent.payloadHash))throw Error('Native intent changed during admission.');
+     const currentIntent=fresh.intents.find(row=>row.nativeTaskId===intent.nativeTaskId&&row.payloadHash===intent.payloadHash);
+     if(fresh.state!=='verified'||!currentIntent)throw Error('Native intent changed during admission.');
      const startParams={task:intent.nativeTaskId,worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`,agent:intent.member.agent,run:work.run.id,...(intent.member.model!=='default'?{model:intent.member.model}:{}),...(intent.member.effort!=='default'?{effort:intent.member.effort}:{})};
-     const admitted=store.prepareDispatch(workId,intent,startParams);if(admitted.fresh&&!intent.unadmitted)await permit(work,admitted.attempt);
+     const admitted=store.prepareDispatch(workId,currentIntent,startParams);if(admitted.fresh&&!currentIntent.unadmitted)await permit(work,admitted.attempt);
     }catch(error){protocol=store.updateDispatchProtocol(workId,store.readDispatchProtocol(workId).version,{detail:String(error.message).slice(0,1200)});}
    }
    // Resume only unsent, committed permits; sending/unknown never becomes a fresh input.
