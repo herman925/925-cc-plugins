@@ -1,5 +1,5 @@
 import { withNativeRuntime } from './native-runtime.mjs';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { sendFingerprint } from './teamwork.mjs';
 import { readNativeDispatchEvidence } from './native-dispatch.mjs';
 import { discoverCapabilities } from './capabilities.mjs';
@@ -19,7 +19,7 @@ export function accepted(receipt,send,instance){
  if(send.method==='agentSession.send')return receipt?.ok===true&&receipt.value?.clientMessageId===send.params.envelope.clientOperationId&&(receipt.value.queued?send.params.delivery==='queue-if-active'&&typeof receipt.value.queued.messageId==='string'&&['waiting','dispatched'].includes(receipt.value.queued.state):['pending','accepted'].includes(receipt.value.submission?.dispatchState));
  return receipt?.send?.accepted===true&&receipt.send.handle===instance.handle&&receipt.send.prompt?.requestId===send.envelope.orchestrationRequestId&&receipt.send.prompt.processIncarnation===instance.incarnationId;
 }
-export function createDispatchService({store,rpc,userData,consent,works,beforeAdmission,onNativeWait}) {
+export function createDispatchService({store,rpc,userData,consent,works,beforeAdmission,onNativeWait,onClosedMember}) {
  const queues=new Map();
  const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
  const project=id=>store.dispatchProjection(id);
@@ -77,6 +77,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
   return {attemptId:prior.id,binding:saved,terminal,...(sessionFence?{sessionFence}:{}),preferences:original};
  }
  async function permit(work,attempt){
+  store.assertAdmission(work.teamId,attempt.memberId);
   if(attempt.permit.state!=='not_sent')return;
   const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.readTeamVersion(work.teamId,work.configVersion);
   if(attempt.token!==protocol.token||attempt.generation!==protocol.generation)throw Error('This permit belongs to an earlier supervisor epoch; preserve its original attempt.');
@@ -92,8 +93,8 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
   }
   const text='TEAM_DISPATCH_PERMIT\n'+JSON.stringify({workId:work.id,attemptId:attempt.id,memberId:attempt.memberId,roleVersion:attempt.roleVersion,configVersion:attempt.configVersion,nativeTaskId:attempt.nativeTaskId,generation:attempt.generation,reviewToken:attempt.reviewToken,reviewProtocol:'team-review/v1',startParams:attempt.startParams,instruction:'Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker.'});
   const nativeSend=userMessage(work,verified.instance,text,verified.status);
-  await consent();attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
-  try { await works.verifyHost(work.id,verified.hostGeneration);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:receipt.value?.queued?'Native host queued the permit for the busy supervisor; waiting for genuine worker-start evidence.':'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
+  await consent();store.assertAdmission(work.teamId,attempt.memberId);attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
+  try { await works.verifyHost(work.id,verified.hostGeneration);store.assertAdmission(work.teamId,attempt.memberId);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:receipt.value?.queued?'Native host queued the permit for the busy supervisor; waiting for genuine worker-start evidence.':'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
   catch(error){store.updateDispatch(attempt.id,attempt.version,{status:'unknown',permit:{state:'unknown',nativeSend},detail:String(error.message).slice(0,1200)});}
  }
  async function check(workId){
@@ -116,7 +117,9 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
      const prior=store.listDispatches(workId).filter(row=>row.memberId===intent.member.id).at(-1);
      const prepared=store.readMemberOperation(intent.member.id),recovery=prepared?.wakeRequestId&&store.readWake(prepared.wakeRequestId);
      const recovered=prior&&recovery&&recovery.newInstance?.requestId===prepared.requestId&&(recovery.oldBinding.sourceAttemptId===prior.id||prior.reuse?.requestId===recovery.oldBinding.requestId);
-     const reuse=recovered?await preparedSession(work,intent.member,prepared):prior?await retainedSession(work,intent.member,prior):prepared?await preparedSession(work,intent.member,prepared):undefined;
+     let reuse;try{reuse=recovered?await preparedSession(work,intent.member,prepared):prior?await retainedSession(work,intent.member,prior):prepared?await preparedSession(work,intent.member,prepared):undefined;}catch(error){
+      const bindingRequestId=prior?.id??prepared?.requestId;if(bindingRequestId&&onClosedMember)await onClosedMember({teamId:work.teamId,memberId:intent.member.id,bindingRequestId,requestId:'taskwake-'+createHash('sha256').update(JSON.stringify([work.id,intent.member.id,bindingRequestId])).digest('hex').slice(0,48)});throw error;
+     }
      const startParams={task:intent.nativeTaskId,worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`,agent:intent.member.agent,run:work.run.id,...(intent.member.model!=='default'?{model:intent.member.model}:{}),...(intent.member.effort!=='default'?{effort:intent.member.effort}:{})};
      if(reuse){delete startParams.agent;delete startParams.model;delete startParams.effort;startParams.terminal=reuse.terminal;}
      const admitted=store.prepareDispatch(workId,currentIntent,startParams,reuse);if(admitted.fresh&&!currentIntent.unadmitted)await permit(work,admitted.attempt);

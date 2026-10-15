@@ -1,4 +1,5 @@
 import { wakeStore, publicWake } from './wake-store.mjs';
+import { stopStore } from './stop-store.mjs';
 import { lifecycleStore } from './lifecycle-store.mjs';
 import { questionStore } from './questions-store.mjs';
 import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
@@ -81,15 +82,16 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
     const dispatchProjection = workId => ({queuedTasks:queuedTasks(workId),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
+    const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
     const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
     };
-    const write = ({ works, goals, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const write = ({ works, goals, recoveries, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
     const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
     readSnapshot();
     const mutate = (op, input, action) => {
@@ -105,7 +107,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         }
         const next = readSnapshot();
         if (next.revision !== input.expectedRevision) fail('Another panel changed the team data. Reload saved teams before trying again; your changes were not saved.');
-        if(input.teamId&&readPrivate(`next-goal:${input.teamId}`))fail('A queued-goal transition is reserved; finish it before changing team configuration.');
+        if(op!=='setAdmission'&&input.teamId&&readPrivate(`next-goal:${input.teamId}`))fail('A queued-goal transition is reserved; finish it before changing team configuration.');
         action(next);
         next.revision++;
         validatePersistentState(next);
@@ -133,6 +135,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     return {
       ...questions,
       ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation,persistOperation,readWork,persistWork,readCurrentWork}),
+      ...stops,
       ...lifecycle,
       readOperation,
       readMemberDispatch(memberId) {const pointer=readPrivate(`dispatch-member:${memberId}`);return pointer?listDispatches(pointer.workId).find(a=>a.id===pointer.id):null;},
@@ -149,6 +152,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(team?.launch?.members?.[memberId]?.requestId===requestId){delete team.launch.members[memberId];next.revision++;write(next);}
         return true;
       });},
+      setAdmission(input) { return mutate('setAdmission',input,next=>{
+        const team=next.teams.find(row=>row.id===input.teamId);
+        if(!team||typeof input.paused!=='boolean'||input.memberId&&!team.members.some(row=>row.id===input.memberId))fail('Choose a saved team or member.');
+        team.admission??={paused:false,members:{}};
+        if(input.memberId)team.admission.members[input.memberId]=input.paused;else team.admission.paused=input.paused;
+      }); },
+      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.');if(stops.listStops().some(row=>row.target.teamId===teamId&&row.target.memberId===memberId&&['intent','submitted','unknown'].includes(row.state)))fail('Stop outcome is unresolved; reconcile this member before a new assignment.'); },
       listGoals,
       enqueueGoal(input){workInput(input);return atomicDispatch(()=>{
         const key=`goal-request:${input.requestId}`,digest=fingerprint(input),prior=readPrivate(key);
@@ -180,6 +190,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(work?.status==='completed'||work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
         const key=`dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId?`:${intent.spec.previousAttemptId}`:''}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
+        this.assertAdmission(work.teamId,intent.spec.memberId);
         questions.questionTaskGate(workId,intent.spec.taskKey,intent.nativeTaskId);
         const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
         if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
@@ -187,7 +198,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const recovery=reuse?.recoveryRequestId&&readPrivate(`wake:${reuse.recoveryRequestId}`),recoveredPrior=recovery&&recovery.handoff?.decision==='replace'&&recovery.handoff.reviewer===work.supervisorMemberId&&(recovery.oldBinding.sourceAttemptId===previous?.id||previous?.reuse?.requestId===recovery.oldBinding.requestId)&&recovery.newInstance?.requestId===reuse.requestId;
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||(previous.status!=='rework'&&!recoveredPrior)||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
-        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history,intent.spec.taskKey,writeScope);
+        const stopAttempts=new Set(stops.listStops().filter(row=>['intent','submitted','unknown'].includes(row.state)).map(row=>row.target.attemptId));
+        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history.map(row=>stopAttempts.has(row.id)?{...row,status:'unknown'}:row),intent.spec.taskKey,writeScope);
         if(conflict&&!intent.unadmitted)fail(`Write scope conflicts with ${conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
         if(previous&&JSON.stringify(writeScope)!==JSON.stringify(previous.writeScope??[]))fail('Rework must preserve the declared write scope.');
         const dependencies=intent.spec.dependencies??[];
@@ -223,6 +235,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(patch.binding&&listDispatches().some(other=>other.memberId!==row.memberId&&other.binding&&(patch.binding.sessionId?other.binding.sessionId===patch.binding.sessionId:other.binding.handle===patch.binding.handle&&other.binding.incarnationId===patch.binding.incarnationId)))fail('Native session is already bound to another member.');
         if(row.evidenceId){if(patch.recovery){row.recovery=patch.recovery;row.version=version+1;putPrivate(`dispatch:${id}`,row);}return row;} // Execution facts and the independent review are immutable.
         Object.assign(row,patch,{version:version+1});validateDispatch(row);putPrivate(`dispatch:${id}`,row);
+        if(row.binding&&row.reuse?.recoveryRequestId){const wake=readPrivate(`wake:${row.reuse.recoveryRequestId}`);if(wake&&wake.newInstance?.requestId===row.reuse.requestId&&wake.state==='replacing'){wake.state='bound';wake.newInstance={...wake.newInstance,attemptId:row.id,dispatchId:row.dispatchId};wake.version++;putPrivate(`wake:${wake.requestId}`,wake);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);}}
         if(row.binding&&readPrivate(`dispatch-member:${row.memberId}`)?.id===row.id)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
         return row;
       }); },

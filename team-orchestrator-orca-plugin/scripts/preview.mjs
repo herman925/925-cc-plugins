@@ -82,7 +82,7 @@ async function fixture(id, mode) {
         if(mode==='dispatch-queued')return;
         if (mode === 'dispatch-unknown') throw Error('Native start evidence unavailable');
         const dispatchId = 'dispatch-'+permit.nativeTaskId, handle = 'structworker_'+permit.nativeTaskId, paneKey = 'child-tab:'+permit.nativeTaskId;
-        const complete = !['dispatch-running','dispatch-scheduling'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
+        const complete = !['dispatch-running','dispatch-scheduling','dispatch-stop-success','dispatch-stop-unknown','dispatch-stop-unsupported'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
         nativeDb.prepare('INSERT INTO dispatch_contexts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(dispatchId, work.run.id, permit.nativeTaskId, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'structured' ? owner.sessionId : null, null, handle, paneKey, permit.startParams.agent + '_child_'+permit.nativeTaskId, 'child-instance', JSON.stringify({ kind: 'local', hostId: 'local' }), complete ? outcome === 'succeeded' ? 'completed' : 'failed' : 'dispatched', permit.generation);
         nativeDb.prepare('INSERT INTO worker_dispatches VALUES (?,?,?,?,?,?)').run(dispatchId, work.scope.workspaceId, handle, complete ? outcome : 'ready', 'fixture-runtime', JSON.stringify({ resolvedWorktreeId: work.scope.workspaceId, agent: permit.startParams.agent, worktree: work.scope.workspaceId }));
         nativeDb.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
@@ -101,6 +101,11 @@ async function fixture(id, mode) {
       }
     };
     const runtime = async (method, params, envelope) => {
+      if(method==='orchestration.workerStop'){
+        if(mode==='dispatch-stop-unsupported')throw Object.assign(Error('Native worker stop is unsupported by this host.'),{native:true,code:'method_not_supported'});
+        assert.match(envelope.orchestrationRequestId,/^[a-f0-9-]{36}$/);assert.deepEqual(Object.keys(params),['dispatch']);
+        return {dispatchId:params.dispatch,state:mode==='dispatch-stop-unknown'?'stop_unknown':'stopped',processAction:'closed_agent_terminal',close:{ptyKilled:mode!=='dispatch-stop-unknown'}};
+      }
       if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
       if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
@@ -157,6 +162,11 @@ async function fixture(id, mode) {
     };
     executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
     return { profile, store, executor, nativeDb, journal, async mediate(op, input) {
+      if(op==='stopMember'){
+        const row=await executor.execute({op:'_stopPrepare',params:input,internalKey}),plan=await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
+        if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
+        return executor.execute({op:'load'});
+      }
       const result = await mediateOperation({ op, input, invoke: args => executor.execute({ ...args, internalKey }), rpc: runtime, authority: async () => {} });
       return result.value;
     } };
@@ -196,7 +206,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
-      if (['decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
+      if (['stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {

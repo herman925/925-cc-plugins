@@ -1,3 +1,4 @@
+import {createNativeRpc,withNativeRuntime} from './native-runtime.mjs';
 import { mediateOperation } from './native-broker.mjs';
 import { MAX_TEMPLATE_BYTES } from '../templates.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
@@ -42,9 +43,9 @@ export async function installAdapter(electron, { version, identity, internalKey 
       const message = call.params.teamWorker;
       const envelopeLimit = ['previewTemplate', 'importTemplate'].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 60000;
       if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      if (message.commandId === 'team.control' && !['setAdmission','stopMember','checkStop','ping', 'context', 'load', 'createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       if (Object.keys(message.args ?? {}).some(key => !['op', 'params', 'workspaceId'].includes(key))) throw Error('Invalid public worker arguments.');
-      if (message.commandId === 'team.control' && ['decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember', 'replaceMember'].includes(message.args?.op)) {
+      if (message.commandId === 'team.control' && ['stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember', 'replaceMember'].includes(message.args?.op)) {
         if (!internalKey) throw Error('Native broker authority is unavailable; initialise the adapter again.');
         const invoke = args => originals.get(names[2])(event, { pluginKey: KEY, commandId: 'team.control', args: { ...args, internalKey } });
         const runtime = handlers.get('runtime:call');
@@ -64,6 +65,24 @@ export async function installAdapter(electron, { version, identity, internalKey 
           if (!response?.ok) throw Object.assign(Error(response?.error?.message || 'Native operation unavailable.'), { code: response?.error?.code ?? 'host_unavailable' });
           return response.result;
         };
+        if(message.args.op==='stopMember'){
+          const command=async(op,params)=>{const response=await invoke({op,params});if(response?.ok===false)throw Error(response.error?.message??response.error??'Stop command refused.');return response;};
+          await authority();const saved=await command('_stopPrepare',message.args.params);
+          await authority();const plan=await command('_stopValidate',{requestId:saved.requestId});
+          if(plan){
+            const socketRpc=createNativeRpc({userData:electron.app.getPath('userData'),parentPid:process.pid,consent:authority});
+            let receipt,error;try{receipt=await withNativeRuntime(socketRpc,plan.runtimeId,async()=>{
+              if(plan.executionHostId?.startsWith('ssh:')){const state=(await socketRpc('ssh.getState',{targetId:decodeURIComponent(plan.executionHostId.slice(4))}))?.state;if(state?.status!=='connected'||state.connectionGeneration!==plan.hostGeneration)throw Error('Stop execution host changed before submission; reconcile the saved intent.');}
+              if(plan.terminalIdentity){const expected=plan.terminalIdentity,shown=(await socketRpc('terminal.show',{terminal:expected.handle}))?.terminal;if(shown?.handle!==expected.handle||shown.incarnationId!==expected.incarnationId||shown.ptyId!==expected.ptyId||`${shown.tabId}:${shown.leafId}`!==expected.paneKey||shown.worktreeId!==expected.workspaceId||shown.executionHostId!==plan.executionHostId)throw Error('Exact terminal identity changed before stop submission.');}
+              const receipt=await socketRpc(plan.method,plan.params,plan.envelope);
+              if(plan.executionHostId?.startsWith('ssh:')){const state=(await socketRpc('ssh.getState',{targetId:decodeURIComponent(plan.executionHostId.slice(4))}))?.state;if(state?.status!=='connected'||state.connectionGeneration!==plan.hostGeneration)throw Error('Stop execution host changed before receipt verification; reconcile the saved intent.');}
+              return receipt;
+            });}catch(failure){error={message:failure.message,code:failure.code,native:failure.native===true};}
+            // Native effects may have happened. Durable submitted intent survives a revoked settle.
+            await authority();await command('_stopSettle',{requestId:saved.requestId,receipt,error});
+          }
+          await authority();return {ok:true,value:await command('load',{})};
+        }
         return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority });
       }
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.

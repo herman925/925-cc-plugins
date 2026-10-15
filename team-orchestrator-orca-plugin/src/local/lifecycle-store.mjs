@@ -8,6 +8,10 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
   const reasons=[];
+  if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some(r=>{const row=JSON.parse(r.json);return row.teamId===work.teamId&&!['bound','resumed'].includes(row.state);}))reasons.push('Member recovery or handoff remains unresolved');
+  for(const row of db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%'").all()){
+   const stop=JSON.parse(row.json);if(stop.target.workId===work.id&&['intent','submitted','unknown'].includes(stop.state))reasons.push('Stop outcome remains unconfirmed; preserve the exact member reservation');
+  }
   if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>JSON.parse(r.json).workId===work.id))reasons.push('Queued member tasks await admission');
   const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
   for(const expected of work.currentRecipientBindings??work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');

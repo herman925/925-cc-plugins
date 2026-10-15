@@ -43,6 +43,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   return row;
  }
  return {
+ async validateFresh(id){const row=store.readWake(id);if(row?.state!=='replacing'||!await stopped(row))throw Error('Previous execution stopped proof changed before fresh replacement.');await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);},
  async resolveQuestion(input){
   const row=store.readWake(input?.requestId),work=store.readCurrentWork(input?.workId),question=work&&store.listQuestions(work.id).find(q=>q.id===input.questionId);
   if(row?.state!=='bound'||row.newInstance?.workId!==work?.id||work.recoveryRequestId!==row.requestId||!question||(question.epoch??0)>=(work.epoch??0)||typeof input.note!=='string'||!input.note.trim()||input.note.length>4000)throw Error('Review the exact superseded question and provide a resolution note.');
@@ -104,7 +105,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   });
  },
  async check(id){
-  const row=store.readWake(id);if(!row||!['accepted','unknown'].includes(row.state))return publicWake(row);
+  let row=store.readWake(id);if(row?.state==='submitted')row=store.updateWake(id,row.version,{state:'unknown',detail:'Continuation receipt was lost. Reconciliation never submits it again.'});if(!row||!['accepted','unknown'].includes(row.state))return publicWake(row);
   await consent();return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{
    await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);
    if((await rpc('status.get'))?.runtimeId!==row.proof.runtimeId)throw Error('Recovery runtime changed; reservation retained.');

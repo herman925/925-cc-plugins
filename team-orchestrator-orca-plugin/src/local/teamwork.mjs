@@ -125,6 +125,6 @@ export function createWorkService({store,rpc,userData,consent}){
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readCurrentWork(prepared.work.id)):store.readCurrentWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readCurrentWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readCurrentWork(id);if(!work||work.recoveryRequestId||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},
-  async reconcile(){for(const work of store.listCurrentWorks())if(work.status!=='completed'&&work.input.state!=='not_sent'&&work.run.state!=='fenced')await this.check(work.id);}
+  async reconcile(){for(const work of store.listCurrentWorks())if(work.status!=='completed'&&(work.recoveryRequestId||work.input.state!=='not_sent')&&work.run.state!=='fenced')await this.check(work.id);}
  };
 }
