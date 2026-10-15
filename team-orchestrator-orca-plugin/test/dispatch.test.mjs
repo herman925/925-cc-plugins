@@ -37,9 +37,9 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   calls.push(method);
   if(method==='status.get')return {runtimeId:'runtime-one',capabilities:['orchestration.contract.v1','agent-session.structured.v1','terminal.prompt-delivery.v1','agent.launch.v2','agent.launch.replay-required.v1']};
   if(method==='worktree.show')return {worktree:{id:scope.workspaceId,hostId:'local'}};
-  if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:codex_head'};
-  if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'codex_head',worktreeId:scope.workspaceId}};
-  if(method==='agentSession.history')return {ok:true,page:{sessionId:'codex_head',fence:7,submissions:[],items:[]}};
+  if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
+  if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
+  if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
   if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
   if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
@@ -66,24 +66,38 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  const actor=params=>kind==='structured'?{...params,__orcaCallerOrcaSessionId:'codex_head'}:Object.fromEntries(Object.entries(params).map(([k,v])=>[['from','callerTerminalHandle','terminal'].includes(k)?k:k,['from','callerTerminalHandle'].includes(k)?{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}:v]));
  const from=kind==='structured'?'orca_session_id:codex_head':'term-head';
  const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params)),'completed',JSON.stringify(result));
- const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false}={})=>{
+ const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId}={})=>{
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
-  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.'});
+  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
   db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
  };
  const start=permit=>{
-  const id='dispatch-'+permit.nativeTaskId;
+  const id='dispatch-'+permit.nativeTaskId,chat=Boolean(permit.startParams.terminal?.startsWith('orca_session_id:')),handle=chat?permit.startParams.terminal:'structworker_child',pane=chat?null:'child-tab:child-leaf';
   const hostScope={kind:'local',hostId:'local'};
-  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,'structworker_child','child-tab:child-leaf','claude_child','child-instance',JSON.stringify(hostScope),'dispatched',1);
-  db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run(id,scope.workspaceId,'structworker_child','ready','runtime-one',JSON.stringify({resolvedWorktreeId:scope.workspaceId,agent:workerAgent,worktree:scope.workspaceId}));
+  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,'claude_child',chat?null:'child-instance',JSON.stringify(hostScope),'dispatched',1);
+  db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run(id,scope.workspaceId,handle,'ready','runtime-one',JSON.stringify({resolvedWorktreeId:scope.workspaceId,agent:workerAgent,worktree:scope.workspaceId}));
   db.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
   receipt('start-'+permit.nativeTaskId,'orchestration.workerStart',{...permit.startParams,from,devMode:false},{runId:'run-head',taskId:permit.nativeTaskId,dispatchId:id,state:'ready'});
   return id;
  };
  t.after(async()=>{db.close();store.close();await rm(profile,{recursive:true,force:true});});
- return {profile,get store(){return store;},team,member,work,get works(){return works;},rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;},async restart(){store.close();store=await openTeamStore({userData:profile});works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});}};
+ const complete=attempt=>{
+  const reportId='report-'+attempt.nativeTaskId,d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(attempt.dispatchId);
+  db.prepare("UPDATE dispatch_contexts SET status='completed' WHERE id=?").run(attempt.dispatchId);
+  db.prepare("UPDATE worker_dispatches SET state='succeeded' WHERE dispatch_id=?").run(attempt.dispatchId);
+  db.prepare("UPDATE tasks SET status='completed',result='Original execution result' WHERE id=?").run(attempt.nativeTaskId);
+  db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome:'succeeded'}));
+  db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:'+reportId,attempt.dispatchId,attempt.nativeTaskId,'run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome:'succeeded',reportId:'worker_report:'+reportId}));
+ };
+ const review=(attempt,{decision='accept',forged=false,patch={},requestId='review-'+attempt.id}={})=>{
+  const value={protocol:'team-review/v1',workId:work.id,token:attempt.token,generation:attempt.generation,taskKey:attempt.taskKey,attemptId:attempt.id,nativeTaskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,reviewToken:attempt.reviewToken,reviewerMemberId:head.id,decision,evidenceRefs:[attempt.evidenceId],summary:'Checked result and validation.',...patch};
+  const result=JSON.stringify(value),task={...db.prepare('SELECT * FROM tasks WHERE id=?').get(attempt.nativeTaskId),result};
+  db.prepare('UPDATE tasks SET result=? WHERE id=?').run(result,attempt.nativeTaskId);
+  receipt(requestId,'orchestration.taskUpdate',{id:task.id,status:'completed',result,run:'run-head',callerTerminalHandle:from},{task},forged);
+ };
+ return {complete,review,profile,get store(){return store;},team,member,work,get works(){return works;},rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;},async restart(){store.close();store=await openTeamStore({userData:profile});works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});}};
 }
 test('genuine supervisor intent commits admission before native member start and records execution pending acceptance',async t=>{
  const {createDispatchService}=await import('../src/local/dispatch.mjs');
@@ -210,4 +224,69 @@ test('an observed native start after app reservation but before permit is fenced
  const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works});
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));inject=true;await service.check(f.work.id);
  const row=f.store.listDispatches(f.work.id)[0];assert.equal(inject,false);assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+});
+
+test('supervisor acceptance alone releases an application dependency and survives restart with original result',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ const make=()=>createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});let service=make();
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});
+ f.createIntent(protocol);await service.check(f.work.id);let first=f.store.listDispatches(f.work.id)[0];
+ f.createIntent(protocol,{taskId:'dependent',taskKey:'dependent',memberId:f.team.members[2].id,dependencies:[first.taskKey]});
+ f.complete(first);await service.check(f.work.id);first=f.store.listDispatches(f.work.id)[0];
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(first.status,'pending_acceptance');
+ f.review(first);await service.check(f.work.id);await service.check(f.work.id);
+ first=f.store.listDispatches(f.work.id)[0];assert.equal(first.status,'accepted');assert.equal(first.result,'Original execution result');assert.equal(first.review.decision,'accept');
+ assert.equal(f.store.listDispatches(f.work.id).length,2);
+ await f.restart();service=make();await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].review.requestId,'review-'+first.id);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,2);
+});
+for(const kind of ['structured','terminal'])test(`rework reuses the verified retained child session under a new attempt (${kind} supervisor)`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{kind});
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});
+ f.createIntent(protocol);await service.check(f.work.id);f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);
+ const first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id)[0].status,'rework');
+ f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
+ const attempts=f.store.listDispatches(f.work.id);assert.equal(attempts.length,2);assert.equal(attempts[1].status,'running');
+ assert.equal(attempts[1].startParams.terminal,'orca_session_id:claude_child');assert.equal(attempts[1].startParams.agent,undefined);
+ assert.equal(attempts[0].result,'Original execution result');assert.equal(attempts[1].outcome,undefined);
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[1].status,'running');
+ f.complete(attempts[1]);await service.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[1]);await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id)[1].status,'accepted');
+});
+for(const fault of ['wrong-author','wrong-work','wrong-attempt','missing-evidence','wrong-generation'])test(`${fault} review cannot accept native completion or release its dependent`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];
+ f.createIntent(protocol,{taskId:'dependent',taskKey:'dependent',dependencies:[row.taskKey]});
+ const patch={'wrong-work':{workId:'another-work'},'wrong-attempt':{attemptId:'obsolete'},'missing-evidence':{evidenceRefs:[]},'wrong-generation':{generation:4}}[fault]??{};
+ f.review(row,{forged:fault==='wrong-author',patch});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.store.listDispatches(f.work.id)[0].status,'pending_acceptance');assert.equal(f.store.listDispatches(f.work.id)[0].result,'Original execution result');
+});
+test('conflicting late decision cannot replace prior review, finish rework or permit a duplicate',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ const make=()=>createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});let service=make();
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];
+ f.review(first,{decision:'rework'});await service.check(f.work.id);await f.restart();service=make();
+ f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
+ f.review(first,{requestId:'late-conflict'});await service.check(f.work.id);await service.check(f.work.id);
+ const rows=f.store.listDispatches(f.work.id);assert.equal(rows.length,2);assert.equal(rows[0].status,'rework');assert.equal(rows[1].status,'running');assert.equal(rows[1].result,undefined);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,2);
+});
+test('unverifiable retained session keeps rework reserved and never falls back to fresh launch',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);let unavailable=false;
+ const rpc=async(method,...args)=>{if(unavailable&&method==='orchestration.partyLocation'&&args[0].address==='orca_session_id:claude_child')return {location:null,lost:'chat'};return f.rpc(method,...args);};
+ const service=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await service.check(f.work.id);
+ unavailable=true;f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
+ assert.match(f.store.readDispatchProtocol(f.work.id).detail,/closed|unverified/);
 });
