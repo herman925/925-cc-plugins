@@ -1,3 +1,4 @@
+import {WORKER_RULES} from '../src/dispatch.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -42,8 +43,8 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
   if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
-  if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
-  if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks').all()};
+  if(method==='orchestration.runShow')return {run:db.prepare('SELECT * FROM runs WHERE id=?').get(params.id)};
+  if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks WHERE run_id=?').all(params.run)};
   if(method==='settings.get')return {settings:{}};
   if(method==='preflight.detectAgents')return ['codex','claude'];
   if(method==='agentSession.createSupport')return {supported:true};
@@ -68,7 +69,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
  const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params)),'completed',JSON.stringify(result));
  const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId}={})=>{
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
-  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',writeScope:[],dependencies,...(previousAttemptId?{previousAttemptId}:{})});
+  const spec=JSON.stringify({protocol:'team-dispatch/v1',workerRules:WORKER_RULES,workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',writeScope:[],dependencies,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
   db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
@@ -89,7 +90,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   db.prepare('UPDATE dispatch_contexts SET status=? WHERE id=?').run(outcome==='succeeded'?'completed':'failed',attempt.dispatchId);
   db.prepare('UPDATE worker_dispatches SET state=? WHERE dispatch_id=?').run(outcome,attempt.dispatchId);
   db.prepare("UPDATE tasks SET status=?,result='Original execution result' WHERE id=?").run(outcome==='succeeded'?'completed':'failed',attempt.nativeTaskId);
-  db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome}));
+  db.prepare('INSERT INTO messages(id,run_id,from_handle,sender_pane_key,type,body,payload) VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome}));
   db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:'+reportId,attempt.dispatchId,attempt.nativeTaskId,'run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome,reportId:'worker_report:'+reportId}));
  };
  const review=(attempt,{decision='accept',forged=false,patch={},requestId='review-'+attempt.id}={})=>{
