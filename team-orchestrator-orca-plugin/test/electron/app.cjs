@@ -12,6 +12,7 @@ app.on('window-all-closed', () => {}); // Keep the fixture host alive while its 
 app.setPath('appData', __dirname + '/redirected-app-data');
 app.setPath('userData', __dirname + '/redirected-runtime-profile');
 const KEY = 'herman925.team-orchestrator';
+const questionSends = new Map(), notifications = [];
 const data = new Map(); const leases = new Map(); const pending = new Map();
 let child; let nextId = 0; let enabled = true; let admitted = true; let start;
 const mainFrame = event => assert.equal(event.senderFrame, event.sender.mainFrame, 'must preserve genuine main-frame IPC');
@@ -29,6 +30,7 @@ function startWorker() {
           let result;
           if (message.method === 'storage.get') result = { value: data.get(key) ?? null };
           else if (message.method === 'storage.set') { data.set(key, value); result = { ok: true }; }
+          else if(message.method==='notifications.show'){assert.ok(message.params.title.length<=120);notifications.push(message.params);result={delivered:true};}
           else throw Error('Unknown host method');
           child.send({ type: 'hostResult', id: message.id, value: result });
         } catch (error) { child.send({ type: 'hostResult', id: message.id, error: error.message }); }
@@ -78,6 +80,10 @@ function dispatchInput(text, params, envelope) {
     const terminal = work.instance.kind === 'terminal';
     nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId, work.run.id, spec, 'ready', null, terminal ? work.instance.handle : null, terminal ? work.instance.paneKey : null, terminal ? work.instance.incarnationId : null, terminal ? wire.generation : null);
     nativeReceipt(work, 'create-' + work.id, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task: { id: taskId, run_id: work.run.id, spec, status: 'ready' } });
+    const questionSpec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:wire.token,generation:wire.generation,appQuestionId:'fixture-question',summary:'Choose fixture scope',options:['Focused','Full'],blockingTaskKeys:[]});
+    const questionId='question-'+work.id;
+    nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(questionId,work.run.id,questionSpec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.incarnationId:null,terminal?wire.generation:null);
+    nativeReceipt(work,'question-create-'+work.id,'orchestration.taskCreate',{spec:questionSpec,run:work.run.id,callerTerminalHandle:from},{task:{id:questionId,run_id:work.run.id,spec:questionSpec}});
     assert.equal(nativeDb.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts WHERE task_id=?').get(taskId).n, 0, 'supervisor waits for committed admission');
   } else {
     const attempt = savedPrivate('dispatch').find(row => row.id === wire.attemptId);
@@ -189,6 +195,13 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   else if (method === 'agentSession.history') result = { ok: true, page: { sessionId: params.sessionId, fence: 7, items: [], submissions: [], ...history.get(params.sessionId) } };
   else if (method === 'agentSession.send' || method === 'terminal.send') {
     const text = params.body?.blocks?.[0]?.text ?? params.text;
+    if(text?.startsWith('TEAM_USER_ANSWER\n')){
+      assert.equal(transport,'socket');assert.equal(params.body?.role??'user','user');assert.equal(params.from,undefined);
+      const wire=JSON.parse(text.slice(text.indexOf('\n')+1)),q=savedPrivate('question').find(q=>q.workId===wire.workId&&q.id===wire.appQuestionId),answer=q.answers.find(a=>a.id===wire.answerId),work=savedWorks().find(w=>w.id===wire.workId);
+      assert.equal(answer.state,'sending','answer committed before native user input');assert.deepEqual(answer.nativeSend.params,params);assert.equal(questionSends.has(answer.id),false);questionSends.set(answer.id,wire.workId);
+      const operationId=params.envelope?.clientOperationId??envelope.orchestrationRequestId;
+      return params.body?{ok:true,fence:7,value:{clientMessageId:operationId,submission:{dispatchState:'accepted'}}}:{send:{handle:params.terminal,accepted:true,prompt:{requestId:operationId,processIncarnation:work.instance.incarnationId}}};
+    }
     if (text?.startsWith('TEAM_DISPATCH_')) {
       assert.equal(transport, 'socket', 'dispatch protocol uses ordinary native local-user input');
       assert.equal(params.body?.role ?? 'user', 'user');
@@ -366,6 +379,9 @@ app.whenReady().then(async () => {
       assert.equal(work.tasks[0].outcome, 'succeeded'); assert.match(work.tasks[0].result, /completed inspection/);
       assert.equal(work.nativeSend, undefined); assert.equal(work.protocolToken, undefined);
     }
+    const answers=edited.works.map(work=>({workId:work.id,questionId:'fixture-question',questionRevision:1,answerId:'answer-'+work.id,body:'Focused',supplement:false}));
+    for(const input of answers){const result=await control('answerQuestion',input);const q=result.value.works.find(w=>w.id===input.workId).questions[0];assert.equal(q.status,'pending');assert.equal(q.answers[0].state,'accepted');assert.equal(q.answers[0].processed,'unconfirmed');await control('answerQuestion',input);}
+    assert.equal(questionSends.size,2);assert.equal(notifications.length,2,'one real host capability call per decision');
     // Independent scripted supervisors mutate native Tasks; product transport cannot taskUpdate.
     for(const attempt of savedPrivate('dispatch'))reviewNativeDispatch(attempt,attempt.workId===terminalWork.id?'accept':'rework');
     const reviewDeadline=Date.now()+8000;
@@ -398,6 +414,9 @@ app.whenReady().then(async () => {
     assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited), 'replay never overwrites the latest snapshot');
     assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle);
     assert.equal(launched.size, 2, 'worker restart cannot relaunch a bound member');
+    for(const input of answers){await control('answerQuestion',input);assert.equal((await control('load',{})).value.works.find(w=>w.id===input.workId).questions[0].answers.length,1);}
+    assert.equal(questionSends.size,2,'answer replay after restart never resends native input');
+    assert.equal(notifications.length,2,'reopening and restart never repeats notification');
     for (const request of objectiveRequests) assert.equal((await control('submitWork', request)).work.id, edited.works.find(work => work.teamId === request.teamId).id);
     assert.equal(objectiveSends.size, 2, 'original native input identities remain stable');
     for(const work of (await control('load',{})).value.works){assert.equal(work.tasks[0].status,work.id===terminalWork.id?'accepted':'rework');assert.match(work.tasks[0].result,/completed inspection/);}
@@ -412,7 +431,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation and restart input deduplication; durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation and restart input deduplication; durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });
