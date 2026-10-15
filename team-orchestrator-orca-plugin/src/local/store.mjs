@@ -99,7 +99,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         }
         const next = readSnapshot();
         if (next.revision !== input.expectedRevision) fail('Another panel changed the team data. Reload saved teams before trying again; your changes were not saved.');
-        if(input.teamId&&readPrivate(`next-goal:${input.teamId}`))fail('A queued-goal transition is reserved; finish it before changing team configuration.');
+        if(op!=='setAdmission'&&input.teamId&&readPrivate(`next-goal:${input.teamId}`))fail('A queued-goal transition is reserved; finish it before changing team configuration.');
         action(next);
         next.revision++;
         validatePersistentState(next);
