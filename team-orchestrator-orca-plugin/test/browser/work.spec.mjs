@@ -56,3 +56,16 @@ test('unknown input can discover its Run without resending the objective',async(
  await expect(panel(page).getByRole('button',{name:'Submit total objective'})).toHaveCount(0);
  expect(await page.evaluate(()=>window.bridgeCalls.filter(row=>['submitWork','retryObjective'].includes(row.params?.teamWorker?.args?.op)))).toHaveLength(0);
 });
+test('user reworks then accepts overall delivery and advances two durable queued objectives into new conversations',async({page})=>{
+ const ui=await prepared(page,'goal-lifecycle');
+ await ui.getByLabel('Total objective',{exact:true}).fill('First objective');await ui.getByRole('button',{name:'Submit total objective'}).click();
+ await expect(ui.getByRole('region',{name:'Overall delivery'})).toContainText('Audit delivered <script>');
+ for(const goal of ['Second objective','Third objective']){await ui.getByLabel('Queue a later objective').fill(goal);await ui.getByRole('button',{name:'Queue objective',exact:true}).click();await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');}
+ await ui.getByLabel('Requested corrections').fill('Include the missing comparison');await ui.getByRole('button',{name:'Request rework'}).click();
+ await expect(ui.getByRole('region',{name:'Overall delivery'})).toContainText('changes_requested');await expect(ui.getByRole('region',{name:'Queued objectives'})).toContainText('Second objective · queued');
+ await ui.getByRole('button',{name:'Check work evidence'}).click();await expect(ui.getByRole('region',{name:'Overall delivery'})).toContainText('Corrected audit <script>');
+ await ui.getByRole('button',{name:'Accept delivery'}).click();await expect(ui.getByRole('region',{name:'TeamWork'})).toContainText('Second objective');await expect(ui.getByRole('region',{name:'TeamWork'})).toContainText('Run: verified');
+ await ui.getByRole('button',{name:'Check work evidence'}).click();await ui.getByRole('button',{name:'Accept delivery'}).click();await expect(ui.getByRole('region',{name:'TeamWork'})).toContainText('Third objective');
+ await page.reload();await expect(panel(page).getByRole('region',{name:'TeamWork'})).toContainText('Third objective');await expect(panel(page).getByText('Accepted work history (2)')).toBeVisible();
+ expect(await page.evaluate(()=>window.bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='_decideWork'))).toBe(false);
+});

@@ -340,7 +340,7 @@ test('overall delivery requires native Head author proof and user decision; rewo
   const task={id,run_id:'run-head',spec,status:'ready'};f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);
   f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','create-'+id,'orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:forged?'forged':'codex_head'}),'completed',JSON.stringify({task}));
  };
- proposal('forged',true);await service.check(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery,undefined);
+ proposal('forged',true);await service.check(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery,undefined);f.db.prepare('DELETE FROM tasks WHERE id=?').run('forged');
  proposal('delivery-one');await service.check(f.work.id);await service.check(f.work.id);
  let w=f.store.readSnapshot().works[0];assert.equal(w.delivery.id,'delivery-one');assert.equal(w.status,'awaiting_acceptance');assert.equal(notices.length,1);
  f.store.enqueueGoal({teamId:f.team.id,requestId:'next',expectedRevision:f.store.readSnapshot().revision,objective:'Next goal'});

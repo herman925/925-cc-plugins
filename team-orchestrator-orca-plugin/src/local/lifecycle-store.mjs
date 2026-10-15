@@ -1,3 +1,4 @@
+import { initialMembers } from '../launch.mjs';
 import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>{throw Error(message);};
@@ -8,7 +9,6 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
   const reasons=[];const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
   for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
-  for(const event of db.prepare("SELECT json FROM receipts WHERE id LIKE 'question-event:%'").all().map(r=>JSON.parse(r.json)))if(event.workId===work.id&&event.kind==='native-fault')reasons.push('Native permission or login requires confirmation');
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
  };
@@ -56,7 +56,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
     db.prepare('DELETE FROM receipts WHERE id=?').run(`active-work:${w.teamId}`);
     w.closedAt=event.recordedAt;w.handoff={summary:d.summary,evidenceRefs:d.evidenceRefs,deliveryId:d.id};
     const goal=listGoals(w.teamId).find(g=>g.status==='queued');
-    if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequestId=randomUUID();goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=w.handoff;putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
+    if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=w.handoff;putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
     state.revision++;write(state);
    }
    persistWork(w);putPrivate(key,event);return event;

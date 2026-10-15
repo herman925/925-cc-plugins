@@ -97,7 +97,17 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
     reviews.push({attemptId:attempt.id,requestId:proof.request_id,payloadHash:proof.payload_hash,reviewerMemberId:review.reviewerMemberId,decision:review.decision,evidenceRefs:review.evidenceRefs,summary:review.summary,generation:protocol.generation});
    }
   }
-  return {state:'verified',intents,rejected,observations,reviews,deliveries};
+  const unmanaged=[];
+  for(const task of tasks){
+   if(admitted.some(a=>a.nativeTaskId===task.id))continue;
+   const spec=parse(task.spec),proof=receipts('orchestration.taskCreate',task.id);
+   const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
+   const control=['team-delivery/v1','team-questions/v1'].includes(spec?.protocol)&&spec.workId===work.id&&spec.token===protocol.token&&spec.generation===protocol.generation&&proof.length===1&&proof[0].payload_hash===expected&&proof[0].value?.task?.spec===task.spec&&proof[0].value.task.run_id===work.run.id&&(owner.kind!=='terminal'||task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.incarnationId&&task.created_by_run_generation===protocol.generation)&&!db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id);
+   if(!control)unmanaged.push(task.id);
+  }
+  // Every native Dispatch in this Run must belong to an exact app-admitted attempt.
+  for(const d of db.prepare('SELECT id FROM dispatch_contexts WHERE run_id=?').all(work.run.id))if(!admitted.some(a=>a.dispatchId===d.id))unmanaged.push(d.id);
+  return {state:'verified',intents,rejected,observations,reviews,deliveries,unmanaged};
  }catch(error){return {state:'unverified',detail:error.code?'Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime.':String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
  finally{if(db){try{db.exec('ROLLBACK');}catch{}db.close();}}
 }

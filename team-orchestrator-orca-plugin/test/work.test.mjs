@@ -201,3 +201,19 @@ test('queued goals are durable, idempotent and do not consume a preparation sess
  await f.restart();assert.deepEqual(f.store.listGoals(f.team.id).map(row=>row.objective),['Second goal','Third goal']);assert.notEqual(second.id,first.id);
  assert.throws(()=>f.store.enqueueGoal({...input,objective:'Conflicting goal'}),/conflict/);
 });
+test('acceptance reserves two queued objectives in order and each consumes a fresh preparation and handoff',async t=>{
+ const f=await fixture(t),start=objective=>f.store.prepareWork({teamId:f.team.id,requestId:'first-work',expectedRevision:f.store.readSnapshot().revision,objective}).work;
+ let w=start('First objective');w=f.store.updateWork(w.id,w.version,{run:{state:'verified',id:'first-run',consumerGeneration:1},instance:{kind:'structured',sessionId:'session-head',liveSessionId:'session-head',fence:7},status:'active'});
+ for(const [requestId,objective] of [['second-goal','Second objective'],['third-goal','Third objective']])f.store.enqueueGoal({teamId:f.team.id,requestId,objective,expectedRevision:f.store.readSnapshot().revision});
+ const accept=()=>{f.store.recordDelivery(w.id,{id:'delivery-'+w.id,previousDeliveryId:null,summary:'Approved handoff',evidenceRefs:['artifact:report'],attemptIds:[],generation:1,proof:{requestId:'native-proof',payloadHash:'a'.repeat(64)}});w=f.store.readWork(w.id);return f.store.decideWork({workId:w.id,requestId:'accept-'+w.id,deliveryId:'delivery-'+w.id,expectedWorkVersion:w.version,decision:'accept'});};
+ accept();const old=w.id,goal=f.store.nextGoal(f.team.id);
+ assert.throws(()=>f.store.prepareWork({teamId:f.team.id,requestId:'bypass-queue',expectedRevision:f.store.readSnapshot().revision,objective:'Other'}),/queued|transition/i);
+ assert.throws(()=>f.store.updateRole({teamId:f.team.id,memberId:f.head.id,requestId:'race-role',expectedRevision:f.store.readSnapshot().revision,brief:'Changed',habits:'',collaboration:''}),/transition/i);
+ const fresh=f.store.prepareOperation({teamId:f.team.id,memberId:f.head.id,configVersion:1,requestId:goal.launchRequests[f.head.id]},{scope:f.scope,nativeRequest:nativeLaunchIntent(f.team,f.head,f.scope),roleVersion:1,title:'Head',executionHostId:'local',runtimeId:'runtime-one'}).operation;
+ const patch={status:'created',kind:'structured',handle:'chat-second',sessionId:'session-second',briefAccepted:true};f.store.settleOperation(fresh.requestId,fresh.nativeRequest.operationId,{...patch,public:publicOperation({...fresh,...patch})});
+ w=f.store.prepareWork({teamId:f.team.id,requestId:goal.workRequestId,expectedRevision:f.store.readSnapshot().revision,objective:goal.objective}).work;
+ assert.equal(w.handoff.summary,'Approved handoff');assert.notEqual(w.id,old);assert.equal(w.binding.sessionId,'session-second');assert.equal(w.run.state,'unverified');assert.equal(f.store.nextGoal(f.team.id),null);assert.equal(f.store.listGoals(f.team.id)[1].status,'queued');
+ const {objectiveInstructions}=await import('../src/local/teamwork.mjs');assert.match(objectiveInstructions(w,f.team),/Approved handoff/);assert.match(objectiveInstructions(w,f.team),/folder:\/work/);
+ w=f.store.updateWork(w.id,w.version,{run:{state:'verified',id:'second-run',consumerGeneration:1},instance:{kind:'structured',sessionId:'session-second',liveSessionId:'session-second',fence:1},status:'active'});accept();assert.equal(f.store.nextGoal(f.team.id).objective,'Third objective');
+ await f.restart();assert.equal(f.store.listWorks().length,2);assert.equal(f.store.listWorks().filter(w=>w.status!=='completed').length,0);assert.notEqual(f.store.nextGoal(f.team.id).launchRequests[f.head.id],fresh.requestId);
+});
