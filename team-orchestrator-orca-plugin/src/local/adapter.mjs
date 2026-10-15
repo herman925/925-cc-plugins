@@ -1,4 +1,4 @@
-import { discoverCapabilities } from './capabilities.mjs';
+import { mediateOperation } from './native-broker.mjs';
 import { MAX_TEMPLATE_BYTES } from '../templates.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
@@ -42,27 +42,29 @@ export async function installAdapter(electron, { version, identity, internalKey 
       const message = call.params.teamWorker;
       const envelopeLimit = ['previewTemplate', 'importTemplate'].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 60000;
       if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       if (Object.keys(message.args ?? {}).some(key => !['op', 'params', 'workspaceId'].includes(key))) throw Error('Invalid public worker arguments.');
-      if (message.commandId === 'team.control' && message.args?.op === 'capabilities') {
-        if (!internalKey) throw Error('Native capability authority is unavailable; initialise the adapter again.');
+      if (message.commandId === 'team.control' && ['capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(message.args?.op)) {
+        if (!internalKey) throw Error('Native broker authority is unavailable; initialise the adapter again.');
         const invoke = args => originals.get(names[2])(event, { pluginKey: KEY, commandId: 'team.control', args: { ...args, internalKey } });
-        const prepared = await invoke({ op: '_capabilityScope', params: message.args.params });
         const runtime = handlers.get('runtime:call');
-        if (typeof runtime !== 'function') throw Error('The pinned runtime read channel is unavailable.');
+        if (typeof runtime !== 'function') throw Error('The pinned runtime channel is unavailable.');
+        const current = () => {
+          if (!isMainFrame(event) || leases.get(call.sessionToken) !== event.sender.id || handlers.get('runtime:call') !== runtime || ![...wrappers].every(([name, handler]) => handlers.get(name) === handler)) throw Object.assign(Error('Native broker authority expired.'), { code: 'authority_expired', authority: true });
+        };
+        const authority = async () => {
+          current();
+          const gate = await originals.get(names[1])(event, { ...call, params: {} });
+          if (!gate.ok) throw Object.assign(Error(gate.error || 'Native broker authority was refused.'), { code: gate.code ?? 'permission_denied', authority: true });
+          current();
+        };
         const rpc = async (method, params) => {
-          if (!isMainFrame(event) || leases.get(call.sessionToken) !== event.sender.id || handlers.get('runtime:call') !== runtime || ![...wrappers].every(([name, handler]) => handlers.get(name) === handler)) throw Object.assign(Error('Native capability authority expired.'), { code: 'authority_expired', authority: true });
-          const authority = await originals.get(names[1])(event, { ...call, params: {} });
-          if (!authority.ok) throw Object.assign(Error(authority.error || 'Native capability authority was refused.'), { code: authority.code ?? 'permission_denied', authority: true });
+          await authority();
           const response = await runtime(event, { method, ...(params === undefined ? {} : { params }) });
-          if (!response?.ok) throw Error('Host capability read unavailable.');
+          if (!response?.ok) throw Object.assign(Error(response?.error?.message || 'Native operation unavailable.'), { code: response?.error?.code ?? 'host_unavailable' });
           return response.result;
         };
-        const value = await discoverCapabilities(rpc, prepared.scope);
-        const finalGate = await originals.get(names[1])(event, { ...call, params: {} });
-        if (!finalGate.ok) throw Object.assign(Error(finalGate.error || 'Native capability read was refused.'), { code: finalGate.code ?? 'permission_denied', authority: true });
-        if (!isMainFrame(event) || leases.get(call.sessionToken) !== event.sender.id || handlers.get('runtime:call') !== runtime || ![...wrappers].every(([name, handler]) => handlers.get(name) === handler)) throw Object.assign(Error('Native capability authority expired.'), { code: 'authority_expired', authority: true });
-        return { ok: true, value: await invoke({ op: '_capabilityResult', params: { observationId: prepared.observationId, value } }) };
+        return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority });
       }
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;

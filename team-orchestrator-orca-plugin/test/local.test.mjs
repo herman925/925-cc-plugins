@@ -55,59 +55,6 @@ test('adapter binds only its panel, preserves consent/owner gates, captures desk
   await handlers.get('plugins:setEnabled')(event, { pluginKey: 'herman925.team-orchestrator', enabled: false });
   assert.equal(handlers.get('plugins:panelAction'), original);
 });
-async function executorFixture(t, { modern = true, failure, workspaceId = 'repo::/server/project' } = {}) {
-  const profile = await mkdtemp(join(tmpdir(), 'executor-')); const store = await openTeamStore({ userData: profile });
-  t.after(async () => { store.close(); await rm(profile, { recursive: true, force: true }); });
-  const data = { get: key => store.readReceipt(key) }; const calls = []; let creates = 0;
-  const host = { call: async () => { throw Error('Legacy KV access is forbidden'); } };
-  const cli = async args => {
-    calls.push(args);
-    if (args[0] === 'worktree') return { worktree: { id: workspaceId, displayName: 'Server', path: '/server/project', hostId: 'ssh:server' } };
-    if (args[0] === 'agent-context') return { commands: [{ command: modern ? 'agent launch' : 'terminal create', flags: ['shell'] }] };
-    if (args[1] === 'launch' || args[1] === 'create') { creates++; if (failure === 'create') throw new Error('transport unknown'); return modern ? { outcome: { handle: 'child-1' }, prompt: { outcome: 'handed-to-terminal' } } : { terminal: { handle: 'child-1' } }; }
-    if (args[1] === 'rename' && failure === 'rename') throw new Error('rename failed');
-    if (args[1] === 'show') return { terminal: { title: 'Squad/Head', executionHostId: 'ssh:server' } };
-    return {};
-  };
-  const scope = { workspaceId, executionHostId: 'ssh:server', kind: 'git', displayName: 'Server', workspaceKey: digest(JSON.stringify([workspaceId, 'ssh:server'])) };
-  const state = store.createTeam({ requestId: 'create', expectedRevision: 0, form: { ...DEFAULT_FORM, models: ['gpt-6.1-sol','default','default'], efforts: ['high','default','default'] } }, scope);
-  const team = state.teams[0];
-  store.beginLaunch({ requestId: 'begin', expectedRevision: 1, teamId: team.id, mode: 'on-demand' });
-  const executor = createExecutor(host, cli, { store });
-  const params = memberLaunch(team, team.members[0], scope.workspaceKey);
-  return { executor, store, data, calls, params, workspaceId, count: () => creates };
-}
-test('executor journals before background launch, preserves real handles, fences scope and replays without duplication', async t => {
-  const f = await executorFixture(t);
-  const request = { op: 'start', params: f.params, workspaceId: f.workspaceId };
-  const results = await Promise.all([f.executor.execute(request), f.executor.execute(request)]);
-  assert.ok(results.every(row => row.status === 'starting'));
-  await f.executor.settle();
-  const receipt = await f.executor.execute({ op: 'receipt', params: { requestId: f.params.requestId } });
-  assert.equal(receipt.handle, 'child-1'); assert.equal(receipt.briefAccepted, true); assert.equal(receipt.executionHostId, 'ssh:server');
-  assert.equal(f.calls[0][3], 'id:repo::/server/project');
-  await f.executor.execute(request); assert.equal(f.count(), 1);
-  await assert.rejects(f.executor.execute({ ...request, params: { ...f.params, agent: 'claude' } }), /conflicts/);
-  await assert.rejects(f.executor.execute({ ...request, params: { ...f.params, workspaceKey: 'a'.repeat(64) } }), /conflicts/);
-  assert.equal(f.count(), 1);
-  const restarted = createExecutor({}, async () => { throw Error('must not spawn'); }, { store: f.store });
-  assert.equal((await restarted.execute(request)).status, 'created');
-});
-for (const failure of ['create', 'rename']) test(`executor retains ${failure} failure evidence and never repeats the spawn`, async t => {
-  const f = await executorFixture(t, { failure }); const request = { op: 'start', params: f.params, workspaceId: f.workspaceId };
-  await f.executor.execute(request); await f.executor.settle();
-  const receipt = f.data.get('launch:' + f.params.requestId);
-  assert.equal(receipt.status, failure === 'create' ? 'unknown' : 'created');
-  assert.match(receipt.warning || receipt.error, new RegExp(failure === 'create' ? 'transport' : 'rename'));
-  await f.executor.execute(request); assert.equal(f.count(), 1);
-});
-test('legacy CLI creates a named agent carrying its initial prompt, with no send to existing terminals', async t => {
-  const f = await executorFixture(t, { modern: false });
-  await f.executor.execute({ op: 'start', params: f.params, workspaceId: f.workspaceId }); await f.executor.settle();
-  const call = f.calls.find(args => args[1] === 'create');
-  assert.equal(call[5], 'Squad/Head'); assert.match(call[7], /codex.*model_reasoning_effort=high/);
-  assert.ok(f.calls.every(args => args[1] !== 'send'));
-});
 test('POSIX startup quoting keeps hostile text in one inert prompt argument and detects Windows quoting', () => {
   const brief = 'quote \' " `danger` $(touch /tmp/should-never-exist) ; $HOME';
   const command = startupCommand({ agent: 'codex', model: 'test', brief });
@@ -127,22 +74,18 @@ test('CLI locates its installed entry and keeps newline prompt argv without shel
     await assert.rejects(run(['fail']), /permission denied/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-test('worker bridge requires echoed nonce, polls persisted receipt, and never retries unknown transport delivery', async () => {
-  let calls = []; const raw = async (_, { teamWorker: message }) => {
+test('worker bridge verifies nonce and sends one supervisor operation without retrying uncertain transport', async () => {
+  const calls = [];
+  const bridge = createWorkerBridge(async (_, { teamWorker: message }) => {
     calls.push(message.args.op);
     if (message.args.op === 'ping') return { nonce: message.nonce, ready: true, platform: 'darwin', workerPid: 7 };
-    if (message.args.op === 'start') return { status: 'starting' };
-    return { status: 'created', handle: 'actual-handle' };
-  };
-  const bridge = createWorkerBridge(raw, { nonce: () => 'nonce', spacingMs: 0, pollMs: 0 });
-  await assert.rejects(bridge.call('storage.get', {}), /connection/);
-  await bridge.connect(); assert.equal((await bridge.call('terminal.createAgent', { requestId: 'id' })).handle, 'actual-handle');
-  assert.deepEqual(calls, ['ping', 'start', 'receipt']);
+    throw Error('unknown transport');
+  }, { nonce: () => 'nonce', spacingMs: 0 });
+  await bridge.connect();
+  await assert.rejects(bridge.call('launchSupervisor', { requestId: 'id' }), /unknown transport/);
+  assert.deepEqual(calls, ['ping', 'launchSupervisor']);
   const bad = createWorkerBridge(async () => ({ ready: true, platform: 'linux', workerPid: 7 }), { nonce: () => 'nonce', spacingMs: 0 });
   await assert.rejects(bad.connect(), /not verified/);
-  let mutations = 0;
-  const lost = createWorkerBridge(async (_, { teamWorker: m }) => { if (m.args.op === 'ping') return { nonce: m.nonce, ready: true, platform: 'linux', workerPid: 7 }; mutations++; throw Error('unknown transport'); }, { nonce: () => 'n', spacingMs: 0 });
-  await lost.connect(); await assert.rejects(lost.call('terminal.createAgent', { requestId: 'id' }), /unknown transport/); assert.equal(mutations, 1);
 });
 
 test('adapter binds an already open panel without triggering the refresh that revokes worker calls', async () => {

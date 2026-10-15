@@ -77,31 +77,7 @@ test('executor binds confirmed folder/SSH scope, ignores later focus, and never 
  assert.equal(selectors.at(-1), 'folder:/srv/project');
  await assert.rejects(executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: 'forged', expectedRevision: 1, requestId: 'bad' } }), /Confirm/);
 });
-test('saved launch follows the bound scope after focus changes and receipts survive restart independently of role edits', async t => {
- const { createExecutor } = await import('../src/local/executor.mjs');
- const { memberLaunch } = await import('../src/launch.mjs');
- const f = await fixture(t); const launched = [];
- const cli = async args => {
-   if (args[0] === 'worktree') return { worktree: { id: 'folder:/private/project', hostId: 'local', displayName: 'Documents' } };
-   if (args[0] === 'agent-context') return { commands: [{ command: 'agent launch' }] };
-   if (args[1] === 'launch') { launched.push(args); return { outcome: { handle: 'actual-head' }, prompt: { outcome: 'journaled' } }; }
-   return { terminal: { title: 'Squad/Head', executionHostId: 'local' } };
- };
- const executor = createExecutor({}, cli, { store: f.store });
- let state = f.store.createTeam({ requestId: 'team', expectedRevision: 0, form: DEFAULT_FORM }, scope);
- const team = state.teams[0];
- state = (await executor.execute({ op: 'beginLaunch', params: { teamId: team.id, mode: 'on-demand', requestId: 'begin', expectedRevision: 1 } })).value;
- const params = memberLaunch(team, team.members[0], scope.workspaceKey);
- await executor.execute({ op: 'start', params, workspaceId: 'another-focus' }); await executor.settle();
- assert.equal(launched.length, 1); assert.equal(launched[0][5], 'folder:/private/project');
- await f.restart();
- const saved = f.store.readSnapshot().teams[0];
- assert.equal(saved.launch.members[team.members[0].id].terminalId, 'actual-head');
- assert.equal(saved.launch.configVersion, 1);
- const edited = f.store.updateRole({ requestId: 'after-launch', expectedRevision: f.store.readSnapshot().revision, teamId: team.id, memberId: team.members[0].id, brief: 'A future role', habits: '', collaboration: '' });
- assert.equal(edited.teams[0].configVersion, 2); assert.equal(edited.teams[0].launch.configVersion, 1);
- assert.equal(f.store.readTeamVersion(team.id, 1).members[0].brief, team.members[0].brief);
-});
+
 test('a symlinked plugin data directory cannot write outside the verified profile', async t => {
  const { symlink, readdir } = await import('node:fs/promises');
  const root = await mkdtemp(join(tmpdir(), 'team-path-'));

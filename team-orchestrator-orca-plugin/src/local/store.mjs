@@ -90,8 +90,51 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.prepare('INSERT INTO team_versions VALUES (?,?,?)').run(team.id, team.configVersion, JSON.stringify(team));
       for (const member of team.members) db.prepare('INSERT OR IGNORE INTO role_versions VALUES (?,?,?)').run(member.id, member.roleVersion, JSON.stringify({ brief: member.brief, habits: member.habits, collaboration: member.collaboration }));
     };
+    const readOperation = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`operation:${id}`); return row ? JSON.parse(row.json) : null; };
+    const persistOperation = operation => {
+      db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`operation:${operation.requestId}`, JSON.stringify(operation));
+      const next = readSnapshot(), team = next.teams.find(row => row.id === operation.teamId);
+      if (!team) fail('Operation team is missing.');
+      team.launch ??= { native: true, status: 'sending', mode: 'on-demand', workspaceKey: team.scope.workspaceKey, configVersion: operation.configVersion, members: {} };
+      team.launch.members[operation.memberId] = { ...operation.public, status: operation.status, requestId: operation.requestId, ...(operation.handle ? { terminalId: operation.handle, title: operation.title, briefAccepted: operation.briefAccepted === true, executionHostId: operation.executionHostId } : {}), ...(operation.error ? { error: operation.error } : {}) };
+      team.launch.status = operation.status === 'created' ? 'accepted' : 'unknown';
+      next.revision++; validatePersistentState(next); write(next);
+    };
     let closed = false;
     return {
+      readOperation,
+      prepareOperation(input, intent) {
+        const digest = fingerprint(input);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const previous = readOperation(input.requestId);
+          if (previous) {
+            if (previous.fingerprint !== digest) fail('Request identity conflicts with another launch input.');
+            db.exec('COMMIT'); return { operation: previous, fresh: false };
+          }
+          const team = readSnapshot().teams.find(row => row.id === input.teamId);
+          const member = team?.members.find(row => row.id === input.memberId);
+          if (!member || member.boss || team.configVersion !== input.configVersion) fail('Launch requires the current saved highest supervisor configuration.');
+          const bindingKey = `binding:${input.memberId}`;
+          if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
+          const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', createdAt: new Date().toISOString() };
+          db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId }));
+          persistOperation(operation);
+          db.exec('COMMIT'); return { operation, fresh: true };
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+      },
+      settleOperation(requestId, nativeOperationId, patch) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const operation = readOperation(requestId);
+          if (!operation || operation.nativeRequest.operationId !== nativeOperationId) fail('Launch settlement does not match its operation.');
+          // An ambiguous late response cannot erase a durable created identity.
+          if (operation.status === 'created' && patch.status === 'unknown') { db.exec('COMMIT'); return operation; }
+          if (operation.handle && patch.handle && (operation.kind !== patch.kind || (operation.kind === 'structured' ? operation.sessionId !== patch.sessionId : operation.handle !== patch.handle && (!operation.paneKey || operation.paneKey !== patch.paneKey)))) fail('Launch settlement conflicts with its saved identity.');
+          Object.assign(operation, patch);
+          persistOperation(operation); db.exec('COMMIT'); return operation;
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+      },
       readSnapshot,
       replay(op, input) {
         readSnapshot();

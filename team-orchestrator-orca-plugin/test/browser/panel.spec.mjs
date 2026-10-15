@@ -25,7 +25,7 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   expect(await page.locator('#panel').getAttribute('sandbox')).toBe('allow-scripts');
   const sends = await page.evaluate(() => bridgeCalls.filter(call => call.action === 'terminal.sendText'));
   expect(sends).toHaveLength(0); // Reload resets the test host's call log; the persisted request remains accepted.
-  await expect(panel(page).locator('.team-card')).toContainText('actual tab receipt');
+  await expect(panel(page).locator('.team-card')).toContainText('actual session receipt');
   expect(errors).toEqual([]);
 });
 test('CEO flow, per-level choices, independent same-name teams and settings persistence', async ({ page }) => {
@@ -40,7 +40,6 @@ test('CEO flow, per-level choices, independent same-name teams and settings pers
   await ui.getByRole('combobox', { name: 'CEO model' }).press('Tab');
   await ui.getByRole('combobox', { name: 'CEO effort' }).selectOption('high');
   await ui.getByRole('combobox', { name: 'Heads CLI' }).selectOption('claude');
-  await ui.locator('[data-launch-mode]').selectOption('all');
   await createAndLaunch(ui);
   await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 25000 });
   await expect(ui.getByRole('heading', { name: '@Organisation' })).toBeVisible();
@@ -94,38 +93,40 @@ for (const width of [320, 960]) {
     await expect(ui.locator('.org-chart .org-node')).toHaveCount(21);
   });
 }
-test('all-at-create opens four named Codex tabs without selecting or messaging a coordinator', async ({ page }) => {
-  await page.goto('/'); const ui = panel(page);
+test('Launch opens only the real highest supervisor and can focus its verified session', async ({ page }) => {
+  await page.goto('/?mode=permission'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
-  await expect(ui.getByRole('combobox', { name: 'Coordinator agent tab' })).toHaveCount(0);
-  await ui.locator('[data-launch-mode]').selectOption('all');
   await createAndLaunch(ui);
-  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText('Orca created 4 tab(s)', { timeout: 25000 });
-  const calls = await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'start').map(call => ({ action: 'terminal.createAgent', params: call.params.teamWorker.args.params })));
-  expect(calls).toHaveLength(4);
-  expect(calls.every(call => call.action === 'terminal.createAgent')).toBe(true);
-  expect(calls.map(call => call.params.title)).toEqual(['Squad/Head', 'Squad/Worker-1', 'Squad/Worker-2', 'Squad/Worker-3']);
-  expect(calls.every(call => call.params.agent === 'codex')).toBe(true);
-  await expect(ui.locator('.team-card')).toContainText('4 actual tab receipts');
-  await expect(ui.getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
+  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText("Orca created Head's terminal session");
+  expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'launchSupervisor').length)).toBe(1);
+  await expect(ui.locator('.team-card')).toContainText('1 actual session receipt');
+  await expect(ui.locator('.team-card')).toContainText('Observation: permission');
+  await ui.getByRole('button', { name: 'Open verified session' }).click();
+  await expect(ui.getByText('Opened the verified native session.')).toBeVisible();
 });
 test('native launch requires no pre-existing agent tabs', async ({ page }) => {
   await page.goto('/?mode=no-tabs'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
   await createAndLaunch(ui);
-  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText('Orca created 1 tab(s)', { timeout: 25000 });
+  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText("Orca created Head's terminal session", { timeout: 25000 });
 });
-test('partial launch preserves the head handle and stops the remaining workers', async ({ page }) => {
-  await page.goto('/?mode=partial'); const ui = panel(page);
-  await ui.getByRole('button', { name: /Squad/ }).click();
-  await ui.locator('[data-launch-mode]').selectOption('all');
-  await createAndLaunch(ui);
-  await expect(ui.getByRole('alert')).toContainText('no automatic retry', { timeout: 25000 });
-  await expect(ui.locator('.team-card')).toContainText('created-member-1');
-  expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'start').length)).toBe(2);
+test('unknown launch remains reserved after reload and never automatically creates a second session', async ({ page }) => {
+  await page.goto('/?mode=launch-unknown'); const ui = panel(page);
+  await ui.getByRole('button', { name: /Squad/ }).click(); await createAndLaunch(ui);
+  await expect(ui.locator('.team-card')).toContainText('unknown');
+  await expect(ui.getByRole('button', { name: 'Check saved launch' })).toBeVisible();
   await page.reload();
-  await expect(panel(page).locator('.team-card')).toContainText('created-member-1');
-  await expect(panel(page).getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
+  await expect(ui.locator('.team-card')).toContainText('unknown');
+  await expect(ui.getByRole('button', { name: 'Launch this team' })).toHaveCount(0);
+  expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'launchSupervisor').length)).toBe(0);
+});
+test('structured supervisor keeps prompt acceptance separate from provider observation and opens its exact chat', async ({ page }) => {
+  await page.goto('/?mode=structured'); const ui = panel(page);
+  await ui.getByRole('button', { name: /Squad/ }).click(); await createAndLaunch(ui);
+  await expect(ui.locator('.team-card')).toContainText('structured');
+  await expect(ui.locator('.team-card')).toContainText('Input: journaled · Observation: unknown');
+  await ui.getByRole('button', { name: 'Open verified session' }).click();
+  await expect(ui.getByText('Opened the verified native session.')).toBeVisible();
 });
 
 test('connection test verifies a nonce and sends only worker envelopes', async ({ page }) => {

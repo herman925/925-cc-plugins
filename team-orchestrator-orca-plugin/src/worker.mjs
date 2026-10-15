@@ -38,7 +38,7 @@ export default function activate(orca) {
     storeProfile = report.cliPaths.userData;
     storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
     executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
-      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey }))
+      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile }))
       .catch(error => { executorPromise = null; throw error; });
     return (await executorPromise).execute(args);
   });

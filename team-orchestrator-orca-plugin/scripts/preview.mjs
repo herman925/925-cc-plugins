@@ -1,4 +1,4 @@
-import { discoverCapabilities } from '../src/local/capabilities.mjs';
+import { mediateOperation } from '../src/local/native-broker.mjs';
 // Development/test host only: real plugin persistence/service, fake Orca boundary.
 import http from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -13,30 +13,42 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let creates = 0; let title = ''; let host = mode === 'capabilities-local' ? 'local' : 'ssh:demo';
+    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'capabilities-local' ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
-      if (args[0] === 'agent-context') return { commands: [{ command: 'agent launch' }] };
-      if (args[1] === 'launch') { creates++; if (mode === 'partial' && creates === 2) throw Error('Agent launch outcome unknown'); return { outcome: { handle: `created-member-${creates}` }, prompt: { outcome: 'journaled' } }; }
-      if (args[1] === 'rename') title = args[5];
-      return { terminal: { title, executionHostId: host } };
+      throw Error('CLI launch fallback is forbidden');
     };
     const internalKey = `fixture-${id}`;
-    const executor = createExecutor({}, cli, { store, internalKey });
+    const executor = createExecutor({}, cli, { store, internalKey, userData: profile });
     const runtime = async (method, params) => {
-      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];
       if (method === 'agentSession.agents') return { agents: [] };
       if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };
       if (method === 'agentSession.modelCatalog') return { origin: 'probe', fetchedAt: Date.now(), models: [{ id: params.agent === 'claude' ? 'claude-model' : 'my-model', label: 'Fixture host model', isDefault: false, efforts: (params.agent === 'claude' ? ['low', 'max'] : ['high', 'ultra']).map(value => ({ value, label: value })) }] };
+      if (method === 'agent.launchReplay') {
+        if (launches.has(params.operationId)) return launches.get(params.operationId);
+        creates++;
+        if (mode === 'partial' || mode === 'launch-unknown') throw Error('Agent launch outcome unknown');
+        const structured = mode === 'structured';
+        const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
+        launches.set(params.operationId, result); if (structured) sessionIds.add(result.outcome.sessionId); return result;
+      }
+      const launch = [...launches.values()].find(row => row.outcome.handle === params?.terminal || row.outcome.sessionId === params?.sessionId);
+      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId } }; }
+      if (method === 'terminal.rename') { title = params.title; return { rename: { handle: params.terminal, title, tabId: 'tab-1' } }; }
+      if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'permission' ? 'permission' : 'idle' } };
+      if (method === 'terminal.focus') return { focus: { handle: params.terminal } };
+      if (method === 'orchestration.sessionAddress') return { orcaSessionId: `orca_session_id:${params.sessionId}` };
+      if (method === 'orchestration.partyLocation') { const sessionId = params.address.slice('orca_session_id:'.length), row = [...launches.values()].find(row => row.outcome.sessionId === sessionId); return { location: row ? { kind: 'chat', sessionId, worktreeId: row.worktreeId } : null }; }
+      if (method === 'agentSession.reveal' && launch) return { ok: true, sessionId: params.sessionId, workspaceId: launch.worktreeId, agent: 'codex', readable: true };
       throw Error('Unknown fixture read');
     };
-    return { profile, store, executor, async capabilities(params) {
-      const prepared = await executor.execute({ op: '_capabilityScope', internalKey, params });
-      const value = await discoverCapabilities(runtime, prepared.scope);
-      return executor.execute({ op: '_capabilityResult', internalKey, params: { observationId: prepared.observationId, value } });
+    return { profile, store, executor, async mediate(op, input) {
+      const result = await mediateOperation({ op, input, invoke: args => executor.execute({ ...args, internalKey }), rpc: runtime, authority: async () => {} });
+      return result.value;
     } };
   })());
   return fixtures.get(id);
@@ -74,7 +86,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
-      if (op === 'capabilities') return reply(await f.capabilities(params));
+      if (['capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {
