@@ -4,7 +4,7 @@ const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Obje
 const hash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
 const text=(v,n)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
 const id=v=>text(v,120)&&/^[a-zA-Z0-9-]+$/.test(v);
-export function staffingStore({db,readPrivate,putPrivate,readWork,readSnapshot,write,archive,atomic}) {
+export function staffingStore({db,readPrivate,putPrivate,readWork,listRunWorks,readSnapshot,write,archive,atomic}) {
  const rows=prefix=>db.prepare('SELECT json FROM receipts WHERE id LIKE ? ORDER BY rowid').all(prefix+'%').map(r=>JSON.parse(r.json));
  const rootWork=id=>{const w=readWork(id);return w?.teamWorkId?readWork(w.teamWorkId):w;};
  const active=id=>{const w=rootWork(id);if(!w||w.status==='completed')throw Error('This TeamWork is closed or unavailable; staffing requires a current work.');return w;};
@@ -26,7 +26,7 @@ export function staffingStore({db,readPrivate,putPrivate,readWork,readSnapshot,w
  const publicDelta=({nativeSend,...row})=>row;
  const api={effectiveTeamForWork,listRosterDeltas,listStaffingProposals,recordConfigurationAmendment,
   staffingRecipientBindings(workId){const root=rootWork(workId),ids=new Set(rows('configuration-amendment:').filter(a=>a.workId===root?.id&&a.kind==='add-member').flatMap(a=>a.memberIds));return rows('operation:').filter(o=>ids.has(o.memberId)&&readPrivate(`binding:${o.memberId}`)?.requestId===o.requestId).map(o=>({memberId:o.memberId,requestId:o.requestId,instanceGeneration:o.instanceGeneration??1}));},
-  staffingClosureBlockers(workId){const root=rootWork(workId),reasons=[];for(const d of listRosterDeltas(workId))if(d.processed!=='confirmed')reasons.push(`Roster configuration ${d.configVersion} awaits manager processing`);for(const r of rows('staffing-request:'))if(r.result?.workId===root?.id&&r.result.launch&&readPrivate(`operation:${r.result.launch.requestId}`)?.status!=='created')reasons.push('Approved staffing preparation remains pending or unknown');return [...new Set(reasons)];},
+  staffingClosureBlockers(workId){const root=rootWork(workId),reasons=[];for(const d of listRosterDeltas(workId))if(d.processed!=='confirmed'&&(d.state!=='queued'||(listRunWorks?.(workId)??[root]).some(w=>w.supervisorMemberId===d.supervisorMemberId)))reasons.push(`Roster configuration ${d.configVersion} awaits manager processing`);for(const r of rows('staffing-request:'))if(r.result?.workId===root?.id&&r.result.launch&&readPrivate(`operation:${r.result.launch.requestId}`)?.status!=='created')reasons.push('Approved staffing preparation remains pending or unknown');return [...new Set(reasons)];},
   assertStaffingPreparation(memberId){const request=rows('staffing-request:').find(r=>r.result?.memberId===memberId);if(request)active(request.result.workId);},
   readStaffingRequest(input){const prior=readPrivate(`staffing-request:${input.requestId}`);if(prior&&prior.fingerprint!==hash(input))throw Error('Staffing request identity conflicts.');return prior?.result??null;},
   staffingProjection:workId=>({staffingProposals:listStaffingProposals(workId).map(({proof,fingerprint,...p})=>p),rosterDeltas:listRosterDeltas(workId).map(publicDelta),effectiveConfigVersion:effectiveTeamForWork(workId)?.configVersion}),

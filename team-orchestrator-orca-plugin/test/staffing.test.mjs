@@ -109,3 +109,9 @@ test('lower manager genuine Run proposes a direct child and receives the version
  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,task.spec,'ready',null,null,null,null,null);f.receipt('lower-new-task-receipt','orchestration.taskCreate',{spec:taskSpec,run:child.run.id,callerTerminalHandle:'orca_session_id:claude_child',__orcaCallerOrcaSessionId:'claude_child'},{task},true);await dispatch.check(child.id);
  const attempt=f.store.listDispatches(child.id)[0];assert.equal(attempt.memberId,added.memberId);assert.equal(attempt.supervisorMemberId,f.member.id);assert.equal(attempt.configVersion,2);assert.equal(attempt.permit.state,'accepted');
 });
+test('an unused department without a native Run does not permanently block closure after a roster amendment',async t=>{
+ const f=await questionFixture(t,{formOverrides:{structure:'organisation',levels:3,fan:4,groups:'One, Two'}});await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ f.store.saveStaffing({...direct(f),member:{...memberInput(f),boss:f.member.id}});await service(f).check(f.work.id);
+ const headDelta=f.store.listRosterDeltas(f.work.id).find(d=>d.supervisorMemberId===f.team.members[0].id);publish(f,'roster-ack',{deltaId:headDelta.id,configVersion:2},{taskId:'unused-branch-ack'});await service(f).check(f.work.id);
+ assert.deepEqual(f.store.staffingClosureBlockers(f.work.id),[]);assert.ok(f.store.listRosterDeltas(f.work.id).some(d=>d.state==='queued'&&d.processed==='unconfirmed'));
+});

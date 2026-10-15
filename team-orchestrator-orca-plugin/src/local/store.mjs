@@ -137,7 +137,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       team.launch.status = initialMembers(team).every(member => team.launch.members[member.id]?.status === 'created') ? 'accepted' : 'unknown';
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
-    const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,readSnapshot,write,archive,atomic:atomicDispatch});
+    const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listRunWorks,readSnapshot,write,archive,atomic:atomicDispatch});
     readSnapshot();
     let closed = false;
     return {
