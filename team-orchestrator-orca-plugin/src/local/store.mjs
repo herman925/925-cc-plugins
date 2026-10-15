@@ -66,11 +66,15 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.prepare('INSERT INTO snapshot VALUES (1,?)').run(JSON.stringify(empty()));
       db.exec('COMMIT');
     }
-    const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
-    const readCurrentWork = id => {const work=readWork(id);return work?.currentSupervisor?{...work,...work.currentSupervisor,nativeSend:work.currentSupervisor.nativeSend,error:work.currentSupervisor.error,originalBinding:work.binding}:work;};
+    const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`) ?? db.prepare('SELECT json FROM receipts WHERE id=?').get(`native-run-binding:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
+    const readCurrentWork = id => {
+      const raw=readWork(id),work=raw?.currentSupervisor?{...raw,...raw.currentSupervisor,nativeSend:raw.currentSupervisor.nativeSend,error:raw.currentSupervisor.error,originalBinding:raw.binding}:raw;
+      if(work?.parent){const parent=readWork(work.parent.workId),epoch=parent?.currentSupervisor,attempt=readPrivate(`dispatch:${work.parent.attemptId}`);if(epoch&&attempt?.reviewAuthority?.recoveryRequestId===epoch.recoveryRequestId&&attempt.reviewAuthority.generation===epoch.run.consumerGeneration)work.parentAuthority={generation:epoch.run.consumerGeneration,recoveryRequestId:epoch.recoveryRequestId};}
+      return work;
+    };
     const listCurrentWorks = () => listWorks().map(work=>readCurrentWork(work.id));
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
-    const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`work:${work.id}`, JSON.stringify(work));
+    const persistWork = work => {const {parentAuthority,...saved}=work;return db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(saved));};
     const persistCurrentWork = work => {
       const raw=readWork(work.id);if(!raw?.currentSupervisor)return persistWork(work);
       for(const key of ['status','input','processing','run','snapshot','error','instance','nativeSend'])raw.currentSupervisor[key]=work[key];
@@ -80,8 +84,10 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const putPrivate = (key,value) => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(key,JSON.stringify(value));
     const readDispatchProtocol = workId => { const row=readPrivate(`dispatch-protocol:${workId}`); return row?validateDispatchProtocol(row):null; };
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%' ORDER BY rowid").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
+    const listRunWorks = id => { const root=readCurrentWork(id);if(!root)return [];const teamWorkId=root.teamWorkId??root.id;return [readCurrentWork(teamWorkId),...db.prepare("SELECT json FROM receipts WHERE id LIKE 'native-run-binding:%' ORDER BY rowid").all().map(r=>readCurrentWork(JSON.parse(r.json).id)).filter(w=>w.teamWorkId===teamWorkId)]; };
+    const listTeamDispatches = id => {const ids=new Set(listRunWorks(id).map(w=>w.id));return listDispatches().filter(a=>ids.has(a.workId));};
     const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
-    const dispatchProjection = workId => ({queuedTasks:queuedTasks(workId),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
+    const dispatchProjection = workId => ({queuedTasks:listRunWorks(workId).flatMap(w=>queuedTasks(w.id)),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listTeamDispatches(workId).map(publicDispatch),nativeRuns:listRunWorks(workId).map(w=>({id:w.id,teamWorkId:w.teamWorkId??w.id,supervisorMemberId:w.supervisorMemberId,run:w.run,parent:w.parent,input:{state:w.input.state},error:w.error,questions:questions.listQuestions(w.id).map(q=>({id:q.id,summary:q.summary,status:q.status,to:q.to,relay:q.relay})),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(w.id))}))});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
@@ -93,7 +99,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), organizationChanges:organization.organizationProjection(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
     };
     const write = ({ works, goals, recoveries, organizationChanges, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
-    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write,applyOrganization:(work,team)=>organization.applyOrganization(work,team)});
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches:listTeamDispatches,listRunWorks,listGoals,questions,atomic:atomicDispatch,readSnapshot,write,applyOrganization:(work,team)=>organization.applyOrganization(work,team)});
+
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -137,7 +144,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       if(stops.listStops().some(r=>r.target.memberId===memberId&&['intent','submitted','unknown'].includes(r.state)))fail('Unresolved Stop blocks idle replacement.');
       for(const a of listDispatches().filter(a=>a.memberId===memberId||a.supervisorMemberId===memberId))if(!['accepted','rework'].includes(a.status)||!a.evidenceId)fail('Member has running, unknown or unreviewed execution.');
       for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all()){const q=JSON.parse(saved.json);if(q.memberId===memberId||q.supervisorMemberId===memberId)fail('Queued execution blocks idle replacement.');}
-      const roots=listCurrentWorks().filter(w=>w.status!=='completed');
+      const roots=listCurrentWorks().filter(w=>w.status!=='completed').flatMap(w=>listRunWorks(w.id));
       for(const w of roots)for(const q of questions.listQuestions(w.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))fail('Unresolved question blocks idle replacement.');
     };
     const replacementTeam=teamId=>{const work=listCurrentWorks().find(w=>w.teamId===teamId&&w.status!=='completed');return readSnapshot().teams.find(t=>t.id===teamId);};
@@ -193,7 +200,19 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         putPrivate(`goal:${goal.id}`,goal);putPrivate(key,{id:goal.id,fingerprint:digest});state.revision++;write(state);return goal;
       });},
       readCurrentWork, listCurrentWorks,
-      readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
+      readWork, listWorks, readDispatchProtocol, listDispatches, listRunWorks, listTeamDispatches, dispatchProjection,
+      readOwningWork(workId,memberId){const root=readCurrentWork(workId),team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===memberId);return listRunWorks(workId).filter(w=>w.supervisorMemberId===member?.boss).at(-1)??null;},
+      prepareManagerRun(parentWorkId,attemptId){return atomicDispatch(()=>{
+        const parentWork=readCurrentWork(parentWorkId),attempt=listDispatches(parentWorkId).find(a=>a.id===attemptId);
+        const prior=listRunWorks(parentWorkId).find(w=>w.parent?.attemptId===attemptId);if(prior)return prior;
+        const root=readCurrentWork(parentWork.teamWorkId??parentWork.id);
+        const team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===attempt?.memberId);
+        if(root.status==='completed'||parentWork.run.state!=='verified'||attempt?.status!=='running'||attempt.admission!=='committed'||!attempt.dispatchId||!attempt.binding||attempt.supervisorMemberId!==parentWork.supervisorMemberId||!team.members.some(m=>m.boss===member?.id)||listDispatches(parentWorkId).filter(a=>a.taskKey===attempt.taskKey).at(-1)?.id!==attempt.id)fail('A current genuine manager parent assignment is required.');
+        const id=randomUUID(),protocolToken=randomUUID(),b=attempt.binding;
+        const binding={status:'created',requestId:attempt.id,sourceAttemptId:attempt.id,memberId:member.id,teamId:root.teamId,kind:b.kind,handle:b.handle,...(b.sessionId?{sessionId:b.liveSessionId??b.sessionId}:{}),paneKey:b.paneKey,runtimeId:b.runtimeId,scope:root.scope,nativeRequest:{agent:member.agent,sessionOptions:{model:member.model,effort:member.effort}}};
+        const work={format:'team-work-v1',id,teamWorkId:root.id,teamId:root.teamId,requestId:attempt.id,objective:attempt.instruction,configVersion:team.configVersion,roleVersion:attempt.roleVersion,supervisorMemberId:member.id,scope:root.scope,binding,protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${attempt.instruction}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'},parent:{workId:parentWork.id,runId:attempt.runId,taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,attemptId:attempt.id,generation:attempt.generation}};
+        validateWork(work);persistWork(work);return work;
+      });},
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
         const work=readCurrentWork(workId); if(work?.status==='completed'||work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
         const prior=readDispatchProtocol(workId); if(prior) { if(prior.generation!==work.run.consumerGeneration)fail('Dispatch protocol belongs to an older Run generation.'); return prior; }
@@ -212,19 +231,20 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       prepareDispatch(workId,intent,startParams,reuse) { return atomicDispatch(()=>{
         const work=readCurrentWork(workId),protocol=readDispatchProtocol(workId);
         if(work?.status==='completed'||work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
+        if(work.parent){const parent=readWork(work.parent.workId),a=listDispatches(parent.id).find(a=>a.id===work.parent.attemptId);if(readWork(work.teamWorkId)?.status==='completed'||a?.status!=='running'||a.evidenceId||a.dispatchId!==work.parent.dispatchId||listDispatches(parent.id).filter(r=>r.taskKey===a.taskKey).at(-1)?.id!==a.id)fail('Parent attempt is stale or settled; child admission is fenced.');}
         const key=`dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId?`:${intent.spec.previousAttemptId}`:''}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
         this.assertAdmission(work.teamId,intent.spec.memberId);
         questions.questionTaskGate(workId,intent.spec.taskKey,intent.nativeTaskId);
-        const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
+        const team=this.effectiveTeamForWork?.(workId)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
         if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
         const recovery=reuse?.recoveryRequestId&&readPrivate(`wake:${reuse.recoveryRequestId}`),recoveredPrior=recovery&&recovery.handoff?.decision==='replace'&&recovery.handoff.reviewer===work.supervisorMemberId&&(recovery.oldBinding.sourceAttemptId===previous?.id||previous?.reuse?.requestId===recovery.oldBinding.requestId)&&recovery.newInstance?.requestId===reuse.requestId;
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||(previous.status!=='rework'&&!recoveredPrior)||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
         const stopAttempts=new Set(stops.listStops().filter(row=>['intent','submitted','unknown'].includes(row.state)).map(row=>row.target.attemptId));
-        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history.map(row=>stopAttempts.has(row.id)?{...row,status:'unknown'}:row),intent.spec.taskKey,writeScope);
-        if(conflict&&!intent.unadmitted)fail(`Write scope conflicts with ${conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
+        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(listTeamDispatches(work.teamWorkId??work.id).filter(a=>a.id!==work.parent?.attemptId).map(a=>({...a,originalTaskKey:a.taskKey,...(stopAttempts.has(a.id)?{status:'unknown'}:{}),taskKey:`${a.workId}:${a.taskKey}`})),`${workId}:${intent.spec.taskKey}`,writeScope);
+        if(conflict&&!intent.unadmitted)fail(`Write scope conflicts with ${conflict.originalTaskKey??conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
         if(previous&&JSON.stringify(writeScope)!==JSON.stringify(previous.writeScope??[]))fail('Rework must preserve the declared write scope.');
         const dependencies=intent.spec.dependencies??[];
         if(previous&&JSON.stringify(dependencies)!==JSON.stringify(previous.dependencies??[]))fail('Rework must preserve business task dependencies.');
@@ -237,7 +257,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(reservation&&!recoveredMember&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
         if(reuse&&reuse.kind!=='prepared'&&!reservation)fail('Retained member reservation changed.');
         const instanceGeneration=reuse?.instanceGeneration??retained?.instanceGeneration??(readPrivate(`binding-generation:${member.id}`)?.generation??0)+1;
-        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,instanceGeneration,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,instanceGeneration,workId,teamWorkId:work.teamWorkId??work.id,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:team.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
         validateDispatch(attempt);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
@@ -245,13 +265,16 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(row.review){if(row.review.requestId===review.requestId&&row.review.payloadHash===review.payloadHash)return row;fail('This attempt already has an immutable supervisor decision.');}
         if(review.reviewToken!==(row.reviewAuthority?.reviewToken??row.reviewToken)||review.protocolToken!==readDispatchProtocol(row.workId)?.token||current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||(row.reviewAuthority?.generation??row.generation)!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
         if(work?.status==='completed'||current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
+        if(review.decision==='accept')for(const child of listRunWorks(row.teamWorkId??row.workId).filter(w=>w.parent?.attemptId===row.id)){
+          if(child.run.state!=='verified'||listDispatches(child.id).some(a=>a.status!=='accepted')||queuedTasks(child.id).length||questions.listQuestions(child.id).some(q=>q.status!=='answered'))fail('Manager acceptance awaits descendant results and questions.');
+        }
         const event={...review,workId:row.workId,taskKey:row.taskKey,nativeTaskId:row.nativeTaskId,dispatchId:row.dispatchId,recordedAt:new Date().toISOString()};
         row.review=event;row.status=review.decision==='accept'?'accepted':'rework';row.version++;row.detail=review.decision==='accept'?'Direct supervisor accepted the execution and validation evidence.':'Direct supervisor requested rework; dependencies remain blocked.';
         validateDispatch(row);putPrivate(`dispatch-review:${row.id}`,event);putPrivate(`dispatch:${row.id}`,row);return row;
       }); },
       updateDispatch(id,version,patch,expectedWorkVersion) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`));if(readWork(row.workId)?.status==='completed')fail('Completed TeamWork is sealed.');if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
-        if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
+        if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','creatorDispatchId','depth','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
         if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
         if(row.evidenceId&&patch.evidenceId&&row.evidenceId!==patch.evidenceId)fail('Execution result already has immutable native evidence.');

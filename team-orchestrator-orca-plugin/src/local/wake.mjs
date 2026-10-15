@@ -1,4 +1,5 @@
 import {verifyIdleReplacement} from './idle-replacement.mjs';
+import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import {notifyQuestionEvent} from './questions.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {readNativeRunEvidence} from './native-run.mjs';
@@ -9,6 +10,7 @@ import {publicWake} from './wake-store.mjs';
 import {readSessionDeath} from './recovery.mjs';
 import {withNativeRuntime} from './native-runtime.mjs';
 export function createWakeService({store,rpc,userData,consent,works,notify}) {
+ const allWorks=()=>store.listCurrentWorks().flatMap(w=>store.listRunWorks(w.id));
  const bindingFor=input=>{
   const op=store.readOperation(input.bindingRequestId);if(op)return op;
   const attempt=store.listDispatches().find(a=>a.id===input.bindingRequestId&&a.teamId===input.teamId&&a.memberId===input.memberId),b=attempt?.binding,team=attempt&&store.readTeamVersion(attempt.teamId,attempt.configVersion),member=team?.members.find(m=>m.id===input.memberId);
@@ -33,7 +35,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  }
  async function requestDecision(row){
   if(row.state!=='needs_decision')return row;
-  const member=memberFor(row),work=store.readCurrentWork(row.oldBinding.sourceWorkId)??store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed');
+  const member=memberFor(row),root=store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed'),work=(root&&store.readOwningWork?.(root.id,row.memberId))??store.readCurrentWork(row.oldBinding.sourceWorkId)??root;
   if(!member?.boss){await notifyQuestionEvent(store,notify,{workId:work?.id??row.teamId,id:`wake-${row.requestId}`,kind:'decision',title:'Supervisor recovery needs your decision',body:'Native continuation is unavailable. Review the saved handoff before creating a replacement conversation.'});return row;}
   if(!works||!work||work.supervisorMemberId!==member.boss||row.managerRequest)return row;
   try{
@@ -64,8 +66,9 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  },
  async bind(id){
   const row=store.readWake(id);if(!row||!['resumed','replacing'].includes(row.state))return publicWake(row);
-  const binding=store.readOperation(row.newInstance.requestId),work=store.listCurrentWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.supervisorMemberId===row.memberId&&w.status!=='completed');
+  const binding=store.readOperation(row.newInstance.requestId),work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.supervisorMemberId===row.memberId&&w.status!=='completed');
   if(!work||binding?.status!=='created')return publicWake(!work&&row.mode==='idle-replacement'?store.finishIdleReplacement(id):row);
+
   await consent();return withNativeRuntime(rpc,binding.runtimeId,async()=>{
    await hostGeneration(binding.scope,row.proof.hostGeneration);
    if((await rpc('status.get'))?.runtimeId!==binding.runtimeId||!store.isActiveOperation(binding))throw Error('Recovered supervisor runtime or recipient changed.');
@@ -85,6 +88,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
    const shown=(await rpc('orchestration.runShow',{id:run.id}))?.run;
    if(shown?.id!==run.id||shown.consumer_generation!==run.consumerGeneration||shown.objective!==work.nativeObjective)return publicWake(row);
    const final=await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:instance,runId:run.id});if(final.state!=='verified'||final.consumerGeneration!==run.consumerGeneration)return publicWake(row);
+   if(work.parent){const parentWork=store.readCurrentWork(work.parent.workId),attempt=store.listDispatches(parentWork.id).find(a=>a.id===work.parent.attemptId);if(!attempt)return publicWake(row);const parent=await readNativeParentEvidence(userData,{parentWork,attempt});if(parent.state!=='verified'||(instance.kind==='structured'?parent.assignee.sessionId!==instance.sessionId:parent.assignee.handle!==instance.handle||parent.assignee.paneKey!==instance.paneKey||parent.assignee.incarnationId!==instance.incarnationId))return publicWake(row);}
    return publicWake(store.rebindWake(id,row.version,work.id,instance,run));
   });
  },
@@ -112,7 +116,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
    await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);
    const root=store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed'),team=root&&store.effectiveTeamForWork?store.effectiveTeamForWork(root.id):store.readSnapshot().teams.find(t=>t.id===row.teamId),member=team?.members.find(m=>m.id===row.memberId);if(!member)throw Error('Saved recovery member configuration changed.');
    const nativeRequest=nativeLaunchIntent(team,member,row.oldBinding.scope);
-   const work=store.listCurrentWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed');
+   const work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed');
    nativeRequest.prompt.text+=`\nTEAM_RECOVERY_HANDOFF\nOriginal member ${row.memberId}; original instance ${row.oldBinding.requestId}.\n${row.handoff.summary}\nEvidence: ${row.handoff.evidenceRefs.join(', ')}\nPreserve all original Task/Dispatch identities. ${work?`As your own native identity, run-use ${work.run.id} with the installed Orca CLI; the exact objective remains ${JSON.stringify(work.nativeObjective)}. Never impersonate the old supervisor.`:''} Await verified Run ownership and admission before work.`;
    return store.prepareWakeReplacement(id,row.version,{scope:row.oldBinding.scope,nativeRequest,configVersion:team.configVersion,roleVersion:member.roleVersion,title:row.oldBinding.title,executionHostId:row.oldBinding.executionHostId,runtimeId:row.proof.runtimeId,hostGeneration:row.proof.hostGeneration??null});
   });
@@ -137,7 +141,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   const status=await rpc('status.get');if(typeof status?.runtimeId!=='string'||!status.runtimeId)throw Error('Native runtime identity is required for recovery.');
   return withNativeRuntime(rpc,status.runtimeId,async()=>{
    const generation=await hostGeneration(op.scope,op.hostGeneration);
-   const work=store.listCurrentWorks().find(w=>w.binding.requestId===op.requestId),fence=work?.instance?.fence??op.observation?.ownerFence;
+   const work=allWorks().find(w=>w.binding.requestId===op.requestId),fence=work?.instance?.fence??op.observation?.ownerFence;
    const death=await stopped({oldBinding:op,proof:{death:{ownerFence:fence}}});
    if(!death||op.kind==='structured'&&death.provider!==op.nativeRequest.agent)return {state:'blocked',detail:'The exact previous execution has not been proven stopped. Reconcile native death evidence before waking this member.'};
    const selected=(await rpc('worktree.show',{worktree:op.scope.workspaceId.startsWith('folder:')?op.scope.workspaceId:`id:${op.scope.workspaceId}`}))?.worktree;

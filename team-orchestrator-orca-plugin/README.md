@@ -179,6 +179,16 @@ A submitted request, native assignment stopped, a closed view, and proven execut
 
 `store.readStopProof({ memberId, requestId, instanceGeneration, attemptId, binding })` exposes exact, read-only lifecycle evidence internally. It does not retire a binding or authorize replacement. On pinned Orca `9fdd90f`, `terminal.agentStatus` does not expose a provider session ID; stop does not manufacture one for resume. The fixture validations exercise scripted native boundaries and a separate Electron runtime, not live Orca/provider acceptance.
 
+### Manager hierarchy
+
+A dispatched department manager creates its own native Run from its inherited Orca identity. The plugin retains a separate Run binding within the same TeamWork, linked to the original parent Task, Dispatch and attempt. It verifies the actual native assignee, creator Dispatch and depth; native Task parents never cross Runs. The umbrella parent Dispatch must remain active while its manager delegates, accepts direct reports and resolves questions. The manager sends its own original native `worker_done` upward; the plugin never sends that report or consumes a manager inbox.
+
+Only the highest supervisor presents user questions and total delivery. Lower managers publish verified relay records and use native asks/replies through their actual owning Runs. An upstream acknowledgement alone cannot resolve an unanswered descendant question. TeamWork closure checks every descendant Run, latest attempt, pending question, unknown stop and unregistered native task. The panel shows manager Runs and their original parent responsibility chain alongside member tasks and reviews.
+
+The pinned host defaults to nested worker depth **1**. The 11 and 21 member presets require depth **2**, configured by the user in **Settings → Orchestration → Nested worker depth**. Native depth refusals remain authoritative; the plugin does not change the setting or create standalone replacement sessions to bypass it. Local verified ancestry is supported; unverified remote ancestry remains blocked. Preset shape, admission, SQLite fixtures, pinned native contracts and separate Electron tests do not establish live provider load at 11 or 21 members.
+
+Every admitted native worker Task includes the cooperative rule against self-creating provider-native subagents. Approved roster dispatch and assigned collaboration preserve the original manager's acceptance responsibility. These instructions do not intercept arbitrary provider tools.
+
 ## Closed-member recovery and checked handoff (#118)
 
 Closing a native conversation preserves the roster member. A later admitted task checks its retained recipient and can request wake; **Wake closed member** provides the same explicit panel action. Neither worker recycling, assignment pause, lease release, a timeout nor an absent terminal proves execution death. Wake requires the exact saved owner-fence death record or the exact native stop proof for that operation/attempt. Unknown execution and pending native effects remain reserved.
