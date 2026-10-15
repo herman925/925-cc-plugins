@@ -28,6 +28,8 @@ import {
   TABLE_GAP,
   MIN_DESC,
   wrapWords,
+  isGrillSkill,
+  GRILL_NOTE,
   tableWidths,
   pageRows,
   meter,
@@ -846,6 +848,14 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     }
   })
 
+  // A grill skill's questions go through the question box. The note rides on the skill's own text, only when one loads,
+  // so it costs no context on other turns.
+  on('skill.prompt', async ($, e, next) => {
+    const r = await next(e)
+    if (!isGrillSkill(e.skill) || !(await read($, enabledA)) || !(await read($, askRuleA))) return r
+    return { text: `${r.text}\n\n${GRILL_NOTE}` }
+  })
+
   // ---------- a prompt starts a job ----------
   on('prompt.submit', async ($, e, next) => {
     // Status lines (typed by the user, or sent by the team head in an envelope) are applied here. A message that is only
@@ -869,6 +879,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   })
 
   on('turn.start', async ($, e, next) => {
+    // subagents' and teammates' turns arrive here too; only the main loop's turn is this session's job
+    if ((e as { agentId?: string }).agentId !== undefined) return next(e)
     await update($, trackA, t => startTurn(t, e.turnId))
     await update($, askedA, () => false)
     const result = await next(e)
@@ -1163,7 +1175,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
     // Coloured words that carry the state: a filled pill for what is on or chosen, plain dim words for the rest.
     const pillOf = (label: string, bg: string) => (
-      <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
+      <Text weight="bold" inverse={isPlain} backgroundColor={isPlain ? undefined : bg} color={isPlain ? undefined : 'white'}>
         {` ${label} `}
       </Text>
     )
@@ -1387,7 +1399,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       ))
     }
     const nameCell = (s: Setting): RenderChildren =>
-      s.kind === 'toggle' ? <Button key={`set-${s.id}`} plain label={s.label} onPress={() => s.set(!s.isOn)} /> : <Text bold>{s.label}</Text>
+      s.kind === 'toggle' ? <Button key={`set-${s.id}`} plain label={s.label} onPress={() => s.set(!s.isOn)} /> : <Text weight="bold">{s.label}</Text>
     const descCell = (s: Setting) => (
       <Box width={descW} flexShrink={0} flexDirection="column">
           {linesOf(s).map((line, i) => (
@@ -1507,7 +1519,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           </Box>
           <Text dimColor>{'─'.repeat(width - 2)}</Text>
           <Box flexDirection="row">
-            {headerPieces(cols).map((p, i) => (p.key === 'bar' ? <Text key={`h${i}`} dimColor>{p.text}</Text> : <Text key={`h${i}`} bold>{p.text}</Text>))}
+            {headerPieces(cols).map((p, i) => (p.key === 'bar' ? <Text key={`h${i}`} dimColor>{p.text}</Text> : <Text key={`h${i}`} weight="bold">{p.text}</Text>))}
           </Box>
           <Box flexDirection="row">
             {rulePieces(cols).map((p, i) => <Text key={`r${i}`} dimColor>{p.text}</Text>)}
@@ -1569,7 +1581,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer} minHeight={settingsOpen ? CARD_HEIGHT + 3 : undefined}>
           <Box flexDirection="row" justifyContent="space-between" width={width}>
             <Box flexDirection="row">
-              <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
+              <Text weight="bold" inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
                 {enabled ? ' Session Panel ' : ' Session Panel · off '}
               </Text>
               {version !== '' ? <Text dimColor>{` v${version}`}</Text> : null}
@@ -1582,7 +1594,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           {settingsOpen ? (
             <Box position="absolute" top={1} right={0} flexDirection="column">
               <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={width} height={CARD_HEIGHT} flexShrink={0}>
-                <Box flexDirection="row" justifyContent="space-between" width={cardInner}><Text bold>Settings</Text>{pageControls}</Box>
+                <Box flexDirection="row" justifyContent="space-between" width={cardInner}><Text weight="bold">Settings</Text>{pageControls}</Box>
                 {tabRow}
                 {tabBody}
               </Box>
@@ -1670,12 +1682,12 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         <Box key={`bar-${it.id}`} flexDirection="row">
           <Box width={textBlock - pillW} flexShrink={0} flexDirection="row">
             <Text color={color(it.bg)}>● </Text>
-            <Text bold={it.isLive} wrap="truncate">{shortName(it.name, Math.max(8, textBlock - 3 - pillW))}</Text>
+            <Text weight={(it.isLive) ? 'bold' : undefined} wrap="truncate">{shortName(it.name, Math.max(8, textBlock - 3 - pillW))}</Text>
           </Box>
           <Box flexShrink={0}>{pillOf(shortName(it.pillText, pillW - 2).padEnd(pillW - 2, ' '), it.bg)}</Box>
           {barSegments(it.pct, barW, tick, it.isLive && !isStill, it.label).map((seg, k) =>
             seg.kind === 'label' ? (
-              <Text key={`seg-${k}`} bold inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
+              <Text key={`seg-${k}`} weight="bold" inverse={isPlain} backgroundColor={isPlain ? undefined : it.bg} color={isPlain ? undefined : 'white'}>
                 {seg.text}
               </Text>
             ) : seg.kind === 'fill' ? (
@@ -1684,7 +1696,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
               <Text key={`seg-${k}`} dimColor>{seg.text}</Text>
             ),
           )}
-          <Text>{` ${String(it.pct).padStart(3, ' ')}% `}</Text>
+          <Text tabular>{` ${String(it.pct).padStart(3, ' ')}% `}</Text>
           <Button key={`x-${it.id}`} label="×" onPress={it.onDismiss} />
         </Box>
       ))
@@ -1754,8 +1766,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       <Box flexDirection="column">
         <Box flexDirection="row">
           {phasePill}
-          <Text bold wrap="truncate">{` ${title}`}</Text>
-          <Text dimColor>{`${stepNote} · ${elapsed}`}</Text>
+          <Text weight="bold" wrap="truncate">{` ${title}`}</Text>
+          <Text dimColor tabular>{`${stepNote} · ${elapsed}`}</Text>
         </Box>
         {detail !== '' ? <Text dimColor wrap="truncate">{`  ${detail}`}</Text> : null}
       </Box>
@@ -1783,10 +1795,10 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             const waiting = cl.phase === 'needs-you'
             return (
               <Box key={`r-${t.id}`} flexDirection="row">
-                <Text bold color={color(waiting ? 'yellow' : 'magenta')}>{waiting ? '‖ ' : '▶ '}</Text>
-                <Text bold>{fitName(t.name, nameCol)} </Text>
+                <Text weight="bold" color={color(waiting ? 'yellow' : 'magenta')}>{waiting ? '‖ ' : '▶ '}</Text>
+                <Text weight="bold">{fitName(t.name, nameCol)} </Text>
                 <Text color={color(waiting ? 'yellow' : 'magenta')}>{t.hasReported ? meter(t.shown) : sweep(tick, isStill || waiting)}</Text>
-                <Text bold>{t.hasReported ? `  ${pct(t.percent)}` : waiting ? '  Waiting' : '  Working'}</Text>
+                <Text weight="bold" tabular>{t.hasReported ? `  ${pct(t.percent)}` : waiting ? '  Waiting' : '  Working'}</Text>
               </Box>
             )
           }
@@ -1831,9 +1843,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         <Box key={`old-${f.id}`} flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" width={width}>
             <Text wrap="truncate">
-              <Text bold color={color('success')}>{'✓ '}</Text>
+              <Text weight="bold" color={color('success')}>{'✓ '}</Text>
               <Text>{f.title}</Text>
-              <Text dimColor>{` · took ${formatDuration(f.seconds * 1000)}${changed}`}</Text>
+              <Text dimColor tabular>{` · took ${formatDuration(f.seconds * 1000)}${changed}`}</Text>
             </Text>
             <Button
               key={`x-${f.id}`}

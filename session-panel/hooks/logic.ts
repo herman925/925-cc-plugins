@@ -373,7 +373,7 @@ const ASK_CHOICES_LINE =
   "- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply."
 
 const QUESTION_BOX_LINE =
-  "- Ask with AskUserQuestion, never in prose, whenever you need the person's go-ahead: permission to act (edits, deletes, sends, pushes, installs), or a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Every question from /grilling, /grill-me or /grill-with-docs goes through AskUserQuestion, one call per question, with the recommended option first. Then stop and wait for the reply."
+  "- Ask with AskUserQuestion, never in prose, whenever you need the person's go-ahead: permission to act (edits, deletes, sends, pushes, installs), or a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Then stop and wait for the reply."
 
 /** The rules section. The question-box rule replaces the picker line when it is on; otherwise the picker is used when it is on. */
 export function rulesSection(questionBox: boolean, picker: boolean): string {
@@ -1219,3 +1219,10 @@ export function pageRows<T>(rows: T[], heights: number[], budget: number): T[][]
   if (cur.length > 0) pages.push(cur)
   return pages.length > 0 ? pages : [[]]
 }
+
+/** The grill skills, whether typed (`grilling`) or named with their plugin (`mattpocock-skills:grilling`). */
+export const isGrillSkill = (skill: string) => /(^|:)grill(ing|-me|-with-docs)$/i.test(skill.trim())
+
+/** Added to a grill skill's text while the question box is on, so its questions come one AskUserQuestion call each. */
+export const GRILL_NOTE =
+  "Session Panel: ask each of this skill's questions with AskUserQuestion, one call per question, the recommended option first, then stop and wait for the answer. Do not ask them in prose."

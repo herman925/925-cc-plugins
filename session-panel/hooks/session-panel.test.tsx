@@ -675,7 +675,7 @@ test('bar style: name, pill, bar and percent sit together, with the words inside
   const nameBox = boxes.find((b: any) => String(b.key) === 'bar-now')
   const nameCol = (await ui.findAll({ type: 'Box' })).find((b: any) => b.props.flexShrink === 0 && typeof b.props.width === 'number' && b.text.startsWith('●'))
   expect(nameCol).toBeDefined()
-  const pill = (await ui.findAll({ type: 'Text' })).find((t: any) => t.props.bold === true && t.props.backgroundColor !== undefined && t.text.startsWith(' Read your brand notes'))
+  const pill = (await ui.findAll({ type: 'Text' })).find((t: any) => t.props.weight === 'bold' && t.props.backgroundColor !== undefined && t.text.startsWith(' Read your brand notes'))
   expect(pill).toBeDefined()
   expect((nameCol!.props.width as number) + (pill!.text as string).length).toBe(Math.floor((WIDTH - 4) * 0.35))
   // the bar takes the rest: 120 - text block (42) - percent and x (11) - 2 spare, words included
@@ -2930,7 +2930,7 @@ test('rulesSection: the question box line replaces the picker line, and the gril
   expect(rulesSection(true, true)).not.toContain('ask_choices')
   expect(rulesSection(false, true)).toContain('ask_choices')
   expect(rulesSection(false, false)).not.toContain('ask_choices')
-  expect(rulesSection(true, false)).toContain('/grill-with-docs')
+  expect(rulesSection(true, false)).not.toContain('grill')
 })
 
 
@@ -3004,3 +3004,29 @@ for (const columns of [140, 80]) {
     expect(text.some(l => l.includes('Jev pass'))).toBe(true)
   })
 }
+
+test("a subagent's turn neither starts a new job nor changes the band", async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read your brand notes', 'Build the pricing section'] })
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const before = await texts(ui)
+  await $.turn.start({ text: 'Explore the repository layout', turnId: 'sub1', agentId: 'agent-1' } as any)
+  expect(await texts(ui)).toEqual(before)
+  await ui.unmount()
+})
+
+test('a grill skill gets the question-box note on its own text; other skills and a switched-off box get none', async ($, on) => {
+  world(on)
+  on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
+  const run = (skill: string, pluginName?: string) =>
+    ($ as any).skill.prompt({ skill, text: 'Ask me hard questions.', frontmatter: {}, source: 'plugin', ...(pluginName ? { pluginName } : {}) })
+  for (const skill of ['grilling', 'grill-me', 'grill-with-docs', 'mattpocock-skills:grilling']) {
+    expect((await run(skill)).text).toContain('one call per question')
+  }
+  expect((await run('commit')).text).toBe('Ask me hard questions.')
+  expect((await run('grillmaster')).text).toBe('Ask me hard questions.')
+  await ruleOff($)
+  expect((await run('grilling')).text).toBe('Ask me hard questions.')
+})

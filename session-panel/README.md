@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.62. The version is shown dim beside the band title, as ` v0.3.62`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.63. The version is shown dim beside the band title, as ` v0.3.63`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -14,6 +14,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 - **Hide details / Show details** and `/simple on|off` toggle the hiding. The setting is kept between sessions. It starts on.
 - **Settings** opens the Settings card (below).
 - **Stop** appears only while a turn is running. It cancels that turn. The toast is `Stopped`, or `Nothing to stop: the turn has ended.` if the turn already ended.
+- **Subagents:** a subagent's or teammate's turn does not start a job, change the checklist or move the Stop button; only the session's own turns do.
 - **Checklist:** Claude plans the job with `mcp__session-panel__plan_steps` and reports progress with `mcp__session-panel__report_progress`. Questions go through AskUserQuestion while the question box is on (the default); with it off and `/askchoices on`, `mcp__session-panel__ask_choices` shows numbered choices in the band.
 - `NO_COLOR` is honoured. `NO_MOTION`, `REDUCE_MOTION` or `PREFERS_REDUCED_MOTION` gives a static meter.
 
@@ -34,7 +35,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 
 Settings → Questions holds three switches:
 
-- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act (edits, deletes, sends, pushes, installs) and for choices that change scope, cost, files or direction. Routine details are not asked; Claude decides them and states them as `ASSUMPTION:` lines. Every question from /grilling, /grill-me and /grill-with-docs goes through it, one call per question, the recommended option first. The rule is in the system-prompt section `session-panel:rules`; it is an instruction, so Claude can still miss it. While it is on, the ask_choices picker is refused with `The question box is on: ask this with AskUserQuestion instead.`
+- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act (edits, deletes, sends, pushes, installs) and for choices that change scope, cost, files or direction. Routine details are not asked; Claude decides them and states them as `ASSUMPTION:` lines. The rule is in the system-prompt section `session-panel:rules`; it is an instruction, so Claude can still miss it. The grill skills (`grilling`, `grill-me` and `grill-with-docs`, also when named with their plugin) get a note added to their own text when they load: ask each question with AskUserQuestion, one call per question, the recommended option first. It is added only while the question box is on, and costs no context on other turns. While it is on, the ask_choices picker is refused with `The question box is on: ask this with AskUserQuestion instead.`
 - **Picker above the prompt** (off by default): the ask_choices buttons. It works only while the question box is off.
 - **Warn on prose questions** (on by default): when a reply ends with a question and no AskUserQuestion call was made in that turn, a toast says `Claude asked in prose instead of the question box. Turn the warning off in Settings → Questions if it is not wanted.` It needs the question box on. It only warns; it cannot make Claude ask again.
 
@@ -45,7 +46,7 @@ Until the job has a plan, other tools are refused for the main agent. Subagents 
 - The refusal says: `Blocked by the Session Panel mod until this session calls mcp__session-panel__plan_steps (see the Session Panel system section).`
 - The rule itself is in a system-prompt section, `session-panel:plan`. It asks for `plan_steps` before any other tool, and says to skip the plan if the tool is still missing.
 - **Escape:** after 3 refusals in a row with no plan, tools go through. The toast says `Session Panel: no plan_steps call after 3 tries, so tools are open.` A plan, or the end of the job, resets the count.
-- If the gate hook ever fails, tools are allowed through.
+- If the gate hook throws an error, tools are allowed through. A gate hook that cannot answer in time is refused by Claude Code itself, which now blocks an action whose hook gives no answer.
 
 ## The enhancer
 
