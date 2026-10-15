@@ -148,7 +148,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         team.admission??={paused:false,members:{}};
         if(input.memberId)team.admission.members[input.memberId]=input.paused;else team.admission.paused=input.paused;
       }); },
-      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.'); },
+      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.');if(stops.listStops().some(row=>row.target.teamId===teamId&&row.target.memberId===memberId&&['intent','submitted','unknown'].includes(row.state)))fail('Stop outcome is unresolved; reconcile this member before a new assignment.'); },
       listGoals,
       enqueueGoal(input){workInput(input);return atomicDispatch(()=>{
         const key=`goal-request:${input.requestId}`,digest=fingerprint(input),prior=readPrivate(key);
@@ -186,7 +186,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||previous.status!=='rework'||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
-        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history,intent.spec.taskKey,writeScope);
+        const stopAttempts=new Set(stops.listStops().filter(row=>['intent','submitted','unknown'].includes(row.state)).map(row=>row.target.attemptId));
+        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history.map(row=>stopAttempts.has(row.id)?{...row,status:'unknown'}:row),intent.spec.taskKey,writeScope);
         if(conflict&&!intent.unadmitted)fail(`Write scope conflicts with ${conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
         if(previous&&JSON.stringify(writeScope)!==JSON.stringify(previous.writeScope??[]))fail('Rework must preserve the declared write scope.');
         const dependencies=intent.spec.dependencies??[];

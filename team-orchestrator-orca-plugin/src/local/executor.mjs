@@ -191,7 +191,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
-      if (op === 'setAdmission') { await consent(); return {value:store.setAdmission(params)}; }
+      if (op === 'setAdmission') { await consent(); await reconcileExisting(); const value=store.setAdmission(params); stopped=false;scheduleWork();return {value}; }
       if (op === 'checkStop') { await stops.check(params.requestId); return {value:store.readSnapshot()}; }
       if (op === 'answerQuestion') { await reconcileExisting(); return { value: await questions.answer(params) }; }
       if(op==='enqueueGoal'){await consent();store.enqueueGoal(params);return {value:store.readSnapshot()};}

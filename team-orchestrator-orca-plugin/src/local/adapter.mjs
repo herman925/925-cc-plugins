@@ -71,7 +71,13 @@ export async function installAdapter(electron, { version, identity, internalKey 
           await authority();const plan=await command('_stopValidate',{requestId:saved.requestId});
           if(plan){
             const socketRpc=createNativeRpc({userData:electron.app.getPath('userData'),parentPid:process.pid,consent:authority});
-            let receipt,error;try{receipt=await withNativeRuntime(socketRpc,plan.runtimeId,()=>socketRpc(plan.method,plan.params,plan.envelope));}catch(failure){error={message:failure.message,code:failure.code,native:failure.native===true};}
+            let receipt,error;try{receipt=await withNativeRuntime(socketRpc,plan.runtimeId,async()=>{
+              if(plan.executionHostId?.startsWith('ssh:')){const state=(await socketRpc('ssh.getState',{targetId:decodeURIComponent(plan.executionHostId.slice(4))}))?.state;if(state?.status!=='connected'||state.connectionGeneration!==plan.hostGeneration)throw Error('Stop execution host changed before submission; reconcile the saved intent.');}
+              if(plan.terminalIdentity){const expected=plan.terminalIdentity,shown=(await socketRpc('terminal.show',{terminal:expected.handle}))?.terminal;if(shown?.handle!==expected.handle||shown.incarnationId!==expected.incarnationId||shown.ptyId!==expected.ptyId||`${shown.tabId}:${shown.leafId}`!==expected.paneKey||shown.worktreeId!==expected.workspaceId||shown.executionHostId!==plan.executionHostId)throw Error('Exact terminal identity changed before stop submission.');}
+              const receipt=await socketRpc(plan.method,plan.params,plan.envelope);
+              if(plan.executionHostId?.startsWith('ssh:')){const state=(await socketRpc('ssh.getState',{targetId:decodeURIComponent(plan.executionHostId.slice(4))}))?.state;if(state?.status!=='connected'||state.connectionGeneration!==plan.hostGeneration)throw Error('Stop execution host changed before receipt verification; reconcile the saved intent.');}
+              return receipt;
+            });}catch(failure){error={message:failure.message,code:failure.code,native:failure.native===true};}
             // Native effects may have happened. Durable submitted intent survives a revoked settle.
             await authority();await command('_stopSettle',{requestId:saved.requestId,receipt,error});
           }
