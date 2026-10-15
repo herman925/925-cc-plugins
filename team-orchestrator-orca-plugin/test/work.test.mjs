@@ -217,3 +217,17 @@ test('acceptance reserves two queued objectives in order and each consumes a fre
  w=f.store.updateWork(w.id,w.version,{run:{state:'verified',id:'second-run',consumerGeneration:1},instance:{kind:'structured',sessionId:'session-second',liveSessionId:'session-second',fence:1},status:'active'});accept();assert.equal(f.store.nextGoal(f.team.id).objective,'Third objective');
  await f.restart();assert.equal(f.store.listWorks().length,2);assert.equal(f.store.listWorks().filter(w=>w.status!=='completed').length,0);assert.notEqual(f.store.nextGoal(f.team.id).launchRequests[f.head.id],fresh.requestId);
 });
+test('closure rechecks user questions, preserves unknown receipts after confirmed processing, and rolls back pointer races',async t=>{
+ const f=await fixture(t);let w=f.store.prepareWork({teamId:f.team.id,requestId:'work',expectedRevision:f.store.readSnapshot().revision,objective:'Audit'}).work;
+ w=f.store.updateWork(w.id,w.version,{status:'active',run:{state:'verified',id:'run',consumerGeneration:1},instance:{kind:'structured',sessionId:'session-head',liveSessionId:'session-head',fence:7}});
+ f.store.recordDelivery(w.id,{id:'delivery',summary:'Done',evidenceRefs:['report'],attemptIds:[],generation:1,proof:{requestId:'proof',payloadHash:'a'.repeat(64)}});w=f.store.readWork(w.id);
+ const decision={requestId:'accept',workId:w.id,deliveryId:'delivery',expectedWorkVersion:w.version,decision:'accept'};
+ f.store.ingestQuestion(w.id,{spec:{appQuestionId:'question',summary:'Choose scope',options:['A','B'],blockingTaskKeys:[]}});
+ assert.throws(()=>f.store.decideWork(decision),/Required work remains/);assert.equal(f.store.readWork(w.id).status,'awaiting_acceptance');
+ f.store.queueQuestionAnswer({workId:w.id,questionId:'question',questionRevision:1,answerId:'answer',body:'A',supplement:false});
+ f.store.updateQuestion(w.id,'question',q=>{q.status='answered';q.answers[0].state='unknown';});assert.throws(()=>f.store.decideWork(decision),/Required work remains/);
+ f.store.updateQuestion(w.id,'question',q=>{q.answers[0].processed='confirmed';});
+ const old=f.store.readOperation('launch');assert.equal(f.store.retireBinding({memberId:f.head.id,requestId:'launch',instanceGeneration:1}),true);
+ const replacement=f.store.prepareOperation({teamId:f.team.id,memberId:f.head.id,configVersion:1,requestId:'replacement'},{scope:f.scope,nativeRequest:nativeLaunchIntent(f.team,f.head,f.scope),runtimeId:'runtime-one',roleVersion:1,title:'Head'}).operation;
+ assert.throws(()=>f.store.decideWork(decision),/binding changed/);assert.equal(f.store.readWork(w.id).status,'awaiting_acceptance');assert.equal(f.store.isActiveOperation(replacement),true);assert.equal(f.store.readWorkDecision('accept'),null);assert.equal(old.status,'created');
+});

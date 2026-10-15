@@ -7,6 +7,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
   const reasons=[];const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
+  for(const expected of work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
   for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
@@ -43,7 +44,9 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(input.decision==='accept'){
     if(readPrivate(`active-work:${w.teamId}`)?.workId!==w.id)fail('Active TeamWork pointer changed.');
     const state=readSnapshot(),team=state.teams.find(t=>t.id===w.teamId);
-    for(const expected of w.recipientBindings??[w.binding]){
+    const expectedRecipients=w.recipientBindings??[w.binding];
+    if(Object.values(team.launch?.members??{}).some(r=>!expectedRecipients.some(e=>e.requestId===r.requestId)))fail('Current member binding changed during Work; reconcile before closure.');
+    for(const expected of expectedRecipients){
      const pointer=readPrivate(`binding:${expected.memberId}`);
      if(pointer?.requestId!==expected.requestId||(pointer.instanceGeneration??1)!==(expected.instanceGeneration??1))fail('Current member binding changed; closure must not retire a replacement.');
      db.prepare('DELETE FROM receipts WHERE id=?').run(`binding:${expected.memberId}`);putPrivate(`binding-generation:${expected.memberId}`,{generation:expected.instanceGeneration??1});
@@ -62,6 +65,17 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    persistWork(w);putPrivate(key,event);return event;
   });},
   updateWorkDecision(requestId,patch){return atomic(()=>{const event=readPrivate(`work-decision:${requestId}`);if(!event)fail('Saved decision not found.');Object.assign(event,patch);putPrivate(`work-decision:${requestId}`,event);return event;});},
+  reserveNextGoal(teamId){return atomic(()=>{
+   const prior=api.nextGoal(teamId);if(prior)return prior;
+   if(readPrivate(`active-work:${teamId}`))return null;
+   const state=readSnapshot(),team=state.teams.find(t=>t.id===teamId),goal=listGoals(teamId).find(g=>g.status==='queued');
+   if(!team||!goal)return null;
+   if(Object.keys(team.launch?.members??{}).length)fail('Existing preparation bindings must be resolved before a fresh queued goal.');
+   const old=db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%' ORDER BY rowid DESC").all().map(r=>JSON.parse(r.json)).find(w=>w.teamId===teamId&&w.status==='completed');
+   if(!old)fail('Submit the first total objective with its prepared supervisor before advancing later goals.');
+   Object.assign(goal,{status:'reserved',previousWorkId:old.id,handoff:old.handoff,launchRequests:Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()])),workRequestId:randomUUID(),configVersion:team.configVersion,supervisorMemberId:team.members.find(m=>m.boss===null).id});
+   putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${teamId}`,{goalId:goal.id});state.revision++;write(state);return goal;
+  });},
   nextGoal(teamId){const p=readPrivate(`next-goal:${teamId}`);return p?readPrivate(`goal:${p.goalId}`):null;},
  };
  return api;

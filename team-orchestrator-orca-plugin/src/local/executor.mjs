@@ -82,10 +82,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
         if(op==='_decideWork'){
+          if(!store.readWorkDecision(params.requestId))await questions.check(params.workId);
           const decision=await lifecycle.decide(params);return {value:store.readSnapshot(),decision,teamId:store.readWork(params.workId).teamId};
         }
         if(op==='_nextGoal'){
-          const goal=store.nextGoal(params.teamId);if(!goal)return {value:store.readSnapshot()};
+          const goal=store.reserveNextGoal(params.teamId);if(!goal)return {value:store.readSnapshot()};
           const team=store.readSnapshot().teams.find(t=>t.id===params.teamId);
           if(team?.configVersion!==goal.configVersion)throw Error('Queued transition configuration changed.');
           const pending=Object.entries(goal.launchRequests).find(([memberId,id])=>store.readOperation(id)?.status!=='created');
@@ -176,7 +177,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id);
+        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }

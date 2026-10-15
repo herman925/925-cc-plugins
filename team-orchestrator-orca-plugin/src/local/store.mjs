@@ -155,6 +155,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const protocol={format:'team-dispatch-protocol-v1',workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
       }); },
       updateDispatchProtocol(workId,version,patch) { return atomicDispatch(()=>{
+        if(readWork(workId)?.status==='completed')fail('Completed TeamWork is sealed.');
         const row=readDispatchProtocol(workId);if(!row||row.version!==version)fail('Dispatch protocol changed while observing evidence.');
         if(Object.keys(patch).some(key=>!['state','detail','nativeSend'].includes(key)))fail('Immutable dispatch protocol cannot change.');
         Object.assign(row,patch,{version:version+1});validateDispatchProtocol(row);putPrivate(`dispatch-protocol:${workId}`,row);return row;
@@ -192,13 +193,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`)),work=readWork(row.workId),current=listDispatches(row.workId).filter(other=>other.taskKey===row.taskKey).at(-1);
         if(row.review){if(row.review.requestId===review.requestId&&row.review.payloadHash===review.payloadHash)return row;fail('This attempt already has an immutable supervisor decision.');}
-        if(current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
+        if(work?.status==='completed'||current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
         const event={...review,workId:row.workId,taskKey:row.taskKey,nativeTaskId:row.nativeTaskId,dispatchId:row.dispatchId,recordedAt:new Date().toISOString()};
         row.review=event;row.status=review.decision==='accept'?'accepted':'rework';row.version++;row.detail=review.decision==='accept'?'Direct supervisor accepted the execution and validation evidence.':'Direct supervisor requested rework; dependencies remain blocked.';
         validateDispatch(row);putPrivate(`dispatch-review:${row.id}`,event);putPrivate(`dispatch:${row.id}`,row);return row;
       }); },
       updateDispatch(id,version,patch,expectedWorkVersion) { return atomicDispatch(()=>{
-        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(readWork(row.workId)?.status==='completed')fail('Completed TeamWork is sealed.');if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
         if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
         if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
@@ -225,6 +226,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if(state.revision!==input.expectedRevision) fail('Another panel changed team data. Reload before submitting the objective.');
           const requestId=team.launch?.members?.[supervisor.id]?.requestId, binding=requestId&&readOperation(requestId);
           if(binding?.status!=='created'||binding.teamId!==team.id||binding.memberId!==supervisor.id||!binding.handle) fail('Launch and verify the registered highest supervisor before submitting a total objective.');
+          if(listWorks().some(w=>w.teamId===team.id&&(binding.kind==='structured'?w.binding.sessionId===binding.sessionId:w.binding.handle===binding.handle||w.binding.paneKey===binding.paneKey)))fail('New TeamWork requires a fresh native conversation; old session authority cannot be reused.');
           if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? 'default') || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? 'default')) fail('The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.');
           if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`session-work:${requestId}`)) fail('This preparation session has already accepted a total objective.');
           const scope=JSON.parse(db.prepare('SELECT json FROM scopes WHERE team_id=?').get(team.id).json);

@@ -112,7 +112,7 @@ async function fixture(id, mode) {
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
-        const structured = mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
+        const structured = mode === 'goal-lifecycle' || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); return result;
       }

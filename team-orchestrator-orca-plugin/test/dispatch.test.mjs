@@ -351,9 +351,14 @@ test('overall delivery requires native Head author proof and user decision; rewo
  await assert.rejects(service.decide({...rework,requestId:'stale',decision:'accept'}),/delivery|changed|superseded/i);
  proposal('delivery-two');await service.check(w.id);w=f.store.readSnapshot().works[0];
  const accepted={requestId:'user-accept',workId:w.id,deliveryId:w.delivery.id,expectedWorkVersion:w.version,decision:'accept'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run('unregistered','run-head','{}','completed',null,null,null,null,null);
+ await assert.rejects(service.decide(accepted),/Unregistered native work/);assert.equal(f.store.readWork(w.id).status,'awaiting_acceptance');f.db.prepare('DELETE FROM tasks WHERE id=?').run('unregistered');
  await service.decide(accepted);await service.decide(accepted);assert.equal(f.store.readWork(w.id).status,'completed');assert.equal(f.store.listGoals(f.team.id)[0].status,'reserved');
  assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),false);assert.equal(f.store.readOperation('launch').status,'created');
- await f.works.check(w.id);await f.works.reconcile();await service.check(w.id);assert.equal(f.store.readWork(w.id).status,'completed');
+ const callCount=f.calls.length;await f.works.check(w.id);await f.works.reconcile();await service.check(w.id);
+ const {createQuestionService}=await import('../src/local/questions.mjs'),{createRecoveryService}=await import('../src/local/recovery.mjs');
+ await createQuestionService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(w.id);await createRecoveryService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}}).checkWork(w.id);await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(w.id);
+ assert.equal(f.calls.length,callCount,'all closed Work observation loops are effect-free');assert.equal(f.store.readWork(w.id).status,'completed');
  await f.restart();assert.equal(f.store.readWork(w.id).status,'completed');assert.equal(f.store.readSnapshot().works[0].delivery.summary,'Audit complete');
 });
 

@@ -146,7 +146,7 @@ function details() {
 }
 function workSection(team){
  const history=(state.works||[]).filter(w=>w.teamId===team.id&&w.status==='completed'),goals=(state.goals||[]).filter(g=>g.teamId===team.id&&g.status!=='started');
- const queue=`<section class="section" aria-label="Queued objectives"><h3>Next total objectives</h3><label class="field">Queue a later objective<textarea data-goal="${team.id}" maxlength="8000">${escape(goalDrafts.get(team.id)||'')}</textarea></label>${button('Queue objective','enqueue-goal',`data-team="${team.id}"`,'small')}<p>Queueing saves the goal. It starts after you accept the current delivery, using fresh conversations.</p>${goals.map(g=>`<p>${escape(g.objective)} · ${escape(g.status)}</p>`).join('')}${goals.some(g=>g.status==='reserved')?button('Continue next objective','start-next',`data-team="${team.id}"`,'small'):''}</section>`;
+ const queue=`<section class="section" aria-label="Queued objectives"><h3>Next total objectives</h3><label class="field">Queue a later objective<textarea data-goal="${team.id}" maxlength="8000">${escape(goalDrafts.get(team.id)||'')}</textarea></label>${button('Queue objective','enqueue-goal',`data-team="${team.id}"`,'small')}<p>Queueing saves the goal. It starts after you accept the current delivery, using fresh conversations.</p>${goals.map(g=>`<p>${escape(g.objective)} · ${escape(g.status)}</p>`).join('')}${(goals.some(g=>g.status==='reserved')||history.length&&!state.works?.some(w=>w.teamId===team.id&&w.status!=='completed')&&goals.length)?button('Continue next objective','start-next',`data-team="${team.id}"`,'small'):''}</section>`;
  const past=history.length?`<details><summary>Accepted work history (${history.length})</summary>${history.map(w=>`<p>${escape(w.objective)} · Accepted by you · ${escape(w.closedAt)}</p><p>${escape(w.handoff?.summary||'')}</p>`).join('')}</details>`:'';
  return activeWorkSection(team)+queue+past;
 }
@@ -366,7 +366,7 @@ app.addEventListener('click', async event => {
       while(result.continue){message='Preparing fresh sessions for the next objective…';render();await new Promise(resolve=>setTimeout(resolve,10100));result=await call('startNextGoal',{teamId});}
       state=validatePersistentState(result.value||(await call('storage.get',{})).value);
       if(result.pending)message=result.detail||'Next objective remains reserved. Continue after checking its saved launch evidence.';
-    }catch(error){problem=error.message;try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    }catch(error){problem=error.message;if(/changed|superseded/i.test(error.message))decisionRequests.clear();try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
     finally{busy=false;render();}
   }
   else if (action === 'answer-question') {
