@@ -42,6 +42,7 @@ function startWorker() {
   });
 }
 const runtimeReads = [], launched = new Map(), objectiveSends = new Map();
+let stopCalls=0;
 let terminalStatus = 'permission', nativeDb, nativeSocket, objectiveAttempts = 0;
 const nativeToken = 'fixture-private-runtime-token';
 const history = new Map();
@@ -172,7 +173,13 @@ function savedOperation(nativeId) {
 async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   runtimeReads.push({ method, params, transport });
   let result;
-  if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+  if(method==='orchestration.workerStop'){
+    assert.equal(transport,'socket');assert.match(envelope.orchestrationRequestId,/^[a-f0-9-]{36}$/);assert.deepEqual(Object.keys(params),['dispatch']);
+    const intent=savedPrivate('stop').find(row=>row.nativeRequestId===envelope.orchestrationRequestId);assert.equal(intent.state,'submitted');assert.equal(intent.target.dispatchId,params.dispatch);
+    stopCalls++;result={dispatchId:params.dispatch,state:stopCalls===1?'stopped':'stop_unknown',processAction:'closed_agent_terminal',close:{ptyKilled:stopCalls===1}};
+    nativeDb.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('fixture-local-caller',envelope.orchestrationRequestId,method,createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex'),'completed',JSON.stringify(result));
+  }
+  else if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
   else if (method === 'worktree.show') result = { worktree: { id: 'repo::/remote/project', hostId: 'ssh:fixture' } };
   else if (method === 'settings.get') result = { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } };
   else if (method === 'ssh.getState') result = { state: { status: 'connected', connectionGeneration: 1 } };
@@ -459,6 +466,19 @@ app.whenReady().then(async () => {
     const prepared=(await control('load',{})).value.teams.find(row=>row.id===all.id);
     assert.deepEqual(Object.keys(prepared.launch.members).sort(),all.members.map(row=>row.id).sort());
     assert.equal(runtimeReads.filter(row=>row.method==='agent.launchReplay').every(row=>row.params.target.kind==='existing'&&row.params.target.worktree==='id:repo::/remote/project'),true,'every roster member uses the exact existing shared Git workspace');
+    const stoppedWorks=(await control('load',{})).value.works;
+    for(const [index,work] of stoppedWorks.entries()){
+      const attempt=savedPrivate('dispatch').find(row=>row.workId===work.id);
+      
+      const input={requestId:'explicit-stop-'+work.id,teamId:work.teamId,memberId:attempt.memberId,workId:work.id,attemptId:attempt.id};
+      const result=await control('stopMember',input);assert.equal(result.value.stops.find(row=>row.requestId===input.requestId).state,index===0?'stopped':'unknown');
+      await control('stopMember',input);
+    }
+    assert.equal(stopCalls,2,'duplicate stops must not repeat the native effect');
+    const admission=(await control('load',{})).value;
+    await control('setAdmission',{requestId:'pause-team',teamId:all.id,paused:true,expectedRevision:admission.revision});
+    const paused=(await control('load',{})).value;assert.equal(paused.teams.find(row=>row.id===all.id).admission.paused,true);
+    await control('setAdmission',{requestId:'resume-team',teamId:all.id,paused:false,expectedRevision:paused.revision});
     // #116 authenticated Head proposal, explicit user rework/accept, and fresh queued conversation.
     let closing=savedWorks().find(w=>w.id===terminalWork.id);
     const answer=answers.find(a=>a.workId===closing.id);
@@ -481,7 +501,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: native UUID stop, unknown, deduplication, admission pause/resume; overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });

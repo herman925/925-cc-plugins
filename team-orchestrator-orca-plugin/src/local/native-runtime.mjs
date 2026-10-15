@@ -3,7 +3,7 @@ import { createConnection } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { realpath,readFile } from 'node:fs/promises';
 import { join,relative,isAbsolute,sep } from 'node:path';
-const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.send','agentSession.history','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow','orchestration.workerRead']);
+const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.send','agentSession.history','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow','orchestration.workerRead','orchestration.workerStop','terminal.stopExact','agentSession.close']);
 export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxBytes=2*1024*1024}) {
  const context=new AsyncLocalStorage();
  const rpc=async (method,params,envelope={})=>{
