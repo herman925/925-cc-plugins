@@ -7,13 +7,14 @@ import { createHash } from 'node:crypto';
 import { openTeamStore } from '../src/local/store.mjs';
 import { DEFAULT_FORM } from '../src/team.mjs';
 import { nativeLaunchIntent, publicOperation } from '../src/local/native-launch.mjs';
-const scope = { workspaceId: 'folder:/work', executionHostId: 'local', kind: 'folder', displayName: 'Work', workspaceKey: createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex') };
-export async function fixture(t, kind = 'structured') {
+const baseScope = { workspaceId: 'folder:/work', executionHostId: 'local', kind: 'folder', displayName: 'Work', workspaceKey: createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex') };
+export async function fixture(t, kind = 'structured', executionHostId = 'local') {
+ const scope={...baseScope,executionHostId,workspaceKey:createHash('sha256').update(JSON.stringify([baseScope.workspaceId,executionHostId])).digest('hex')};
  const profile = await mkdtemp(join(tmpdir(), 'team-work-')); let store = await openTeamStore({ userData: profile });
  t.after(async () => { store.close(); await rm(profile, { recursive:true, force:true }); });
  const team = store.createTeam({ requestId:'team', expectedRevision:0, form:DEFAULT_FORM }, scope).teams[0]; const head = team.members[0];
  const launch = { teamId:team.id,memberId:head.id,configVersion:1,requestId:'launch' };
- const operation = store.prepareOperation(launch, { scope, nativeRequest:nativeLaunchIntent(team,head,scope), roleVersion:1,title:'Squad/Head',executionHostId:'local',runtimeId:'runtime-one' }).operation;
+ const operation = store.prepareOperation(launch, { scope, nativeRequest:nativeLaunchIntent(team,head,scope), roleVersion:1,title:'Squad/Head',executionHostId,runtimeId:'runtime-one' }).operation;
  const patch = { status:'created', kind,handle:kind==='structured'?'chat-head':'term-head',...(kind==='structured'?{sessionId:'session-head'}:{paneKey:'tab:leaf'}),briefAccepted:true,prompt:{delivery:'submit',outcome:'journaled',messageId:'role-message'} };
  store.settleOperation('launch',operation.nativeRequest.operationId,{...patch,public:publicOperation({...operation,...patch})});
  return { profile,team,head,scope,get store(){return store;}, async restart(){store.close();store=await openTeamStore({userData:profile});} };
@@ -176,4 +177,19 @@ test('two SQLite panel connections cannot settle an obsolete observation over a 
  second.settleOperation('launch',observed.nativeRequest.operationId,{recovery:{state:'confirmed_effect',observedAt:'newer'}},observed.version);
  assert.throws(()=>f.store.settleOperation('launch',observed.nativeRequest.operationId,{recovery:{state:'stopped',observedAt:'older'}},observed.version),/changed|stale/);
  assert.equal(f.store.readOperation('launch').recovery.observedAt,'newer');
+});
+test('SSH generation rotation during supervisor observation prevents sending the objective',async t=>{
+ const {createWorkService}=await import('../src/local/teamwork.mjs');const f=await fixture(t,'structured','ssh:saved-host');let generation=1,sends=0;
+ const rpc=async(method)=>{
+  if(method==='status.get')return {runtimeId:'runtime-one',capabilities:['orchestration.contract.v1','agent-session.structured.v1']};
+  if(method==='worktree.show')return {worktree:{id:f.scope.workspaceId,hostId:f.scope.executionHostId}};
+  if(method==='ssh.getState')return {state:{status:'connected',connectionGeneration:generation}};
+  if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:session-head'};
+  if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'session-head',worktreeId:f.scope.workspaceId}};
+  if(method==='agentSession.history'){generation=2;return {ok:true,page:{sessionId:'session-head',fence:7}};}
+  if(method==='agentSession.send'){sends++;throw Error('An epoch-spanning input must not be submitted');}
+  throw Error('Unexpected read');
+ };
+ const work=await createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}).submit({teamId:f.team.id,requestId:'ssh-rotate',expectedRevision:f.store.readSnapshot().revision,objective:'Keep remote scope'});
+ assert.equal(sends,0);assert.equal(work.input.state,'not_sent');assert.match(work.error,/SSH.*generation|SSH.*changed/i);
 });

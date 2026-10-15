@@ -226,7 +226,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const bindingKey = `binding:${input.memberId}`;
           if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
           const instanceGeneration=(readPrivate(`binding-generation:${input.memberId}`)?.generation??0)+1;
-          const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', instanceGeneration, version:1, createdAt: new Date().toISOString() };
+          const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', effectState:'intent', instanceGeneration, version:1, createdAt: new Date().toISOString() };
           db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId, instanceGeneration }));
           persistOperation(operation);
           db.exec('COMMIT'); return { operation, fresh: true };

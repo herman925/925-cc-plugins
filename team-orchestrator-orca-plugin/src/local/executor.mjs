@@ -105,6 +105,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved execution scope changed before launch.');
+          // Commit the may-have-executed boundary before the adapter can call the native effect.
+          settled(saved,{effectState:'submitted',recovery:undefined});
           return { valid: true };
         }
         if (op === '_launchSettle' || op === '_launchFollowup') {

@@ -18,7 +18,7 @@ export async function readSessionDeath(userData,sessionId,ownerFence,scope){
   const raw=db.prepare('SELECT record_json FROM agent_session_records WHERE session_id=?').get(sessionId)?.record_json;
   if(typeof raw!=='string'||raw.length>262144)return null;
   const record=JSON.parse(raw),lease=record.lease,death=lease?.deathEvidence;
-  if(record.schemaVersion!==2||record.location?.workspaceId!==scope?.workspaceId||record.location?.executionHostId!==scope?.executionHostId||record.sessionId!==sessionId||lease?.sessionId!==sessionId||lease.runtimeFence!==ownerFence||lease.claimStatus!=='released'||lease.handoffStage||lease.handoffOperationId||lease.ownerProcess||lease.reservedSpawnToken||lease.unreconciled===true||death?.ownerFence!==ownerFence||!['exit-observed','pid-absent','identity-mismatch'].includes(death.kind)||!Number.isSafeInteger(death.observedAt)||death.observedAt>Date.now()+300000)return null;
+  if(record.schemaVersion!==2||record.location?.workspaceId!==scope?.workspaceId||record.location?.executionHostId!==scope?.executionHostId||record.sessionId!==sessionId||lease?.sessionId!==sessionId||(!Number.isSafeInteger(lease.runtimeFence)||lease.runtimeFence<ownerFence)||lease.claimStatus!=='released'||lease.handoffStage||lease.handoffOperationId||lease.ownerProcess||lease.reservedSpawnToken||lease.unreconciled===true||death?.ownerFence!==ownerFence||!['exit-observed','pid-absent','identity-mismatch'].includes(death.kind)||!Number.isSafeInteger(death.observedAt)||death.observedAt>Date.now()+300000)return null;
   return {kind:death.kind,ownerFence,observedAt:death.observedAt};
  }catch{return null;}finally{db?.close();}
 }
@@ -39,7 +39,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
    if(operation.status==='unknown'){
     const ledger=await readNativeLaunchLedger(userData,operation.nativeRequest);
     if(ledger.state==='succeeded'){patch={...launchReceipt(ledger.result,operation),error:undefined};recovery={...recovery,state:'confirmed_effect',source:'native-launch-ledger',detail:'Original native launch receipt recovered; current execution is separate.'};}
-    else {recovery.detail=ledger.detail;patch.error=ledger.detail;}
+    else {recovery.detail=ledger.detail;patch.error=ledger.detail;if(operation.effectState==='intent')recovery={...recovery,state:'intent',detail:'Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it.'};}
    }
    const saved={...operation,...patch};
    if(saved.status==='created'){

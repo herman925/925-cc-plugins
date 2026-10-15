@@ -12,6 +12,12 @@ export function createWorkService({store,rpc,userData,consent}){
  const queue=new Map();
  const serial=(id,fn)=>{const promise=(queue.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queue.set(id,promise);promise.finally(()=>{if(queue.get(id)===promise)queue.delete(id);}).catch(()=>{});return promise;};
  const save=(work,patch)=>store.updateWork(work.id,work.version,patch);
+ async function verifyHost(work,expected=work.binding.hostGeneration){
+  if(!work.scope.executionHostId.startsWith('ssh:'))return null;
+  const state=(await rpc('ssh.getState',{targetId:decodeURIComponent(work.scope.executionHostId.slice(4))}))?.state;
+  if(state?.status!=='connected'||!Number.isSafeInteger(state.connectionGeneration)||(expected!=null&&state.connectionGeneration!==expected))throw Error('Saved SSH host disconnected or changed generation; existing intent remains reserved.');
+  return state.connectionGeneration;
+ }
  async function verify(work,forSend=false){
   await consent();
   const binding=store.readOperation(work.binding.requestId);
@@ -20,10 +26,7 @@ export function createWorkService({store,rpc,userData,consent}){
   if(status?.runtimeId!==binding.runtimeId||!status.capabilities?.includes('orchestration.contract.v1'))throw Error('The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.');
   const selected=(await rpc('worktree.show',{worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`}))?.worktree;
   if(selected?.id!==work.scope.workspaceId||(selected.hostId??selected.identity?.executionHostId)!==work.scope.executionHostId)throw Error('The saved project or execution host is no longer verified.');
-  if(work.scope.executionHostId.startsWith('ssh:')){
-   const state=(await rpc('ssh.getState',{targetId:decodeURIComponent(work.scope.executionHostId.slice(4))}))?.state;
-   if(state?.status!=='connected'||(binding.hostGeneration!=null&&state.connectionGeneration!==binding.hostGeneration))throw Error('Reconnect the saved SSH host and verify its native CLI connection; the objective has not been redirected locally.');
-  }
+  const hostGeneration=await verifyHost(work);
   if(binding.kind==='structured'){
    if(!status.capabilities.includes('agent-session.structured.v1'))throw Error('This runtime cannot accept structured user messages.');
    const address=(await rpc('orchestration.sessionAddress',{sessionId:binding.sessionId}))?.orcaSessionId;
@@ -33,7 +36,8 @@ export function createWorkService({store,rpc,userData,consent}){
    if(history?.ok!==true||history.page?.sessionId!==binding.sessionId||!Number.isSafeInteger(history.page.fence)||history.page.fence<1)throw Error('A verified native session fence is unavailable. Open the supervisor session and resolve its native error.');
    const instance={kind:'structured',sessionId:address.slice('orca_session_id:'.length),liveSessionId:binding.sessionId,fence:history.page.fence};
    if(work.instance&&['sessionId','liveSessionId','fence'].some(key=>work.instance[key]!==instance[key]))throw Error('Supervisor execution fence changed; the existing work remains reserved.');
-   return {instance,history:history.page,status};
+   await verifyHost(work,hostGeneration);
+   return {instance,history:history.page,status,hostGeneration};
   }
   const shown=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;
   if(shown?.handle!==binding.handle||shown.worktreeId!==work.scope.workspaceId||shown.executionHostId!==work.scope.executionHostId||!shown.connected||!shown.writable||!shown.incarnationId||shown.agentIdentity!==binding.nativeRequest.agent||`${shown.tabId}:${shown.leafId}`!==binding.paneKey)throw Error('The prepared terminal agent, host or execution instance is unverified. Open its native session and resolve login or permission issues.');
@@ -44,7 +48,8 @@ export function createWorkService({store,rpc,userData,consent}){
   const instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,incarnationId:shown.incarnationId};
   if(work.instance&&work.instance.incarnationId!==instance.incarnationId)throw Error('Supervisor terminal incarnation changed; the existing work remains reserved.');
   if(!status.capabilities.includes('terminal.prompt-delivery.v1'))throw Error('This host does not support durable terminal prompt delivery. Update the owning Orca host before submitting.');
-  return {instance,status};
+  await verifyHost(work,hostGeneration);
+  return {instance,status,hostGeneration};
  }
  async function observe(work,verified){
   if(work.run.state==='fenced')return work;
@@ -74,6 +79,7 @@ export function createWorkService({store,rpc,userData,consent}){
    if(finalOwner.state!=='verified'||finalOwner.consumerGeneration!==run.consumerGeneration)throw Error('Native Run ownership changed during snapshot read; prior generation remains fenced.');
    snapshot={stale:false,observedAt:new Date().toISOString(),tasks:result.tasks.map(task=>({id:task.id,status:task.status,title:task.task_title??task.display_name??'Task',...(task.dispatch_id?{dispatchId:task.dispatch_id}:{})}))};
   }
+  await verifyHost(work,verified.hostGeneration);
   return save(work,{input,processing,run,...(snapshot?{snapshot}:{}),instance:verified.instance,status:run.state==='verified'?'active':input.state==='not_sent'||input.state==='rejected'?'needs_attention':'awaiting_run',error:undefined});
  }
  async function deliver(work){
@@ -87,6 +93,7 @@ export function createWorkService({store,rpc,userData,consent}){
     nativeSend={method:'agentSession.send',params:{envelope:{sessionId,clientOperationId:`${Date.now()}-${randomBytes(16).toString('hex')}`,expectedRuntimeFence:verified.instance.fence,payloadFingerprint:sendFingerprint(sessionId,body)},body},envelope:{}};
    }else nativeSend={method:'terminal.send',params:{terminal:work.binding.handle,text:body.blocks[0].text,enter:true,agentPrompt:true,waitSubmitMs:1000,client:{id:'team-orchestrator',type:'desktop'}},envelope:{orchestrationRequestId:randomUUID()}};
    await consent();work=save(work,{nativeSend,instance:verified.instance,input:{state:'sending'},status:'awaiting_input'});attempted=true;
+   await verifyHost(work,verified.hostGeneration);
    const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);
    let input,processing={state:'unknown'};
    if(work.binding.kind==='structured'){
@@ -112,6 +119,7 @@ export function createWorkService({store,rpc,userData,consent}){
   }catch(error){return save(work,{input:attempted&&work.input.state==='sending'?{...work.input,state:'unknown',detail:'Input may have been delivered. Checking work never resends it.'}:work.input,status:'needs_attention',error:String(error.message).slice(0,1500)});}
  }
  return {
+  async verifyHost(id,expected){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return verifyHost(work,expected);},
   async verifyWork(id,forSend=false){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return withNativeRuntime(rpc,work.binding.runtimeId,()=>verify(work,forSend));},
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},

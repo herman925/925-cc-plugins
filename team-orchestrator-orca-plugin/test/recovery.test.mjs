@@ -15,7 +15,7 @@ async function fixture(t,{host='local'}={}){
  return {profile,scope,team,member,op,rpc,calls,get store(){return store;},set offline(value){offline=value;},set epoch(value){epoch=value;},service(){return createRecoveryService({store,rpc,userData:profile,consent:async()=>{}});},async restart(){store.close();store=await openTeamStore({userData:profile});}};
 }
 test('worker crash, sleep, runtime restart and reread retain uncertain launch reservation without any launch effect',async t=>{
- const f=await fixture(t);await f.restart();await f.service().reconcile();
+ const f=await fixture(t);f.store.settleOperation('launch',f.op.nativeRequest.operationId,{effectState:'submitted'},f.op.version);await f.restart();await f.service().reconcile();
  assert.equal(f.store.readOperation('launch').recovery.state,'unknown');
  f.offline=true;await f.service().reconcile();f.offline=false;f.epoch='restarted-runtime';await f.restart();await f.service().reconcile();
  assert.equal(f.store.readOperation('launch').status,'unknown');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
@@ -31,7 +31,7 @@ test('released structured lease needs exact saved owner-fence death evidence; hi
  const write=()=>db.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run('session',JSON.stringify({schemaVersion:2,sessionId:'session',location:{workspaceId:f.scope.workspaceId,executionHostId:f.scope.executionHostId},lease}));
  write();await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'confirmed_effect');assert.equal(f.store.readOperation('launch').recovery.liveness,'unknown');
  lease.deathEvidence={kind:'exit-observed',ownerFence:6,observedAt:Date.now()};write();await f.service().reconcile();assert.notEqual(f.store.readOperation('launch').recovery.state,'stopped');
- lease.deathEvidence.ownerFence=7;write();await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'stopped');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
+ lease.deathEvidence.ownerFence=7;lease.runtimeFence=8;write();await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'stopped');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
 });
 test('SSH disconnect and sleep during observation retain the exact member and mark output incomplete until reread',async t=>{
  const f=await fixture(t,{host:'ssh:remote%20one'}),patch={status:'created',kind:'terminal',handle:'terminal',paneKey:'tab:leaf',observation:{state:'unknown',incarnationId:'native-instance'}};
@@ -39,4 +39,9 @@ test('SSH disconnect and sleep during observation retain the exact member and ma
  const rpc=async(method,params)=>{if(method==='ssh.getState'){assert.equal(params.targetId,'remote one');reads++;return {state:{status:disconnected&&reads%2===0?'disconnected':'connected',connectionGeneration:1}};}if(method==='terminal.show')return {terminal:{handle:'terminal',incarnationId:'native-instance',worktreeId:f.scope.workspaceId,executionHostId:f.scope.executionHostId,tabId:'tab',leafId:'leaf',connected:true}};return f.rpc(method,params);};
  let recovery=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});await recovery.reconcile();let op=f.store.readOperation('launch');assert.equal(op.recovery.incomplete,true);assert.equal(op.recovery.liveness,'unknown');assert.equal(op.status,'created');
  await f.restart();disconnected=false;recovery=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});await recovery.reconcile();op=f.store.readOperation('launch');assert.equal(op.recovery.liveness,'live');assert.equal(op.instanceGeneration,1);assert.equal(f.store.isActiveOperation(op),true);
+});
+test('a durable launch intent that never passed native admission remains distinct from an ambiguous submitted operation',async t=>{
+ const f=await fixture(t);await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'intent');
+ const op=f.store.readOperation('launch');f.store.settleOperation('launch',op.nativeRequest.operationId,{effectState:'submitted'},op.version);
+ await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'unknown');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
 });
