@@ -1,3 +1,5 @@
+import {historyCleanup} from './history-cleanup.mjs';
+import {STORAGE_SCHEMA,MAINTENANCE_DDL,prepareStorage,migrateStorage,recoveryInventory} from './storage-maintenance.mjs';
 import { organizationStore } from './organization-store.mjs';
 import { staffingStore } from './staffing-store.mjs';
 
@@ -8,7 +10,7 @@ import { questionStore } from './questions-store.mjs';
 import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
 import { initialMembers } from '../launch.mjs';
 import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
-import { mkdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, realpath, stat, open } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { planTeam, SETTINGS, validatePersistentState } from '../team.mjs';
@@ -23,14 +25,14 @@ const fail = message => { throw new Error(message); };
 export async function openTeamStore(options) {
   try { return await openStore(options); }
   catch (error) {
-    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
+    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
     throw error;
   }
 }
 async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}) {
   if (typeof userData !== 'string' || !isAbsolute(userData) || userData.includes('\0')) fail('Verified Orca profile is required for team storage.');
-  let DatabaseSync;
-  try { ({ DatabaseSync } = await sqlite()); } catch { fail('This worker does not support node:sqlite. Team persistence is unavailable.'); }
+  let DatabaseSync, backup;
+  try { ({ DatabaseSync, backup } = await sqlite()); } catch { fail('This worker does not support node:sqlite. Team persistence is unavailable.'); }
   if (typeof DatabaseSync !== 'function') fail('This worker does not support node:sqlite. Team persistence is unavailable.');
   const profile = await realpath(userData);
   const directory = join(profile, 'plugins-data', 'herman925.team-orchestrator');
@@ -46,13 +48,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
   const path = join(directory, 'team-orchestrator.sqlite');
   let exists = false;
   try { await stat(path); exists = true; inside(await realpath(path)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let prepared;
+  if(exists)try{prepared=await prepareStorage({path,directory,DatabaseSync,backup});}catch(error){const backups=await recoveryInventory(directory,DatabaseSync);const reason=error instanceof SyntaxError?'Saved JSON evidence is damaged':/^(EACCES|EPERM|EROFS|ENOSPC|EIO|EMFILE|ENFILE)$/.test(error.code??'')?`Storage filesystem failure (${error.code})`:error.message;throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter(b=>b.status==='verified-backup').length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);}
+  if(!exists){const fresh=await open(path,'wx',0o600);await fresh.close();}
   const db = new DatabaseSync(path);
   try {
     if (exists) {
-      if (db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') fail('Team database is damaged; preserve the file and restore a verified backup.');
-      const version = db.prepare('PRAGMA user_version').get().user_version;
-      if (version !== 1) fail('Unsupported team database schema. Preserve this database and use a compatible plugin or backup.');
-      if (db.prepare('SELECT format FROM metadata').get()?.format !== FORMAT) fail('Unrecognized team database. Original data has been preserved.');
+      migrateStorage(db,prepared);
     } else {
       db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE metadata (format TEXT NOT NULL);
@@ -63,7 +65,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         CREATE TABLE role_versions (member_id TEXT NOT NULL, version INTEGER NOT NULL, json TEXT NOT NULL, PRIMARY KEY(member_id,version));
         CREATE TABLE requests (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL);
         CREATE TABLE receipts (id TEXT PRIMARY KEY, json TEXT NOT NULL);
-        PRAGMA user_version=1;
+        ${MAINTENANCE_DDL};
+        PRAGMA user_version=${STORAGE_SCHEMA};
         `);
       db.prepare('INSERT INTO snapshot VALUES (1,?)').run(JSON.stringify(empty()));
       db.exec('COMMIT');
@@ -112,7 +115,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const previous = db.prepare('SELECT * FROM requests WHERE id=?').get(input.requestId);
         if (previous) {
           if (previous.fingerprint !== digest) fail('Request identity conflicts with another input.');
-          const result = validatePersistentState(JSON.parse(previous.result));
+          const saved=JSON.parse(previous.result);const result = saved.format==='history-pruned-replay-v1'?readSnapshot():validatePersistentState(saved);
           db.exec('COMMIT'); return result;
         }
         const next = readSnapshot();
@@ -158,6 +161,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
 
     let closed = false;
     return {
+      ...historyCleanup({db,readSnapshot,write,atomic:atomicDispatch}),
+      storageInfo:()=>({schema:STORAGE_SCHEMA,backupId:prepared?.backupId??null}),
       ...staffing,
       ...questions,
       ...organization,
@@ -379,7 +384,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const previous = db.prepare('SELECT fingerprint,result FROM requests WHERE id=?').get(input.requestId);
         if (!previous) return null;
         if (previous.fingerprint !== fingerprint({ op, input })) fail('Request identity conflicts with another input.');
-        return validatePersistentState(JSON.parse(previous.result));
+        const saved=JSON.parse(previous.result);return saved.format==='history-pruned-replay-v1'?readSnapshot():validatePersistentState(saved);
       },
       readScope(teamId) {
         const row = db.prepare('SELECT json FROM scopes WHERE team_id=?').get(teamId);

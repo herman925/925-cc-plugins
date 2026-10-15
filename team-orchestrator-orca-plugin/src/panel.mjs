@@ -21,6 +21,8 @@ let storageAvailable = false;
 let message = '';
 let problem = '';
 let canRetry = false;
+let storageRecovery=null,cleanupPreview=null,cleanupRequest=null;
+const cleanupSelection=new Set();
 let workspace = null;
 let targetError = '';
 let confirmedWorkspace = null;
@@ -225,8 +227,15 @@ function attentionView() {
  }).join('')}`;
  }).join('')}${!(state.recoveries||[]).length&&!(state.works||[]).some(w=>w.questions?.length||w.staffingProposals?.length||w.failureStreaks?.some(s=>s.escalationNeeded))?'<p>No pending decisions.</p>':''}</section>`;
 }
+function storageRecoveryView(){
+ return `<section aria-label="Storage recovery"><h1>Saved storage is unavailable</h1><p>Your saved teams could not be read. Existing data has not been reset.</p><p>Preserve the database together with its WAL, SHM and journal sidecars. Stop the plugin before copying recovery evidence. Use a compatible plugin for a newer schema. Restoring an older backup requires manual reconciliation of later native effects before starting work.</p>${button('Inspect recovery details','storage-recovery','','small')}${storageRecovery?`<dl><dt>Storage status</dt><dd>${escape(storageRecovery.status)}</dd><dt>Found / supported schema</dt><dd>${escape(storageRecovery.foundSchema??'Unreadable')} / ${escape(storageRecovery.supportedSchema)}</dd>${storageRecovery.location?`<dt>Verified local recovery directory</dt><dd>${escape(storageRecovery.location)}</dd>`:''}</dl><p>${escape(storageRecovery.guidance)}</p><h2>Migration backups</h2>${storageRecovery.backups.length?storageRecovery.backups.map(b=>`<p>${escape(b.id)} · ${escape(b.status)} · ${escape(b.createdAt||'Incomplete')}</p>`).join(''):'<p>No verified migration backup is available.</p>'}`:''}</section>`;
+}
+function cleanupView(){
+ const history=(state.works||[]).filter(w=>w.status==='completed');
+ return `<section class="section" aria-label="Manual history cleanup"><h2>Manual history cleanup</h2><p>Select accepted work to preview summary and task-result cleanup. Identity, acceptance and replay evidence stay saved.</p>${history.map(w=>`<label class="check"><input type="checkbox" data-cleanup-work="${escape(w.id)}" ${cleanupSelection.has(w.id)?'checked':''} ${w.historyPruned?'disabled':''}> ${escape(w.objective)} · ${w.historyPruned?'Previously cleaned':'Accepted by you'}</label>`).join('')}${!history.length?'<p>No accepted history yet.</p>':''}${button('Preview history cleanup','preview-cleanup',!storageAvailable||!cleanupSelection.size?'disabled':'','small')}${cleanupPreview?`<section aria-label="Cleanup preview"><h3>Cleanup preview</h3><p>${cleanupPreview.eligibleWorkIds.length} eligible Work(s) · ${cleanupPreview.changes.length} records · ${cleanupPreview.snapshotCount} cached snapshots · ${cleanupPreview.logicalBytes} logical bytes inspected</p><p>${escape(cleanupPreview.notice)}</p>${cleanupPreview.retained.map(r=>`<p>Kept ${escape(r.workId)}: ${escape(r.reason)}</p>`).join('')}<details><summary>Exact affected records</summary>${cleanupPreview.changes.map(r=>`<p>${escape(r.recordId)}: ${r.fields.map(escape).join(', ')}</p>`).join('')}</details>${button('Clear previewed summaries and results','apply-cleanup',!cleanupPreview.eligibleWorkIds.length?'disabled':'','primary small')}${button('Cancel preview','cancel-cleanup','','small')}</section>`:''}</section>`;
+}
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
+  return `<h1>Settings</h1>${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
@@ -236,7 +245,7 @@ function render() {
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : roster()}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : connectionReady&&!storageAvailable&&!busy?storageRecoveryView():roster()}
     </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
@@ -308,6 +317,14 @@ app.addEventListener('click', async event => {
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
   if (['roster', 'new', 'templates', 'settings', 'attention'].includes(action)) { view = action; message = ''; render(); }
+  else if(action==='storage-recovery') {busy=true;render();try{storageRecovery=await call('storageRecovery',{});}catch(error){problem=error.message;}finally{busy=false;render();}}
+  else if(action==='preview-cleanup'||action==='apply-cleanup') {
+    busy=true;problem='';render();try{
+      if(action==='preview-cleanup'){cleanupPreview=await call('previewHistoryCleanup',{selectedWorkIds:[...cleanupSelection]});cleanupRequest=null;}
+      else{cleanupRequest??={requestId:crypto.randomUUID(),previewToken:cleanupPreview.previewToken,expectedStorageRevision:cleanupPreview.storageRevision};const result=await call('applyHistoryCleanup',cleanupRequest);state=validatePersistentState(result.value);message=`Cleared summaries and results for ${result.cleanup.cleanedWorkIds.length} Work(s). Retained identity and acceptance evidence.`;cleanupPreview=null;cleanupRequest=null;cleanupSelection.clear();}
+    }catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if(action==='cancel-cleanup'){cleanupPreview=null;cleanupRequest=null;render();}
   else if (action === 'preset') { Object.assign(form, PRESETS[Number(target.dataset.index)].form); view = 'new'; message = ''; render(); }
   else if (action === 'pick') {
     const field = target.dataset.field;
@@ -492,6 +509,7 @@ app.addEventListener('change', async event => {
     } catch (error) { problem = error.message; }
     render();
   }
+  else if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
   else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
   else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }
