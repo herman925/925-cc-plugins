@@ -1,3 +1,4 @@
+import {latestBusinessAttempts,questionNeedsProcessing} from './acceptance.mjs';
 import { initialMembers } from '../launch.mjs';
 import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -15,10 +16,10 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    const stop=JSON.parse(row.json);if(listRunWorks(work.id).some(w=>w.id===stop.target.workId)&&['intent','submitted','unknown'].includes(stop.state))reasons.push('Stop outcome remains unconfirmed; preserve the exact member reservation');
   }
   if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>listRunWorks(work.id).some(w=>w.id===JSON.parse(r.json).workId)))reasons.push('Queued member tasks await admission');
-  const latest=new Map(listDispatches(work.id).map(a=>[`${a.workId}:${a.taskKey}`,a]));
+  const latest=latestBusinessAttempts(listDispatches(work.id));
   for(const expected of work.currentRecipientBindings??work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
-  for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
-  for(const q of listRunWorks(work.id).flatMap(w=>questions.listQuestions(w.id)))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const a of latest)if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
+  for(const q of listRunWorks(work.id).flatMap(w=>questions.listQuestions(w.id)))if(questionNeedsProcessing(q))reasons.push(`User decision ${q.id} awaits processing`);
   for(const child of listRunWorks(work.id).filter(w=>w.parent))if(child.run.state!=='verified'||child.error)reasons.push('Manager Run '+child.supervisorMemberId+' awaits verification');
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
@@ -45,7 +46,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(input.decision==='rework'&&(typeof input.feedback!=='string'||!input.feedback.trim()||input.feedback.length>8000))fail('Describe the requested corrections (1–8000 characters).');
    if(input.decision==='accept'){
     const reasons=blockers(w);if(reasons.length)fail('Required work remains: '+reasons.join('; '));
-    const latest=[...new Map(listDispatches(w.id).map(a=>[`${a.workId}:${a.taskKey}`,a])).values()];
+    const latest=latestBusinessAttempts(listDispatches(w.id));
     if(latest.some(a=>!d.attemptIds.includes(a.id)||!d.evidenceRefs.includes(a.evidenceId)))fail('Delivery omits required accepted task evidence.');
    }
    const event={...input,fingerprint,recordedAt:new Date().toISOString(),input:{state:input.decision==='rework'?'not_sent':'none'}};

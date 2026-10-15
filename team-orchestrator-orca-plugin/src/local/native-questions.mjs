@@ -1,15 +1,10 @@
-import {realpath} from 'node:fs/promises';
-import {join,relative,isAbsolute,sep} from 'node:path';
+import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {nativeMutationFingerprint} from './native-dispatch.mjs';
 const parse=v=>{try{return JSON.parse(v);}catch{return null;}};
 const text=(v,n=8000)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
 export async function readNativeQuestionEvidence(userData,{work,protocol,owner,attempts=[]}) {
- let db;
  try {
-  const root=await realpath(userData),file=await realpath(join(root,'orchestration.db')),rel=relative(root,file);
-  if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error('Invalid native evidence path.');
-  const {DatabaseSync}=await import('node:sqlite');db=new DatabaseSync(file,{readOnly:true});db.exec('BEGIN');
-  if(db.prepare('PRAGMA user_version').get().user_version!==43)throw Error('Unsupported native question schema.');
+  return await withOrchestrationSnapshot(userData,{pathError:'Invalid native evidence path.',schemaError:'Unsupported native question schema.'},db=>{
   const run=db.prepare('SELECT * FROM runs WHERE id=?').get(work.run.id);
   if(!run||run.objective!==work.nativeObjective||run.home_database!=='this_database'||run.legacy!==0||run.consumer_generation!==protocol.generation||work.run.consumerGeneration!==protocol.generation)throw Error('Question authority changed.');
   if(owner.kind==='structured'?(run.coordinator_orca_session_id!==owner.sessionId||run.coordinator_orca_session_id_generation!==protocol.generation):(run.coordinator_handle!==owner.handle||run.coordinator_pane_key!==owner.paneKey))throw Error('Question supervisor changed.');
@@ -61,6 +56,6 @@ export async function readNativeQuestionEvidence(userData,{work,protocol,owner,a
    messages.push({id:m.id,workId:work.id,fromMemberId:a.memberId,toMemberId:s.toMemberId,attemptId:a.id,toAttemptId:target?.id,dispatchId:a.dispatchId,nativeTaskId:a.nativeTaskId,runId:a.runId,body:m.body,type:m.type,requestId:r.request_id,payloadHash:r.payload_hash,state:'native_committed',processing:'unconfirmed'});
   }
   return {state:'verified',intents,rejected,threads,messages};
+  });
  }catch(error){return {state:'unverified',detail:error.code?'Native question evidence is unavailable. Preserve pending answers and reconnect the owning runtime.':error.message,intents:[],rejected:[],threads:[]};}
- finally{if(db){try{db.exec('ROLLBACK');}catch{}db.close();}}
 }

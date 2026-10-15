@@ -1,3 +1,4 @@
+import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
@@ -12,8 +13,8 @@ export function objectiveInstructions(work,team){
  return `Team Orchestrator work protocol v1. TeamWork ${work.id}; team ${work.teamId}; supervisor member ${work.supervisorMemberId}; configuration ${work.configVersion}; role ${work.roleVersion}.\nYour saved role: ${head.brief}\nWork habits: ${head.habits}\nCollaboration: ${head.collaboration}\nProject: ${work.scope.workspaceId}; execution host: ${work.scope.executionHostId}.\nApproved prior-work handoff: ${work.handoff?JSON.stringify(work.handoff):'None'}.\nTotal objective: ${work.objective}\nUse your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
 }
 export function createWorkService({store,rpc,userData,consent}){
- const queue=new Map();
- const serial=(id,fn)=>{const promise=(queue.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queue.set(id,promise);promise.finally(()=>{if(queue.get(id)===promise)queue.delete(id);}).catch(()=>{});return promise;};
+ const serialize=createKeyedSerializer();
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
  const save=(work,patch)=>store.updateWork(work.id,work.version,patch);
  async function verifyHost(work,expected=work.binding.hostGeneration){
   if(!work.scope.executionHostId.startsWith('ssh:'))return null;

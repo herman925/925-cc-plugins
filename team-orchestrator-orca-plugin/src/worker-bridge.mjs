@@ -1,3 +1,4 @@
+import {PUBLIC_OPERATIONS,PUBLIC_BRIDGE_ALIASES} from './public-operations.mjs';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pollMs = 1000, spacingMs = 400 } = {}) {
   let connected = false;
@@ -31,10 +32,9 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
     },
     async call(action, params) {
       if (!connected) throw new Error('Test the local worker connection first.');
-      if (action === 'workspace.readContext') return rpc('context', params);
-      if (['saveStaffing','requestReplacement','scheduleOrganization','cancelOrganization','storageRecovery','previewHistoryCleanup','applyHistoryCleanup','setAdmission','stopMember','checkStop','createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(action)) return rpc(action, params);
-      if (action === 'storage.get') return rpc('load');
-      if (action === 'receipt') return rpc('receipt', params);
+      const alias=Object.hasOwn(PUBLIC_BRIDGE_ALIASES,action)&&PUBLIC_BRIDGE_ALIASES[action];
+      if(alias)return rpc(alias,alias==='load'?undefined:params);
+      if(PUBLIC_OPERATIONS.includes(action)&&!['ping','context','load'].includes(action))return rpc(action,params);
       throw new Error('Unknown worker operation.');
     }
   };

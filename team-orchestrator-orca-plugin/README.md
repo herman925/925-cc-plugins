@@ -62,7 +62,7 @@ The worker journals the objective before sending legitimate user input to the bo
 
 The card distinguishes host input acceptance (including the exact journal dispatch state), observed processing, and verified Run ownership. A session/lineage record is not a liveness signal. Missing native evidence stays unverified; changed owner/generation fences previous work. **Check work evidence** never resends an ambiguous objective. **Retry unsent objective** appears only while no native input was attempted. Native metadata, credentials and private scope references stay out of public snapshots. The active worker checks real authority while reconciling pending work and resumes durable records after worker restart.
 
-These source changes and their socket/SQLite/browser/Electron fixtures do not establish real installed-Orca/provider or remote-host acceptance. Current prerequisites come from actual host capabilities and refusals; the plugin does not invent obsolete Experimental/SSH settings. Task dispatch and total-result acceptance remain subsequent tickets.
+These source changes and their socket/SQLite/browser/Electron fixtures do not establish real installed-Orca/provider or remote-host acceptance. Current prerequisites come from actual host capabilities and refusals; the plugin does not invent obsolete Experimental/SSH settings. The source supports admitted native task dispatch, hierarchical manager Runs, direct-supervisor acceptance or rework, and user acceptance of the total result before advancing a queued objective. Closure checks the latest attempt for each business task, resolved questions, and current native evidence; historical attempts retain their original provenance.
 
 ## New-format team templates
 

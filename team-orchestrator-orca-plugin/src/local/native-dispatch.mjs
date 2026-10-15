@@ -1,8 +1,7 @@
+import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
 import { declaredWriteScope } from '../scheduling.mjs';
 import { createHash } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
-import { join, relative, isAbsolute, sep } from 'node:path';
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().filter(key=>value[key]!==undefined).map(key=>[key,canonical(value[key])])):value;
 export const nativeMutationFingerprint=(method,params,owner,target)=>{
  const stable={...params}; delete stable.waitSubmitMs;
@@ -31,12 +30,8 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  return {spec,member,nativeTaskId:task.id,taskSpec:task.spec,requestId:receipt.request_id,payloadHash:receipt.payload_hash};
 }
 export async function readNativeDispatchEvidence(userData,{work,protocol,team,owner,admitted=[],allowSettledParent=false}) {
- let db;
  try {
-  const root=await realpath(userData),file=await realpath(join(root,'orchestration.db')),rel=relative(root,file);
-  if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error('Native evidence path is outside the verified profile.');
-  const {DatabaseSync}=await import('node:sqlite');db=new DatabaseSync(file,{readOnly:true});db.exec('BEGIN');
-  if(db.prepare('PRAGMA user_version').get().user_version!==43)throw Error('Native orchestration evidence schema is unsupported.');
+  return await withOrchestrationSnapshot(userData,{pathError:'Native evidence path is outside the verified profile.',schemaError:'Native orchestration evidence schema is unsupported.'},db=>{
   const run=db.prepare('SELECT id,objective,home_database,legacy,consumer_generation,coordinator_handle,coordinator_pane_key,coordinator_orca_session_id,coordinator_orca_session_id_generation FROM runs WHERE id=?').get(work.run.id);
   if(!run||run.objective!==work.nativeObjective||run.home_database!=='this_database'||run.legacy!==0||run.consumer_generation!==protocol.generation||work.run.consumerGeneration!==protocol.generation)throw Error('Native Run generation or work changed; admission is fenced.');
   if(owner.kind==='structured'?(run.coordinator_orca_session_id!==owner.sessionId||run.coordinator_orca_session_id_generation!==run.consumer_generation):(run.coordinator_handle!==owner.handle||run.coordinator_pane_key!==owner.paneKey))throw Error('Native Run owner no longer matches its supervisor.');
@@ -121,6 +116,6 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   // Every native Dispatch in this Run must belong to an exact app-admitted attempt.
   for(const d of db.prepare('SELECT id FROM dispatch_contexts WHERE run_id=?').all(work.run.id))if(!admitted.some(a=>a.dispatchId===d.id))unmanaged.push(d.id);
   return {state:'verified',intents,rejected,observations,reviews,deliveries,unmanaged};
+  });
  }catch(error){return {state:'unverified',detail:error.code?'Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime.':String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
- finally{if(db){try{db.exec('ROLLBACK');}catch{}db.close();}}
 }

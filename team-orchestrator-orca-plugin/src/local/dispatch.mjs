@@ -1,3 +1,4 @@
+import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -21,8 +22,8 @@ export function accepted(receipt,send,instance){
  return receipt?.send?.accepted===true&&receipt.send.handle===instance.handle&&receipt.send.prompt?.requestId===send.envelope.orchestrationRequestId&&receipt.send.prompt.processIncarnation===instance.incarnationId;
 }
 export function createDispatchService({store,rpc,userData,consent,works,beforeAdmission,onNativeWait,onClosedMember}) {
- const queues=new Map();
- const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
+ const serialize=createKeyedSerializer();
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
  const project=id=>store.dispatchProjection(id);
  const teamFor=work=>store.effectiveTeamForWork?.(work.id)??store.readTeamVersion(work.teamId,work.configVersion);
  async function evidence(work,protocol,team,verified){return readNativeDispatchEvidence(userData,{work,protocol,team,owner:verified.instance,admitted:store.listDispatches(work.id)});}
