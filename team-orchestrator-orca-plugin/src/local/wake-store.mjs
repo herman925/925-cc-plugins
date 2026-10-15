@@ -3,11 +3,16 @@ import {randomUUID,createHash} from 'node:crypto';
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export const publicWake=row=>{if(!row)return null;const {oldBinding,nativeAction,fingerprint,managerRequest,...value}=row;return {...value,...(managerRequest?{managerRequest:{state:managerRequest.state,reviewer:managerRequest.reviewer}}:{}),oldRequestId:oldBinding.requestId,oldInstanceGeneration:oldBinding.instanceGeneration??1};};
 export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persistOperation,readWork,persistWork,readCurrentWork}){
+ function currentPointer(old){
+  const pointer=readPrivate(`binding:${old.memberId}`);if(!old.sourceAttemptId)return pointer;
+  if(pointer?.requestId!==old.sourceOperationRequestId)return null;
+  return {requestId:readPrivate(`dispatch-member:${old.memberId}`)?.id,instanceGeneration:old.instanceGeneration};
+ }
  function updateRecipients(old,operation){
   for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all()){
    const work=JSON.parse(saved.json);if(work.teamId!==old.teamId||work.status==='completed')continue;
    const rows=work.currentRecipientBindings??work.recipientBindings??[work.binding],prior=rows.find(r=>r.memberId===old.memberId);
-   if(prior&&prior.requestId!==old.requestId)continue;
+   if(prior&&prior.requestId!==old.requestId&&prior.requestId!==old.sourceOperationRequestId)continue;
    work.currentRecipientBindings=rows.filter(r=>r.memberId!==old.memberId).concat(operation);work.version++;persistWork(work);
   }
  }
@@ -17,7 +22,7 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
   listWakes:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>JSON.parse(r.json)),
   prepareWake(input,operation,proof,nativeAction){return atomic(()=>{
    const prior=readWake(input.requestId),fingerprint=digest(input);if(prior){if(prior.fingerprint!==fingerprint)throw Error('Recovery request conflicts with saved input.');return {row:prior,fresh:false};}
-   const current=operation.sourceAttemptId?readPrivate(`dispatch:${operation.sourceAttemptId}`):readOperation(operation.requestId),pointer=operation.sourceAttemptId?{requestId:readPrivate(`dispatch-member:${operation.memberId}`)?.id,instanceGeneration:operation.instanceGeneration}:readPrivate(`binding:${operation.memberId}`);
+   const current=operation.sourceAttemptId?readPrivate(`dispatch:${operation.sourceAttemptId}`):readOperation(operation.requestId),pointer=currentPointer(operation);
    if(current?.version!==operation.version||pointer?.requestId!==operation.requestId||(pointer.instanceGeneration??1)!==(operation.instanceGeneration??1))throw Error('Member binding changed during recovery.');
    if(readPrivate(`wake-member:${operation.memberId}`))throw Error('This member already has an unresolved recovery. Check its saved result.');
    const row={...input,fingerprint,oldBinding:operation,proof,nativeAction,state:nativeAction?'reserved':'needs_decision',version:1,createdAt:new Date().toISOString()};
@@ -38,14 +43,14 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
   });},
   prepareWakeReplacement(id,version,intent){return atomic(()=>{
    const row=readWake(id);if(!row||row.version!==version||row.state!=='approved'||!row.handoff)throw Error('A checked handoff decision is required.');
-   const old=row.oldBinding,pointer=old.sourceAttemptId?{requestId:readPrivate(`dispatch-member:${old.memberId}`)?.id,instanceGeneration:old.instanceGeneration}:readPrivate(`binding:${old.memberId}`);
+   const old=row.oldBinding,pointer=currentPointer(old);
    if(pointer?.requestId!==old.requestId||(pointer.instanceGeneration??1)!==(old.instanceGeneration??1))throw Error('Member binding changed before replacement.');
    const operation={...intent,requestId:`replace-${id}`,memberId:old.memberId,teamId:old.teamId,configVersion:old.configVersion,status:'unknown',effectState:'intent',instanceGeneration:(old.instanceGeneration??1)+1,version:1,replaces:old.requestId,wakeRequestId:id,createdAt:new Date().toISOString()};operation.public=publicOperation(operation);
    putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);updateRecipients(old,operation);
    row.state='replacing';row.newInstance={requestId:operation.requestId,instanceGeneration:operation.instanceGeneration};row.version++;putPrivate(`wake:${id}`,row);return {operation,fresh:true};
   });},
   publishWake(id,version,instance){return atomic(()=>{
-   const row=readWake(id),old=row?.oldBinding,pointer=old&&(old.sourceAttemptId?{requestId:readPrivate(`dispatch-member:${old.memberId}`)?.id,instanceGeneration:old.instanceGeneration}:readPrivate(`binding:${old.memberId}`));
+   const row=readWake(id),old=row?.oldBinding,pointer=old&&currentPointer(old);
    if(!row||row.version!==version||!['accepted','unknown'].includes(row.state)||pointer?.requestId!==old.requestId||(pointer.instanceGeneration??1)!==(old.instanceGeneration??1))throw Error('Recovery member instance changed.');
    const operation={...old,requestId:`wake-${id}`,instanceGeneration:(old.instanceGeneration??1)+1,version:1,runtimeId:row.proof.runtimeId,wakeRequestId:id,resumedFrom:old.requestId,recovery:undefined,observation:{state:'observed',ownerFence:instance.fence,detail:'Native owner acquired a newer execution fence after the exact prior owner stopped.'}};
    if(operation.sourceAttemptId){operation.originAttemptId=operation.sourceAttemptId;delete operation.sourceAttemptId;delete operation.sourceDispatchId;delete operation.sourceWorkId;}
