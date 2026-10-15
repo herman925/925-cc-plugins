@@ -73,7 +73,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
     if(d.status!==expectedStatus||worker.state!==report.outcome)continue;
     completion={outcome:report.outcome,result:String(message.body??'').slice(0,16000),evidenceId:fact.id};break;
    }
-   observations.push({id:attempt.id,state:'verified',dispatchId:d.id,binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
+   observations.push({id:attempt.id,state:'verified',dispatchId:d.id,creatorDispatchId:d.creator_dispatch_id,binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
   }
   for(const attempt of admitted){
    if(!attempt.evidenceId||!attempt.reviewToken)continue;

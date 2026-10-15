@@ -52,7 +52,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
       if (shown?.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || (saved.paneKey && `${shown.tabId}:${shown.leafId}` !== saved.paneKey)) throw Error('Created terminal could not be corroborated in its saved project.');
       await rpc('terminal.rename', { terminal: saved.handle, title: saved.title });
       const status = (await rpc('terminal.agentStatus', { terminal: saved.handle }))?.agentStatus;
-      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.' };
+      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.', ...(shown.incarnationId ? { incarnationId: shown.incarnationId } : {}) };
     } else warning = [warning, 'Native structured naming is unavailable; the plugin label is retained. Provider start/login observation is unknown.'].filter(Boolean).join(' ');
   } catch (failure) { warning = [warning, failure.message].filter(Boolean).join(' ').slice(0, 1200); }
   return { ok: true, value: await invoke({ op: '_launchFollowup', params: { phaseId: settled.phaseId, warning, observation } }) };

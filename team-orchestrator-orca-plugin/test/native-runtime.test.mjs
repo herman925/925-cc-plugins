@@ -33,3 +33,20 @@ test('native error text cannot disclose the runtime credential, socket or profil
  const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});
  await assert.rejects(rpc('status.get'),error=>!error.message.includes('private-token')&&!error.message.includes(profile)&&!error.message.includes(endpoint));
 });
+test('one observation pins the native epoch across calls and refuses a same-process rotation before input',async t=>{
+ const profile=await mkdtemp(join(tmpdir(),'native-epoch-')),endpoint=join(profile,'runtime.sock');let epoch='runtime-one';const requests=[];
+ const metadata=()=>writeFile(join(profile,'orca-runtime.json'),JSON.stringify({runtimeId:epoch,pid:process.pid,transports:[{kind:'unix',endpoint}],authToken:'private-token'}));
+ const server=createServer(socket=>socket.once('data',async chunk=>{const request=JSON.parse(chunk.toString().trim());requests.push(request);socket.end(JSON.stringify({id:request.id,ok:true,result:{runtimeId:epoch},_meta:{runtimeId:epoch}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});await metadata();
+ const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});
+ await assert.rejects(rpc.withRuntime('runtime-one',async()=>{await rpc('status.get');epoch='runtime-two';await metadata();await rpc('agentSession.send',{body:{}});}),/runtime.*changed|epoch/i);
+ assert.deepEqual(requests.map(row=>row.method),['status.get']);
+ assert.equal((await rpc.withRuntime('runtime-two',()=>rpc('status.get'))).runtimeId,'runtime-two');
+});
+test('a runtime rotation after native response bytes prevents accepting an old combined observation',async t=>{
+ const profile=await mkdtemp(join(tmpdir(),'native-response-epoch-')),endpoint=join(profile,'runtime.sock');
+ const metadata=runtimeId=>writeFile(join(profile,'orca-runtime.json'),JSON.stringify({runtimeId,pid:process.pid,transports:[{kind:'unix',endpoint}],authToken:'private-token'}));
+ const server=createServer(socket=>socket.once('data',async chunk=>{const request=JSON.parse(chunk.toString().trim());await metadata('new-epoch');socket.end(JSON.stringify({id:request.id,ok:true,result:{runtimeId:'old-epoch'},_meta:{runtimeId:'old-epoch'}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});await metadata('old-epoch');
+ const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});await assert.rejects(rpc.withRuntime('old-epoch',()=>rpc('status.get')),/epoch changed/);
+});
