@@ -1,5 +1,4 @@
 import {randomUUID,createHash} from 'node:crypto';
-import {storageDigest} from './storage-maintenance.mjs';
 const CLEARED='[History manually cleared]';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const family=id=>id.split(':')[0];
@@ -10,20 +9,27 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
  function plan(ids){
   const rows=db.prepare('SELECT id,json FROM receipts ORDER BY id').all().map(r=>({...r,value:JSON.parse(r.json)})),byId=new Map(rows.map(r=>[r.id,r]));
-  const eligibleWorkIds=[],retained=[],changes=[];
+  const eligibleWorkIds=[],retained=[],changes=[],graph=new Map(),teamIds=new Set();
+  const schema=db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+  const knownTables=new Set(['metadata','snapshot','scopes','team_versions','role_versions','requests','receipts','maintenance']);
+  const columns={metadata:['format'],snapshot:['id','json'],scopes:['team_id','json'],team_versions:['team_id','version','json'],role_versions:['member_id','version','json'],requests:['id','fingerprint','result'],receipts:['id','json'],maintenance:['id','json']};
+  const unknownSchema=schema.some(row=>row.type==='table'&&!knownTables.has(row.name))||Object.entries(columns).some(([table,expected])=>JSON.stringify(db.prepare(`PRAGMA table_info(${table})`).all().map(c=>c.name))!==JSON.stringify(expected));
   for(const id of ids){
    const work=byId.get(`work:${id}`)?.value;
    if(!work||work.status!=='completed'||!work.closedAt){retained.push({workId:id,reason:'Only closed work explicitly accepted by you is eligible.'});continue;}
    if(work.historyPruned){retained.push({workId:id,reason:'This work was already cleaned; its closure and identity evidence remain.'});continue;}
+   teamIds.add(work.teamId);
    const contexts=new Set([id,...rows.filter(r=>family(r.id)==='native-run-binding'&&r.value.teamWorkId===id).map(r=>r.value.id)]);
    const own=r=>contexts.has(r.value.workId)||contexts.has(r.value.teamWorkId)||contexts.has(r.value.target?.workId)||contexts.has(r.value.id)&&['work','native-run-binding'].includes(family(r.id));
-   const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId]).filter(v=>typeof v==='string')]);
-   let reason;
+   const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId,r.value.binding?.requestId,r.value.currentSupervisor?.binding?.requestId,...(r.value.recipientBindings??[]).map(b=>b.requestId),...(r.value.currentRecipientBindings??[]).map(b=>b.requestId)]).filter(v=>typeof v==='string')]);
+   let reason=unknownSchema?'An unknown storage table or column may reference this history; use a compatible cleanup implementation.':undefined;
+   for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
     const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId;
-    if(!known.has(k)&&contains(v,identities))reason='An unknown record references this history; preserve it for a compatible plugin.';
+    if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
     if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(v))))reason='Unknown, pending or unprocessed evidence remains in this work.';
+    if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
     if(related&&k==='dispatch'&&!['accepted','rework','rejected'].includes(v.status))reason='A task is running or still requires supervisor acceptance.';
     if(sameTeam&&k==='goal'&&['queued','reserved'].includes(v.status))reason='A later goal awaits its Work transition.';
     if(related&&k==='dispatch-queue')reason='Queued task admission remains.';
@@ -35,7 +41,7 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
     if(sameTeam&&k==='operation'&&v.status!=='created')reason='An original native operation remains unknown.';
     if(k==='active-work'&&contexts.has(v.workId))reason='This work is still actively reserved.';
     // Replay indexes intentionally retain references; other surviving graphs must keep their evidence intact.
-    if(!related&&contains(v,identities)&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
+    if(!related&&contains(v,identities)&&!(k==='operation'&&identities.has(v.requestId)&&v.status==='created')&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
    }
    if(reason){retained.push({workId:id,reason});continue;}
    eligibleWorkIds.push(id);
@@ -55,15 +61,18 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
     if(fields.length)changes.push({id:r.id,workId:id,fields,value:v,beforeHash:hash(r.json),logicalBytes:Buffer.byteLength(r.json)});
    }
   }
-  const requestRows=db.prepare('SELECT id,result FROM requests ORDER BY id').all();
+  const requestRows=db.prepare('SELECT id,fingerprint,result FROM requests ORDER BY id').all();
   const snapshots=requestRows.filter(r=>{const v=JSON.parse(r.result);return v?.format==='orca-team-store'&&v.version===2&&Array.isArray(v.works)&&v.works.some(w=>eligibleWorkIds.includes(w.id));}).map(r=>r.id);
-  return {selectedWorkIds:ids,eligibleWorkIds,retained,changes,snapshots};
+  const snapshot=JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get().json);
+  const teams=snapshot.teams.filter(t=>teamIds.has(t.id)).map(t=>({id:t.id,configVersion:t.configVersion,scope:t.scope,members:t.members.map(m=>({id:m.id,boss:m.boss,roleVersion:m.roleVersion}))}));
+  const storageRevision=hash({schema,userVersion:db.prepare('PRAGMA user_version').get().user_version,teams,selectedWorkIds:ids,eligibleWorkIds,retained,graph:[...graph].sort(([a],[b])=>a.localeCompare(b)),snapshots:requestRows.filter(r=>snapshots.includes(r.id))});
+  return {selectedWorkIds:ids,eligibleWorkIds,retained,changes,snapshots,storageRevision};
  }
  return {
   previewHistoryCleanup(input){
    if(!input||Object.keys(input).some(k=>k!=='selectedWorkIds')||!Array.isArray(input.selectedWorkIds)||input.selectedWorkIds.length<1||input.selectedWorkIds.length>100||input.selectedWorkIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9-]{1,120}$/.test(id)))throw Error('Select 1–100 saved Work histories.');
    return atomic(()=>{
-    const ids=[...new Set(input.selectedWorkIds)].sort(),p=plan(ids),previewToken=randomUUID(),storageRevision=storageDigest(db),expiresAt=Date.now()+300000;
+    const ids=[...new Set(input.selectedWorkIds)].sort(),p=plan(ids),previewToken=randomUUID(),storageRevision=p.storageRevision,expiresAt=Date.now()+300000;
     if(previews.size>=64)previews.delete(previews.keys().next().value);previews.set(previewToken,{...p,storageRevision,expiresAt});
     return {previewToken,storageRevision,expiresAt,selectedWorkIds:ids,eligibleWorkIds:p.eligibleWorkIds,retained:p.retained,changes:p.changes.map(({id,workId,fields,logicalBytes})=>({recordId:id,workId,fields,logicalBytes})),snapshotCount:p.snapshots.length,logicalBytes:p.changes.reduce((n,r)=>n+r.logicalBytes,0),notice:'Clears displayed delivery summaries, task results, review summaries and cached public snapshots. Keeps objectives, native request/proof bodies (which may contain copies), questions, notification evidence, closure decisions, identities, replay barriers, configuration and role versions. Migration backups may still contain history. Project files, login data, native sessions and provider conversations are outside this cleanup. No secure erasure or immediate file shrink is promised.'};
    });
@@ -73,7 +82,7 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    const key=`cleanup:${input.requestId}`,fingerprint=hash({requestId:input.requestId,previewToken:input.previewToken,expectedStorageRevision:input.expectedStorageRevision}),prior=db.prepare('SELECT json FROM maintenance WHERE id=?').get(key);
    if(prior){const p=JSON.parse(prior.json);if(p.fingerprint!==fingerprint)throw Error('Cleanup request identity conflicts.');return p.result;}
    const p=previews.get(input.previewToken);if(!p||p.expiresAt<Date.now())throw Error('Cleanup preview expired or worker restarted; preview again.');
-   if(p.storageRevision!==input.expectedStorageRevision||storageDigest(db)!==p.storageRevision)throw Error('Storage changed since preview; preview again before cleaning.');
+   if(p.storageRevision!==input.expectedStorageRevision||plan(p.selectedWorkIds).storageRevision!==p.storageRevision)throw Error('Storage changed since preview; preview again before cleaning.');
    if(!p.eligibleWorkIds.length)throw Error('No selected history is eligible for cleanup.');
    const at=new Date().toISOString();for(const row of p.changes){if(row.value.historyPruned)row.value.historyPruned.at=at;db.prepare('UPDATE receipts SET json=? WHERE id=?').run(JSON.stringify(row.value),row.id);}
    for(const id of p.snapshots)db.prepare('UPDATE requests SET result=? WHERE id=?').run(JSON.stringify({format:'history-pruned-replay-v1',recordedAt:at}),id);

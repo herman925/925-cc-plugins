@@ -25,7 +25,7 @@ const fail = message => { throw new Error(message); };
 export async function openTeamStore(options) {
   try { return await openStore(options); }
   catch (error) {
-    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
+    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
     throw error;
   }
 }
@@ -49,7 +49,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
   let exists = false;
   try { await stat(path); exists = true; inside(await realpath(path)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let prepared;
-  if(exists)try{prepared=await prepareStorage({path,directory,DatabaseSync,backup});}catch(error){const backups=await recoveryInventory(directory,DatabaseSync);throw Error(`Cannot open team storage: ${error.message}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter(b=>b.status==='verified-backup').length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);}
+  if(exists)try{prepared=await prepareStorage({path,directory,DatabaseSync,backup});}catch(error){const backups=await recoveryInventory(directory,DatabaseSync);const reason=error instanceof SyntaxError?'Saved JSON evidence is damaged':/^(EACCES|EPERM|EROFS|ENOSPC|EIO|EMFILE|ENFILE)$/.test(error.code??'')?`Storage filesystem failure (${error.code})`:error.message;throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter(b=>b.status==='verified-backup').length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);}
   if(!exists){const fresh=await open(path,'wx',0o600);await fresh.close();}
   const db = new DatabaseSync(path);
   try {
