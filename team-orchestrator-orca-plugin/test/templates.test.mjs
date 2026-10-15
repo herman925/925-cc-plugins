@@ -1,3 +1,4 @@
+import {parseTeamTemplate} from '../src/templates.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -21,7 +22,8 @@ test('export to another profile imports independent IDs, roles and reporting tre
  const template = source.store.exportTemplate(team.id);
  assert.equal(template.format, 'orca-team-template'); assert.equal(template.version, 1);
  assert.equal(JSON.stringify(template).includes(team.id), false);
- assert.equal(JSON.stringify(template).includes('launch'), false);
+ assert.equal(Object.hasOwn(template.team,'launch'), false);
+ assert.equal(template.team.configuration.launchMode,'on-demand');
  let imported = target.store.importTemplate({ requestId: 'import', expectedRevision: 0, template }, scope('folder:/another', 'ssh:remote'));
  assert.equal(imported.teams.length, 1); const copy = imported.teams[0];
  assert.notEqual(copy.id, team.id); assert.equal(copy.launch, undefined); assert.equal(copy.configVersion, 1);
@@ -134,4 +136,10 @@ test('native panel bridge admits bounded full-roster templates but keeps ordinar
    assert.equal((await call('previewTemplate', { template: 'x'.repeat(MAX_TEMPLATE_BYTES + 8192) })).code, 'invalid_params');
    assert.equal(calls, 1);
  } finally { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); }
+});
+
+test('older v1 templates without preparation mode inherit on demand',async t=>{
+ const source=await profile(t),team=source.store.createTeam({requestId:'legacy-mode',expectedRevision:0,form:DEFAULT_FORM},scope()).teams[0];
+ const template=source.store.exportTemplate(team.id);delete template.team.configuration.launchMode;
+ assert.equal(parseTeamTemplate(JSON.stringify(template)).team.configuration.launchMode,'on-demand');
 });

@@ -76,7 +76,7 @@ function dispatchInput(text, params, envelope) {
     assert.deepEqual(protocol.nativeSend.params, params);
     assert.equal(protocolInputs.has(work.id), false, 'protocol is never sent twice'); protocolInputs.set(work.id, operationId);
     const member = wire.children[0], taskId = 'native-task-' + work.id;
-    const spec = JSON.stringify({ protocol: wire.protocol, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, instruction: 'Inspect the checkout and return evidence.' });
+    const spec = JSON.stringify({ protocol: wire.protocol, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: [], instruction: 'Inspect the checkout and return evidence.' });
     const terminal = work.instance.kind === 'terminal';
     nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId, work.run.id, spec, 'ready', null, terminal ? work.instance.handle : null, terminal ? work.instance.paneKey : null, terminal ? work.instance.incarnationId : null, terminal ? wire.generation : null);
     nativeReceipt(work, 'create-' + work.id, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task: { id: taskId, run_id: work.run.id, spec, status: 'ready' } });
@@ -178,7 +178,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
     if (launched.has(params.operationId)) result = launched.get(params.operationId);
     else {
       const n = launched.size + 1, kind = n === 1 ? 'terminal' : 'structured';
-      result = { worktreeId: 'repo::/remote/project', outcome: kind === 'terminal' ? { kind, handle: 'fixture-terminal', paneKey: 'fixture-tab:fixture-leaf' } : { kind, handle: 'fixture-chat', sessionId: 'codex:fixture-chat', tabId: 'chat-tab' }, receipt: { mode: kind, preferred: kind, reason: 'user_default', detail: 'Fixture native choice' }, prompt: { delivery: 'submit', outcome: kind === 'terminal' ? 'handed-to-terminal' : 'journaled', ...(kind === 'structured' ? { messageId: 'fixture-message' } : {}) } };
+      result = { worktreeId: 'repo::/remote/project', outcome: kind === 'terminal' ? { kind, handle: 'fixture-terminal', paneKey: 'fixture-tab:fixture-leaf' } : { kind, handle: n===2?'fixture-chat':'fixture-chat-'+n, sessionId: n===2?'codex:fixture-chat':'codex:fixture-chat-'+n, tabId: 'chat-tab-'+n }, receipt: { mode: kind, preferred: kind, reason: 'user_default', detail: 'Fixture native choice' }, prompt: { delivery: 'submit', outcome: kind === 'terminal' ? 'handed-to-terminal' : 'journaled', ...(kind === 'structured' ? { messageId: 'fixture-message' } : {}) } };
       launched.set(params.operationId, result);
     }
     const { nativeLaunchFingerprint } = await import(process.env.ORCA_TEST_PLUGIN + '/src/local/native-launch-ledger.mjs');
@@ -430,10 +430,23 @@ app.whenReady().then(async () => {
     let inspectorOpen = true;
     try { await fetch('http://127.0.0.1:9229/json/list', { signal: AbortSignal.timeout(500) }); } catch { inspectorOpen = false; }
     assert.equal(inspectorOpen, false, 'temporary inspector must close');
+    // #114 user-initiated roster preparation remains real renderer IPC and never invents workers.
+    const rosterState=(await control('load',{})).value;
+    const all=(await control('createTeam',{requestId:'all-roster',expectedRevision:rosterState.revision,selectionToken:(await control('context',{})).selectionToken,form:{...form,name:'All-Roster',launchMode:'all'}})).value.teams.at(-1);
+    const beforeRoster=launched.size;
+    for(const member of all.members){
+      const input={teamId:all.id,memberId:member.id,configVersion:all.configVersion,requestId:'all-'+member.id};
+      assert.equal((await control('launchSupervisor',input)).status,'created');
+      await control('launchSupervisor',input);
+    }
+    assert.equal(launched.size-beforeRoster,4,'all preparation opens exactly the four saved members once');
+    const prepared=(await control('load',{})).value.teams.find(row=>row.id===all.id);
+    assert.deepEqual(Object.keys(prepared.launch.members).sort(),all.members.map(row=>row.id).sort());
+    assert.equal(runtimeReads.filter(row=>row.method==='agent.launchReplay').every(row=>row.params.target.kind==='existing'&&row.params.target.worktree==='id:repo::/remote/project'),true,'every roster member uses the exact existing shared Git workspace');
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });

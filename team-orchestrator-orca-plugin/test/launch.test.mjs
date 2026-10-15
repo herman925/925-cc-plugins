@@ -4,9 +4,10 @@ import { DEFAULT_FORM, PRESETS, planTeam, validateState } from '../src/team.mjs'
 import { initialMembers, memberLaunch } from '../src/launch.mjs';
 const context = { nativeAgentLaunch: true, workspaceKey: 'a'.repeat(64) };
 const team = overrides => ({ ...planTeam({ ...structuredClone(DEFAULT_FORM), ...overrides }), id: 'launch-request-123' });
-test('launch selects only the actual highest supervisor for every roster', () => {
+test('on demand prepares every saved manager while all prepares the exact roster', () => {
   assert.deepEqual(initialMembers(team()).map(member => member.role), ['head']);
-  assert.deepEqual(initialMembers(team(PRESETS[2].form)).map(member => member.role), ['ceo']);
+  assert.deepEqual(initialMembers(team(PRESETS[2].form)).map(member => member.role), ['ceo', 'head', 'head', 'head', 'head']);
+  const all=team({launchMode:'all'}); assert.deepEqual(initialMembers(all).map(row=>row.id),all.members.map(row=>row.id));
 });
 test('native launch uses selected CLI and preferences with exact role and no extra CEO', () => {
   const t = team({ agents: ['claude', 'codex', 'codex'], models: ['opus', 'gpt-6.1-sol', 'default'], efforts: ['high', 'medium', 'default'] });

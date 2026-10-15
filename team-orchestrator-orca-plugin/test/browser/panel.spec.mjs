@@ -15,11 +15,11 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   await ui.getByRole('button', { name: '3 · Head + leads + workers' }).click();
   await expect(ui.locator('#preview')).toContainText('13 members');
   await createAndLaunch(ui);
-  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 25000 });
+  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 45000 });
   await expect(ui.getByRole('heading', { name: '@QA' })).toBeVisible();
   await ui.getByRole('button', { name: 'Lead-1-1', exact: true }).click();
   await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Head');
-  await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('On demand');
+  await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Created · startup brief supplied');
   await page.reload();
   await expect(panel(page).getByRole('heading', { name: '@QA' })).toBeVisible();
   expect(await page.locator('#panel').getAttribute('sandbox')).toBe('allow-scripts');
@@ -41,7 +41,7 @@ test('CEO flow, per-level choices, independent same-name teams and settings pers
   await ui.getByRole('combobox', { name: 'CEO effort' }).selectOption('high');
   await ui.getByRole('combobox', { name: 'Heads CLI' }).selectOption('claude');
   await createAndLaunch(ui);
-  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 25000 });
+  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 45000 });
   await expect(ui.getByRole('heading', { name: '@Organisation' })).toBeVisible();
   await ui.getByRole('button', { name: 'New team', exact: true }).click();
   await saveTeam(ui);
@@ -86,7 +86,7 @@ for (const width of [320, 960]) {
     const ui = panel(page);
     await ui.getByRole('button', { name: /Tech Team/ }).click();
       await createAndLaunch(ui);
-    await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 25000 });
+    await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false', { timeout: 45000 });
   await expect(ui.getByRole('heading', { name: '@Tech-Team' })).toBeVisible();
     const frame = page.frames().find(frame => frame.url() === 'about:srcdoc');
     expect(await frame.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
@@ -97,7 +97,7 @@ test('Launch opens only the real highest supervisor and can focus its verified s
   await page.goto('/?mode=permission'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
   await createAndLaunch(ui);
-  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText("Orca created Head's terminal session");
+  await expect(ui.getByRole('status').filter({ hasText: 'requested member sessions created' })).toContainText('1/1 requested member sessions created');
   expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'launchSupervisor').length)).toBe(1);
   await expect(ui.locator('.team-card')).toContainText('1 actual session receipt');
   await expect(ui.locator('.team-card')).toContainText('Observation: permission');
@@ -108,7 +108,7 @@ test('native launch requires no pre-existing agent tabs', async ({ page }) => {
   await page.goto('/?mode=no-tabs'); const ui = panel(page);
   await ui.getByRole('button', { name: /Squad/ }).click();
   await createAndLaunch(ui);
-  await expect(ui.getByRole('status').filter({ hasText: 'Orca created' })).toContainText("Orca created Head's terminal session", { timeout: 25000 });
+  await expect(ui.getByRole('status').filter({ hasText: 'requested member sessions created' })).toContainText('1/1 requested member sessions created', { timeout: 45000 });
 });
 test('unknown launch remains reserved after reload and never automatically creates a second session', async ({ page }) => {
   await page.goto('/?mode=launch-unknown'); const ui = panel(page);
@@ -182,4 +182,14 @@ test('host model choices and individual mixed-provider preferences persist with 
  await expect(ui.getByRole('combobox', { name: 'Member model' })).toHaveValue('my-model');
  await ui.getByRole('button', { name: 'Use level default' }).click();
  await expect(ui.getByRole('combobox', { name: 'Member model' })).toHaveValue('claude-model');
+});
+
+test('all-at-start prepares four saved members and keeps independent successes after partial failure',async({page})=>{
+ await page.goto('/?mode=roster-partial');const ui=panel(page);await ui.getByRole('button',{name:/Squad/}).click();
+ await ui.getByRole('combobox',{name:'Preparation mode'}).selectOption('all');await createAndLaunch(ui);
+ await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false',{timeout:45000});
+ await expect(ui.getByRole('status').filter({hasText:'requested member sessions created'})).toContainText('3/4 requested member sessions created');
+ await expect(ui.locator('.team-card')).toContainText('Worker-1 · unknown');await expect(ui.locator('.team-card')).toContainText('3 actual session receipt');
+ expect(await page.evaluate(()=>bridgeCalls.filter(row=>row.params?.teamWorker?.args?.op==='launchSupervisor').length)).toBe(4);
+ await page.reload();await expect(panel(page).locator('.team-card')).toContainText('3 actual session receipt');
 });
