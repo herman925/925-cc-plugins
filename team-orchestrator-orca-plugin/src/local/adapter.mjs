@@ -1,3 +1,4 @@
+import { MAX_TEMPLATE_BYTES } from '../templates.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
@@ -38,8 +39,9 @@ export async function installAdapter(electron, { version, identity }) {
     if (!gate.ok) return gate;
     try {
       const message = call.params.teamWorker;
-      if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > 60000) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      const envelopeLimit = ['previewTemplate', 'importTemplate'].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 60000;
+      if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'exportTemplate', 'previewTemplate', 'importTemplate', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;
       if (message.args?.op === 'context' && !message.args?.params?.teamId) {

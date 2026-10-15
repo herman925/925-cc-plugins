@@ -85,8 +85,16 @@ app.whenReady().then(async () => {
     assert.equal(saved.teams.length, 1); assert.equal(saved.teams[0].launch, undefined);
     assert.equal(JSON.stringify(saved).includes('/remote/project'), false);
     assert.equal(readFileSync(__dirname + '/cli-calls.jsonl','utf8').trim().split('\n').map(JSON.parse).every(args => args[0] === 'worktree'), true, 'save must not launch');
-    const edited = (await control('updateRole', { requestId: 'electron-role', expectedRevision: 1, teamId: saved.teams[0].id, memberId: saved.teams[0].members[0].id, brief: 'Review evidence', habits: 'Read results first', collaboration: 'Escalate blockers' })).value;
+    let edited = (await control('updateRole', { requestId: 'electron-role', expectedRevision: 1, teamId: saved.teams[0].id, memberId: saved.teams[0].members[0].id, brief: 'Review evidence', habits: 'Read results first', collaboration: 'Escalate blockers' })).value;
     assert.equal(edited.teams[0].members[0].roleVersion, 2);
+    const exported = await control('exportTemplate', { teamId: saved.teams[0].id });
+    assert.equal(JSON.stringify(exported.template).includes(saved.teams[0].id), false);
+    const preview = await control('previewTemplate', { template: exported.template });
+    const importRequest = { requestId: 'electron-import', expectedRevision: edited.revision, template: preview.template, previewToken: preview.previewToken, selectionToken: selection.selectionToken };
+    edited = (await control('importTemplate', importRequest)).value;
+    assert.equal(edited.teams.length, 2); assert.notEqual(edited.teams[0].id, edited.teams[1].id);
+    assert.equal(edited.teams[1].members[0].brief, 'Review evidence');
+    assert.equal(edited.teams[1].members[0].roleVersion, 1); assert.equal(edited.teams[1].launch, undefined);
     assert.equal((await ipc('plugins:panelAction', envelope('foreign.command'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'arbitrary.runtime'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'ping', 'foreign-token'))).code, 'invalid_request');
@@ -105,6 +113,8 @@ app.whenReady().then(async () => {
     start = undefined;
     assert.deepEqual((await control('load', {})).value, edited);
     assert.deepEqual((await control('createTeam', create)).value, saved, 'recover completed save after worker restart');
+    assert.deepEqual((await control('importTemplate', importRequest)).value, edited, 'recover completed import after worker restart');
+    assert.deepEqual((await control('load', {})).value, edited, 'replay never overwrites the latest snapshot');
     assert.equal(data.size, 0, 'new format must not write legacy KV');
     await new Promise(resolve => setTimeout(resolve, 800));
     let inspectorOpen = true;
@@ -113,7 +123,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC, SQLite save/role/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); app.exit(1); }
 });

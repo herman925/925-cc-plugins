@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { startupCommand } from './startup-command.mjs';
 import { memberLaunch } from '../launch.mjs';
+import { parseTeamTemplate } from '../templates.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 export function createExecutor(host, cli, { store } = {}) {
   const selections = new Map();
+  const previews = new Map();
   const starts = new Map();
   const jobs = new Set();
   const get = async key => store.readReceipt(key);
@@ -111,6 +113,25 @@ export function createExecutor(host, cli, { store } = {}) {
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The selected execution host changed. Confirm the project again.');
         return { value: store.createTeam(params, selected) };
+      }
+      if (op === 'exportTemplate') return { template: store.exportTemplate(params.teamId) };
+      if (op === 'previewTemplate') {
+        const template = parseTeamTemplate(params.template);
+        const previewToken = randomUUID();
+        if (previews.size >= 128) previews.delete(previews.keys().next().value);
+        previews.set(previewToken, JSON.stringify(template));
+        return { template, previewToken };
+      }
+      if (op === 'importTemplate') {
+        const previous = store.replay('importTemplate', params);
+        if (previous) return { value: previous };
+        const template = parseTeamTemplate(params.template);
+        if (previews.get(params.previewToken) !== JSON.stringify(template)) throw new Error('Preview this exact template again before importing.');
+        const selected = selections.get(params.selectionToken);
+        if (!selected) throw new Error('Confirm the target project and execution host before importing.');
+        const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
+        if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The selected execution host changed. Confirm the project again.');
+        return { value: store.importTemplate(params, selected) };
       }
       if (op === 'updateRole') return { value: store.updateRole(params) };
       if (op === 'updateSettings') return { value: store.updateSettings(params) };

@@ -74,7 +74,7 @@ export function validateState(value) {
     const ids = new Set();
     const names = new Set();
     for (const member of team.members) {
-      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !['default', 'low', 'medium', 'high', 'xhigh'].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
+      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !string(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
       if (member.boss !== null && !ids.has(member.boss)) throw new Error('Saved reporting relationships are invalid. It has been left untouched.');
       if (member.boss === null && ids.size !== 0) throw new Error('Saved team has multiple roots. It has been left untouched.');
       if ((member.boss === null && member.level !== 1) || (member.boss !== null && team.members.find(boss => boss.id === member.boss)?.level !== member.level - 1)) throw new Error('Saved hierarchy levels are invalid. It has been left untouched.');
