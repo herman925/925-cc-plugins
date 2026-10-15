@@ -66,6 +66,11 @@ async function fixture(id, mode) {
         receipt(work, 'create-task-fixture-'+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
         }
       }
+      if(mode==='dispatch-staffing'&&text.startsWith('TEAM_DISPATCH_PROTOCOL\n')){
+        const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'staffing-proposal',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'reviewer-proposal',configVersion:p.configVersion,roleVersion:1,proposingManagerId:work.supervisorMemberId,member:{name:'Independent reviewer <script>',boss:work.supervisorMemberId,brief:'Review sources.',habits:'',collaboration:'Report directly.',agent:'claude',model:'default',effort:'default'},rationale:'Need independent review.',affectedTaskKeys:[]}),task={id:'staffing-fixture',run_id:work.run.id,spec,status:'ready'};
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        receipt(work,'staffing-fixture-create','orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});
+      }
       if (mode.startsWith('dispatch-question') && text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
         const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'scope-choice',summary:'Choose scope <script>',options:['Focused','Full'],blockingTaskKeys:[]});
         const task={id:'question-fixture',run_id:work.run.id,spec,status:'ready'};
@@ -132,7 +137,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
-        const dispatchInput = text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
+        const dispatchInput = text?.startsWith('TEAM_ROSTER_DELTA\n') || text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
         const work = store.listWorks().find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;
@@ -202,7 +207,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
-      if (['stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
+      if (['saveStaffing','stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {

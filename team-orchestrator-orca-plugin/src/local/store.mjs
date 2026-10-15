@@ -1,3 +1,4 @@
+import { staffingStore } from './staffing-store.mjs';
 import { stopStore } from './stop-store.mjs';
 import { lifecycleStore } from './lifecycle-store.mjs';
 import { questionStore } from './questions-store.mjs';
@@ -81,11 +82,10 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id),...staffing.staffingProjection(work.id)})) };
     };
     const write = ({ works, goals, stops: ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
-    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
-    readSnapshot();
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,staffing:()=>staffing,atomic:atomicDispatch,readSnapshot,write});
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -123,8 +123,11 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       team.launch.status = initialMembers(team).every(member => team.launch.members[member.id]?.status === 'created') ? 'accepted' : 'unknown';
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
+    const staffing=staffingStore({db,readPrivate,putPrivate,readWork,readSnapshot,write,archive,atomic:atomicDispatch});
+    readSnapshot();
     let closed = false;
     return {
+      ...staffing,
       ...questions,
       ...stops,
       ...lifecycle,
@@ -181,8 +184,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
         this.assertAdmission(work.teamId,intent.spec.memberId);
         questions.questionTaskGate(workId,intent.spec.taskKey,intent.nativeTaskId);
-        const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
-        if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
+        const team=staffing.effectiveTeamForWork(workId),member=team?.members.find(row=>row.id===intent.spec.memberId);
+        if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion||intent.spec.configVersion!==team.configVersion)fail('Only the true direct supervisor can admit this frozen member role.');
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||previous.status!=='rework'||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
@@ -199,7 +202,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(reuse?.kind==='prepared'&&(!prepared||reservation||startParams.terminal!==reuse.terminal))fail('Prepared member reservation changed.');
         if(reservation&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
         if(reuse&&reuse.kind!=='prepared'&&!reservation)fail('Retained member reservation changed.');
-        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:team.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
         validateDispatch(attempt);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
@@ -273,6 +276,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const team = readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
           if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
+          staffing.assertStaffingPreparation(member.id);
           const nextGoal=lifecycle.nextGoal(input.teamId);
           if(nextGoal&&(nextGoal.launchRequests[input.memberId]!==input.requestId||nextGoal.configVersion!==input.configVersion))fail('Queued transition requires its saved fresh launch identity.');
           const bindingKey = `binding:${input.memberId}`;
@@ -403,6 +407,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
             member[key] = input[key];
           }
           member.roleVersion++; team.configVersion++; archive(team);
+          for(const work of listWorks().filter(w=>w.teamId===team.id&&w.status!=='completed'))staffing.recordConfigurationAmendment(work.id,team,{requestId:input.requestId,kind:'role-update',memberIds:[member.id]});
         });
       },
       readTeamVersion(teamId, version) {

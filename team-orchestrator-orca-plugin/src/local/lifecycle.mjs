@@ -9,7 +9,7 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
   const work=store.readWork(id);if(!work||work.status==='completed')return null;
   const verified=await works.verifyWork(id,true),protocol=store.readDispatchProtocol(id);
   if(!protocol||protocol.generation!==work.run.consumerGeneration)throw Error('Supervisor delivery protocol is unavailable.');
-  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.readTeamVersion(work.teamId,work.configVersion),owner:verified.instance,admitted:store.listDispatches(id)});
+  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id)});
   if(native.state!=='verified')throw Error(native.detail);
   return {work,verified,native};
  }

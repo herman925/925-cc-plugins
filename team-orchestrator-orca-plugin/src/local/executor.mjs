@@ -1,3 +1,4 @@
+import {createStaffingService} from './staffing.mjs';
 import {createStopService} from './stop.mjs';
 import { createLifecycleService } from './lifecycle.mjs';
 import { createQuestionService } from './questions.mjs';
@@ -16,6 +17,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const works = createWorkService({ store, userData, consent, rpc });
+  const staffing=createStaffingService({store,userData,consent,rpc,works});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
   const stops = createStopService({store,rpc,userData,consent});
@@ -30,7 +32,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     try {
       await consent(); await recovery.reconcile(); await stops.reconcile();
       if (!store.listWorks().some(work => work.status!=='completed' && work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
-      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await lifecycle.reconcile(); scheduleWork();
+      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
   }
@@ -84,6 +86,20 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if(op==='_staffingTarget'){
+          const prior=store.readStaffingRequest(params);if(prior)return {staffing:prior};
+          const work=store.readWork(params.workId);if(!work||work.status==='completed')throw Error('TeamWork is closed or unavailable.');
+          return {teamId:work.teamId};
+        }
+        if(op==='_saveStaffing'){
+          await consent();const previous=store.readStaffingRequest(params);
+          if(previous)return {staffing:previous,value:store.readSnapshot()};
+          const work=store.readWork(params.workId);if(!work||work.status==='completed')throw Error('TeamWork is closed or unavailable.');
+          const member=params.member??store.listStaffingProposals(work.id).find(p=>p.id===params.proposalId)?.member;
+          if(params.decision!=='reject'){const issue=preferenceIssue(member??{},capabilities.get(work.scope.workspaceKey));if(issue)throw Error(issue);}
+          const result=store.saveStaffing(params);await staffing.check(work.id);stopped=false;scheduleWork();
+          return {staffing:result,value:store.readSnapshot()};
+        }
         if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
         if (op === '_stopValidate') return stops.validate(params.requestId);
         if (op === '_stopSettle') return stops.settle(params.requestId,params.receipt,params.error);
@@ -130,6 +146,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if (op === '_launchValidate') {
           const phase = launchPlans.get(params.phaseId), saved = phase && store.readOperation(phase.requestId);
           if (!saved || latestObservation.get(saved.scope.workspaceKey) !== params.observationId) throw Error('Launch admission is stale.');
+          store.assertStaffingPreparation(saved.memberId);
           const observed = capabilities.get(saved.scope.workspaceKey);
           if (!saved.runtimeId || observed?.runtimeId !== saved.runtimeId) throw Error('Native runtime identity changed; the unknown launch remains reserved until its original ledger can be corroborated.');
           const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
@@ -187,7 +204,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if(op!=='checkWork')await reconcileExisting();
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
+        await dispatches.check(work.id); await questions.check(work.id); await staffing.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }

@@ -248,3 +248,15 @@ test('four-member on-demand hierarchy prepares root and department manager, reta
  assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,2);
  assert.deepEqual(Object.keys(f.store().readSnapshot().teams[0].launch.members),f.team.members.filter(row=>row.role!=='worker').map(row=>row.id));
 });
+test('approved full-roster staffing reuses genuine launch IPC and member reservation; failure and repeated panel confirmation retain one member',async t=>{
+ const f=await fixture(t,{launchMode:'all'});await f.send('launchSupervisor');
+ const store=f.store(),work=store.prepareWork({requestId:'staffing-goal',teamId:f.team.id,objective:'Review',expectedRevision:store.readSnapshot().revision}).work;
+ const input={requestId:'staffing-add',workId:work.id,expectedRevision:store.readSnapshot().revision,configVersion:1,member:{name:'New reviewer',boss:f.team.members[0].id,brief:'Review findings.',habits:'',collaboration:'Use direct supervisor.',agent:'claude',model:'default',effort:'default'}};
+ f.budget(30);f.effect(async()=>{throw Error('Native launch outcome lost.');});
+ const response=await f.send('saveStaffing',input);assert.equal(response.ok,true,response.error);
+ assert.equal(response.value.staffing.decision,'approved');assert.equal(response.value.preparation.status,'unknown');
+ const saved=store.readSnapshot();assert.equal(saved.teams[0].members.length,5);const member=saved.teams[0].members.at(-1);assert.equal(store.readMemberOperation(member.id).status,'unknown');
+ assert.ok(f.gateCount()<=30);f.budget(30);const again=await f.send('saveStaffing',input);assert.equal(again.ok,true,again.error);assert.equal(again.value.staffing.memberId,member.id);
+ assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);
+ assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').at(-1).params.target.worktree,'folder:/saved');
+});

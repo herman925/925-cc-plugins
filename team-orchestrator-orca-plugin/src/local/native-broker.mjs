@@ -1,6 +1,20 @@
 import { discoverCapabilities } from './capabilities.mjs';
 // Trusted adapter orchestration only; invoke/rpc retain its actual event and authority.
-export async function mediateOperation({ op, input, invoke, rpc, authority }) {
+export async function mediateOperation({ op, input, invoke, rpc, authority, admission }) {
+  if(op==='saveStaffing'){
+    await authority();const target=await invoke({op:'_staffingTarget',params:input});
+    if(!target.staffing&&input.decision!=='reject'){
+      const prepared=await invoke({op:'_capabilityScope',params:{teamId:target.teamId}}),value=await discoverCapabilities(rpc,prepared.scope);
+      await authority();const observed=await invoke({op:'_capabilityResult',params:{observationId:prepared.observationId,value}});admission={prepared,observed};
+    }
+    await authority();const saved=await invoke({op:'_saveStaffing',params:input});
+    if(saved.staffing.launch){
+      try{const launched=await mediateOperation({op:'launchSupervisor',input:saved.staffing.launch,invoke,rpc,authority,admission});saved.preparation=launched.value;}
+      catch(error){saved.preparation={status:'pending',detail:String(error.message).slice(0,1200)};}
+      await authority();saved.value=(await invoke({op:'load',params:{}})).value;
+    }
+    return {ok:true,value:saved};
+  }
   if(op==='decideWork'){
     await authority();const result=await invoke({op:'_decideWork',params:input});
     if(input.decision!=='accept'||!result.decision.nextGoalId)return {ok:true,value:result};
@@ -39,10 +53,9 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
     if (recovery?.receipt) return { ok: true, value: recovery.receipt };
     if (op === 'recoverLaunch') throw Error('Saved launch operation was not found; checking cannot start a new session.');
   }
-  const prepared = await invoke({ op: '_capabilityScope', params: op === 'capabilities' ? input : { teamId: input.teamId } });
-  const value = await discoverCapabilities(rpc, prepared.scope);
-  await authority();
-  const observed = await invoke({ op: '_capabilityResult', params: { observationId: prepared.observationId, value } });
+  const prepared = admission?.prepared??await invoke({ op: '_capabilityScope', params: op === 'capabilities' ? input : { teamId: input.teamId } });
+  let observed=admission?.observed;
+  if(!observed){const value=await discoverCapabilities(rpc,prepared.scope);await authority();observed=await invoke({op:'_capabilityResult',params:{observationId:prepared.observationId,value}});}
   if (op === 'capabilities') return { ok: true, value: observed };
   const launch = recovery ?? await invoke({ op: '_launchPrepare', params: { input, observationId: prepared.observationId } });
   if (launch.receipt) return { ok: true, value: launch.receipt };
