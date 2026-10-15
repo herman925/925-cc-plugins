@@ -362,13 +362,25 @@ export function looksLikeUserDenial(text: string): boolean {
   return /doesn.?t want to proceed|rejected|permission (to use|for) .* (was )?denied|user denied|declined to/i.test(text)
 }
 
-export const SECTION_TEXT = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
+const SECTION_BASE = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
 - For EVERY request, even a quick question, call plan_steps first (load it with ToolSearch if it is deferred). Use 1 step for a quick question, 2 to 8 for bigger work.
 - Step names are plain English, under 40 characters, and start with a verb, for example "Build the pricing section". Never put file paths, file names, commands, code or tool names in a step name.
 - Then call report_progress as real progress happens, with the same step name, and call it with percent 100 the moment a step finishes.
 - If you have TodoWrite or TaskCreate you may use that to-do list as the plan instead.
-- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply.
 - Keep written replies short, warm and free of jargon.`
+
+const ASK_CHOICES_LINE =
+  "- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply."
+
+const QUESTION_BOX_LINE =
+  "- Ask with AskUserQuestion, never in prose, whenever you need the person's go-ahead: permission to act (edits, deletes, sends, pushes, installs), or a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Every question from /grilling, /grill-me or /grill-with-docs goes through AskUserQuestion, one call per question, with the recommended option first. Then stop and wait for the reply."
+
+/** The rules section. The question-box rule replaces the picker line when it is on; otherwise the picker is used when it is on. */
+export function rulesSection(questionBox: boolean, picker: boolean): string {
+  if (questionBox) return `${SECTION_BASE}\n${QUESTION_BOX_LINE}`
+  if (picker) return `${SECTION_BASE}\n${ASK_CHOICES_LINE}`
+  return SECTION_BASE
+}
 
 /**
  * The values to copy from the old clean-view settings row into this plugin's store. The row keyed with the
@@ -1137,3 +1149,73 @@ const joined = (ps: Piece[]) => ps.map(p => p.text).join('')
 export const tableHeader = (cols: Col[]) => joined(headerPieces(cols))
 export const tableRule = (cols: Col[]) => joined(rulePieces(cols))
 export const tableRow = (cols: Col[], a: Assumption) => joined(rowPieces(cols, a))
+
+/** Short names for the enhancer sources in the Settings table, with the detail in each one's description. */
+export const SOURCE_SHORT: Record<SourceId, { label: string; hint: string }> = {
+  instructions: { label: 'CLAUDE.md, AGENTS.md', hint: 'Project and global instruction files. Capped at 4000 characters.' },
+  skills: { label: 'Skills list', hint: 'The project skills list. Capped at 4000 characters.' },
+  docs: { label: 'Context docs', hint: 'CONTEXT.md, PRD, ADRs and glossary. Capped at 4000 characters.' },
+  github: { label: 'GitHub', hint: 'Wayfinder map, else recent issues. Off by default. Uses gh.' },
+}
+
+/** The space between two columns of the Settings table. */
+export const TABLE_GAP = 2
+
+/** The narrowest the description column gets; on a narrower card the row runs past the edge rather than lose its words. */
+export const MIN_DESC = 12
+
+/** Word-wraps text into lines no wider than width. A word longer than the width is cut across lines. */
+export function wrapWords(text: string, width: number): string[] {
+  const w = Math.max(1, width)
+  const lines: string[] = []
+  let cur = ''
+  for (const word of text.split(/\s+/).filter(x => x !== '')) {
+    let piece = word
+    while (piece.length > w) {
+      if (cur !== '') {
+        lines.push(cur)
+        cur = ''
+      }
+      lines.push(piece.slice(0, w))
+      piece = piece.slice(w)
+    }
+    if (piece === '') continue
+    if (cur === '') cur = piece
+    else if (cur.length + 1 + piece.length <= w) cur += ` ${piece}`
+    else {
+      lines.push(cur)
+      cur = piece
+    }
+  }
+  if (cur !== '') lines.push(cur)
+  return lines.length > 0 ? lines : ['']
+}
+
+/**
+ * Column widths for the Settings table. The selector and name columns fit their widest entry across every tab, so the
+ * columns do not move when the tab changes; the description takes what is left of the card.
+ */
+export function tableWidths(inner: number, selectorWidths: number[], names: string[]): { selector: number; name: number; desc: number } {
+  const selector = Math.max(0, ...selectorWidths)
+  const name = Math.max(0, ...names.map(n => n.length))
+  return { selector, name, desc: Math.max(MIN_DESC, inner - selector - name - 2 * TABLE_GAP) }
+}
+
+/** Splits rows into pages of at most `budget` lines. A row taller than the budget has a page of its own. */
+export function pageRows<T>(rows: T[], heights: number[], budget: number): T[][] {
+  const pages: T[][] = []
+  let cur: T[] = []
+  let used = 0
+  rows.forEach((row, i) => {
+    const h = Math.max(1, heights[i] ?? 1)
+    if (cur.length > 0 && used + h > budget) {
+      pages.push(cur)
+      cur = []
+      used = 0
+    }
+    cur.push(row)
+    used += h
+  })
+  if (cur.length > 0) pages.push(cur)
+  return pages.length > 0 ? pages : [[]]
+}

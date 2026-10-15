@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.53. The version is shown dim beside the band title, as ` v0.3.53`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.62. The version is shown dim beside the band title, as ` v0.3.62`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 
@@ -29,6 +29,14 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 | `/enhance` | Enhances the text in the prompt box. |
 | `/enhance <draft>` | Enhances a draft given in the command. From the prompt box, the result goes back in the box, as Enhance does. Elsewhere (for example `claude -p`), it shows the result and the model that answered (`via`), with its notes. |
 | `/enhance-key` | Adds Ctrl+X E for Enhance to your `keybindings.json`. |
+
+## Questions
+
+Settings → Questions holds three switches:
+
+- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act and for choices that change scope, cost, files or direction. Questions from /grilling, /grill-me and /grill-with-docs go through it. While it is on, the ask_choices picker is refused.
+- **Picker above the prompt**: the ask_choices buttons. Off while the question box is on.
+- **Warn on prose questions** (on by default): a toast when a reply ends with a question that was not asked in the question box. It cannot make Claude ask again.
 
 ## The plan gate
 

@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { rulesSection } from './logic'
 
 import { DEFAULT_PREFS, buildContext, enhance, githubMap, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
 import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
@@ -47,11 +48,39 @@ async function begin($: any, text = 'Build my landing page') {
   await $.turn.start({ text, turnId: 't1' })
 }
 
-// Settings groups start closed except Enhancer, so the Band rows are opened first.
+// The Band tab is the first one; the other tabs are opened by pressing their tab button.
 async function openBand(ui: any) {
-  if (!(await ui.find({ key: 'toggle-band' }))) return
   if (await ui.find({ key: 'set-details' })) return
-  await ui.press({ key: 'toggle-band' })
+  await ui.press({ key: 'tab-btn-band' })
+}
+
+// The Settings card pages its rows; this shows the page that holds a control, from the first page on.
+async function reveal(ui: any, key: string) {
+  while (await ui.find({ key: 'page-prev' })) await ui.press({ key: 'page-prev' })
+  while (!(await ui.find({ key })) && (await ui.find({ key: 'page-next' }))) await ui.press({ key: 'page-next' })
+}
+
+// A mounted band whose find and press first page the Settings card to the control they name.
+function paged(ui: any) {
+  const wrap: any = {}
+  for (const p of Object.keys(ui)) wrap[p] = typeof ui[p] === 'function' ? (...a: any[]) => ui[p](...a) : ui[p]
+  for (const p of ['find', 'press']) {
+    wrap[p] = async (q: any) => {
+      if (typeof q?.key === 'string') await reveal(ui, q.key)
+      return ui[p](q)
+    }
+  }
+  return wrap
+}
+
+async function ruleOff($: any) {
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'settings' })
+  await ui.press({ key: 'tab-btn-questions' })
+  await ui.press({ key: 'set-questionbox' })
+  await ui.press({ key: 'tab-btn-band' })
+  await ui.press({ key: 'settings' })
+  await ui.unmount()
 }
 
 async function texts(ui: any): Promise<string> {
@@ -357,6 +386,7 @@ const ASK_CMD = (args: string) => ({ command: 'askchoices', args, origin: { kind
 
 test('ask_choices is off by default and points the model to AskUserQuestion; /askchoices on turns it on', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
   const off = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
@@ -371,10 +401,11 @@ test('ask_choices is off by default and points the model to AskUserQuestion; /as
 
 test('the Ask choices row in Settings flips the setting', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
-  await openBand(ui)
+  await ui.press({ key: 'tab-btn-questions' })
   expect(await ui.find({ key: 'set-ask' })).toBeDefined()
   await ui.press({ key: 'set-ask' })
   const on1 = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
@@ -392,6 +423,7 @@ test('ask_choices shows numbered choices and a press sends the answer', async ($
     sent.push(e.text)
     return { text: e.text }
   })
+  await ruleOff($)
   await begin($)
   await $.command.run(ASK_CMD('on'))
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
@@ -559,6 +591,7 @@ test('bar style: next steps show as numbered choices with 0 to dismiss, and a pr
     sent.push(e.text)
     return { text: e.text }
   })
+  await ruleOff($)
   await begin($)
   await $.command.run(RUN('bars'))
   await $.command.run(ASK_CMD('on'))
@@ -800,6 +833,7 @@ test('clampPercent: a number from 0 to 100, anything else is 0', () => {
 
 test('a subagent ask_choices stays out of the band; the member own ask_choices still shows the picker', async ($, on) => {
   world(on)
+  await ruleOff($)
   await begin($)
   await $.command.run(ASK_CMD('on')) // the gap only matters when ask_choices is on (off by default)
   await $.tool.call({ tool: PLAN, steps: ['Build the pricing section', 'Polish the footer'] })
@@ -1116,6 +1150,8 @@ test('enhance key: with no keyboard file, the Settings button creates it with th
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
+  await ui.press({ key: 'tab-btn-enhancer' })
+  await reveal(ui, 'set-key')
   await ui.press({ key: 'set-key' })
   expect(w.toasts).toContain(ADDED)
   expect(w.writes.map(t => JSON.parse(t))).toEqual([
@@ -2800,8 +2836,8 @@ async function decideRows($: any) {
   await begin($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'settings' })
-  if (!(await ui.find({ key: 'set-decide' }))) await ui.press({ key: 'toggle-assumptions' })
-  return ui
+  await ui.press({ key: 'tab-btn-assumptions' })
+  return paged(ui)
 }
 
 const decideSection = (out: any) => out.sections.find((s: any) => s.id === 'session-panel:decide')
@@ -2879,3 +2915,92 @@ test('decide: the Keep threshold row offers 0.4 to 0.8, and 0.5 is the default',
   expect(MAX_PER_KIND).toBe(5)
   await ui.unmount()
 })
+
+test('the question box is on by default: ask_choices is refused and says to use AskUserQuestion', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.command.run(ASK_CMD('on'))
+  await $.tool.call({ tool: PLAN, steps: ['Build the pricing section'] })
+  const r = await $.tool.call({ tool: ASK, question: 'Which style?', options: ['A', 'B'] })
+  expect(r.result).toContain('AskUserQuestion')
+})
+
+test('rulesSection: the question box line replaces the picker line, and the grill skills are named', async ($, on) => {
+  expect(rulesSection(true, true)).toContain('AskUserQuestion')
+  expect(rulesSection(true, true)).not.toContain('ask_choices')
+  expect(rulesSection(false, true)).toContain('ask_choices')
+  expect(rulesSection(false, false)).not.toContain('ask_choices')
+  expect(rulesSection(true, false)).toContain('/grill-with-docs')
+})
+
+
+// A small text layout of the drawn Settings rows: a Box with a width pads its lines to that width, a row Box sets its
+// children side by side, a column Box stacks them. It shows what each cell holds, so a cell too narrow for its content
+// is caught here and not on screen.
+type Lines = string[]
+function layout(el: any, overflow: string[]): Lines {
+  if (el == null) return []
+  if (typeof el === 'string') return [el]
+  if (Array.isArray(el)) return el.flatMap(c => layout(c, overflow))
+  if (el.type === 'Text') return [(el.children ?? []).map((c: any) => (typeof c === 'string' ? c : layout(c, overflow).join(''))).join('')]
+  if (el.type === 'Button') return [el.props.plain ? el.props.label : `[ ${el.props.label} ]`]
+  const kids: any[] = el.children ?? []
+  const pad = el.props?.paddingLeft ?? 0
+  let lines: Lines
+  if (el.props?.flexDirection === 'row') {
+    const parts = kids.map(c => layout(c, overflow))
+    const widths = parts.map(p => Math.max(0, ...p.map(l => l.length)))
+    const h = Math.max(1, ...parts.map(p => p.length))
+    lines = Array.from({ length: h }, (_, i) => parts.map((p, j) => (p[i] ?? '').padEnd(widths[j], ' ')).join(''))
+  } else {
+    lines = kids.flatMap(c => layout(c, overflow))
+  }
+  lines = lines.map(l => ' '.repeat(pad) + l)
+  const w = el.props?.width
+  if (typeof w === 'number') {
+    for (const l of lines) if (l.length > w) overflow.push(`${JSON.stringify(l)} is wider than its cell (${w})`)
+    lines = lines.map(l => l.padEnd(w, ' '))
+    if (lines.length === 0) lines = [' '.repeat(w)]
+  }
+  return lines
+}
+
+function findRows(el: any, out: any[] = []): any[] {
+  if (el == null || typeof el !== 'object') return out
+  if (Array.isArray(el)) {
+    el.forEach(c => findRows(c, out))
+    return out
+  }
+  if (el.type === 'Box' && typeof el.props?.key === 'string' && el.props.key.startsWith('row-')) out.push(el)
+  else (el.children ?? []).forEach((c: any) => findRows(c, out))
+  return out
+}
+
+async function settingsPages(ui: any): Promise<{ text: string[]; overflow: string[] }> {
+  const text: string[] = []
+  const overflow: string[] = []
+  for (const tab of ['band', 'enhancer', 'questions', 'assumptions', 'setup']) {
+    if (await ui.find({ key: `tab-btn-${tab}` })) await ui.press({ key: `tab-btn-${tab}` })
+    for (let page = 0; ; page++) {
+      text.push(`--- ${tab} page ${page + 1}`)
+      for (const row of findRows(await ui.drawn())) text.push(...layout(row, overflow).map(l => l.trimEnd()))
+      if (!(await ui.find({ key: 'page-next' }))) break
+      await ui.press({ key: 'page-next' })
+    }
+  }
+  return { text, overflow }
+}
+
+for (const columns of [140, 80]) {
+  test(`settings table at ${columns} columns: every cell holds its content, and the columns start in the same place on every row`, async ($, on) => {
+    world(on)
+    await begin($)
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: columns }, surface: 'terminal' })
+    await ui.press({ key: 'settings' })
+    const { text, overflow } = await settingsPages(ui)
+    expect(overflow).toEqual([])
+    const rows = text.filter(l => !l.startsWith('---'))
+    expect(rows.every(l => l.length <= columns - 8)).toBe(true)
+    expect(text.some(l => l.includes('Jev pass'))).toBe(true)
+  })
+}

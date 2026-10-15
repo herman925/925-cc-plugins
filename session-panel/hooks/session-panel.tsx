@@ -6,7 +6,7 @@ import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type Enhancer
 import {
   GATE_MESSAGE,
   PLAN_SECTION,
-  SECTION_TEXT,
+  rulesSection,
   GATE_LIMIT,
   versionFrom,
   actionLabel,
@@ -24,7 +24,12 @@ import {
   friendlyError,
   isGateExempt,
   looksLikeUserDenial,
-  SOURCE_LABELS,
+  SOURCE_SHORT,
+  TABLE_GAP,
+  MIN_DESC,
+  wrapWords,
+  tableWidths,
+  pageRows,
   meter,
   migratedValues,
   newChecklist,
@@ -102,6 +107,11 @@ type Hooked = EngineInterface
 
 const enabledA = atom({ plugin: 'session-panel', key: 'sessionPanelEnabled' } as const, true)
 const askEnabledA = atom({ plugin: 'session-panel', key: 'askChoicesEnabled' } as const, false)
+const askRuleA = atom({ plugin: 'session-panel', key: 'questionBoxRule' } as const, true)
+const stopCheckA = atom({ plugin: 'session-panel', key: 'stopCheck' } as const, true)
+const askedA = atom({ plugin: 'session-panel', key: 'askedThisTurn' } as const, false)
+const settingsTabA = atom({ plugin: 'session-panel', key: 'settingsTab' } as const, 'band')
+const settingsPageA = atom({ plugin: 'session-panel', key: 'settingsPage' } as const, 0)
 const settingsOpenA = atom({ plugin: 'session-panel', key: 'settingsOpen' } as const, false)
 const checklistA = atom({ plugin: 'session-panel', key: 'checklist' } as const, newChecklist())
 const tickA = atom({ plugin: 'session-panel', key: 'tick' } as const, 0)
@@ -112,7 +122,6 @@ const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { 
 const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const, 0)
 const trackA = atom({ plugin: 'session-panel', key: 'assumptionTrack' } as const, newTrack() as AssumptionTrack)
 const versionA = atom({ plugin: 'session-panel', key: 'version' } as const, '')
-const openGroupsA = atom({ plugin: 'session-panel', key: 'openGroups' } as const, ['enhancer'] as string[])
 /** The row whose full text is open, or null. One row at a time. */
 const expandedA = atom({ plugin: 'session-panel', key: 'assumptionExpanded' } as const, null as number | null)
 /** The rows printed while the reveal runs: a count, or null once it has finished (all rows print). */
@@ -815,9 +824,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   on('prompt.compose', async ($, e, next) => {
     const result = await next(e)
     if (!(await read($, enabledA))) return result
-    const text = (await read($, askEnabledA))
-      ? SECTION_TEXT
-      : SECTION_TEXT.split('\n').filter(l => !l.includes('ask_choices')).join('\n')
+    const text = rulesSection(await read($, askRuleA), await read($, askEnabledA))
     // The decision step (#91): one pointer digest of the assumptions worth reading this turn. Its own try keeps any
     // failure here from touching the sections below, and it never blocks the turn.
     let digest = ''
@@ -863,6 +870,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
   on('turn.start', async ($, e, next) => {
     await update($, trackA, t => startTurn(t, e.turnId))
+    await update($, askedA, () => false)
     const result = await next(e)
     if (!(await read($, enabledA))) return result
     const text = e.text.trim()
@@ -936,6 +944,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
 
   on('tool.call', { tool: 'mcp__session-panel__ask_choices' }, async ($, e) => {
     if (!(await read($, enabledA)) || !(await read($, askEnabledA))) return { result: 'ask_choices is off. Ask this question with AskUserQuestion instead.' }
+    if (await read($, askRuleA)) return { result: 'The question box is on: ask this with AskUserQuestion instead.' }
     const args = e as { question?: unknown; options?: unknown }
     // A helper cannot put a question on the person's screen: no Needs you, no bell, no picker.
     if (e.agentId !== undefined) {
@@ -947,6 +956,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const q = typeof args.question === 'string' && args.question.trim() !== '' ? args.question.trim().slice(0, 160) : question
     await needsYou($, q, { question: q, options })
     return { result: 'The question is on the person’s screen. Stop now and wait for their reply.' }
+  })
+
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    await update($, askedA, () => true)
+    return next(e)
   })
 
   // ---------- the gate and the bookkeeping for every other tool ----------
@@ -1030,6 +1044,10 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     await finishAssumptions($, e)
+    const proseQuestion = e.agentId === undefined && e.reason !== 'aborted' && e.reason !== 'error' && e.reason !== 'refusal' && asksUser(e.answer)
+    if (proseQuestion && (await read($, enabledA)) && (await read($, askRuleA)) && (await read($, stopCheckA)) && !(await read($, askedA))) {
+      $.ui.toast('Claude asked in prose instead of the question box. Turn the warning off in Settings → Questions if it is not wanted.')
+    }
     if (e.agentId !== undefined || !(await read($, enabledA))) return result
     const now = await $.clock.now()
     const c = await read($, checklistA)
@@ -1130,10 +1148,13 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const style = await read($, styleA)
     const finished = await read($, finishedA)
     const askOn = await read($, askEnabledA)
+    const askRule = await read($, askRuleA)
+    const stopCheck = await read($, stopCheckA)
     const settingsOpen = await read($, settingsOpenA)
+    const settingsTab = await read($, settingsTabA)
+    const settingsPage = await read($, settingsPageA)
     const prefs = await read($, prefsA)
     const enh = await read($, enhancerA)
-    const openGroups = await read($, openGroupsA)
     const version = await read($, versionA)
     const track = await read($, trackA)
     const hiddenCols = await read($, hiddenColsA)
@@ -1150,7 +1171,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     // Settings are data: add an entry here and it shows in the dropdown. A toggle is on or off; a choice picks one value.
     type Setting =
       | { id: string; group: string; label: string; hint: string; kind: 'toggle'; isOn: boolean; set: (v: boolean) => void }
-      | { id: string; group: string; label: string; hint: string; kind: 'button'; press: () => void }
+      | { id: string; group: string; label: string; hint: string; kind: 'button'; press: () => void; action: string }
       | { id: string; group: string; label: string; hint: string; kind: 'choice'; value: string; options: Array<{ value: string; label: string }>; set: (v: string) => void }
     const settings: Setting[] = [
       {
@@ -1164,12 +1185,30 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       },
       {
         id: 'ask',
-        group: 'band',
-        label: 'Ask choices',
-        hint: 'Let Claude ask with the picker in this box',
+        group: 'questions',
+        label: 'Picker above the prompt',
+        hint: 'ask_choices buttons. Off while the question box is on.',
         kind: 'toggle',
         isOn: askOn,
         set: v => void setAskEnabled($, v),
+      },
+      {
+        id: 'questionbox',
+        group: 'questions',
+        label: 'Question box',
+        hint: 'Claude asks with AskUserQuestion, never in prose',
+        kind: 'toggle',
+        isOn: askRule,
+        set: v => void update($, askRuleA, () => v),
+      },
+      {
+        id: 'stopcheck',
+        group: 'questions',
+        label: 'Warn on prose questions',
+        hint: 'A toast when a reply ends with a question not asked in the box',
+        kind: 'toggle',
+        isOn: stopCheck,
+        set: v => void update($, stopCheckA, () => v),
       },
       {
         id: 'look',
@@ -1208,6 +1247,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         label: 'Add Ctrl+X E for Enhance',
         hint: 'Adds the key to keybindings.json',
         kind: 'button',
+        action: 'Add',
         press: () => void addEnhanceKey($).then(line => $.ui.toast(line)),
       },
       {
@@ -1274,20 +1314,20 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         id: 'chat',
         group: 'enhancer',
         label: 'Chat context',
-        hint: 'Haiku + recent reads the last six turns. Full chat forks the session.',
+        hint: 'Recent: Haiku reads the last six turns. Full chat: forks the session with its model.',
         kind: 'choice',
         value: prefs.chat,
         options: [
-          { value: 'recent', label: 'Haiku + recent' },
-          { value: 'full', label: 'Full chat (session model)' },
+          { value: 'recent', label: 'Recent' },
+          { value: 'full', label: 'Full chat' },
         ],
         set: v => void setPrefs($, { chat: v === 'full' ? 'full' : 'recent' }),
       },
       ...(['instructions', 'skills', 'docs', 'github'] as const).map(src => ({
         id: `src-${src}`,
         group: 'enhancer',
-        label: SOURCE_LABELS[src],
-        hint: src === 'github' ? 'Off by default. Uses gh.' : 'Capped at 4000 characters',
+        label: SOURCE_SHORT[src].label,
+        hint: SOURCE_SHORT[src].hint,
         kind: 'toggle' as const,
         isOn: prefs.sources[src],
         set: (v: boolean) => void setPrefs($, { sources: { ...prefs.sources, [src]: v } }),
@@ -1298,72 +1338,132 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         label: 'Run setup again',
         hint: 'Ask the first-run questions again',
         kind: 'button',
+        action: 'Run',
         press: () => void runSetup($),
       },
     ]
-    const labelW = Math.max(...settings.map(s => s.label.length))
-    const settingRow = (s: Setting) => {
-      if (s.kind === 'button') {
-        return (
-          <Box key={`row-${s.id}`} flexDirection="row">
-            <Button key={`set-${s.id}`} plain label={s.label} onPress={s.press} />
-            <Text dimColor>{`  ${s.hint}`}</Text>
-          </Box>
-        )
-      }
-      const name = <Text bold>{s.label.padEnd(labelW, ' ')}</Text>
-      if (s.kind === 'toggle') {
-        return (
-          <Box key={`row-${s.id}`} flexDirection="row">
-            {s.isOn ? pillOf(' ON ', 'green') : pillOf(' OFF', 'gray')}
-            <Text> </Text>
-            <Button key={`set-${s.id}`} plain label={s.label.padEnd(labelW, ' ')} onPress={() => s.set(!s.isOn)} />
-            <Text dimColor>{`  ${s.hint}`}</Text>
-          </Box>
-        )
-      }
-      return (
-        <Box key={`row-${s.id}`} flexDirection="row">
-          {name}
-          <Text>  </Text>
-          {s.options.map(o =>
-            o.value === s.value ? (
-              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                {pillOf(o.label, 'magenta')}
-                <Text> </Text>
-              </Box>
-            ) : (
-              <Box key={`opt-${s.id}-${o.value}`} flexDirection="row">
-                <Button key={`set-${s.id}-${o.value}`} plain dimColor label={` ${o.label} `} onPress={() => s.set(o.value)} />
-                <Text> </Text>
-              </Box>
-            ),
-          )}
-          <Text dimColor>{`  ${s.hint}`}</Text>
-        </Box>
-      )
-    }
     const GROUPS: Array<{ id: string; title: string; note?: string }> = [
       { id: 'band', title: 'Band' },
       { id: 'enhancer', title: 'Enhancer' },
+      { id: 'questions', title: 'Questions' },
       { id: 'assumptions', title: 'Assumptions' },
       { id: 'shelf', title: 'Shelf', note: 'Coming in a later stage.' },
       { id: 'setup', title: 'Setup' },
     ]
-    const settingGroups = GROUPS.map(g => {
-      const isOpen = openGroups.includes(g.id)
-      return (
-        <Box key={`group-${g.id}`} flexDirection="column">
-          <Button
-            key={`toggle-${g.id}`}
-            plain
-            label={`${isOpen ? '▾' : '▸'} ${g.title}`}
-            onPress={() => void update($, openGroupsA, o => (o.includes(g.id) ? o.filter(x => x !== g.id) : [...o, g.id]))}
-          />
-          {isOpen ? (g.note ? <Text dimColor>{`  ${g.note}`}</Text> : settings.filter(s => s.group === g.id).map(settingRow)) : null}
+    const activeGroup = GROUPS.find(g => g.id === settingsTab) ?? GROUPS[0]
+    const tabSettings = settings.filter(s => s.group === activeGroup.id)
+    // The card is a table with three fixed columns: selector | name | description. Every cell is a box of its column's
+    // width that never shrinks, so each column starts at the same place on every row of the tab, on every page.
+    const CARD_LINES = 6
+    const CARD_HEIGHT = 2 + 1 + 2 + CARD_LINES
+    const cardInner = width - 4
+    const optionWidth = (label: string) => label.length + 2
+    const selectorWidth = (s: Setting) =>
+      s.kind === 'toggle'
+        ? 5
+        : s.kind === 'button'
+          ? optionWidth(s.action)
+          : s.options.reduce((n, o) => n + optionWidth(o.label), 0)
+    const tcols = tableWidths(cardInner, tabSettings.map(selectorWidth), tabSettings.map(s => s.label))
+    // On a narrow card the description goes on the lines under the name, in the same column, instead of beside it.
+    const stacked = tcols.desc < 30
+    const descW = stacked ? Math.max(MIN_DESC, cardInner - tcols.selector - TABLE_GAP) : tcols.desc
+    const rowWidth = stacked ? tcols.selector + TABLE_GAP + Math.max(tcols.name, descW) : tcols.selector + tcols.name + tcols.desc + 2 * TABLE_GAP
+    const linesOf = (s: Setting) => wrapWords(s.hint, descW)
+    const heightOf = (s: Setting) => linesOf(s).length + (stacked ? 1 : 0)
+    const selectorCell = (s: Setting): RenderChildren => {
+      if (s.kind === 'toggle') return s.isOn ? pillOf('ON', 'green') : pillOf('OFF', 'gray')
+      if (s.kind === 'button') return <Button key={`set-${s.id}`} plain label={`[${s.action}]`} onPress={s.press} />
+      return s.options.map(o => (
+        <Box key={`opt-${s.id}-${o.value}`} flexDirection="row" flexShrink={0}>
+          {o.value === s.value ? (
+            pillOf(o.label, 'magenta')
+          ) : (
+            <Box width={optionWidth(o.label)} flexShrink={0} paddingLeft={1}>
+              <Button key={`set-${s.id}-${o.value}`} plain dimColor label={o.label} onPress={() => s.set(o.value)} />
+            </Box>
+          )}
+        </Box>
+      ))
+    }
+    const nameCell = (s: Setting): RenderChildren =>
+      s.kind === 'toggle' ? <Button key={`set-${s.id}`} plain label={s.label} onPress={() => s.set(!s.isOn)} /> : <Text bold>{s.label}</Text>
+    const descCell = (s: Setting) => (
+      <Box width={descW} flexShrink={0} flexDirection="column">
+          {linesOf(s).map((line, i) => (
+            <Text key={`d${i}`} dimColor>{line}</Text>
+          ))}
+      </Box>
+    )
+    const settingRow = (s: Setting) =>
+      stacked ? (
+        <Box key={`row-${s.id}`} flexDirection="column" width={rowWidth} flexShrink={0}>
+          <Box flexDirection="row" flexShrink={0}>
+        <Box width={tcols.selector} flexShrink={0} flexDirection="row">{selectorCell(s)}</Box>
+        <Box width={TABLE_GAP} flexShrink={0} />
+        <Box width={tcols.name} flexShrink={0} flexDirection="row">{nameCell(s)}</Box>
+          </Box>
+          <Box flexDirection="row" flexShrink={0}>
+            <Box width={tcols.selector + TABLE_GAP} flexShrink={0} />
+            {descCell(s)}
+          </Box>
+        </Box>
+      ) : (
+        <Box key={`row-${s.id}`} flexDirection="row" width={rowWidth} flexShrink={0}>
+        <Box width={tcols.selector} flexShrink={0} flexDirection="row">{selectorCell(s)}</Box>
+        <Box width={TABLE_GAP} flexShrink={0} />
+        <Box width={tcols.name} flexShrink={0} flexDirection="row">{nameCell(s)}</Box>
+          <Box width={TABLE_GAP} flexShrink={0} />
+          {descCell(s)}
         </Box>
       )
-    })
+    const tabText = (title: string) => ` ${title} `
+    const tabsWidth = GROUPS.reduce((n, g) => n + tabText(g.title).length, 0)
+    // Tabs: the open tab's label is a filled pill and its rule is blank, so it joins the body under it; the others sit on a rule.
+    const tabRow = (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          {GROUPS.map(g =>
+            g.id === activeGroup.id ? (
+              <Box key={`tab-${g.id}`}>{pillOf(g.title, 'cyan')}</Box>
+            ) : (
+              <Button
+                key={`tab-btn-${g.id}`}
+                plain
+                label={tabText(g.title)}
+                onPress={() => {
+                  void update($, settingsTabA, () => g.id)
+                  void update($, settingsPageA, () => 0)
+                }}
+              />
+            ),
+          )}
+        </Box>
+        <Box flexDirection="row">
+          {GROUPS.map(g => {
+            const w = tabText(g.title).length
+            return <Text key={`rule-${g.id}`} dimColor>{g.id === activeGroup.id ? ' '.repeat(w) : '─'.repeat(w)}</Text>
+          })}
+          <Text dimColor>{'─'.repeat(Math.max(0, cardInner - tabsWidth))}</Text>
+        </Box>
+      </Box>
+    )
+    // The body holds CARD_LINES lines. A tab with more is paged; Prev and Next sit on the title line, so they stay visible.
+    const pages = pageRows(tabSettings, tabSettings.map(heightOf), CARD_LINES)
+    const pageNo = Math.min(settingsPage, pages.length - 1)
+    const pageControls = pages.length > 1 ? (
+      <Box flexDirection="row">
+        {pageNo > 0 ? <Button key="page-prev" plain label="◀ Prev" onPress={() => void update($, settingsPageA, () => pageNo - 1)} /> : <Text dimColor>{'       '}</Text>}
+        <Text dimColor>{`  ${pageNo + 1} / ${pages.length}  `}</Text>
+        {pageNo < pages.length - 1 ? <Button key="page-next" plain label="Next ▶" onPress={() => void update($, settingsPageA, () => pageNo + 1)} /> : null}
+      </Box>
+    ) : null
+    const tabBody = (
+      <Box flexDirection="column" height={CARD_LINES} flexShrink={0}>
+        {activeGroup.note ? <Text dimColor>{activeGroup.note}</Text> : pages[pageNo].map(settingRow)}
+      </Box>
+    )
+
     // The panel is hidden when there are no assumptions. Otherwise: a title with the open count, and when open a table: a
     // header, a rule, then one line per entry with a light rule between entries. Each line is drawn as pieces, padded to the
     // column widths, so every header sits above its contents; the buttons sit in the last column, beside their row.
@@ -1466,7 +1566,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     // Frame: a title tab and the Settings button on top, the dropdown under them, then the body.
     const frame = (body: RenderChildren): RenderElement =>
       stack(
-        <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer}>
+        <Box flexDirection="column" borderStyle="round" borderColor={color('cyan')} paddingX={1} width={outer} minHeight={settingsOpen ? CARD_HEIGHT + 3 : undefined}>
           <Box flexDirection="row" justifyContent="space-between" width={width}>
             <Box flexDirection="row">
               <Text bold inverse={isPlain} backgroundColor={isPlain ? undefined : 'cyan'} color={isPlain ? undefined : 'black'}>
@@ -1476,17 +1576,18 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             </Box>
             {settingsButton}
           </Box>
-          {settingsOpen ? (
-            <Box flexDirection="row" justifyContent="flex-end" width={width}>
-              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} paddingX={1}>
-                <Text bold>Settings</Text>
-                {settingGroups}
-              </Box>
-            </Box>
-          ) : null}
           {enhancerBar}
           {assumptionsBlock}
           {body}
+          {settingsOpen ? (
+            <Box position="absolute" top={1} right={0} flexDirection="column">
+              <Box flexDirection="column" borderStyle="round" borderColor={color('magenta')} backgroundColor="black" paddingX={1} width={width} height={CARD_HEIGHT} flexShrink={0}>
+                <Box flexDirection="row" justifyContent="space-between" width={cardInner}><Text bold>Settings</Text>{pageControls}</Box>
+                {tabRow}
+                {tabBody}
+              </Box>
+            </Box>
+          ) : null}
         </Box>,
       )
 
