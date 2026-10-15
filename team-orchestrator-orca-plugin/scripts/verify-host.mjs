@@ -9,6 +9,7 @@ import { nativeLaunchFingerprint, readNativeLaunchLedger } from '../src/local/na
 import { DatabaseSync } from 'node:sqlite';
 import { sendFingerprint } from '../src/local/teamwork.mjs';
 import { readNativeRunEvidence } from '../src/local/native-run.mjs';
+import { nativeMutationFingerprint } from '../src/local/native-dispatch.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
 const revision = '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
@@ -26,7 +27,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { TaskCreateParams } from './src/shared/rpc-contract/orchestration-params';\nexport { WorkerStartParams } from './src/shared/rpc-contract/orchestration-worker-start-params';\nexport { replayStableCallerParams, hashCanonical } from './src/main/runtime/rpc/orchestration-mutation-receipt';\nexport { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -46,6 +47,40 @@ const bundle = async name => {
 };
 try {
   const before = await bundle('before');
+  {
+  // Independent pinned-source oracle: parsed params and runtime-resolved identity.
+  const caller = 'codex_11111111_2222_4333_8444_555555555555';
+  const owner = { kind: 'structured', sessionId: caller };
+  const noPane = { getTerminalPaneKey: () => null };
+  const spec = '{"protocol":"team-dispatch/v1","attemptId":"attempt-1"}';
+  const task = before.TaskCreateParams.parse({ spec, run: 'run_test', callerTerminalHandle: `orca_session_id:${caller}`, deps: '', __orcaCallerOrcaSessionId: 'forged' });
+  assert.equal(task.__orcaCallerOrcaSessionId, undefined, 'untrusted caller marker is stripped by native parser');
+  const hostHash = (method, params, identity = caller, runtime = noPane) => before.hashCanonical({ method, params: before.replayStableCallerParams(runtime, params, identity) });
+  const taskHash = hostHash('orchestration.taskCreate', task);
+  assert.equal(taskHash, '917d6c33f373c22b7fa32061068766aecb1764067877a10ffebd13267d491a14');
+  assert.equal(nativeMutationFingerprint('orchestration.taskCreate', task, owner), taskHash);
+  for (const identity of [null, 'different-resolved-caller']) assert.notEqual(hostHash('orchestration.taskCreate', task, identity), taskHash);
+  assert.notEqual(hostHash('orchestration.taskCreate', { ...task, spec: spec + ' ' }), taskHash, 'spec bytes remain exact');
+  const workerInput = { task: 'task_test', run: 'run_test', from: `orca_session_id:${caller}`, worktree: 'folder:/verified', agent: 'claude', devMode: false };
+  const worker = before.WorkerStartParams.parse({ ...workerInput, waitSubmitMs: 1000, __orcaCallerOrcaSessionId: 'forged' });
+  assert.equal(worker.__orcaCallerOrcaSessionId, undefined);
+  assert.equal(nativeMutationFingerprint('orchestration.workerStart', workerInput, owner), hostHash('orchestration.workerStart', worker));
+  for (const identity of [null, 'different-resolved-caller']) assert.notEqual(hostHash('orchestration.workerStart', worker, identity), hostHash('orchestration.workerStart', worker));
+  assert.notEqual(hostHash('orchestration.workerStart', { ...worker, devMode: undefined }), hostHash('orchestration.workerStart', worker), 'parsed devMode absence differs from false');
+  assert.equal(before.WorkerStartParams.safeParse({ ...workerInput, model: ' padded ' }).success, false);
+  assert.equal(before.WorkerStartParams.safeParse({ ...workerInput, spec }).success, false);
+  assert.equal(hostHash('orchestration.workerStart', { ...worker, waitSubmitMs: 8000 }), hostHash('orchestration.workerStart', worker));
+  for (const paneKey of ['tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'legacy-pane']) {
+    const runtime = { getTerminalPaneKey: () => paneKey };
+    const normalized = paneKey.includes(':') ? { paneLeafId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } : { paneKey };
+    assert.deepEqual(before.replayStableCallerParams(runtime, { from: 'term', callerTerminalHandle: 'term', terminal: 'target' }), { from: normalized, callerTerminalHandle: normalized, terminal: normalized });
+    const terminalOwner = { kind: 'terminal', handle: 'term', paneKey };
+    const terminalTask = before.TaskCreateParams.parse({ spec, run: 'run_test', callerTerminalHandle: 'term' });
+    assert.equal(nativeMutationFingerprint('orchestration.taskCreate', terminalTask, terminalOwner), hostHash('orchestration.taskCreate', terminalTask, null, runtime));
+    const terminalStart = before.WorkerStartParams.parse({ ...workerInput, from: 'term' });
+    assert.equal(nativeMutationFingerprint('orchestration.workerStart', terminalStart, terminalOwner), hostHash('orchestration.workerStart', terminalStart, null, runtime));
+  }
+  }
   const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'A separate total objective' }] };
   const sendEnvelope = { sessionId: 'head-session', clientOperationId: `${Date.now()}-0123456789abcdef0123456789abcdef`, expectedRuntimeFence: 7, payloadFingerprint: sendFingerprint('head-session', body) };
   assert.equal(before.SendParams.safeParse({ envelope: sendEnvelope, body }).success, true);
@@ -139,5 +174,5 @@ try {
   assert.equal((await handlers.get('plugins:panelAction')(event, call)).ok, false);
   assert.equal(invoked, 1);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
-  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, pinned capability read schemas, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
+  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, pinned TaskCreate/WorkerStart parsers, resolved-caller hashes and pane normalization, capability read schemas, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
 } finally { await rm(root, { recursive: true, force: true }); }
