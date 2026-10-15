@@ -18,7 +18,6 @@ export function planTeam(form) {
   for (const values of [form.models, form.efforts]) {
     if (!Array.isArray(values) || values.length !== 3 || values.some(value => typeof value !== 'string' || !value || value.length > 120)) throw new Error('Invalid model or effort selection.');
   }
-  if (form.efforts.some(value => !['default', 'low', 'medium', 'high', 'xhigh'].includes(value))) throw new Error('Invalid effort selection.');
   if (form.models.some((model, i) => model === 'default' && form.efforts[i] !== 'default')) throw new Error('Choose a model before overriding its effort.');
   const agents = form.agents ?? ['codex', 'codex', 'codex'];
   if (!Array.isArray(agents) || agents.length !== 3 || agents.some(agent => !['codex', 'claude'].includes(agent))) throw new Error('Choose Codex or Claude Code for each level.');
@@ -74,7 +73,7 @@ export function validateState(value) {
     const ids = new Set();
     const names = new Set();
     for (const member of team.members) {
-      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !['default', 'low', 'medium', 'high', 'xhigh'].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
+      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !string(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
       if (member.boss !== null && !ids.has(member.boss)) throw new Error('Saved reporting relationships are invalid. It has been left untouched.');
       if (member.boss === null && ids.size !== 0) throw new Error('Saved team has multiple roots. It has been left untouched.');
       if ((member.boss === null && member.level !== 1) || (member.boss !== null && team.members.find(boss => boss.id === member.boss)?.level !== member.level - 1)) throw new Error('Saved hierarchy levels are invalid. It has been left untouched.');
@@ -112,7 +111,7 @@ export function validatePersistentState(value) {
     const { configuration, scope, ...roster } = team;
     validateState({ version: 1, teams: [roster] });
     for (const member of team.members) {
-      if (!uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some(text => typeof text !== 'string' || text.length > 1500)) throw new Error('Saved role identity/version is invalid. It has been left untouched.');
+      if ((member.preferenceOverride !== undefined && typeof member.preferenceOverride !== 'boolean') || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some(text => typeof text !== 'string' || text.length > 1500)) throw new Error('Saved role identity/version is invalid. It has been left untouched.');
       memberIds.add(member.id);
     }
     teamIds.add(team.id);

@@ -1,9 +1,12 @@
+import { preferenceIssue } from '../capabilities.mjs';
+import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { startupCommand } from './startup-command.mjs';
 import { memberLaunch } from '../launch.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-export function createExecutor(host, cli, { store } = {}) {
+export function createExecutor(host, cli, { store, internalKey } = {}) {
   const selections = new Map();
+  const observations = new Map(), capabilities = new Map(), latestObservation = new Map();
   const starts = new Map();
   const jobs = new Set();
   const get = async key => store.readReceipt(key);
@@ -33,7 +36,7 @@ export function createExecutor(host, cli, { store } = {}) {
   function validateLaunch(value) {
     if (!value || !/^[a-zA-Z0-9-]{1,120}$/.test(value.requestId) || !/^[a-f0-9]{64}$/.test(value.workspaceKey) || !['codex', 'claude'].includes(value.agent) || typeof value.title !== 'string' || !value.title || value.title.length > 160 || typeof value.brief !== 'string' || !value.brief || value.brief.length > 16384) throw new Error('Invalid member launch request.');
     for (const field of ['model', 'effort']) if (value[field] !== undefined && (typeof value[field] !== 'string' || !value[field] || value[field].length > 120)) throw new Error('Invalid model or effort.');
-    if (value.effort && (!value.model || !['low', 'medium', 'high', 'xhigh'].includes(value.effort))) throw new Error('Effort requires a model and a supported level.');
+    if (value.effort && !value.model) throw new Error('Effort requires a model.');
   }
   async function start(params, workspaceId) {
     validateLaunch(params);
@@ -100,7 +103,38 @@ export function createExecutor(host, cli, { store } = {}) {
     await set(key, record);
   }
   return {
-    async execute({ op, params = {}, workspaceId } = {}) {
+    async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
+      if (op?.startsWith('_')) {
+        if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if (op === '_capabilityScope') {
+          const scope = params.teamId ? store.readScope(params.teamId) : selections.get(params.selectionToken);
+          if (!scope) throw Error('Confirm a saved team or selected project before reading capabilities.');
+          const observationId = randomUUID(); latestObservation.set(scope.workspaceKey, observationId);
+          capabilities.delete(scope.workspaceKey);
+          const verified = verifiedScope(await workspaceRecord(scope.workspaceId));
+          if (verified.workspaceKey !== scope.workspaceKey) throw Error('The bound execution host changed.');
+          if (latestObservation.get(scope.workspaceKey) !== observationId) throw Error('Host capability observation was superseded.');
+          if (observations.size >= 128) observations.delete(observations.keys().next().value);
+          observations.set(observationId, scope);
+          return { observationId, scope };
+        }
+        if (op === '_capabilityResult') {
+          const scope = observations.get(params.observationId); observations.delete(params.observationId);
+          if (!scope || latestObservation.get(scope.workspaceKey) !== params.observationId || params.value?.workspaceKey !== scope.workspaceKey || params.value?.executionHostId !== scope.executionHostId) throw Error('Host capability observation is stale or does not match its scope.');
+          capabilities.set(scope.workspaceKey, params.value);
+          return params.value;
+        }
+        throw Error('Unknown internal observation phase.');
+      }
+      if (op === 'updateAgentPreferences') {
+        const replay = store.replay(op, params); if (replay) return { value: replay };
+        const scope = store.readScope(params.teamId);
+        if (!params.inherit) {
+          const issue = preferenceIssue(params, capabilities.get(scope.workspaceKey));
+          if (issue) throw Error(issue);
+        }
+        return { value: store.updateAgentPreferences(params) };
+      }
       if (op === 'context') return context(workspaceId, params.teamId);
       if (op === 'load') return { value: store.readSnapshot() };
       if (op === 'createTeam') {
@@ -110,11 +144,22 @@ export function createExecutor(host, cli, { store } = {}) {
         if (!selected) throw new Error('Confirm the project and execution host again before saving.');
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The selected execution host changed. Confirm the project again.');
+        for (let level = 0; level < 3; level++) {
+          const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? 'codex', model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
+          if (issue) throw Error(issue);
+        }
         return { value: store.createTeam(params, selected) };
       }
       if (op === 'updateRole') return { value: store.updateRole(params) };
       if (op === 'updateSettings') return { value: store.updateSettings(params) };
-      if (op === 'beginLaunch') return { value: store.beginLaunch(params) };
+      if (op === 'beginLaunch') {
+        const scope = store.readScope(params.teamId), observed = capabilities.get(scope.workspaceKey);
+        if (observed) {
+          const team = store.readSnapshot().teams.find(row => row.id === params.teamId);
+          for (const member of team.members) { const issue = preferenceIssue(member, observed, { requireCore: true }); if (issue) throw Error(issue); }
+        }
+        return { value: store.beginLaunch(params) };
+      }
       if (op === 'start') return start(params, workspaceId);
       if (op === 'receipt') {
         if (!/^[a-zA-Z0-9-]{1,120}$/.test(params.requestId)) throw new Error('Invalid request identity.');

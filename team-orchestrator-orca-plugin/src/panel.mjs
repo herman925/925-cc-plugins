@@ -1,3 +1,4 @@
+import { preferenceIssue } from './capabilities.mjs';
 import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, emptyTeamState, validatePersistentState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
 import { createWorkerBridge } from './worker-bridge.mjs';
@@ -23,6 +24,9 @@ let workspace = null;
 let launchMode = 'on-demand';
 let targetError = '';
 let confirmedWorkspace = null;
+const capabilityViews = new Map();
+let memberPreferences = null;
+let preferenceTarget = 'member';
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -46,11 +50,25 @@ function tree(members, parent = null, clickable = false, teamIndex = 0, compact 
     return `<li><${clickable ? 'button type="button"' : 'span'} class="org-node ${escape(member.role)}" ${clickable ? `data-action="member" data-team="${teamIndex}" data-member="${escape(member.id)}" aria-label="${escape(member.name)}" title="${escape(member.name)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></${clickable ? 'button' : 'span'}>${members.some(child => child.boss === member.id) ? tree(members, member.id, clickable, teamIndex, compact) : ''}</li>`;
   }).join('')}</ul>`;
 }
+function preferenceControls(name, preference, caps, suffix, member = false) {
+  const agent = caps?.agents?.[preference.agent];
+  const models = agent?.models ?? [];
+  const listed = models.find(row => row.id === preference.model);
+  const efforts = [...new Set(['default', ...(listed?.efforts ?? []).map(row => row.value), ...(preference.effort === 'default' ? [] : [preference.effort])])];
+  const attr = field => member ? `data-preference="${field}"` : `data-${field}="${suffix}"`;
+  const issue = preferenceIssue(preference, caps);
+  return `<td><select aria-label="${name} ${member ? 'agent' : 'CLI'}" ${attr('agent')}>${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? 'selected' : ''}>${text}${caps?.agents?.[value]?.tuiPickerDisabled ? ' · hidden in TUI picker' : ''}</option>`).join('')}</select></td><td><input aria-label="${name} model" ${attr('model')} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map(row => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join('')}</datalist></td><td><select aria-label="${name} effort" ${attr('effort')} ${preference.model === 'default' ? 'disabled' : ''}>${efforts.map(value => `<option value="${escape(value)}" ${preference.effort === value ? 'selected' : ''}>${escape(value === 'default' ? 'Default' : value)}</option>`).join('')}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ''}</td>`;
+}
+function capabilityNotice(scope) {
+  const caps = capabilityViews.get(scope?.workspaceKey);
+  return `<p class="subtle">${caps ? caps.connection === 'connected' ? 'Capabilities verified for this project' : 'Execution host unavailable; refresh after reconnecting in Orca.' : 'Refresh host capabilities to validate explicit model and effort choices. Default inherits Orca configuration.'}</p>${caps ? `<p class="subtle">${['codex', 'claude'].map(id => `${id}: ${caps.agents[id].availability}${caps.agents[id].configured.model ? ` · Orca saved preference ${caps.agents[id].configured.model}${caps.agents[id].configured.effort ? ` / ${caps.agents[id].configured.effort}` : ''}` : ''}${caps.agents[id].detail ? ` · ${caps.agents[id].detail}` : ''}`).map(escape).join('<br>')}</p>` : ''}`;
+}
 function configRows() {
   const count = form.structure === 'organisation' ? 3 : form.levels;
+  const caps = capabilityViews.get((confirmedWorkspace || workspace)?.workspaceKey);
   return Array.from({ length: count }, (_, i) => {
     const name = form.structure === 'organisation' ? ['CEO', 'Heads', 'Workers'][i] : i === 0 ? 'Head' : i === count - 1 ? 'Workers' : 'Leads';
-    return `<tr><th scope="row">${name}</th><td><select aria-label="${name} CLI" data-agent="${i}">${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${form.agents[i] === value ? 'selected' : ''}>${text}</option>`).join('')}</select></td><td><input aria-label="${name} model" data-model="${i}" list="model-options" value="${escape(form.models[i])}" maxlength="120" placeholder="default or model ID"></td><td><select aria-label="${name} effort" data-effort="${i}" ${form.models[i] === 'default' ? 'disabled' : ''}>${['default', 'low', 'medium', 'high', 'xhigh'].map(value => `<option value="${value}" ${form.efforts[i] === value ? 'selected' : ''}>${({ default: 'Default', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high' })[value]}</option>`).join('')}</select></td></tr>`;
+    return `<tr><th scope="row">${name}</th>${preferenceControls(name, { agent: form.agents[i], model: form.models[i], effort: form.efforts[i] }, caps, i)}</tr>`;
   }).join('');
 }
 function preview() {
@@ -65,7 +83,7 @@ function formView() {
     <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Quick start</span>${presets()}</div><div class="field"><span>Structure</span>${segment('structure', [['team', 'One team'], ['organisation', 'CEO over several teams']], form.structure)}</div>
     ${form.structure === 'organisation' ? `<label class="field">Teams<input id="team-groups" data-form="groups" value="${escape(form.groups)}" maxlength="520" placeholder="Team 1, Team 2"><small>Names separated by commas; each gets a head and workers.</small></label>` : `<div class="field"><span>Levels</span>${segment('levels', [[1, '1 · Head only'], [2, '2 · Head + workers'], [3, '3 · Head + leads + workers']], form.levels)}</div>`}
     <div class="field"><span>${form.structure === 'organisation' ? 'Workers each' : 'Reports each'}</span>${segment('fan', [1, 2, 3, 4, 5].map(n => [n, `${n}`]), form.fan)}</div></section>
-    <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option><option value="opus"></option><option value="sonnet"></option><option value="haiku"></option></datalist></section>
+    <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(confirmedWorkspace || workspace)}${button('Refresh host capabilities', 'refresh-capabilities', !(confirmedWorkspace || workspace)?.selectionToken ? 'disabled' : '', 'small')}</section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
     ${projectControls()}${launchControls()}<div class="actions">${button('Save team', 'create', busy || !loaded || !storageAvailable || !confirmedWorkspace ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
 }
@@ -98,7 +116,7 @@ function details() {
   if (!member) return '';
   const boss = team.members.find(row => row.id === member.boss);
   const reports = team.members.filter(row => row.boss === member.id);
-  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Model</dt><dd>${escape(member.model)}</dd><dt>Effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>Role version ${member.roleVersion} · Configuration version ${team.configVersion}</p><label class="field">Role description<textarea data-role="brief" maxlength="1500">${escape(member.brief)}</textarea></label><label class="field">Work habits<textarea data-role="habits" maxlength="1500">${escape(member.habits)}</textarea></label><label class="field">Collaboration rules<textarea data-role="collaboration" maxlength="1500">${escape(member.collaboration)}</textarea></label>${button('Save role', 'save-role', !storageAvailable ? 'disabled' : '', 'primary small')}<p class="subtle">Changes apply at the next launch or handoff. Existing work keeps its saved role version.</p></section>`;
+  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Requested model</dt><dd>${escape(member.model)}</dd><dt>Requested effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>Role version ${member.roleVersion} · Configuration version ${team.configVersion}</p><h3>Agent preferences</h3><p class="subtle">${member.preferenceOverride ? 'Individual override' : 'Inherits level default'} · Effective model: unknown · Effective effort: unknown · Context usage: unknown</p><label class="field">Preference applies to<select data-preference-target><option value="member" ${preferenceTarget === 'member' ? 'selected' : ''}>This member</option><option value="level" ${preferenceTarget === 'level' ? 'selected' : ''}>Level ${member.level} defaults</option></select></label><div class="table-scroll"><table class="models"><thead><tr><th>Agent</th><th>Requested model</th><th>Requested effort</th></tr></thead><tbody><tr>${preferenceControls('Member', memberPreferences || member, capabilityViews.get(team.scope.workspaceKey), 'member', true)}</tr></tbody></table></div>${capabilityNotice(team.scope)}${button('Refresh host capabilities', 'refresh-capabilities', '', 'small')}${button('Save preferences', 'save-preferences', !storageAvailable ? 'disabled' : '', 'primary small')}${button('Use level default', 'inherit-preferences', '', 'small')}<p class="subtle">Saved preferences apply to future launches. Role collaboration rules guide agents; they do not intercept provider tools.</p><label class="field">Role description<textarea data-role="brief" maxlength="1500">${escape(member.brief)}</textarea></label><label class="field">Work habits<textarea data-role="habits" maxlength="1500">${escape(member.habits)}</textarea></label><label class="field">Collaboration rules<textarea data-role="collaboration" maxlength="1500">${escape(member.collaboration)}</textarea></label>${button('Save role', 'save-role', !storageAvailable ? 'disabled' : '', 'primary small')}<p class="subtle">Changes apply at the next launch or handoff. Existing work keeps its saved role version.</p></section>`;
 }
 function roster() {
   if (!state.teams.length) return empty();
@@ -141,6 +159,15 @@ async function refreshTargets() {
     targetError = !workspace ? 'Open the intended workspace first.' : workspace.nativeAgentLaunch !== true ? 'The local executor is not ready. Use Test connection after the bundled bootstrap finishes.' : '';
   } catch (error) { workspace = null; targetError = error.message; }
 }
+async function refreshCapabilities(params, scope, force = false) {
+  const previous = capabilityViews.get(scope?.workspaceKey);
+  if (!force && previous && Date.now() - previous.observedAt < 300000) return;
+  capabilityViews.delete(scope?.workspaceKey);
+  busy = true; render();
+  try { const value = await call('capabilities', params); capabilityViews.set(value.workspaceKey, value); }
+  catch (error) { problem = `Could not read host capabilities: ${error.message}`; }
+  finally { busy = false; render(); }
+}
 async function submit(action, params) {
   if (!loaded || !storageAvailable || busy) return false;
   busy = true; problem = ''; canRetry = false; render();
@@ -153,6 +180,9 @@ async function submit(action, params) {
 async function launchTeam(index) {
   const team = state.teams[index];
   if (team.launch) throw new Error('This launch has already been attempted. Inspect its receipts before starting another team.');
+  await refreshCapabilities({ teamId: team.id }, team.scope, true);
+  const capabilities = capabilityViews.get(team.scope.workspaceKey);
+  for (const member of team.members) { const issue = preferenceIssue(member, capabilities, { requireCore: true }); if (issue) throw Error(issue); }
   if (!await submit('beginLaunch', { teamId: team.id, mode: launchMode })) return;
   busy = true; render();
   try {
@@ -185,11 +215,20 @@ app.addEventListener('click', async event => {
       if (!confirmedWorkspace) throw new Error('Confirm the project and execution host first.');
       if (await submit('createTeam', { form, selectionToken: confirmedWorkspace.selectionToken })) { view = 'roster'; selection = null; message = 'Team saved. You can launch it later; no total objective has been submitted.'; render(); }
     } catch (error) { busy = false; message = ''; problem = error.message; canRetry = false; render(); }
-  } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; const team = state.teams[selection.team]; memberPreferences = { ...team.members.find(row => row.id === selection.member) }; preferenceTarget = 'member'; await refreshCapabilities({ teamId: team.id }, team.scope); render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
   else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
   else if (action === 'refresh-tabs') { confirmedWorkspace = null; await refreshTargets(); render(); }
-  else if (action === 'confirm-project') { confirmedWorkspace = workspace; render(); }
+  else if (action === 'confirm-project') { confirmedWorkspace = workspace; await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace); render(); }
+  else if (action === 'refresh-capabilities') {
+    if (view === 'new') { const scope = confirmedWorkspace || workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
+    else if (selection) { const team = state.teams[selection.team]; await refreshCapabilities({ teamId: team.id }, team.scope, true); }
+  }
+  else if (action === 'save-preferences' || action === 'inherit-preferences') {
+    const team = state.teams[selection.team], member = team.members.find(row => row.id === selection.member);
+    const params = { teamId: team.id, ...(action === 'inherit-preferences' ? { memberId: member.id, inherit: true } : { ...(preferenceTarget === 'level' ? { level: member.level } : { memberId: member.id }), agent: memberPreferences.agent, model: memberPreferences.model, effort: memberPreferences.effort }) };
+    if (await submit('updateAgentPreferences', params)) { memberPreferences = { ...state.teams[selection.team].members.find(row => row.id === member.id) }; message = 'Requested preferences saved. Effective model remains unknown until Orca reports it.'; render(); }
+  }
   else if (action === 'save-role') {
     const team = state.teams[selection.team];
     const fields = Object.fromEntries([...app.querySelectorAll('[data-role]')].map(node => [node.dataset.role, node.value]));
@@ -207,7 +246,9 @@ app.addEventListener('input', event => {
 app.addEventListener('change', async event => {
   const target = event.target;
   if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
-  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
+  else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
+  else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
+  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);
     form.models[i] = target.value.trim() || 'default';

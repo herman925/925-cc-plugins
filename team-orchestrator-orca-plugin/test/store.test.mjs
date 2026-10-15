@@ -160,3 +160,20 @@ test('replaying the same mutation does not depend on JSON property order', async
  const saved = f.store.createTeam({ requestId: 'same', expectedRevision: 0, form: DEFAULT_FORM }, scope);
  assert.deepEqual(f.store.createTeam({ form: { ...DEFAULT_FORM }, expectedRevision: 0, requestId: 'same' }, scope), saved);
 });
+test('level preferences and individual overrides preserve mixed agents and provider-specific effort across restart', async t => {
+ const f = await fixture(t);
+ let state = f.store.createTeam({ requestId: 'prefs-team', expectedRevision: 0, form: DEFAULT_FORM }, scope);
+ const team = state.teams[0];
+ state = f.store.updateAgentPreferences({ requestId: 'level', expectedRevision: 1, teamId: team.id, level: 2, agent: 'claude', model: 'host-opus', effort: 'max' });
+ assert.equal(state.teams[0].members[1].agent, 'claude');
+ assert.equal(state.teams[0].members[2].effort, 'max');
+ state = f.store.updateAgentPreferences({ requestId: 'individual', expectedRevision: 2, teamId: team.id, memberId: team.members[1].id, agent: 'codex', model: 'host-model', effort: 'ultra' });
+ state = f.store.updateAgentPreferences({ requestId: 'level-again', expectedRevision: 3, teamId: team.id, level: 2, agent: 'claude', model: 'host-sonnet', effort: 'low' });
+ assert.equal(state.teams[0].members[1].model, 'host-model');
+ assert.equal(state.teams[0].members[2].model, 'host-sonnet');
+ assert.equal(f.store.readTeamVersion(team.id, 1).members[1].model, 'default');
+ await f.restart(); assert.deepEqual(f.store.readSnapshot(), state);
+ state = f.store.updateAgentPreferences({ requestId: 'inherit', expectedRevision: 4, teamId: team.id, memberId: team.members[1].id, inherit: true });
+ assert.equal(state.teams[0].members[1].model, 'host-sonnet');
+ assert.equal(state.teams[0].members[1].preferenceOverride, false);
+});

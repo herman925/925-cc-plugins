@@ -29,12 +29,13 @@ test('create, inspect and restore a team inside the opaque sandbox', async ({ pa
   expect(errors).toEqual([]);
 });
 test('CEO flow, per-level choices, independent same-name teams and settings persistence', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?mode=capabilities-local');
   const ui = panel(page);
   await ui.getByRole('button', { name: /All-Purpose Team/ }).click();
   await expect(ui.locator('#preview')).toContainText('11 members');
   await ui.locator('#team-name').fill('Organisation');
   await ui.locator('#team-groups').fill('Dev, QA');
+  await ui.getByRole('button', { name: 'Confirm project and host' }).click();
   await ui.getByRole('combobox', { name: 'CEO model' }).fill('my-model');
   await ui.getByRole('combobox', { name: 'CEO model' }).press('Tab');
   await ui.getByRole('combobox', { name: 'CEO effort' }).selectOption('high');
@@ -156,4 +157,28 @@ test('unsupported build shows actionable diagnostics with worker active and laun
   await expect(ui.getByRole('alert').first()).toContainText('Unsupported Orca build');
   await ui.getByRole('button', { name: /Squad/ }).click();
   await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
+});
+test('host model choices and individual mixed-provider preferences persist with effective model unknown', async ({ page }) => {
+ await page.goto('/?mode=capabilities-local'); const ui = panel(page);
+ await ui.getByRole('button', { name: /Squad/ }).click();
+ await ui.getByRole('button', { name: 'Confirm project and host' }).click();
+ await expect(ui.getByText('Capabilities verified for this project')).toBeVisible();
+ await ui.getByRole('combobox', { name: 'Workers CLI' }).selectOption('claude');
+ await ui.getByRole('combobox', { name: 'Workers model' }).fill('claude-model');
+ await ui.getByRole('combobox', { name: 'Workers model' }).press('Tab');
+ await ui.getByRole('combobox', { name: 'Workers effort' }).selectOption('max');
+ await ui.getByRole('button', { name: 'Save team', exact: true }).click();
+ await ui.getByRole('button', { name: 'Worker-1', exact: true }).click();
+ await ui.getByRole('combobox', { name: 'Member agent' }).selectOption('codex');
+ await ui.getByRole('combobox', { name: 'Member model' }).fill('my-model');
+ await ui.getByRole('combobox', { name: 'Member model' }).press('Tab');
+ await ui.getByRole('combobox', { name: 'Member effort' }).selectOption('ultra');
+ await ui.getByRole('button', { name: 'Save preferences', exact: true }).click();
+ await expect(ui.getByText('Requested preferences saved. Effective model remains unknown until Orca reports it.')).toBeVisible();
+ await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Effective model: unknown');
+ await page.reload();
+ await ui.getByRole('button', { name: 'Worker-1', exact: true }).click();
+ await expect(ui.getByRole('combobox', { name: 'Member model' })).toHaveValue('my-model');
+ await ui.getByRole('button', { name: 'Use level default' }).click();
+ await expect(ui.getByRole('combobox', { name: 'Member model' })).toHaveValue('claude-model');
 });
