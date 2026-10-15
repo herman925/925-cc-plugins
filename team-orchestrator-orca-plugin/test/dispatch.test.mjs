@@ -325,3 +325,28 @@ test('rework retains exact terminal process and normalizes the native target ind
  f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
  const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-instance');
 });
+test('overall delivery requires native Head author proof and user decision; rework keeps queued goals and stale acceptance conflicts',async t=>{
+ const {createLifecycleService}=await import('../src/local/lifecycle.mjs');
+ const f=await fixture(t),notices=[];
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const service=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works,notify:async n=>{notices.push(n);return {delivered:true};}}),p=f.store.readDispatchProtocol(f.work.id);
+ const proposal=(id,forged=false)=>{
+  const spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:id==='delivery-two'?'delivery-one':null,summary:'Audit complete',evidenceRefs:['artifact:report.md'],attemptIds:[]});
+  const task={id,run_id:'run-head',spec,status:'ready'};f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);
+  f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','create-'+id,'orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:forged?'forged':'codex_head'}),'completed',JSON.stringify({task}));
+ };
+ proposal('forged',true);await service.check(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery,undefined);
+ proposal('delivery-one');await service.check(f.work.id);await service.check(f.work.id);
+ let w=f.store.readSnapshot().works[0];assert.equal(w.delivery.id,'delivery-one');assert.equal(w.status,'awaiting_acceptance');assert.equal(notices.length,1);
+ f.store.enqueueGoal({teamId:f.team.id,requestId:'next',expectedRevision:f.store.readSnapshot().revision,objective:'Next goal'});
+ const rework={requestId:'user-rework',workId:w.id,deliveryId:w.delivery.id,expectedWorkVersion:w.version,decision:'rework',feedback:'Add the missing comparison'};
+ await service.decide(rework);await service.decide(rework);assert.equal(f.store.readWork(w.id).status,'active');assert.equal(f.store.listGoals(f.team.id)[0].status,'queued');
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_GOAL_REWORK')).length,1);
+ await assert.rejects(service.decide({...rework,requestId:'stale',decision:'accept'}),/delivery|changed|superseded/i);
+ proposal('delivery-two');await service.check(w.id);w=f.store.readSnapshot().works[0];
+ const accepted={requestId:'user-accept',workId:w.id,deliveryId:w.delivery.id,expectedWorkVersion:w.version,decision:'accept'};
+ await service.decide(accepted);await service.decide(accepted);assert.equal(f.store.readWork(w.id).status,'completed');assert.equal(f.store.listGoals(f.team.id)[0].status,'reserved');
+ assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),false);assert.equal(f.store.readOperation('launch').status,'created');
+ await f.works.check(w.id);await f.works.reconcile();await service.check(w.id);assert.equal(f.store.readWork(w.id).status,'completed');
+ await f.restart();assert.equal(f.store.readWork(w.id).status,'completed');assert.equal(f.store.readSnapshot().works[0].delivery.summary,'Audit complete');
+});
