@@ -16,9 +16,9 @@ Plugin panel on your PC
   → new agent tabs on the workspace's execution host
 ```
 
-The worker detects the local OS, application packaging, parent process and Electron inspector fuse. It activates its own parent Orca's loopback inspector, verifies the PID, application name and supported 1.4.x version, then installs an in-memory adapter. It closes the inspector it activated after injection; an existing developer inspector is left alone. Disabled fuses, another process on the inspector port, incompatible handlers or unsupported versions stop injection. The installed application files are never rewritten.
+The worker detects the local OS, application packaging, parent process and Electron inspector fuse. It activates its own parent Orca's loopback inspector, verifies the PID, application name and exact pinned build metadata, architecture, Electron/Node versions and SQLite capability, then installs an in-memory adapter. It closes the inspector it activated after injection; an existing developer inspector is left alone. Disabled fuses, another process on the inspector port, incompatible handlers or unsupported versions stop injection. The installed application files are never rewritten.
 
-The adapter binds only `herman925.team-orchestrator`'s approved Team panel. It forwards an envelope through the existing `workspace.readContext` action to this plugin's declared commands. It calls Orca's original panel handler first, preserving current session ownership, consent, capability and admission checks, then uses the original command handler. It binds already open panels using Orca's existing owner/panel/revision token, without refreshing plugin discovery. It restores its wrappers on plugin disable/removal. Orca restart also removes the in-memory adapter.
+The adapter binds only `herman925.team-orchestrator`'s approved Team panel. It forwards an envelope through the existing `workspace.readContext` action to this plugin's declared commands. It calls Orca's original panel handler first, preserving current session ownership, consent, capability and admission checks, then uses the original command handler. An already open panel is bound on its next genuine main-frame IPC request, reusing Orca's owner/panel/revision token without refreshing discovery or manufacturing a sender event. Subframe requests and undeclared operations are rejected. It restores its wrappers on plugin disable/removal. Orca restart also removes the in-memory adapter.
 
 The adapter captures the desktop's selected workspace identity. The worker hashes that identity for the panel and checks it before every new launch. CLI `active` selectors are deliberately avoided because they resolve from cwd, not desktop selection. The worker passes `ORCA_USER_DATA_PATH` from the verified parent Electron application's `getPath('userData')`, and restores Windows `APPDATA` from `getPath('appData')` for its child CLI. It does not guess a profile directory, copy the desktop's full environment or change system environment settings. These internal paths are omitted from panel ping and Initialise results. This also pins macOS/Linux and custom/dev profiles to the same desktop instance.
 
@@ -65,7 +65,7 @@ npm run test:ui -- --output=/tmp/orca-worker-ui-results
 npm run test:host
 ```
 
-`test:host` downloads unmodified Orca sources pinned at `dc146c09e2b12c229cc38434b7b1d4d9c012fdc5`, compiles its actual manifest, panel envelope, consent fingerprint, capability gates and host handlers, and exercises the adapter against those gates. It applies no source patch. OS secret encryption is stubbed.
+`test:host` downloads unmodified Orca sources pinned at `9fdd90ffa7721e145f1353ad9fb9df2f70c31f43`, compiles its actual manifest, panel envelope, consent fingerprint, capability gates and host handlers, and exercises the adapter against those gates. It applies no source patch. OS secret encryption is stubbed.
 
 For a separate native Electron test executable:
 
@@ -73,9 +73,13 @@ For a separate native Electron test executable:
 ELECTRON_TEST_BINARY=/absolute/path/to/electron npm run test:electron
 ```
 
-That test creates a disposable Electron application, forks the **shipped worker**, verifies automatic injection, panel-to-worker nonce round trip, desktop workspace targeting, four named launch receipts, persisted duplicate prevention, inspector cleanup and disable. Its CLI records arguments and returns fixture receipts; it never starts coding agents. Linux QA used Electron 43.7.5 under Xvfb. Windows/macOS OS/package detection and quoting have unit coverage; native injection on those systems is not verified here.
+That test creates a disposable Electron 43.7.5 application on macOS arm64 and forks the **built worker**. Real renderer `ipcRenderer.invoke` events exercise lazy activation, the nonce round trip, subframe/foreign-command/token rejection, live consent and admission gates, retry without duplicate wrappers, inspector cleanup and disable restoration. Its explicit fixture metadata mirrors the pinned 1.4.222 package; it is not the actual Orca build and never starts a provider. The browser/host tests also use fixtures; they do not establish live provider readiness.
 
-`npm run preview` serves an opaque, network-blocked panel fixture for Playwright. Modes `unpatched`, `no-tabs`, `write-error`, `partial` and `no-workspace` cover failures. Browser storage is fixture-only, never used by the shipped panel. Browser QA uses Playwright because the Browser plugin is unavailable.
+The current experimental contract is restricted to macOS arm64 Orca `1.4.222`, build `1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64`, Electron `43.7.5`, Node `24.21.0`. This is pinned source-contract and read-only package evidence plus separate Electron fixture validation, not installed-Orca/provider acceptance. Windows and other builds are explicitly unverified and refused until their contracts are validated. macOS resolves the outer application framework even when a forked worker runs from a nested Helper.app. Windows fuse inspection uses its actual executable.
+
+Diagnostics distinguish `fuse_file_missing`, `fuse_disabled`, `port_conflict`, `invalid_parent_pid`, `parent_pid_mismatch`, `unsupported_build`, `platform_unverified`, and missing Node/profile capabilities. A panel load does not activate the worker. The panel displays panel-loaded, worker-activation and adapter status separately; a nonce never proves agent readiness. **Test connection** retries the declared initialise command when a bridge is available. If bootstrap fails before the bridge exists, run **Team Orchestrator: Initialise local adapter** and inspect its return/log diagnostics; the stock panel cannot bypass its absent command transport to retrieve those failures.
+
+`npm run preview` serves an opaque, network-blocked panel fixture for Playwright. Modes `unsupported-build`, `unpatched`, `no-tabs`, `write-error`, `partial` and `no-workspace` cover failures. Browser storage is fixture-only, never used by the shipped panel. Browser QA uses Playwright because the Browser plugin is unavailable.
 
 ## Compatibility limits
 

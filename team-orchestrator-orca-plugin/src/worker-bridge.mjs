@@ -20,11 +20,13 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
     }
   };
   return {
-    async connect() {
+    async connect({ retry = false } = {}) {
       connected = false;
       const token = nonce();
+      if (retry) await send('workspace.readContext', { teamWorker: { protocol: 1, nonce: token, commandId: 'team.initialise', args: {} } }, { timeoutMs: 30000 });
       const report = await send('workspace.readContext', { teamWorker: { protocol: 1, nonce: token, commandId: 'team.control', args: { op: 'ping' } } }, { timeoutMs: 30000 });
-      if (report?.nonce !== token || report.ready !== true || !['linux', 'darwin', 'win32'].includes(report.platform) || !Number.isInteger(report.workerPid)) throw new Error('The local worker connection was not verified.');
+      if (report?.nonce !== token || !['linux', 'darwin', 'win32'].includes(report.platform) || !Number.isInteger(report.workerPid)) throw new Error('The local worker connection was not verified.');
+      if (report.ready !== true) throw Object.assign(new Error(report.detail || 'Compatibility layer unavailable.'), { code: report.code, report });
       connected = true; return report;
     },
     async call(action, params) {

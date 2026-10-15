@@ -131,10 +131,31 @@ test('partial launch preserves the head handle and stops the remaining workers',
 
 test('connection test verifies a nonce and sends only worker envelopes', async ({ page }) => {
   await page.goto('/'); const ui = panel(page);
-  await expect(ui.getByRole('status').filter({ hasText: 'Local executor connected' })).toBeVisible();
+  await expect(ui.getByRole('status').filter({ hasText: 'compatibility layer available' })).toBeVisible();
   await ui.getByRole('button', { name: 'Test connection' }).click();
   await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
   const calls = await page.evaluate(() => bridgeCalls);
   expect(calls.every(call => call.action === 'workspace.readContext' && call.params.teamWorker.protocol === 1)).toBe(true);
   expect(calls.filter(call => call.params.teamWorker.args.op === 'ping')).toHaveLength(2);
+});
+
+test('connection diagnostics separate panel, worker and adapter; retry uses the declared native command', async ({ page }) => {
+  await page.goto('/');
+  const ui = panel(page);
+  await expect(ui.getByRole('status').first()).toContainText('Panel loaded · worker activated · compatibility layer available');
+  await expect(ui.getByRole('status').first()).toContainText('agent readiness not verified');
+  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
+  await ui.getByRole('button', { name: 'Test connection' }).click();
+  await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
+  await expect(ui.getByRole('status').first()).toContainText('compatibility layer available');
+  expect(await page.evaluate(() => bridgeCalls.some(call => call.params?.teamWorker?.commandId === 'team.initialise'))).toBe(true);
+});
+
+test('unsupported build shows actionable diagnostics with worker active and launch disabled', async ({ page }) => {
+  await page.goto('/?mode=unsupported-build');
+  const ui = panel(page);
+  await expect(ui.getByRole('status').first()).toContainText('worker activated · compatibility layer unavailable');
+  await expect(ui.getByRole('alert').first()).toContainText('Unsupported Orca build');
+  await ui.getByRole('button', { name: /Squad/ }).click();
+  await expect(ui.getByRole('button', { name: 'Create and launch team', exact: true })).toBeDisabled();
 });
