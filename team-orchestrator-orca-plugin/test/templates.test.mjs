@@ -1,3 +1,4 @@
+import {parseTeamTemplate} from '../src/templates.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -135,4 +136,10 @@ test('native panel bridge admits bounded full-roster templates but keeps ordinar
    assert.equal((await call('previewTemplate', { template: 'x'.repeat(MAX_TEMPLATE_BYTES + 8192) })).code, 'invalid_params');
    assert.equal(calls, 1);
  } finally { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); }
+});
+
+test('older v1 templates without preparation mode inherit on demand',async t=>{
+ const source=await profile(t),team=source.store.createTeam({requestId:'legacy-mode',expectedRevision:0,form:DEFAULT_FORM},scope()).teams[0];
+ const template=source.store.exportTemplate(team.id);delete template.team.configuration.launchMode;
+ assert.equal(parseTeamTemplate(JSON.stringify(template)).team.configuration.launchMode,'on-demand');
 });

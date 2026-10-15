@@ -9,14 +9,14 @@ import { openTeamStore } from '../src/local/store.mjs';
 import { nativeLaunchFingerprint } from '../src/local/native-launch-ledger.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_FORM } from '../src/team.mjs';
-async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand' } = {}) {
+async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand', form = {} } = {}) {
  const profile = await mkdtemp(join(tmpdir(), 'native-launch-'));
  let store = await openTeamStore({ userData: profile });
  const calls = [], cliCalls = []; const internalKey = 'private-launch-key';
  const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', displayName: 'Saved' } }; };
  let executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile });
  const selected = await executor.execute({ op: 'context', workspaceId: 'folder:/saved' });
- const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
+ const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, ...form, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
  const team = state.teams[0], member = team.members.find(row => !row.boss);
  const input = { teamId: team.id, memberId: member.id, requestId: 'launch-root', configVersion: team.configVersion };
  const sender = { id: 1, mainFrame: {}, isDestroyed: () => false }, event = { sender, senderFrame: sender.mainFrame };
@@ -237,4 +237,13 @@ test('queued goal launch uses actual panel broker and new native identity, never
  assert.equal(store.listWorks().length,2);const next=store.listWorks().find(row=>row.id!==w.id);assert.equal(next.binding.sessionId,'new-session');assert.equal(next.handoff.summary,'Handoff checked');assert.equal(store.readWork(w.id).status,'completed');
  await f.send('startNextGoal',{teamId:f.team.id});assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);
  f.executor().stopWork();
+});
+
+test('four-member on-demand hierarchy prepares root and department manager, retaining workers for first assignment',async t=>{
+ const f=await fixture(t,{kind:'structured',form:{structure:'organisation',groups:'Development',fan:2}});let count=0;
+ f.effect(async()=>{count++;return {worktreeId:'folder:/saved',outcome:{kind:'structured',handle:'manager-'+count,sessionId:'session-'+count},receipt:{mode:'structured',preferred:'structured',reason:'user_default',detail:'Native'},prompt:{delivery:'submit',outcome:'journaled',messageId:'role-'+count}};});
+ assert.equal(f.team.members.length,4);
+ for(const member of f.team.members){const response=await f.send('launchSupervisor',{...f.input,memberId:member.id,requestId:'manager-'+member.id});assert.equal(response.ok,member.role!=='worker');}
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,2);
+ assert.deepEqual(Object.keys(f.store().readSnapshot().teams[0].launch.members),f.team.members.filter(row=>row.role!=='worker').map(row=>row.id));
 });

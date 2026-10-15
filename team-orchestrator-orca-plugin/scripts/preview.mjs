@@ -78,6 +78,7 @@ async function fixture(id, mode) {
         const attempt = store.listDispatches(work.id).find(row => row.id === permit.attemptId);
         assert.equal(attempt.status, 'admitted', 'Admission must be durable before the fake supervisor receives permission');
         assert.equal(attempt.memberId, permit.memberId);
+        if(mode==='dispatch-queued')return;
         if (mode === 'dispatch-unknown') throw Error('Native start evidence unavailable');
         const dispatchId = 'dispatch-'+permit.nativeTaskId, handle = 'structworker_'+permit.nativeTaskId, paneKey = 'child-tab:'+permit.nativeTaskId;
         const complete = !['dispatch-running','dispatch-scheduling'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
@@ -99,7 +100,7 @@ async function fixture(id, mode) {
       }
     };
     const runtime = async (method, params, envelope) => {
-      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
       if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
@@ -135,6 +136,7 @@ async function fixture(id, mode) {
         if (mode === 'objective-unknown') throw Error('Objective delivery outcome unknown');
         if (method === 'agentSession.send') {
           const messageId = params.envelope.clientOperationId;
+          if(mode==='dispatch-queued'&&text.startsWith('TEAM_DISPATCH_PERMIT')){assert.equal(params.delivery,'queue-if-active');return {ok:true,value:{clientMessageId:messageId,queued:{messageId:'queue-'+messageId,state:'waiting',position:1}}};}
           if (!dispatchInput) history.set(params.envelope.sessionId, { submissions: [{ clientMessageId: messageId, dispatchState: 'accepted', providerItemId: 'provider-item' }], latestTurn: { turn: { userItemId: 'orca:' + messageId, turnId: 'turn-one', state: 'running' } } });
           return { ok: true, fence: 7, value: { clientMessageId: messageId, submission: { clientMessageId: messageId, dispatchState: 'pending', providerItemId: null } } };
         }
