@@ -224,3 +224,10 @@ test('recovery reads explicit Run and exact Dispatch, labels incomplete output a
  assert.equal(f.messages.length,before);assert.equal(readCalls.some(row=>/inbox|ack|send|start|launch/i.test(row.method)),false);assert.equal(readCalls.find(row=>row.method==='orchestration.taskList').params.run,'run-head');
  f.createIntent(f.store.readDispatchProtocol(f.work.id),{taskId:'blocked',taskKey:'blocked'});await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,1);
 });
+test('recovery refuses a new native incarnation under an existing Dispatch without overwriting the saved member binding',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createRecoveryService}=await import('../src/local/recovery.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice('TEAM_DISPATCH_PERMIT\n'.length)));});await service.check(f.work.id);
+ const before=f.store.listDispatches(f.work.id)[0];f.db.exec("UPDATE dispatch_contexts SET process_incarnation='replacement-instance'");
+ await createRecoveryService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}}).checkWork(f.work.id);
+ const after=f.store.listDispatches(f.work.id)[0];assert.equal(after.binding.incarnationId,before.binding.incarnationId);assert.equal(after.recovery.state,'unknown');
+});

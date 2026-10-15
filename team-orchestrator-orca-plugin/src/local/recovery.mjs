@@ -93,6 +93,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
       if(found?.state==='absent'&&attempt.permit.state==='not_sent')recovery={...recovery,state:'intent',detail:'Permit intent has not been sent. Native absence is not proof that an older execution stopped.'};
       observations.set(attempt.id,{recovery});continue;
      }
+     if(attempt.binding&&['kind','handle','sessionId','paneKey','incarnationId','runtimeId','workspaceId','executionHostId'].some(key=>attempt.binding[key]!==found.binding[key]))throw Error('Saved member execution instance changed; prior binding remains reserved.');
      const hostMatches=host=>work.scope.executionHostId==='local'?host?.kind==='local'&&host.hostId==='local':host?.kind==='ssh'&&`ssh:${encodeURIComponent(host.targetId)}`===work.scope.executionHostId;
      const matches=shown=>hostMatches(shown?.dispatch?.hostScope)&&(shown.dispatch.creatorDispatchId??null)===(found.creatorDispatchId??null)&&shown?.dispatch?.id===found.dispatchId&&shown.dispatch.runId===work.run.id&&shown.dispatch.taskId===attempt.nativeTaskId&&shown.dispatch.assigneeHandle===found.binding.handle&&shown.dispatch.assigneePaneKey===found.binding.paneKey&&shown.dispatch.processIncarnation===found.binding.incarnationId&&shown.worker?.dispatchId===found.dispatchId&&shown.worker.worktreeId===work.scope.workspaceId&&shown.worker.runtimeEpoch===found.binding.runtimeId;
      // workerShow/Read can reconcile old native starting/stopping states into unknown.
