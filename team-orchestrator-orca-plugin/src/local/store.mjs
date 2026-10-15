@@ -1,3 +1,4 @@
+import { validateDispatch, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -61,11 +62,17 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
     const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`work:${work.id}`, JSON.stringify(work));
+    const readPrivate = key => { const row=db.prepare('SELECT json FROM receipts WHERE id=?').get(key); return row?JSON.parse(row.json):null; };
+    const putPrivate = (key,value) => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(key,JSON.stringify(value));
+    const readDispatchProtocol = workId => readPrivate(`dispatch-protocol:${workId}`);
+    const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%'").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
+    const dispatchProjection = workId => ({dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
+    const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), works: listWorks().map(publicWork) };
+      return { ...validatePersistentState(value), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id)})) };
     };
     readSnapshot();
     const write = ({ works, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
@@ -107,7 +114,38 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     let closed = false;
     return {
       readOperation,
-      readWork, listWorks,
+      readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
+      ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
+        const work=readWork(workId); if(work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
+        const prior=readDispatchProtocol(workId); if(prior) { if(prior.generation!==work.run.consumerGeneration)fail('Dispatch protocol belongs to an older Run generation.'); return prior; }
+        const protocol={workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
+      }); },
+      updateDispatchProtocol(workId,version,patch) { return atomicDispatch(()=>{
+        const row=readDispatchProtocol(workId);if(!row||row.version!==version)fail('Dispatch protocol changed while observing evidence.');
+        if(Object.keys(patch).some(key=>!['state','detail','nativeSend'].includes(key)))fail('Immutable dispatch protocol cannot change.');
+        Object.assign(row,patch,{version:version+1});putPrivate(`dispatch-protocol:${workId}`,row);return row;
+      }); },
+      prepareDispatch(workId,intent,startParams) { return atomicDispatch(()=>{
+        const work=readWork(workId),protocol=readDispatchProtocol(workId);
+        if(work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
+        const key=`dispatch-intent:${workId}:${intent.spec.taskKey}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
+        const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
+        const team=JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
+        if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
+        if(readPrivate(`dispatch-member:${member.id}`)||readPrivate(`binding:${member.id}`))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,status:'admitted',permit:{state:'not_sent'},version:1,createdAt:new Date().toISOString()};
+        validateDispatch(attempt);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
+      }); },
+      updateDispatch(id,version,patch) { return atomicDispatch(()=>{
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
+        if(Object.keys(patch).some(key=>!['status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail'].includes(key)))fail('Immutable Dispatch identity cannot change.');
+        if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
+        if(row.evidenceId&&patch.evidenceId&&row.evidenceId!==patch.evidenceId)fail('Execution result already has immutable native evidence.');
+        if(row.status==='pending_acceptance'&&patch.status&&patch.status!=='pending_acceptance')return row;
+        Object.assign(row,patch,{version:version+1});validateDispatch(row);putPrivate(`dispatch:${id}`,row);
+        if(row.binding)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
+        return row;
+      }); },
       prepareWork(input) {
         workInput(input); const digest=fingerprint(input);
         db.exec('BEGIN IMMEDIATE');

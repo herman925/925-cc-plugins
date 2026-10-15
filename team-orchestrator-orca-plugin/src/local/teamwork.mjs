@@ -111,6 +111,7 @@ export function createWorkService({store,rpc,userData,consent}){
   }catch(error){return save(work,{input:attempted&&work.input.state==='sending'?{...work.input,state:'unknown',detail:'Input may have been delivered. Checking work never resends it.'}:work.input,status:'needs_attention',error:String(error.message).slice(0,1500)});}
  }
  return {
+  async verifyWork(id,forSend=false){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return verify(work,forSend);},
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readWork(id);if(!work||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},
