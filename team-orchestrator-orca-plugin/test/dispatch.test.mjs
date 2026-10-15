@@ -233,12 +233,14 @@ test('supervisor acceptance alone releases an application dependency and survive
  await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});
  f.createIntent(protocol);await service.check(f.work.id);let first=f.store.listDispatches(f.work.id)[0];
- f.createIntent(protocol,{taskId:'dependent',taskKey:'dependent',memberId:f.team.members[2].id,dependencies:[first.taskKey]});
+ f.createIntent(protocol,{taskId:'dependent',taskKey:'dependent',dependencies:[first.taskKey]});
  f.complete(first);await service.check(f.work.id);first=f.store.listDispatches(f.work.id)[0];
  assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(first.status,'pending_acceptance');
  f.review(first);await service.check(f.work.id);await service.check(f.work.id);
  first=f.store.listDispatches(f.work.id)[0];assert.equal(first.status,'accepted');assert.equal(first.result,'Original execution result');assert.equal(first.review.decision,'accept');
  assert.equal(f.store.listDispatches(f.work.id).length,2);
+ const dependent=f.store.listDispatches(f.work.id)[1];assert.equal(dependent.status,'running');assert.equal(dependent.startParams.terminal,'orca_session_id:claude_child');
+ f.complete(dependent);await service.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[1]);await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[1].status,'accepted');
  await f.restart();service=make();await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].review.requestId,'review-'+first.id);
  assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,2);
 });
@@ -275,10 +277,13 @@ test('conflicting late decision cannot replace prior review, finish rework or pe
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
  f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];
  f.review(first,{decision:'rework'});await service.check(f.work.id);await f.restart();service=make();
+ f.createIntent(protocol,{taskId:'dependent',taskKey:'dependent',dependencies:[first.taskKey]});
  f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
  f.review(first,{requestId:'late-conflict'});await service.check(f.work.id);await service.check(f.work.id);
  const rows=f.store.listDispatches(f.work.id);assert.equal(rows.length,2);assert.equal(rows[0].status,'rework');assert.equal(rows[1].status,'running');assert.equal(rows[1].result,undefined);
  assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,2);
+ f.complete(rows[1]);await service.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[1]);await service.check(f.work.id);await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,3);assert.equal(f.store.listDispatches(f.work.id)[2].taskKey,'dependent');assert.equal(f.store.listDispatches(f.work.id)[2].status,'running');
 });
 test('unverifiable retained session keeps rework reserved and never falls back to fresh launch',async t=>{
  const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);let unavailable=false;

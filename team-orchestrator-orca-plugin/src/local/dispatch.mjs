@@ -43,7 +43,7 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
    if(location?.kind!=='chat'||location.sessionId!==saved.sessionId||location.worktreeId!==work.scope.workspaceId)throw Error('Retained member session is closed, moved or has unverified lineage.');
    const history=await rpc('agentSession.history',{sessionId:location.sessionId,direction:'tail',limit:1});
    sessionFence=history?.page?.fence;
-   if(history?.ok!==true||history.page?.sessionId!==location.sessionId||!Number.isSafeInteger(sessionFence)||sessionFence<1)throw Error('Retained member session fence is unavailable.');
+   if(history?.ok!==true||history.page?.sessionId!==location.sessionId||!Number.isSafeInteger(sessionFence)||sessionFence<1||(saved.sessionFence!==undefined&&saved.sessionFence!==sessionFence))throw Error('Retained member session fence is unavailable.');
   }else{
    const live=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
    if(live?.handle!==saved.handle||live.incarnationId!==saved.incarnationId||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable)throw Error('Retained member terminal instance is unverified.');
