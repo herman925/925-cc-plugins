@@ -12,7 +12,7 @@ import { createWorkService } from '../src/local/teamwork.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
 // Scripted native-host boundary, separate from the product's proof reader.
 const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured'}={}) {
+async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured'}={}) {
  const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
  const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
@@ -40,6 +40,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
   if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
+  if(method==='terminal.show'&&params.terminal==='structworker_child')return {terminal:{handle:'structworker_child',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'child-instance',agentIdentity:workerAgent,tabId:'child-tab',leafId:'child-leaf'}};
   if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
   if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
@@ -65,7 +66,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  const work=await works.submit({teamId:team.id,requestId:'goal',expectedRevision:store.readSnapshot().revision,objective:'Audit'});
  const actor=params=>kind==='structured'?{...params,__orcaCallerOrcaSessionId:'codex_head'}:Object.fromEntries(Object.entries(params).map(([k,v])=>[['from','callerTerminalHandle','terminal'].includes(k)?k:k,['from','callerTerminalHandle'].includes(k)?{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}:v]));
  const from=kind==='structured'?'orca_session_id:codex_head':'term-head';
- const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params)),'completed',JSON.stringify(result));
+ const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params.terminal==='structworker_child'?{...params,terminal:{paneKey:'child-tab:child-leaf'}}:params)),'completed',JSON.stringify(result));
  const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId}={})=>{
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
   const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,...(previousAttemptId?{previousAttemptId}:{})});
@@ -76,7 +77,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  const start=permit=>{
   const id='dispatch-'+permit.nativeTaskId,chat=Boolean(permit.startParams.terminal?.startsWith('orca_session_id:')),handle=chat?permit.startParams.terminal:'structworker_child',pane=chat?null:'child-tab:child-leaf';
   const hostScope={kind:'local',hostId:'local'};
-  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,'claude_child',chat?null:'child-instance',JSON.stringify(hostScope),'dispatched',1);
+  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,childKind==='structured'?'claude_child':null,chat?null:'child-instance',JSON.stringify(hostScope),'dispatched',1);
   db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run(id,scope.workspaceId,handle,'ready','runtime-one',JSON.stringify({resolvedWorktreeId:scope.workspaceId,agent:workerAgent,worktree:scope.workspaceId}));
   db.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
   receipt('start-'+permit.nativeTaskId,'orchestration.workerStart',{...permit.startParams,from,devMode:false},{runId:'run-head',taskId:permit.nativeTaskId,dispatchId:id,state:'ready'});
@@ -289,4 +290,13 @@ test('unverifiable retained session keeps rework reserved and never falls back t
  unavailable=true;f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
  assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
  assert.match(f.store.readDispatchProtocol(f.work.id).detail,/closed|unverified/);
+});
+
+test('rework retains exact terminal process and normalizes the native target independently from its supervisor',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{childKind:'terminal'}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await service.check(f.work.id);
+ f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
+ const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-instance');
 });
