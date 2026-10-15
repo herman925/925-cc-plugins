@@ -1,5 +1,15 @@
+import {createHash} from 'node:crypto';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
+// No native replay key exists. Persist an attempted marker before the host effect;
+// restart never automatically repeats a possibly visible notification.
+export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,body}) {
+ if(!['decision','native-fault','goal-delivery'].includes(kind))throw Error('Routine progress is not a critical notification.');
+ const event=store.ensureQuestionEvent(workId,id,kind,{title,body});if(event.state!=='queued')return event;
+ store.updateQuestionEvent(workId,id,{state:'attempted'});
+ let state='unavailable';try{if(notify)state=(await notify({title:title.slice(0,120),body:body.slice(0,1000)}))?.delivered===true?'delivered':'unconfirmed';}catch{}
+ return store.updateQuestionEvent(workId,id,{state});
+}
 export function createQuestionService({store,rpc,userData,consent,works,notify}) {
  const queues=new Map();
  const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
@@ -24,7 +34,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    updateAnswer(workId,id,answerId,{state:'sending',nativeSend});sending=true;
    const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);
    if(!accepted(receipt,nativeSend,owner))throw Error('Native input receipt is unconfirmed.');
-   updateAnswer(workId,id,answerId,{state:'accepted',detail:'Native input accepted; manager processing and native reply remain unconfirmed.'});
+   updateAnswer(workId,id,answerId,{state:'accepted',dispatchState:receipt.value?.submission?.dispatchState??'input_accepted',detail:'Native input accepted; manager processing and native reply remain unconfirmed.'});
   }catch(error){updateAnswer(workId,id,answerId,{state:sending?'unknown':'blocked',detail:sending?'Answer delivery is unknown; it will not be automatically sent again.':String(error.message).slice(0,1200)});}
  }
  async function check(workId){
@@ -32,15 +42,31 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(!protocol||work?.run.state!=='verified')return;
   let native;
   try{({native}=await evidence(workId));}catch{return;}
+  for(const streak of store.failureStreaks(workId).filter(s=>s.escalationNeeded)){
+   const evidenceIds=streak.evidence.slice(-2).map(e=>e.evidenceId);
+   if(store.listQuestions(workId).some(q=>q.evidence?.length&&evidenceIds.every(id=>q.evidence.includes(id))))continue;
+   const id='failure-'+createHash('sha256').update(JSON.stringify([streak.taskKey,evidenceIds])).digest('hex');
+   const event=store.ensureQuestionEvent(workId,id,'failure-summary',{taskKey:streak.taskKey,evidence:streak.evidence.slice(-2)});
+   if(event.state==='sending'){store.updateQuestionEvent(workId,id,{state:'unknown'});continue;}
+   if(event.state!=='queued')continue;
+   try{
+    await consent();const current=await evidence(workId);
+    const text='TEAM_FAILURE_SUMMARY_NEEDED\n'+JSON.stringify({workId,taskKey:streak.taskKey,evidence:event.data.evidence,instruction:'Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. As highest supervisor publish a native team-questions/v1 user-question Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step.'});
+    const nativeSend=userMessage(current.work,current.owner,text);store.updateQuestionEvent(workId,id,{state:'sending',nativeSend});
+    const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);store.updateQuestionEvent(workId,id,{state:accepted(receipt,nativeSend,current.owner)?'accepted':'unknown'});
+   }catch{store.updateQuestionEvent(workId,id,{state:'unknown'});}
+  }
   for(const intent of native.intents)if(intent.spec.kind==='user-question')try{store.ingestQuestion(workId,intent);}catch{}
+  for(const intent of native.intents)if(intent.spec.kind==='collaboration-directive')try{store.ingestCollaboration(workId,intent);}catch{}
+  for(const message of native.messages||[])try{store.ingestTeamMessage(workId,message);}catch{}
   for(const intent of native.intents)if(intent.spec.kind==='answer-ack'){
    const s=intent.spec,q=store.listQuestions(workId).find(q=>q.id===s.appQuestionId),a=q?.answers.find(a=>a.id===s.answerId);
    if(!a||!['accepted','unknown','sending'].includes(a.state))continue;
-   store.updateQuestion(workId,q.id,saved=>{const answer=saved.answers.find(a=>a.id===s.answerId);answer.processed='confirmed';answer.acknowledgement={nativeTaskId:intent.nativeTaskId,payloadHash:intent.payloadHash};if(typeof s.nextNativeTaskId==='string')answer.nextNativeTaskId=s.nextNativeTaskId;saved.status='answered';});
+   store.updateQuestion(workId,q.id,saved=>{const answer=saved.answers.find(a=>a.id===s.answerId);answer.processed='confirmed';answer.acknowledgement={nativeTaskId:intent.nativeTaskId,payloadHash:intent.payloadHash};if(typeof s.nextNativeTaskId==='string')answer.nextNativeTaskId=s.nextNativeTaskId;if(saved.answers.at(-1).id===answer.id)saved.status='answered';});
   }
   for(const q of store.listQuestions(workId)){
    const thread=q.origin&&native.threads.find(t=>t.messageId===q.origin.messageId);
-   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer){for(const a of saved.answers)if(a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';saved.status='answered';}}});
+   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer){for(const a of saved.answers)if(a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
    for(const a of q.answers){if(a.state==='sending')updateAnswer(workId,q.id,a.id,{state:'unknown',detail:'Worker restarted during answer submission; no automatic resend.'});else if(a.state==='queued')await deliver(workId,q.id,a.id);}
    if(q.notification.state==='queued'){
     store.updateQuestion(workId,q.id,saved=>{saved.notification={state:'attempted'};});
@@ -49,5 +75,10 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    }
   }
  }
- return {check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listWorks())await this.check(w.id);}};
+ async function nativeWait(workId,attempt,shown){
+  const wait=shown?.observation?.agentWait;
+  if(shown?.observation?.exactWorker!==true||shown.observation.status!=='live'||shown.dispatch?.id!==attempt.dispatchId||shown.dispatch.assigneeHandle!==attempt.binding?.handle||!wait||!['agent-approval-prompt','agent-trust-workspace','agent-hooks-review-prompt','agent-interactive-prompt','codex-trust-workspace','codex-hooks-review-prompt','codex-interactive-prompt'].includes(wait.reason))return;
+  return notifyQuestionEvent(store,notify,{workId,id:`wait-${attempt.id}-${wait.reason}`,kind:'native-fault',title:'Team member needs native input',body:`${attempt.memberName}: ${wait.reason}. Open its original Orca/provider session to handle login or permission. Execution outcome remains unconfirmed.`});
+ }
+ return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listWorks())await this.check(w.id);}};
 }

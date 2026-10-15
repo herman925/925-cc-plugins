@@ -27,7 +27,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { TaskUpdateParams } from './src/main/runtime/rpc/methods/orchestration/schemas';\nexport { TaskCreateParams } from './src/shared/rpc-contract/orchestration-params';\nexport { WorkerStartParams } from './src/shared/rpc-contract/orchestration-worker-start-params';\nexport { replayStableCallerParams, hashCanonical } from './src/main/runtime/rpc/orchestration-mutation-receipt';\nexport { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { TaskUpdateParams } from './src/main/runtime/rpc/methods/orchestration/schemas';\nexport { TaskCreateParams, AskParams } from './src/shared/rpc-contract/orchestration-params';\nexport { WorkerStartParams } from './src/shared/rpc-contract/orchestration-worker-start-params';\nexport { replayStableCallerParams, hashCanonical } from './src/main/runtime/rpc/orchestration-mutation-receipt';\nexport { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -71,6 +71,11 @@ try {
   assert.equal(nativeMutationFingerprint('orchestration.workerStart',reuse,owner,{kind:'terminal',paneKey:targetPane}),hostHash('orchestration.workerStart',before.WorkerStartParams.parse(reuse),caller,reuseRuntime));
   const chatReuse={...reuse,terminal:'orca_session_id:claude_child'};
   assert.equal(nativeMutationFingerprint('orchestration.workerStart',chatReuse,owner,{kind:'structured'}),hostHash('orchestration.workerStart',before.WorkerStartParams.parse(chatReuse)));
+  const ask=before.AskParams.parse({question:'Which scope?',run:'run_test',from:`orca_session_id:${caller}`,compatibilityCliCommand:'orca',timeoutMs:10000,__orcaCallerOrcaSessionId:'forged'});
+  assert.equal(ask.__orcaCallerOrcaSessionId,undefined);
+  assert.equal(nativeMutationFingerprint('orchestration.ask',ask,owner),hostHash('orchestration.ask',ask));
+  assert.notEqual(nativeMutationFingerprint('orchestration.ask',{...ask,compatibilityCliCommand:undefined},owner),hostHash('orchestration.ask',ask));
+  assert.equal(before.AskParams.safeParse({question:'new',resume:'old'}).success,false);
   const workerInput = { task: 'task_test', run: 'run_test', from: `orca_session_id:${caller}`, worktree: 'folder:/verified', agent: 'claude', devMode: false };
   const worker = before.WorkerStartParams.parse({ ...workerInput, waitSubmitMs: 1000, __orcaCallerOrcaSessionId: 'forged' });
   assert.equal(worker.__orcaCallerOrcaSessionId, undefined);
@@ -146,18 +151,24 @@ try {
   assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.04' }).ok, false);
   assert.equal(manifest.main, 'main.mjs');
   assert.notEqual(before.fingerprintPluginConsent(manifest), before.fingerprintPluginConsent({ ...manifest, main: undefined }));
+  assert.equal(before.gatePluginHostCall({ viaPanel: false, grantedCapabilities: [] }, 'notifications.show').granted, false);
+  assert.equal(before.gatePluginHostCall({ viaPanel: false, grantedCapabilities: ['notifications:show'] }, 'notifications.show').granted, true);
   assert.equal(before.gatePluginHostCall({ viaPanel: true, grantedCapabilities: ['storage'] }, 'storage.get').granted, false);
   assert.equal(before.gatePluginHostCall({ viaPanel: false, grantedCapabilities: ['storage'] }, 'storage.get').granted, true);
   const envelope = { type: 'orca-panel-action', requestId: 'panel-1', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'roundtrip', commandId: 'team.control', args: { op: 'ping' } } } };
   assert.equal(before.panelActionRequestSchema.safeParse(envelope).success, true);
   const data = new Map();
   const services = {
+    dispatchPluginNotification: async notification => ({delivered:notification.pluginId==='herman925.team-orchestrator'}),
     storage: { get: (_, key) => data.get(key), set: (_, key, value) => { data.set(key, value); return { ok: true }; } },
     resolveActiveWorktreeContext: async () => ({ worktreeId: 'repo::/remote/project', branch: 'main', displayName: 'Remote workspace' }),
     listWorktreeTerminals: async () => []
   };
   const base = { pluginId: 'herman925.team-orchestrator', grantedCapabilities: ['storage', 'workspace:read'], services, audit: { record: async () => {} } };
   const worker = input => before.executePluginHostCall({ ...base, viaPanel: false, ...input });
+  assert.equal((await worker({method:'notifications.show',params:{title:'Decision',body:'Choose scope'}})).ok,false);
+  assert.deepEqual((await worker({method:'notifications.show',params:{title:'Decision',body:'Choose scope'},grantedCapabilities:['notifications:show']})).value,{delivered:true});
+  assert.equal((await worker({method:'notifications.show',params:{title:'x'.repeat(121)},grantedCapabilities:['notifications:show']})).code,'invalid_params');
   assert.equal((await worker({ method: 'storage.set', params: { key: 'launch:request-1', value: { status: 'starting' } } })).ok, true);
   assert.deepEqual((await worker({ method: 'storage.get', params: { key: 'launch:request-1' } })).value, { value: { status: 'starting' } });
   assert.equal((await worker({ method: 'storage.set', params: { key: '__proto__', value: 1 } })).code, 'invalid_params');

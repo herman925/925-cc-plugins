@@ -55,6 +55,13 @@ async function fixture(id, mode) {
         nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.incarnationId : null, owner.kind === 'terminal' ? protocol.generation : null);
         receipt(work, 'create-task-fixture', 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
       }
+      if (mode.startsWith('dispatch-question') && text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
+        const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'scope-choice',summary:'Choose scope <script>',options:['Focused','Full'],blockingTaskKeys:[]});
+        const task={id:'question-fixture',run_id:work.run.id,spec,status:'ready'};
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        receipt(work,'question-fixture-create','orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});
+      }
+      if (mode==='dispatch-question-unknown' && text.startsWith('TEAM_USER_ANSWER\n')) throw Error('Lost answer receipt');
       if (text.startsWith('TEAM_DISPATCH_PERMIT\n')) {
         const permit = JSON.parse(text.slice('TEAM_DISPATCH_PERMIT\n'.length));
         const attempt = store.listDispatches(work.id).find(row => row.id === permit.attemptId);
@@ -108,7 +115,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
-        const dispatchInput = text?.startsWith('TEAM_DISPATCH_');
+        const dispatchInput = text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
         const work = store.listWorks().find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;
