@@ -49,11 +49,14 @@ async function fixture(id, mode) {
       if (!mode?.startsWith('dispatch-')) return;
       const owner = work.instance, from = owner.kind === 'structured' ? 'orca_session_id:' + owner.sessionId : owner.handle;
       if (text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
-        const protocol = JSON.parse(text.slice('TEAM_DISPATCH_PROTOCOL\n'.length)), member = protocol.children[0];
-        const spec = JSON.stringify({ protocol: protocol.protocol, workId: work.id, token: protocol.token, generation: protocol.generation, taskKey: 'inspect-checkout', memberId: member.memberId, configVersion: protocol.configVersion, roleVersion: member.roleVersion, role: member.role, instruction: 'Inspect checkout <script> safely' });
-        const task = { id: 'native-task-fixture', run_id: work.run.id, spec, status: 'ready', result: null };
+        const protocol = JSON.parse(text.slice('TEAM_DISPATCH_PROTOCOL\n'.length));
+        const children=mode==='dispatch-scheduling'?protocol.children:protocol.children.slice(0,1);
+        for(const [index,member] of children.entries()){
+        const spec = JSON.stringify({ protocol: protocol.protocol, workId: work.id, token: protocol.token, generation: protocol.generation, taskKey: mode==='dispatch-scheduling'?['edit-source','overlap-source','independent-docs'][index]:'inspect-checkout', memberId: member.memberId, configVersion: protocol.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: mode==='dispatch-scheduling'?[{path:index===0?'src':index===1?'src/app.js':'docs/readme.md',kind:index===0?'directory':'file'}]:[], instruction: 'Inspect checkout <script> safely' });
+        const task = { id: 'native-task-fixture-'+index, run_id: work.run.id, spec, status: 'ready', result: null };
         nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.incarnationId : null, owner.kind === 'terminal' ? protocol.generation : null);
-        receipt(work, 'create-task-fixture', 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
+        receipt(work, 'create-task-fixture-'+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
+        }
       }
       if (mode.startsWith('dispatch-question') && text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
         const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'scope-choice',summary:'Choose scope <script>',options:['Focused','Full'],blockingTaskKeys:[]});
@@ -67,13 +70,14 @@ async function fixture(id, mode) {
         const attempt = store.listDispatches(work.id).find(row => row.id === permit.attemptId);
         assert.equal(attempt.status, 'admitted', 'Admission must be durable before the fake supervisor receives permission');
         assert.equal(attempt.memberId, permit.memberId);
+        if(mode==='dispatch-queued')return;
         if (mode === 'dispatch-unknown') throw Error('Native start evidence unavailable');
-        const dispatchId = 'dispatch-fixture', handle = 'structworker_child', paneKey = 'child-tab:child-leaf';
-        const complete = mode !== 'dispatch-running', outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
-        nativeDb.prepare('INSERT INTO dispatch_contexts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(dispatchId, work.run.id, permit.nativeTaskId, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'structured' ? owner.sessionId : null, null, handle, paneKey, permit.startParams.agent + '_child', 'child-instance', JSON.stringify({ kind: 'local', hostId: 'local' }), complete ? outcome === 'succeeded' ? 'completed' : 'failed' : 'dispatched', permit.generation);
+        const dispatchId = 'dispatch-'+permit.nativeTaskId, handle = 'structworker_'+permit.nativeTaskId, paneKey = 'child-tab:'+permit.nativeTaskId;
+        const complete = !['dispatch-running','dispatch-scheduling'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
+        nativeDb.prepare('INSERT INTO dispatch_contexts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(dispatchId, work.run.id, permit.nativeTaskId, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'structured' ? owner.sessionId : null, null, handle, paneKey, permit.startParams.agent + '_child_'+permit.nativeTaskId, 'child-instance', JSON.stringify({ kind: 'local', hostId: 'local' }), complete ? outcome === 'succeeded' ? 'completed' : 'failed' : 'dispatched', permit.generation);
         nativeDb.prepare('INSERT INTO worker_dispatches VALUES (?,?,?,?,?,?)').run(dispatchId, work.scope.workspaceId, handle, complete ? outcome : 'ready', 'fixture-runtime', JSON.stringify({ resolvedWorktreeId: work.scope.workspaceId, agent: permit.startParams.agent, worktree: work.scope.workspaceId }));
         nativeDb.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
-        receipt(work, 'start-task-fixture', 'orchestration.workerStart', { ...permit.startParams, from, devMode: false }, { runId: work.run.id, taskId: permit.nativeTaskId, dispatchId, state: 'ready' });
+        receipt(work, 'start-'+permit.nativeTaskId, 'orchestration.workerStart', { ...permit.startParams, from, devMode: false }, { runId: work.run.id, taskId: permit.nativeTaskId, dispatchId, state: 'ready' });
         if (complete) {
           nativeDb.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?,?)').run('report-fixture', work.run.id, handle, paneKey, 'worker_done', outcome === 'succeeded' ? 'Checkout evidence <b>verified</b>' : 'Checkout verification failed', JSON.stringify({ taskId: permit.nativeTaskId, dispatchId, outcome }));
           nativeDb.prepare('INSERT INTO attempt_observation_facts VALUES (?,?,?,?,?,?)').run('worker_report:report-fixture', dispatchId, permit.nativeTaskId, 'run_home:' + work.run.id, 'worker_report', JSON.stringify({ status: 'accepted', outcome, reportId: 'worker_report:report-fixture' }));
@@ -88,7 +92,7 @@ async function fixture(id, mode) {
       }
     };
     const runtime = async (method, params, envelope) => {
-      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
       if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
@@ -99,7 +103,7 @@ async function fixture(id, mode) {
       if (method === 'agent.launchReplay') {
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
-        if (mode === 'partial' || mode === 'launch-unknown') throw Error('Agent launch outcome unknown');
+        if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
         const structured = mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); return result;
@@ -124,6 +128,7 @@ async function fixture(id, mode) {
         if (mode === 'objective-unknown') throw Error('Objective delivery outcome unknown');
         if (method === 'agentSession.send') {
           const messageId = params.envelope.clientOperationId;
+          if(mode==='dispatch-queued'&&text.startsWith('TEAM_DISPATCH_PERMIT')){assert.equal(params.delivery,'queue-if-active');return {ok:true,value:{clientMessageId:messageId,queued:{messageId:'queue-'+messageId,state:'waiting',position:1}}};}
           if (!dispatchInput) history.set(params.envelope.sessionId, { submissions: [{ clientMessageId: messageId, dispatchState: 'accepted', providerItemId: 'provider-item' }], latestTurn: { turn: { userItemId: 'orca:' + messageId, turnId: 'turn-one', state: 'running' } } });
           return { ok: true, fence: 7, value: { clientMessageId: messageId, submission: { clientMessageId: messageId, dispatchState: 'pending', providerItemId: null } } };
         }

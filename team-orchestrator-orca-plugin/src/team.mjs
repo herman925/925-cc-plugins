@@ -3,13 +3,14 @@ export const PRESETS = [
   { label: 'All-Purpose Team', sketch: '■┬●●', hint: 'CEO + 2 heads, 4 workers each', form: { name: 'All-Purpose-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Team 1, Team 2' } },
   { label: 'Tech Team', sketch: '■┬●●●●', hint: 'CEO + 4 heads, 4 workers each', form: { name: 'Tech-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Dev Team, UI Team, Test Team, Security Team' } }
 ];
-export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', agents: ['codex', 'codex', 'codex'], models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
+export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', launchMode: 'on-demand', agents: ['codex', 'codex', 'codex'], models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
 export const SETTINGS = { chart: true, layout: 'stacked' };
 export const GLYPHS = { ceo: '■', head: '●', lead: '◇', worker: '○' };
 
 export function cleanName(value) { return value.trim().replace(/\s+/g, '-'); }
 function nameValid(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value); }
 export function planTeam(form) {
+  if (form.launchMode !== undefined && !['on-demand','all'].includes(form.launchMode)) throw Error('Choose a supported launch mode.');
   const name = cleanName(form.name);
   if (!nameValid(name)) throw new Error('Use a team name of 1–64 letters, numbers, underscores or dashes, starting with a letter or number.');
   if (!['team', 'organisation'].includes(form.structure)) throw new Error('Choose a team structure.');

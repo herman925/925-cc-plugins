@@ -1,3 +1,4 @@
+import { declaredWriteScope } from './scheduling.mjs';
 export const DISPATCH_STATUSES = ['admitted','awaiting_start','running','unknown','pending_acceptance','accepted','rework','rejected'];
 const text = (value, limit = 4096) => typeof value === 'string' && value.length > 0 && value.length <= limit;
 export function validateDispatch(row) {
@@ -8,6 +9,7 @@ export function validateDispatch(row) {
  if(['pending_acceptance','accepted','rework'].includes(row.status)&&(!['succeeded','failed'].includes(row.outcome)||!text(row.evidenceId,256)||typeof row.result!=='string'))throw Error('Saved Dispatch completion evidence is damaged; preserve the original data.');
  if(row.dependencies!==undefined&&(!Array.isArray(row.dependencies)||row.dependencies.some(key=>!text(key,120))))throw Error('Saved task dependencies are damaged; preserve the original data.');
  if(['accepted','rework'].includes(row.status)&&(!row.review||row.review.decision!==(row.status==='accepted'?'accept':'rework')||!text(row.review.requestId)||!text(row.review.payloadHash)||!text(row.review.recordedAt)||row.review.reviewerMemberId!==row.supervisorMemberId||!Array.isArray(row.review.evidenceRefs)||!row.review.evidenceRefs?.includes(row.evidenceId)||!text(row.review.summary,8000)))throw Error('Saved supervisor review is damaged; preserve the original data.');
+ if(row.writeScope!==undefined)declaredWriteScope(row.writeScope);
  return row;
 }
 export function validateDispatchProtocol(row) {
@@ -16,7 +18,7 @@ export function validateDispatchProtocol(row) {
 }
 export function publicDispatch(row) {
  validateDispatch(row);
- const keys=['id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','previousAttemptId','recovery'];
+ const keys=['id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
  return Object.fromEntries(keys.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
 }
 export function publicDispatchProtocol(row) { return row ? {state:row.state,generation:row.generation,...(row.detail?{detail:row.detail}:{})} : undefined; }

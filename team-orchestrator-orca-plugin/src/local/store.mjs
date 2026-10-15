@@ -1,3 +1,5 @@
+import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
+import { initialMembers } from '../launch.mjs';
 import { questionStore } from './questions-store.mjs';
 import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
@@ -67,7 +69,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const putPrivate = (key,value) => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(key,JSON.stringify(value));
     const readDispatchProtocol = workId => { const row=readPrivate(`dispatch-protocol:${workId}`); return row?validateDispatchProtocol(row):null; };
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%' ORDER BY rowid").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
-    const dispatchProjection = workId => ({dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
+    const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
+    const dispatchProjection = workId => ({queuedTasks:queuedTasks(workId),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const questions = questionStore({db,readPrivate,putPrivate,readWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
@@ -109,15 +112,16 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       const next = readSnapshot(), team = next.teams.find(row => row.id === operation.teamId);
       const pointer=readPrivate(`binding:${operation.memberId}`);
       if(!team?.members.some(member=>member.id===operation.memberId)||pointer?.requestId!==operation.requestId||(pointer.instanceGeneration??1)!==(operation.instanceGeneration??1))return;
-      team.launch ??= { native: true, status: 'sending', mode: 'on-demand', workspaceKey: team.scope.workspaceKey, configVersion: operation.configVersion, members: {} };
+      team.launch ??= { native: true, status: 'sending', mode: team.configuration.launchMode ?? 'on-demand', workspaceKey: team.scope.workspaceKey, configVersion: operation.configVersion, members: {} };
       team.launch.members[operation.memberId] = { ...operation.public, status: operation.status, requestId: operation.requestId, ...(operation.handle ? { terminalId: operation.handle, title: operation.title, briefAccepted: operation.briefAccepted === true, executionHostId: operation.executionHostId } : {}), ...(operation.error ? { error: operation.error } : {}) };
-      team.launch.status = operation.status === 'created' ? 'accepted' : 'unknown';
+      team.launch.status = initialMembers(team).every(member => team.launch.members[member.id]?.status === 'created') ? 'accepted' : 'unknown';
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
     let closed = false;
     return {
       ...questions,
       readOperation,
+      readMemberOperation(memberId) { const pointer=readPrivate(`binding:${memberId}`); return pointer?readOperation(pointer.requestId):null; },
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
       isActiveOperation(operation){const pointer=readPrivate(`binding:${operation.memberId}`);return pointer?.requestId===operation.requestId&&(pointer.instanceGeneration??1)===(operation.instanceGeneration??1)&&readSnapshot().teams.some(team=>team.id===operation.teamId&&team.members.some(member=>member.id===operation.memberId));},
       // Retires only the app recipient pointer. Callers must separately establish lifecycle authorization.
@@ -141,6 +145,10 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(Object.keys(patch).some(key=>!['state','detail','nativeSend'].includes(key)))fail('Immutable dispatch protocol cannot change.');
         Object.assign(row,patch,{version:version+1});validateDispatchProtocol(row);putPrivate(`dispatch-protocol:${workId}`,row);return row;
       }); },
+      queueDispatch(workId,intent,detail) { return atomicDispatch(()=>{
+        if(listDispatches(workId).some(row=>row.nativeTaskId===intent.nativeTaskId))return;
+        putPrivate(`dispatch-queue:${workId}:${intent.nativeTaskId}`,{workId,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,memberId:intent.member.id,memberName:intent.member.name,supervisorMemberId:readWork(workId).supervisorMemberId,configVersion:intent.spec.configVersion,roleVersion:intent.spec.roleVersion,status:'queued',instruction:intent.spec.instruction,dependencies:intent.spec.dependencies??[],writeScope:intent.spec.writeScope,detail:String(detail).slice(0,1200)});
+      }); },
       prepareDispatch(workId,intent,startParams,reuse) { return atomicDispatch(()=>{
         const work=readWork(workId),protocol=readDispatchProtocol(workId);
         if(work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
@@ -152,15 +160,20 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||previous.status!=='rework'||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
+        const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(history,intent.spec.taskKey,writeScope);
+        if(conflict&&!intent.unadmitted)fail(`Write scope conflicts with ${conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
+        if(previous&&JSON.stringify(writeScope)!==JSON.stringify(previous.writeScope??[]))fail('Rework must preserve the declared write scope.');
         const dependencies=intent.spec.dependencies??[];
         if(previous&&JSON.stringify(dependencies)!==JSON.stringify(previous.dependencies??[]))fail('Rework must preserve business task dependencies.');
         if(dependencies.some(key=>history.filter(row=>row.taskKey===key).at(-1)?.status!=='accepted'))fail('Application dependencies await direct supervisor acceptance.');
         const reservation=readPrivate(`dispatch-member:${member.id}`),retained=reservation&&history.find(row=>row.id===reservation.id);
-        if(readPrivate(`binding:${member.id}`))fail('This member already has an active launch binding.');
+        const preparedPointer=readPrivate(`binding:${member.id}`),prepared=preparedPointer&&readOperation(preparedPointer.requestId);
+        if(preparedPointer&&(!reuse||reuse.kind==='prepared'&&(reuse.requestId!==preparedPointer.requestId||(reuse.instanceGeneration??1)!==(preparedPointer.instanceGeneration??1)||prepared?.status!=='created'||prepared.memberId!==member.id||prepared.teamId!==work.teamId||prepared.scope?.workspaceKey!==work.scope.workspaceKey)))fail('This member already has an active launch binding; verify it before reuse.');
+        if(reuse?.kind==='prepared'&&(!prepared||reservation||startParams.terminal!==reuse.terminal))fail('Prepared member reservation changed.');
         if(reservation&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
-        if(reuse&&!reservation)fail('Retained member reservation changed.');
-        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
-        validateDispatch(attempt);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
+        if(reuse&&reuse.kind!=='prepared'&&!reservation)fail('Retained member reservation changed.');
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
+        validateDispatch(attempt);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`)),work=readWork(row.workId),current=listDispatches(row.workId).filter(other=>other.taskKey===row.taskKey).at(-1);
@@ -226,9 +239,9 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           }
           const team = readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
-          if (!member || member.boss || team.configVersion !== input.configVersion) fail('Launch requires the current saved highest supervisor configuration.');
+          if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
           const bindingKey = `binding:${input.memberId}`;
-          if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
+          if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || readPrivate(`dispatch-member:${member.id}`) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
           const instanceGeneration=(readPrivate(`binding-generation:${input.memberId}`)?.generation??0)+1;
           const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', effectState:'intent', instanceGeneration, version:1, createdAt: new Date().toISOString() };
           db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId, instanceGeneration }));

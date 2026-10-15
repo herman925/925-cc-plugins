@@ -68,7 +68,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
  const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params)),'completed',JSON.stringify(result));
  const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId}={})=>{
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
-  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,...(previousAttemptId?{previousAttemptId}:{})});
+  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',writeScope:[],dependencies,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
   db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
