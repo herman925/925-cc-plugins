@@ -93,3 +93,12 @@ for(const [mode,label] of [['dispatch-accepted','Accepted by direct supervisor']
  await page.reload();await expect(panel(page).getByRole('region',{name:'Team tasks',exact:true})).toContainText(label);
  await expect(panel(page).getByRole('button',{name:/accept task|approve task|rework task/i})).toHaveCount(0);
 });
+
+test('overlap queue reason is visible alongside independent active tasks and survives reload',async({page})=>{
+ const ui=await preparedDispatch(page,'dispatch-scheduling'),tasks=ui.getByRole('region',{name:'Team tasks',exact:true});
+ await expect(tasks.getByRole('article')).toHaveCount(3);await expect(tasks).toContainText('Write scope conflicts with edit-source');
+ await expect(tasks.getByRole('article',{name:'Task independent-docs',exact:true})).toContainText('Native assignment observed');
+ await expect(tasks.getByRole('article',{name:'Task overlap-source',exact:true})).toContainText('Queued');
+ await expect(tasks).toContainText('not filesystem isolation');await page.reload();
+ await expect(panel(page).getByRole('region',{name:'Team tasks',exact:true})).toContainText('Write scope conflicts with edit-source');
+});

@@ -1,4 +1,5 @@
 import { createQuestionService } from './questions.mjs';
+import { initialMembers } from '../launch.mjs';
 import { createRecoveryService } from './recovery.mjs';
 import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
@@ -89,7 +90,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           if (previous) return { receipt: publicOperation(previous) };
           const input = params.input, team = store.readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
-          if (!member || member.boss || team.configVersion !== input.configVersion) throw Error('Launch requires the current saved highest supervisor configuration.');
+          if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) throw Error('Launch requires a member selected by the saved roster preparation mode.');
           const scope = store.readScope(team.id), observed = capabilities.get(scope.workspaceKey);
           if (!params.observationId || latestObservation.get(scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 30000) throw Error('Fresh authenticated launch capability admission is required.');
           if (typeof observed.runtimeId !== 'string' || !observed.runtimeId.trim()) throw Error('Native runtime identity is unavailable; no member was reserved.');

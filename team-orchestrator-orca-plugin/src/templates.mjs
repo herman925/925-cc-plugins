@@ -3,7 +3,7 @@
 export const TEMPLATE_FORMAT = 'orca-team-template';
 export const TEMPLATE_VERSION = 1;
 export const MAX_TEMPLATE_BYTES = 1024 * 1024;
-const formFields = ['name', 'purpose', 'structure', 'levels', 'fan', 'groups', 'agents', 'models', 'efforts'];
+const formFields = ['name', 'purpose', 'structure', 'levels', 'fan', 'groups', 'agents', 'models', 'efforts', 'launchMode'];
 const memberFields = ['name', 'team', 'role', 'level', 'agent', 'model', 'effort', 'brief', 'habits', 'collaboration'];
 const pick = (value, keys) => Object.fromEntries(keys.map(key => [key, value[key]]));
 export function exportTeamTemplate(team) {
@@ -39,6 +39,7 @@ export function parseTeamTemplate(value) {
   const config = team.configuration;
   only(config, formFields);
   if (!text(config.name, 64) || !text(config.purpose, 500, true) || config.structure !== team.structure || ![1, 2, 3].includes(config.levels) || ![1, 2, 3, 4, 5].includes(config.fan) || !text(config.groups, 520, true)) reject('the saved setup configuration is invalid.');
+  if(config.launchMode!==undefined&&!['on-demand','all'].includes(config.launchMode))reject('unsupported launch mode.');
   for (const key of ['agents', 'models', 'efforts']) {
     if (!Array.isArray(config[key]) || config[key].length !== 3 || config[key].some(value => !text(value, 120))) reject('three level preferences are required.');
   }

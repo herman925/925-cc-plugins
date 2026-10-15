@@ -12,14 +12,19 @@ import { createWorkService } from '../src/local/teamwork.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
 // Scripted native-host boundary, separate from the product's proof reader.
 const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured'}={}) {
+async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured'}={}) {
  const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
- const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
+ const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,launchMode:prestarted?'all':'on-demand',agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
  const head=team.members[0], member=team.members[1], launch={teamId:team.id,memberId:head.id,configVersion:1,requestId:'launch'};
  const op=store.prepareOperation(launch,{scope,nativeRequest:nativeLaunchIntent(team,head,scope),roleVersion:1,title:'Head',executionHostId:'local',runtimeId:'runtime-one'}).operation;
  const binding={status:'created',kind,handle:kind==='structured'?'chat-head':'term-head',...(kind==='structured'?{sessionId:'codex_head'}:{paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),briefAccepted:true};
  store.settleOperation('launch',op.nativeRequest.operationId,{...binding,public:publicOperation({...op,...binding})});
+ if(prestarted){
+  const input={teamId:team.id,memberId:member.id,configVersion:1,requestId:'prepared-child'},op=store.prepareOperation(input,{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;
+  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf'}),briefAccepted:true};
+  store.settleOperation(input.requestId,op.nativeRequest.operationId,{...value,public:publicOperation({...op,...value})});
+ }
  const db=new DatabaseSync(join(profile,'orchestration.db'));
  db.exec(`PRAGMA user_version=43;
  CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER);
@@ -67,9 +72,9 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
  const actor=params=>kind==='structured'?{...params,__orcaCallerOrcaSessionId:'codex_head'}:Object.fromEntries(Object.entries(params).map(([k,v])=>[['from','callerTerminalHandle','terminal'].includes(k)?k:k,['from','callerTerminalHandle'].includes(k)?{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}:v]));
  const from=kind==='structured'?'orca_session_id:codex_head':'term-head';
  const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params.terminal==='structworker_child'?{...params,terminal:{paneKey:'child-tab:child-leaf'}}:params)),'completed',JSON.stringify(result));
- const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId}={})=>{
+ const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId,writeScope=[]}={})=>{
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
-  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,...(previousAttemptId?{previousAttemptId}:{})});
+  const spec=JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,writeScope,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
   db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
@@ -349,4 +354,60 @@ test('overall delivery requires native Head author proof and user decision; rewo
  assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),false);assert.equal(f.store.readOperation('launch').status,'created');
  await f.works.check(w.id);await f.works.reconcile();await service.check(w.id);assert.equal(f.store.readWork(w.id).status,'completed');
  await f.restart();assert.equal(f.store.readWork(w.id).status,'completed');assert.equal(f.store.readSnapshot().works[0].delivery.summary,'Audit complete');
+});
+
+test('declared overlapping paths queue until acceptance while independent members proceed without a worker cap',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.createIntent(protocol,{writeScope:[{path:'src',kind:'directory'}]});
+ f.createIntent(protocol,{taskId:'overlap',taskKey:'overlap',memberId:f.team.members[2].id,writeScope:[{path:'src/app.js',kind:'file'}]});
+ f.createIntent(protocol,{taskId:'independent',taskKey:'independent',memberId:f.team.members[3].id,writeScope:[{path:'docs/readme.md',kind:'file'}]});
+ await service.check(f.work.id);
+ assert.deepEqual(f.store.listDispatches(f.work.id).map(row=>row.taskKey),['task-key-one','independent']);
+ const queued=f.store.dispatchProjection(f.work.id).queuedTasks;
+ assert.equal(queued.length,1);assert.equal(queued[0].taskKey,'overlap');assert.match(queued[0].detail,/scope.*task-key-one/i);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,2);
+ await f.restart();assert.equal(f.store.dispatchProjection(f.work.id).queuedTasks[0].taskKey,'overlap');
+});
+
+for(const headAgent of ['codex','claude'])test(`prepared structured member reuses canonical session without preferences under ${headAgent} supervisor`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true,headAgent}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));let permit;
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT')){permit=JSON.parse(text.split('\n').slice(1).join('\n'));f.start(permit);}});
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0]?.status,'running');
+ assert.equal(permit.startParams.terminal,'orca_session_id:claude_child');
+ assert.deepEqual(Object.keys(permit.startParams).sort(),['run','task','terminal','worktree']);
+ await service.check(f.work.id);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,1);
+ assert.equal(f.calls.some(method=>/agent.launch|terminal.create|workerStart/.test(method)),false);
+});
+
+for(const hold of ['pending_acceptance','unknown','rework'])test(`overlapping scope remains reserved during ${hold}, accepted scope releases queued task`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT')){const permit=JSON.parse(text.split('\n').slice(1).join('\n'));if(permit.nativeTaskId==='task-one')f.start(permit);}});
+ f.createIntent(protocol,{writeScope:[{path:'src',kind:'directory'}]});await service.check(f.work.id);
+ let first=f.store.listDispatches(f.work.id)[0];
+ if(hold==='unknown')f.db.prepare("UPDATE mutation_receipts SET payload_hash='unverified' WHERE request_id='start-task-one'").run();
+ else {f.complete(first);await service.check(f.work.id);first=f.store.listDispatches(f.work.id)[0];if(hold==='rework'){f.review(first,{decision:'rework'});await service.check(f.work.id);}}
+ f.createIntent(protocol,{taskId:'overlap',taskKey:'overlap',memberId:f.team.members[2].id,writeScope:[{path:'src/app.js',kind:'file'}]});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.match(f.store.dispatchProjection(f.work.id).queuedTasks[0].detail,/scope conflicts/);
+ if(hold==='pending_acceptance'){f.review(first);await service.check(f.work.id);await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,2);assert.equal(f.store.dispatchProjection(f.work.id).queuedTasks.length,0);}
+});
+for(const fault of ['closed','wrong-workspace','self','changed-preferences'])test(`prepared ${fault} member stays reserved without fresh launch`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true});
+ const rpc=async(method,params,...rest)=>{
+  if(params?.sessionId==='claude_child'&&method==='orchestration.sessionAddress'&&fault==='self')return {orcaSessionId:'orca_session_id:codex_head'};
+  if(params?.address==='orca_session_id:claude_child'&&method==='orchestration.partyLocation'&&fault!=='self'&&fault!=='changed-preferences')return {location:fault==='closed'?null:{kind:'chat',sessionId:'claude_child',worktreeId:'foreign'}};
+  return f.rpc(method,params,...rest);
+ };
+ if(fault==='changed-preferences'){const op=f.store.readMemberOperation(f.member.id);f.store.settleOperation(op.requestId,op.nativeRequest.operationId,{nativeRequest:{...op.nativeRequest,sessionOptions:{model:'different'}}});}
+ const service=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,0);assert.equal(f.store.dispatchProjection(f.work.id).queuedTasks.length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,0);assert.equal(f.store.readMemberOperation(f.member.id).status,'created');
+});
+
+test('prepared PTY preserves native process identity and reuses without model overrides',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true,preparedKind:'terminal',childKind:'terminal'}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
+ await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
 });

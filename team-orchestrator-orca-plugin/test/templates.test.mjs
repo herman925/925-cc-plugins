@@ -21,7 +21,8 @@ test('export to another profile imports independent IDs, roles and reporting tre
  const template = source.store.exportTemplate(team.id);
  assert.equal(template.format, 'orca-team-template'); assert.equal(template.version, 1);
  assert.equal(JSON.stringify(template).includes(team.id), false);
- assert.equal(JSON.stringify(template).includes('launch'), false);
+ assert.equal(Object.hasOwn(template.team,'launch'), false);
+ assert.equal(template.team.configuration.launchMode,'on-demand');
  let imported = target.store.importTemplate({ requestId: 'import', expectedRevision: 0, template }, scope('folder:/another', 'ssh:remote'));
  assert.equal(imported.teams.length, 1); const copy = imported.teams[0];
  assert.notEqual(copy.id, team.id); assert.equal(copy.launch, undefined); assert.equal(copy.configVersion, 1);
