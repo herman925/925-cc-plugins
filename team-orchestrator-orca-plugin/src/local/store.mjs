@@ -1,3 +1,4 @@
+import { staffingStore } from './staffing-store.mjs';
 import { wakeStore, publicWake } from './wake-store.mjs';
 import { stopStore } from './stop-store.mjs';
 import { lifecycleStore } from './lifecycle-store.mjs';
@@ -90,16 +91,15 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
-    const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,atomic:atomicDispatch});
+    const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,effectiveTeamForWork:id=>staffing.effectiveTeamForWork(id),atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id),...staffing.staffingProjection(work.id)})) };
     };
     const write = ({ works, goals, recoveries, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
-    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches:listTeamDispatches,listRunWorks,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
-    readSnapshot();
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches:listTeamDispatches,listRunWorks,listGoals,questions,staffing:()=>staffing,atomic:atomicDispatch,readSnapshot,write});
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -137,8 +137,11 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       team.launch.status = initialMembers(team).every(member => team.launch.members[member.id]?.status === 'created') ? 'accepted' : 'unknown';
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
+    const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listRunWorks,readSnapshot,write,archive,atomic:atomicDispatch});
+    readSnapshot();
     let closed = false;
     return {
+      ...staffing,
       ...questions,
       ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation,persistOperation,readWork,persistWork,readCurrentWork}),
       ...stops,
@@ -211,8 +214,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
         this.assertAdmission(work.teamId,intent.spec.memberId);
         questions.questionTaskGate(workId,intent.spec.taskKey,intent.nativeTaskId);
-        const team=this.effectiveTeamForWork?.(workId)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
-        if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
+        const team=staffing.effectiveTeamForWork(workId),member=team?.members.find(row=>row.id===intent.spec.memberId);
+        if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion||intent.spec.configVersion!==team.configVersion)fail('Only the true direct supervisor can admit this frozen member role.');
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
         const recovery=reuse?.recoveryRequestId&&readPrivate(`wake:${reuse.recoveryRequestId}`),recoveredPrior=recovery&&recovery.handoff?.decision==='replace'&&recovery.handoff.reviewer===work.supervisorMemberId&&(recovery.oldBinding.sourceAttemptId===previous?.id||previous?.reuse?.requestId===recovery.oldBinding.requestId)&&recovery.newInstance?.requestId===reuse.requestId;
         if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||(previous.status!=='rework'&&!recoveredPrior)||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
@@ -311,6 +314,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const team = readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
           if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
+          staffing.assertStaffingPreparation(member.id,input.requestId);
           const nextGoal=lifecycle.nextGoal(input.teamId);
           if(nextGoal&&(nextGoal.launchRequests[input.memberId]!==input.requestId||nextGoal.configVersion!==input.configVersion))fail('Queued transition requires its saved fresh launch identity.');
           const bindingKey = `binding:${input.memberId}`;
@@ -441,6 +445,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
             member[key] = input[key];
           }
           member.roleVersion++; team.configVersion++; archive(team);
+          for(const work of listWorks().filter(w=>w.teamId===team.id&&w.status!=='completed'))staffing.recordConfigurationAmendment(work.id,team,{requestId:input.requestId,kind:'role-update',memberIds:[member.id]});
         });
       },
       readTeamVersion(teamId, version) {

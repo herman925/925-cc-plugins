@@ -32,7 +32,7 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
     async call(action, params) {
       if (!connected) throw new Error('Test the local worker connection first.');
       if (action === 'workspace.readContext') return rpc('context', params);
-      if (['setAdmission','stopMember','checkStop','createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(action)) return rpc(action, params);
+      if (['saveStaffing','setAdmission','stopMember','checkStop','createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(action)) return rpc(action, params);
       if (action === 'storage.get') return rpc('load');
       if (action === 'receipt') return rpc('receipt', params);
       throw new Error('Unknown worker operation.');
