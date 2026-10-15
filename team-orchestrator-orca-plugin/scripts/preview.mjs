@@ -16,7 +16,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'goal-lifecycle' || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       throw Error('CLI launch fallback is forbidden');
@@ -46,6 +46,14 @@ async function fixture(id, mode) {
       nativeDb.prepare('INSERT INTO mutation_receipts VALUES (?,?,?,?,?,?)').run('fixture-fingerprint', requestId, method, hash, 'completed', JSON.stringify(value));
     };
     const supervisorInput = (work, text) => {
+      if(mode==='goal-lifecycle'){
+        if(!text.startsWith('TEAM_DISPATCH_PROTOCOL\n')&&!text.startsWith('TEAM_GOAL_REWORK\n'))return;
+        const p=store.readDispatchProtocol(work.id),previous=store.deliveryProjection(work.id).delivery;
+        const id='delivery-'+work.id+'-'+(previous?previous.revision+1:1),spec=JSON.stringify({protocol:'team-delivery/v1',workId:work.id,token:p.token,generation:p.generation,supervisorMemberId:work.supervisorMemberId,previousDeliveryId:previous?.id??null,summary:previous?'Corrected audit <script>':'Audit delivered <script>',evidenceRefs:['report.md','tests:passed'],attemptIds:[]}),task={id,run_id:work.run.id,spec,status:'ready'};
+        const owner=work.instance,from=owner.kind==='structured'?'orca_session_id:'+owner.sessionId:owner.handle;
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        receipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});return;
+      }
       if (!mode?.startsWith('dispatch-')) return;
       const owner = work.instance, from = owner.kind === 'structured' ? 'orca_session_id:' + owner.sessionId : owner.handle;
       if (text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
@@ -104,7 +112,7 @@ async function fixture(id, mode) {
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
-        const structured = mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
+        const structured = mode === 'goal-lifecycle' || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); return result;
       }
@@ -119,7 +127,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
-        const dispatchInput = text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
+        const dispatchInput = text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
         const work = store.listWorks().find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;
@@ -184,7 +192,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
-      if (['capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
+      if (['decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {

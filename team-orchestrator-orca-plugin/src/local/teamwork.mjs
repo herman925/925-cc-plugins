@@ -6,7 +6,7 @@ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(valu
 export const sendFingerprint=(sessionId,body,delivery)=>createHash('sha256').update(canonical({method:'agentSession.send',sessionId,fields:{body,...(delivery?{delivery}:{})}})).digest('hex');
 export function objectiveInstructions(work,team){
  const head=team.members.find(row=>row.id===work.supervisorMemberId);
- return `Team Orchestrator work protocol v1. TeamWork ${work.id}; team ${work.teamId}; supervisor member ${work.supervisorMemberId}; configuration ${work.configVersion}; role ${work.roleVersion}.\nYour saved role: ${head.brief}\nWork habits: ${head.habits}\nCollaboration: ${head.collaboration}\nTotal objective: ${work.objective}\nUse your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
+ return `Team Orchestrator work protocol v1. TeamWork ${work.id}; team ${work.teamId}; supervisor member ${work.supervisorMemberId}; configuration ${work.configVersion}; role ${work.roleVersion}.\nYour saved role: ${head.brief}\nWork habits: ${head.habits}\nCollaboration: ${head.collaboration}\nProject: ${work.scope.workspaceId}; execution host: ${work.scope.executionHostId}.\nApproved prior-work handoff: ${work.handoff?JSON.stringify(work.handoff):'None'}.\nTotal objective: ${work.objective}\nUse your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
 }
 export function createWorkService({store,rpc,userData,consent}){
  const queue=new Map();
@@ -19,6 +19,7 @@ export function createWorkService({store,rpc,userData,consent}){
   return state.connectionGeneration;
  }
  async function verify(work,forSend=false){
+  if(work.status==='completed')throw Error('Completed TeamWork is sealed.');
   await consent();
   const binding=store.readOperation(work.binding.requestId);
   if(!binding||!store.isActiveOperation(binding)||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
@@ -52,7 +53,7 @@ export function createWorkService({store,rpc,userData,consent}){
   return {instance,status,hostGeneration};
  }
  async function observe(work,verified){
-  if(work.run.state==='fenced')return work;
+  if(work.status==='completed'||work.run.state==='fenced')return work;
   verified??=await verify(work);
   let input=work.input.state==='sending'?{...work.input,state:'unknown',detail:'The original submission has no settled receipt. Checking never sends it again.'}:work.input,processing=work.processing;
   if(verified.history&&work.nativeSend){
@@ -80,7 +81,7 @@ export function createWorkService({store,rpc,userData,consent}){
    snapshot={stale:false,observedAt:new Date().toISOString(),tasks:result.tasks.map(task=>({id:task.id,status:task.status,title:task.task_title??task.display_name??'Task',...(task.dispatch_id?{dispatchId:task.dispatch_id}:{})}))};
   }
   await verifyHost(work,verified.hostGeneration);
-  return save(work,{input,processing,run,...(snapshot?{snapshot}:{}),instance:verified.instance,status:run.state==='verified'?'active':input.state==='not_sent'||input.state==='rejected'?'needs_attention':'awaiting_run',error:undefined});
+  return save(work,{input,processing,run,...(snapshot?{snapshot}:{}),instance:verified.instance,status:work.status==='awaiting_acceptance'?'awaiting_acceptance':run.state==='verified'?'active':input.state==='not_sent'||input.state==='rejected'?'needs_attention':'awaiting_run',error:undefined});
  }
  async function deliver(work){
   if(work.input.state!=='not_sent'||work.nativeSend)return work;
@@ -124,6 +125,6 @@ export function createWorkService({store,rpc,userData,consent}){
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readWork(id);if(!work||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},
-  async reconcile(){for(const work of store.listWorks())if(work.input.state!=='not_sent'&&work.run.state!=='fenced')await this.check(work.id);}
+  async reconcile(){for(const work of store.listWorks())if(work.status!=='completed'&&work.input.state!=='not_sent'&&work.run.state!=='fenced')await this.check(work.id);}
  };
 }

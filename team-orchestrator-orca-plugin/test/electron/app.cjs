@@ -119,6 +119,15 @@ function reviewNativeDispatch(attempt,decision) {
   nativeDb.prepare('UPDATE tasks SET result=? WHERE id=?').run(result,task.id);
   nativeReceipt(work,'review-'+attempt.id,'orchestration.taskUpdate',{id:task.id,status:task.status,result,run:work.run.id,callerTerminalHandle:from},{task});
 }
+function headControlTask(work,id,body){
+ const protocol=savedPrivate('dispatch-protocol').find(p=>p.workId===work.id),terminal=work.instance.kind==='terminal',spec=JSON.stringify({workId:work.id,token:protocol.token,generation:protocol.generation,...body}),task={id,run_id:work.run.id,spec,status:'ready'};
+ nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.incarnationId:null,terminal?protocol.generation:null);
+ nativeReceipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:terminal?work.instance.handle:'orca_session_id:'+work.instance.sessionId},{task});
+}
+function overallDelivery(work,id,previousDeliveryId=null){
+ const attempts=savedPrivate('dispatch').filter(a=>a.workId===work.id);
+ headControlTask(work,id,{protocol:'team-delivery/v1',supervisorMemberId:work.supervisorMemberId,previousDeliveryId,summary:'Verified overall handoff',evidenceRefs:attempts.map(a=>a.evidenceId).concat('fixture:validation'),attemptIds:attempts.map(a=>a.id)});
+}
 function createSupervisorRun(work) {
   const instance = work.instance;
   nativeDb.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)').run('run-' + work.id, work.nativeObjective, 'this_database', instance.kind === 'terminal' ? instance.handle : null, instance.paneKey ?? null, instance.kind === 'structured' ? instance.sessionId : null, 1, 1, 0);
@@ -189,12 +198,18 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   else if (method === 'terminal.rename') { const nativeId = [...launched.keys()][0]; assert.equal(savedOperation(nativeId).status, 'created', 'identity commit must precede rename'); result = { rename: { handle: params.terminal, tabId: 'fixture-tab', title: params.title } }; }
   else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: terminalStatus } };
   else if (method === 'terminal.focus') result = { focus: { handle: params.terminal } };
-  else if (method === 'orchestration.sessionAddress') result = { orcaSessionId: 'orca_session_id:fixture-chat' };
-  else if (method === 'orchestration.partyLocation') result = { location: { kind: 'chat', sessionId: 'codex:fixture-chat', worktreeId: 'repo::/remote/project' } };
+  else if (method === 'orchestration.sessionAddress') result = { orcaSessionId: 'orca_session_id:'+params.sessionId.replace(/^codex:/,'') };
+  else if (method === 'orchestration.partyLocation') result = { location: { kind: 'chat', sessionId: 'codex:'+params.address.slice('orca_session_id:'.length), worktreeId: 'repo::/remote/project' } };
   else if (method === 'agentSession.reveal') result = { ok: true, sessionId: params.sessionId, workspaceId: 'repo::/remote/project', agent: 'codex', readable: true };
   else if (method === 'agentSession.history') result = { ok: true, page: { sessionId: params.sessionId, fence: 7, items: [], submissions: [], ...history.get(params.sessionId) } };
   else if (method === 'agentSession.send' || method === 'terminal.send') {
     const text = params.body?.blocks?.[0]?.text ?? params.text;
+    if(text?.startsWith('TEAM_GOAL_REWORK\n')){
+      assert.equal(transport,'socket');const wire=JSON.parse(text.slice(text.indexOf('\n')+1)),decision=savedPrivate('work-decision').find(d=>d.requestId===wire.decisionId),work=savedWorks().find(w=>w.id===wire.workId);
+      assert.equal(decision.input.state,'sending');assert.deepEqual(decision.nativeSend.params,params);overallDelivery(work,'delivery-revised-'+work.id,wire.deliveryId);
+      const id=params.envelope?.clientOperationId??envelope.orchestrationRequestId;
+      return params.body?{ok:true,fence:7,value:{clientMessageId:id,submission:{clientMessageId:id,dispatchState:'accepted'}}}:{send:{handle:params.terminal,accepted:true,prompt:{requestId:id,processIncarnation:work.instance.incarnationId}}};
+    }
     if(text?.startsWith('TEAM_USER_ANSWER\n')){
       assert.equal(transport,'socket');assert.equal(params.body?.role??'user','user');assert.equal(params.from,undefined);
       const wire=JSON.parse(text.slice(text.indexOf('\n')+1)),q=savedPrivate('question').find(q=>q.workId===wire.workId&&q.id===wire.appQuestionId),answer=q.answers.find(a=>a.id===wire.answerId),work=savedWorks().find(w=>w.id===wire.workId);
@@ -225,7 +240,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
       assert.equal(params.body.blocks.length, 1); assert.equal(params.body.blocks[0].type, 'text');
       assert.equal(params.body.blocks[0].text.includes(JSON.stringify(work.nativeObjective)), true, 'supervisor receives its exact issued Run objective');
       assert.equal(params.envelope.expectedRuntimeFence, 7);
-      assert.equal(params.envelope.sessionId, 'codex:fixture-chat');
+      assert.equal(params.envelope.sessionId, work.binding.sessionId);
       assert.match(params.envelope.payloadFingerprint, /^[a-f0-9]{64}$/);
       result = { ok: true, fence: 7, value: { clientMessageId: operationId, submission: { clientMessageId: operationId, dispatchState: 'pending' } } };
     } else {
@@ -237,6 +252,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
       assert.equal(params.text.includes(JSON.stringify(work.nativeObjective)), true, 'terminal supervisor receives the same versioned Run contract');
       result = { send: { handle: params.terminal, accepted: true, prompt: { requestId: operationId, processIncarnation: 'fixture-incarnation', stages: ['input_accepted'], observation: 'supported' } } };
     }
+    if(work.handoff)createSupervisorRun(work);
   } else if (method === 'orchestration.runShow') result = { run: nativeDb.prepare('SELECT id,objective,consumer_generation FROM runs WHERE id=?').get(params.id) };
   else if (method === 'orchestration.workerRead') result = { dispatchId: params.dispatch, source: 'terminal', sourceIdentity: 'fixture-output', sourceExact: true, contentComplete: false, warnings: ['SSH fixture output is incomplete'], archived: true };
   else if (method === 'orchestration.workerShow') {
@@ -443,10 +459,29 @@ app.whenReady().then(async () => {
     const prepared=(await control('load',{})).value.teams.find(row=>row.id===all.id);
     assert.deepEqual(Object.keys(prepared.launch.members).sort(),all.members.map(row=>row.id).sort());
     assert.equal(runtimeReads.filter(row=>row.method==='agent.launchReplay').every(row=>row.params.target.kind==='existing'&&row.params.target.worktree==='id:repo::/remote/project'),true,'every roster member uses the exact existing shared Git workspace');
+    // #116 authenticated Head proposal, explicit user rework/accept, and fresh queued conversation.
+    let closing=savedWorks().find(w=>w.id===terminalWork.id);
+    const answer=answers.find(a=>a.workId===closing.id);
+    headControlTask(closing,'answer-ack-'+closing.id,{protocol:'team-questions/v1',kind:'answer-ack',appQuestionId:answer.questionId,answerId:answer.answerId});
+    overallDelivery(closing,'delivery-first-'+closing.id);
+    let reviewed=(await control('checkWork',{workId:closing.id})).value.works.find(w=>w.id===closing.id);
+    assert.equal(reviewed.delivery.status,'pending');assert.equal(reviewed.questions[0].answers[0].processed,'confirmed');
+    const rework={requestId:'goal-rework',workId:closing.id,deliveryId:reviewed.delivery.id,expectedWorkVersion:reviewed.version,decision:'rework',feedback:'Include the final comparison'};
+    await control('decideWork',rework);await control('decideWork',rework);
+    assert.equal(savedPrivate('work-decision').filter(d=>d.requestId==='goal-rework').length,1);
+    reviewed=(await control('checkWork',{workId:closing.id})).value.works.find(w=>w.id===closing.id);
+    assert.equal(reviewed.delivery.id,'delivery-revised-'+closing.id);
+    await control('enqueueGoal',{requestId:'next-goal',teamId:closing.teamId,objective:'Next audit',expectedRevision:(await control('load',{})).value.revision});
+    const acceptance={requestId:'goal-accept',workId:closing.id,deliveryId:reviewed.delivery.id,expectedWorkVersion:reviewed.version,decision:'accept'},before=launched.size;
+    const next=await control('decideWork',acceptance);assert.equal(launched.size,before+1,'fresh supervisor uses genuine renderer launch IPC');
+    const newWork=next.value.works.find(w=>w.teamId===closing.teamId&&w.id!==closing.id);assert.equal(newWork.run.state,'verified');assert.notEqual(newWork.run.id,closing.run.id);assert.equal(newWork.handoff.summary,'Verified overall handoff');
+    await control('decideWork',acceptance);assert.equal(launched.size,before+1,'accept replay cannot launch twice');
+    await control('checkWork',{workId:closing.id});assert.equal(savedWorks().find(w=>w.id===closing.id).status,'completed');
+    assert.equal(runtimeReads.some(row=>/workerStart|taskCreate|taskUpdate|runCreate|orchestration.send/.test(row.method)),false);
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });
