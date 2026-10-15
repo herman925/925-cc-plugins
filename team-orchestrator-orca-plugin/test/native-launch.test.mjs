@@ -260,3 +260,8 @@ test('approved full-roster staffing reuses genuine launch IPC and member reserva
  assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);
  assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').at(-1).params.target.worktree,'folder:/saved');
 });
+test('staffing validates explicit model against the fixed Work host before saving a member',async t=>{
+ const f=await fixture(t);await f.send('launchSupervisor');const store=f.store(),work=store.prepareWork({requestId:'staffing-model-goal',teamId:f.team.id,objective:'Review',expectedRevision:store.readSnapshot().revision}).work;
+ const result=await f.send('saveStaffing',{requestId:'invalid-model-add',workId:work.id,expectedRevision:store.readSnapshot().revision,configVersion:1,member:{name:'Reviewer',boss:f.team.members[0].id,brief:'Review',habits:'',collaboration:'Report',agent:'claude',model:'unverified-model',effort:'default'}});
+ assert.equal(result.ok,false);assert.match(result.error,/model|overrides/i);assert.equal(store.readSnapshot().teams[0].members.length,4);assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,1);
+});

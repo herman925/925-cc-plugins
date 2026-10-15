@@ -70,3 +70,23 @@ test('invalid parent, stale configuration and closed Work cannot add; rejected p
  assert.throws(()=>f.store.saveStaffing({...direct(f),requestId:'stale-add',configVersion:99}),/configuration changed/);
  f.store.updateWork(f.work.id,f.store.readWork(f.work.id).version,{status:'completed'});assert.throws(()=>f.store.saveStaffing({...direct(f),requestId:'closed-add'}),/closed/);
 });
+import {openTeamStore} from '../src/local/store.mjs';
+import {nativeLaunchIntent,publicOperation} from '../src/local/native-launch.mjs';
+test('two independent SQLite panel connections confirm one proposal to one fresh member',async t=>{
+ const f=await questionFixture(t);await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ publish(f,'staffing-proposal',{configVersion:1,roleVersion:1,proposingManagerId:f.team.members[0].id,member:memberInput(f),rationale:'Review.',affectedTaskKeys:[]});await service(f).check(f.work.id);
+ const second=await openTeamStore({userData:f.profile});t.after(()=>second.close());const input={requestId:'panel-a',workId:f.work.id,proposalId:'staffing-one',decision:'approve',configVersion:1,expectedRevision:f.store.readSnapshot().revision};
+ const a=f.store.saveStaffing(input),b=second.saveStaffing({...input,requestId:'panel-b'});assert.equal(a.memberId,b.memberId);assert.equal(second.readSnapshot().teams[0].members.length,5);
+});
+test('full-mode added preparation is included in closure and its exact reservation retires only after roster processing',async t=>{
+ const f=await questionFixture(t,{formOverrides:{launchMode:'all'}});await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ const added=f.store.saveStaffing(direct(f)),team=f.store.effectiveTeamForWork(f.work.id),member=team.members.at(-1),scope=f.store.readScope(team.id);
+ assert.ok(f.store.workClosureBlockers(f.work.id).some(s=>s.includes('preparation')));
+ const operation=f.store.prepareOperation(added.launch,{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;
+ const patch={status:'created',kind:'structured',sessionId:'new-reviewer-session',handle:'new-reviewer-handle',briefAccepted:true};f.store.settleOperation(operation.requestId,operation.nativeRequest.operationId,{...patch,public:publicOperation({...operation,...patch})});
+ await service(f).check(f.work.id);const delta=f.store.listRosterDeltas(f.work.id)[0];assert.ok(f.store.workClosureBlockers(f.work.id).some(s=>s.includes('manager processing')));
+ publish(f,'roster-ack',{deltaId:delta.id,configVersion:2},{taskId:'closure-roster-ack'});await service(f).check(f.work.id);
+ f.store.recordDelivery(f.work.id,{id:'delivery',previousDeliveryId:null,summary:'Ready',evidenceRefs:['validation'],attemptIds:[],generation:1,supervisorMemberId:f.team.members[0].id,proof:{requestId:'delivery-proof',payloadHash:'fixture'}});
+ f.store.decideWork({requestId:'accept-staffed-work',workId:f.work.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
+ assert.equal(f.store.readWork(f.work.id).status,'completed');assert.equal(f.store.readMemberOperation(member.id),null);assert.equal(f.store.readSnapshot().teams[0].members.length,5);
+});
