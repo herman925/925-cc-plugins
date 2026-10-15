@@ -9,14 +9,14 @@ import { openTeamStore } from '../src/local/store.mjs';
 import { nativeLaunchFingerprint } from '../src/local/native-launch-ledger.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_FORM } from '../src/team.mjs';
-async function fixture(t, { kind = 'terminal', agent = 'codex' } = {}) {
+async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand' } = {}) {
  const profile = await mkdtemp(join(tmpdir(), 'native-launch-'));
  let store = await openTeamStore({ userData: profile });
  const calls = [], cliCalls = []; const internalKey = 'private-launch-key';
  const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', displayName: 'Saved' } }; };
  let executor = createExecutor({}, cli, { store, internalKey, userData: profile });
  const selected = await executor.execute({ op: 'context', workspaceId: 'folder:/saved' });
- const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
+ const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
  const team = state.teams[0], member = team.members.find(row => !row.boss);
  const input = { teamId: team.id, memberId: member.id, requestId: 'launch-root', configVersion: team.configVersion };
  const sender = { id: 1, mainFrame: {}, isDestroyed: () => false }, event = { sender, senderFrame: sender.mainFrame };
@@ -41,7 +41,7 @@ async function fixture(t, { kind = 'terminal', agent = 'codex' } = {}) {
    else if (method === 'agentSession.agents') result = { agents: [] };
    else if (method === 'agentSession.createSupport') result = { supported: true };
    else if (method === 'agentSession.modelCatalog') result = { origin: 'unknown' };
-   else if (method === 'agent.launchReplay') { const saved = store.readOperation(input.requestId); assert.equal(saved.nativeRequest.operationId, params.operationId, 'intent must be durable before native effect'); assert.equal(saved.status, 'unknown'); result = await effect(params); recordNative(params, result); }
+   else if (method === 'agent.launchReplay') { const saved = store.readSnapshot().teams[0].launch.members; const operation=Object.values(saved).map(row=>store.readOperation(row.requestId)).find(row=>row.nativeRequest.operationId===params.operationId); assert.equal(operation.nativeRequest.operationId, params.operationId, 'intent must be durable before native effect'); assert.equal(operation.status, 'unknown'); result = await effect(params); recordNative(params, result); }
    else if (method === 'terminal.rename') { assert.equal(store.readOperation(input.requestId).status, 'created', 'identity must be durable before naming'); result = { rename: { handle: params.terminal, tabId: 'native-tab', title: params.title } }; }
    else if (method === 'terminal.show') result = { terminal: { handle: 'native-handle', worktreeId: 'folder:/saved', executionHostId: 'local', tabId: 'native-tab', leafId: 'native-leaf', agentWait: null } };
    else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: 'native-handle', isRunningAgent: true, status: 'permission' } };
@@ -210,4 +210,17 @@ test('late conflicting structured settlement cannot replace the saved session id
  const saved = f.store().readOperation(f.input.requestId);
  assert.throws(() => f.store().settleOperation(saved.requestId, saved.nativeRequest.operationId, { status: 'created', kind: 'structured', handle: 'other-handle', sessionId: 'other-session' }), /conflict/);
  assert.equal(f.store().readOperation(saved.requestId).sessionId, saved.sessionId);
+});
+
+test('all-at-start prepares precisely four saved members and preserves independent launches after one unknown', async t => {
+ const f=await fixture(t,{launchMode:'all',kind:'structured'}); let count=0;
+ f.effect(async()=>{count++;if(count===2)throw Error('member refused');return {worktreeId:'folder:/saved',outcome:{kind:'structured',handle:'chat-'+count,sessionId:'session-'+count},receipt:{mode:'structured',preferred:'structured',reason:'user_default',detail:'Native configured surface'},prompt:{delivery:'submit',outcome:'journaled',messageId:'message-'+count}};});
+ const outcomes=[];
+ for(const member of f.team.members) outcomes.push(await f.send('launchSupervisor',{...f.input,memberId:member.id,requestId:'prepare-'+member.id}));
+ assert.deepEqual(outcomes.map(row=>row.value?.status),['created','unknown','created','created']);
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,4);
+ assert.deepEqual(Object.keys(f.store().readSnapshot().teams[0].launch.members),f.team.members.map(row=>row.id));
+ for(const member of f.team.members) await f.send('launchSupervisor',{...f.input,memberId:member.id,requestId:'prepare-'+member.id});
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,4);
+ assert.ok(f.calls.filter(row=>row.method==='agent.launchReplay').every(row=>row.params.target.worktree==='folder:/saved'));
 });

@@ -1,3 +1,4 @@
+import { declaredWriteScope } from '../scheduling.mjs';
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { join, relative, isAbsolute, sep } from 'node:path';
@@ -17,8 +18,9 @@ const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
 const parse=value=>{try{return JSON.parse(value);}catch{return null;}};
 function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  if(!spec||spec.protocol!=='team-dispatch/v1'||spec.workId!==work.id||spec.token!==protocol.token||spec.generation!==protocol.generation||spec.configVersion!==work.configVersion||typeof spec.taskKey!=='string'||!/^[A-Za-z0-9-]{1,120}$/.test(spec.taskKey)||typeof spec.instruction!=='string'||!spec.instruction.trim()||spec.instruction.length>8000)throw Error('Native task intent does not match this work admission protocol.');
- if(Object.keys(spec).some(key=>!['protocol','workId','token','generation','taskKey','memberId','configVersion','roleVersion','role','instruction','dependencies','previousAttemptId'].includes(key)))throw Error('Native intent has unsupported fields.');
+ if(Object.keys(spec).some(key=>!['protocol','workId','token','generation','taskKey','memberId','configVersion','roleVersion','role','instruction','dependencies','previousAttemptId','writeScope'].includes(key)))throw Error('Native intent has unsupported fields.');
  if(spec.dependencies!==undefined&&(!Array.isArray(spec.dependencies)||spec.dependencies.length>100||spec.dependencies.some(key=>typeof key!=='string'||!/^[A-Za-z0-9-]{1,120}$/.test(key)||key===spec.taskKey)||new Set(spec.dependencies).size!==spec.dependencies.length))throw Error('Invalid application dependencies.');
+ if(spec.writeScope!==undefined)declaredWriteScope(spec.writeScope);
  const member=team.members.find(row=>row.id===spec.memberId);
  if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==spec.roleVersion||!same(spec.role,{brief:member.brief,habits:member.habits,collaboration:member.collaboration}))throw Error('Task member, direct supervisor or frozen role version does not match.');
  const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
@@ -62,7 +64,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    if(!d||d.run_id!==work.run.id||d.task_id!==attempt.nativeTaskId||!worker||worker.worktree_id!==work.scope.workspaceId||worker.agent_terminal_handle!==d.assignee_handle||!hostMatches||(attempt.reuse?(d.assignee_orca_session_id?d.assignee_orca_session_id!==attempt.reuse.binding.sessionId:d.assignee_handle!==attempt.reuse.binding.handle||d.process_incarnation!==attempt.reuse.binding.incarnationId):options?.agent!==attempt.startParams.agent)||(owner.kind==='structured'?d.creator_orca_session_id!==owner.sessionId:d.creator_handle!==owner.handle||d.creator_pane_key!==owner.paneKey)){observations.push({id:attempt.id,state:'unverified',detail:'Native Dispatch creator, member instance or execution host is unverified.'});continue;}
    const reusedChat=attempt.reuse?.terminal===`orca_session_id:${d.assignee_orca_session_id}`&&d.assignee_handle===attempt.reuse.terminal&&Number.isSafeInteger(attempt.reuse.sessionFence);
    if(!d.assignee_handle||(!reusedChat&&(!d.assignee_pane_key||!d.process_incarnation))||(owner.kind==='structured'?d.assignee_orca_session_id===owner.sessionId:d.assignee_pane_key===owner.paneKey)){observations.push({id:attempt.id,state:'unverified',detail:'Native worker instance evidence is incomplete.'});continue;}
-   const binding={kind:d.assignee_orca_session_id?'structured':'terminal',handle:d.assignee_handle,paneKey:d.assignee_pane_key,incarnationId:d.process_incarnation,...(reusedChat?{sessionFence:attempt.reuse.sessionFence}:{}),...(d.assignee_orca_session_id?{sessionId:d.assignee_orca_session_id}:{}),workspaceId:worker.worktree_id,executionHostId:work.scope.executionHostId,runtimeId:worker.runtime_epoch};
+   const binding={kind:d.assignee_orca_session_id?'structured':'terminal',handle:d.assignee_handle,paneKey:d.assignee_pane_key,incarnationId:d.process_incarnation,...(reusedChat?{sessionFence:attempt.reuse.sessionFence,...(attempt.reuse.binding.liveSessionId?{liveSessionId:attempt.reuse.binding.liveSessionId}:{})}:{}),...(d.assignee_orca_session_id?{sessionId:d.assignee_orca_session_id}:{}),workspaceId:worker.worktree_id,executionHostId:work.scope.executionHostId,runtimeId:worker.runtime_epoch};
    const facts=db.prepare("SELECT id,task_id,authority_id,payload FROM attempt_observation_facts WHERE dispatch_id=? AND facet='worker_report'").all(d.id);
    let completion;
    for(const fact of facts){

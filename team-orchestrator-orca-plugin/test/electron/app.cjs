@@ -74,7 +74,7 @@ function dispatchInput(text, params, envelope) {
     assert.deepEqual(protocol.nativeSend.params, params);
     assert.equal(protocolInputs.has(work.id), false, 'protocol is never sent twice'); protocolInputs.set(work.id, operationId);
     const member = wire.children[0], taskId = 'native-task-' + work.id;
-    const spec = JSON.stringify({ protocol: wire.protocol, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, instruction: 'Inspect the checkout and return evidence.' });
+    const spec = JSON.stringify({ protocol: wire.protocol, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: [], instruction: 'Inspect the checkout and return evidence.' });
     const terminal = work.instance.kind === 'terminal';
     nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId, work.run.id, spec, 'ready', null, terminal ? work.instance.handle : null, terminal ? work.instance.paneKey : null, terminal ? work.instance.incarnationId : null, terminal ? wire.generation : null);
     nativeReceipt(work, 'create-' + work.id, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task: { id: taskId, run_id: work.run.id, spec, status: 'ready' } });

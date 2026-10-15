@@ -5,7 +5,7 @@ import { discoverCapabilities } from './capabilities.mjs';
 import { preferenceIssue } from '../capabilities.mjs';
 export function dispatchInstructions(work,team,protocol) {
  const children=team.members.filter(row=>row.boss===work.supervisorMemberId).map(row=>({memberId:row.id,name:row.name,agent:row.agent,model:row.model,effort:row.effort,roleVersion:row.roleVersion,role:{brief:row.brief,habits:row.habits,collaboration:row.collaboration}}));
- return 'TEAM_DISPATCH_PROTOCOL\n'+JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:protocol.generation,configVersion:work.configVersion,runId:work.run.id,children,instructions:'You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction. Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:<native-message-id> and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself.'});
+ return 'TEAM_DISPATCH_PROTOCOL\n'+JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:protocol.generation,configVersion:work.configVersion,runId:work.run.id,children,instructions:'You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction. Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:<native-message-id> and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself.'});
 }
 function userMessage(work,instance,text){
  if(work.binding.kind==='structured'){
@@ -30,6 +30,27 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
   try { const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope); if(!accepted(receipt,nativeSend,verified.instance))throw Error('Protocol input was not confirmed; no automatic resend.'); return store.updateDispatchProtocol(work.id,protocol.version,{state:'accepted',detail:'Native host accepted dispatch instructions; the real supervisor must create Task intents.'}); }
   catch(error){return store.updateDispatchProtocol(work.id,protocol.version,{state:'unknown',detail:String(error.message).slice(0,1200)});}
  }
+ async function preparedSession(work,member,saved){
+  if(saved.status!=='created'||saved.teamId!==work.teamId||saved.memberId!==member.id||saved.scope?.workspaceKey!==work.scope.workspaceKey||saved.roleVersion!==member.roleVersion||saved.runtimeId!==work.binding.runtimeId)throw Error('Prepared member is unknown, stale or belongs to another scope; no replacement was launched.');
+  const preferences={agent:saved.nativeRequest.agent,model:saved.nativeRequest.sessionOptions?.model??'default',effort:saved.nativeRequest.sessionOptions?.effort??'default'};
+  if(Object.keys(preferences).some(key=>preferences[key]!==member[key]))throw Error('Prepared session preferences differ; reuse cannot override model or effort.');
+  let terminal,binding,sessionFence;
+  if(saved.kind==='structured'){
+   if(work.scope.executionHostId!=='local')throw Error('Prepared structured session requires its owning runtime.');
+   terminal=(await rpc('orchestration.sessionAddress',{sessionId:saved.sessionId}))?.orcaSessionId;
+   if(!terminal?.startsWith('orca_session_id:')||terminal===`orca_session_id:${work.instance.sessionId}`)throw Error('Prepared member canonical target is missing or is the supervisor itself.');
+   const location=(await rpc('orchestration.partyLocation',{address:terminal}))?.location;
+   if(location?.kind!=='chat'||location.sessionId!==saved.sessionId||location.worktreeId!==work.scope.workspaceId)throw Error('Prepared member session is closed, moved or unverified.');
+   const history=await rpc('agentSession.history',{sessionId:saved.sessionId,direction:'tail',limit:1});sessionFence=history?.page?.fence;
+   if(history?.ok!==true||history.page?.sessionId!==saved.sessionId||!Number.isSafeInteger(sessionFence)||sessionFence<1)throw Error('Prepared member session fence is unavailable.');
+   binding={kind:'structured',handle:terminal,sessionId:terminal.slice('orca_session_id:'.length),liveSessionId:saved.sessionId,paneKey:null,incarnationId:null,sessionFence,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
+  }else{
+   const live=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
+   if(live?.handle!==saved.handle||!live.incarnationId||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable||saved.handle===work.binding.handle)throw Error('Prepared member terminal is unverified; no replacement was launched.');
+   terminal=saved.handle;binding={kind:'terminal',handle:terminal,paneKey:saved.paneKey,incarnationId:live.incarnationId,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
+  }
+  return {kind:'prepared',requestId:saved.requestId,...(saved.instanceGeneration?{instanceGeneration:saved.instanceGeneration}:{}),binding,terminal,...(sessionFence?{sessionFence}:{}),preferences};
+ }
  async function retainedSession(work,member,prior){
   if(!prior?.binding||!['accepted','rework'].includes(prior.status)||prior.workId!==work.id||prior.roleVersion!==member.roleVersion)throw Error('Member has an unresolved reservation; do not launch another session.');
   const saved=prior.binding,shown=await rpc('orchestration.workerShow',{dispatch:prior.dispatchId});
@@ -37,10 +58,10 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
   let terminal,sessionFence;
   if(saved.kind==='structured'){
    if(work.scope.executionHostId!=='local')throw Error('Retained structured session requires its owning runtime.');
-   terminal=(await rpc('orchestration.sessionAddress',{sessionId:saved.sessionId}))?.orcaSessionId;
+   terminal=(await rpc('orchestration.sessionAddress',{sessionId:saved.liveSessionId??saved.sessionId}))?.orcaSessionId;
    if(terminal!==`orca_session_id:${saved.sessionId}`)throw Error('Retained member canonical identity changed.');
    const location=(await rpc('orchestration.partyLocation',{address:terminal}))?.location;
-   if(location?.kind!=='chat'||location.sessionId!==saved.sessionId||location.worktreeId!==work.scope.workspaceId)throw Error('Retained member session is closed, moved or has unverified lineage.');
+   if(location?.kind!=='chat'||location.sessionId!==(saved.liveSessionId??saved.sessionId)||location.worktreeId!==work.scope.workspaceId)throw Error('Retained member session is closed, moved or has unverified lineage.');
    const history=await rpc('agentSession.history',{sessionId:location.sessionId,direction:'tail',limit:1});
    sessionFence=history?.page?.fence;
    if(history?.ok!==true||history.page?.sessionId!==location.sessionId||!Number.isSafeInteger(sessionFence)||sessionFence<1||(saved.sessionFence!==undefined&&saved.sessionFence!==sessionFence))throw Error('Retained member session fence is unavailable.');
@@ -58,7 +79,7 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
   const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.readTeamVersion(work.teamId,work.configVersion);
   const member=team.members.find(row=>row.id===attempt.memberId);
   if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==attempt.roleVersion||(!attempt.reuse&&(attempt.startParams.agent!==member.agent||(attempt.startParams.model??'default')!==member.model||(attempt.startParams.effort??'default')!==member.effort)))throw Error('Saved permit preferences or direct supervisor do not match the frozen member.');
-  if(attempt.reuse){const prior=store.listDispatches(work.id).find(row=>row.id===attempt.reuse.attemptId),current=await retainedSession(work,member,prior);if(JSON.stringify(current)!==JSON.stringify(attempt.reuse))throw Error('Retained member changed before permit; reservation preserved.');}
+  if(attempt.reuse){const prior=store.listDispatches(work.id).find(row=>row.id===attempt.reuse.attemptId),prepared=store.readMemberOperation(member.id),current=attempt.reuse.kind==='prepared'?await preparedSession(work,member,prepared):await retainedSession(work,member,prior);if(JSON.stringify(current)!==JSON.stringify(attempt.reuse))throw Error('Retained member changed before permit; reservation preserved.');}
   const checked=await evidence(store.readWork(work.id),protocol,team,verified);
   if(checked.state!=='verified')throw Error(checked.detail);
   const existing=checked.observations.find(row=>row.id===attempt.id);
@@ -89,16 +110,17 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
      const currentIntent=fresh.intents.find(row=>row.nativeTaskId===intent.nativeTaskId&&row.payloadHash===intent.payloadHash);
      if(fresh.state!=='verified'||!currentIntent)throw Error('Native intent changed during admission.');
      const prior=store.listDispatches(workId).filter(row=>row.memberId===intent.member.id).at(-1);
-     const reuse=prior?await retainedSession(work,intent.member,prior):undefined;
+     const prepared=store.readMemberOperation(intent.member.id),reuse=prior?await retainedSession(work,intent.member,prior):prepared?await preparedSession(work,intent.member,prepared):undefined;
      const startParams={task:intent.nativeTaskId,worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`,agent:intent.member.agent,run:work.run.id,...(intent.member.model!=='default'?{model:intent.member.model}:{}),...(intent.member.effort!=='default'?{effort:intent.member.effort}:{})};
      if(reuse){delete startParams.agent;delete startParams.model;delete startParams.effort;startParams.terminal=reuse.terminal;}
      const admitted=store.prepareDispatch(workId,currentIntent,startParams,reuse);if(admitted.fresh&&!currentIntent.unadmitted)await permit(work,admitted.attempt);
-    }catch(error){protocol=store.updateDispatchProtocol(workId,store.readDispatchProtocol(workId).version,{detail:String(error.message).slice(0,1200)});}
+    }catch(error){store.queueDispatch(workId,intent,error.message);protocol=store.updateDispatchProtocol(workId,store.readDispatchProtocol(workId).version,{detail:String(error.message).slice(0,1200)});}
    }
    // Resume only unsent, committed permits; sending/unknown never becomes a fresh input.
-   for(const attempt of store.listDispatches(workId))if(attempt.permit.state==='not_sent')await permit(work,attempt);
+   for(const attempt of store.listDispatches(workId))if(attempt.permit.state==='not_sent')try{await permit(work,attempt);}catch(error){store.updateDispatch(attempt.id,attempt.version,{detail:String(error.message).slice(0,1200)});}
    native=await evidence(store.readWork(workId),protocol,team,await works.verifyWork(workId));if(native.state!=='verified')throw Error(native.detail);
    for(const observed of native.observations){
+    try {
     let attempt=store.listDispatches(workId).find(row=>row.id===observed.id);if(attempt.evidenceId)continue;
     if(observed.state!=='verified'){if(attempt.permit.state==='sending')attempt=store.updateDispatch(attempt.id,attempt.version,{status:'unknown',permit:{...attempt.permit,state:'unknown'},detail:'Permit delivery interrupted; reconciliation never resends.'});else if(observed.state==='unverified')store.updateDispatch(attempt.id,attempt.version,{status:'unknown',detail:observed.detail});continue;}
     const shown=await rpc('orchestration.workerShow',{dispatch:observed.dispatchId});
@@ -106,6 +128,7 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
     const final=await evidence(store.readWork(workId),protocol,team,await works.verifyWork(workId)),settled=final.observations.find(row=>row.id===attempt.id);
     if(final.state!=='verified'||settled?.state!=='verified'||settled.dispatchId!==observed.dispatchId||JSON.stringify(settled.binding)!==JSON.stringify(observed.binding))throw Error('Native Dispatch changed during observation.');
     try { store.updateDispatch(attempt.id,attempt.version,{dispatchId:settled.dispatchId,binding:settled.binding,permit:{...attempt.permit,state:'accepted',source:'native-worker-start'},nativeState:settled.nativeState,startRequestId:settled.startRequestId,startPayloadHash:settled.startPayloadHash,...(settled.completion?{status:'pending_acceptance',...settled.completion,detail:'Native execution report recorded. Direct supervisor acceptance is still required.'}:{status:settled.nativeState==='ready'&&shown.observation?.exactWorker===true&&shown.observation.status==='live'&&!shown.observation.agentWait?'running':'unknown',detail:shown.observation?.agentWait?'Native session is waiting for input or authorization. Resolve its native tab; no replacement was started.':shown.observation?.exactWorker===true&&shown.observation.status==='live'?'Native assignment observed; execution result is not yet proven.':'Native worker observation is unverified; its saved identity remains reserved.'})}); } catch(error) { store.updateDispatch(attempt.id,attempt.version,{status:'unknown',detail:String(error.message).slice(0,1200)}); }
+    }catch(error){const failed=store.listDispatches(workId).find(row=>row.id===observed.id);if(failed&&!failed.evidenceId)store.updateDispatch(failed.id,failed.version,{status:'unknown',detail:String(error.message).slice(0,1200)});}
    }
    const reviewEvidence=await evidence(store.readWork(workId),protocol,team,await works.verifyWork(workId));
    if(reviewEvidence.state!=='verified')throw Error(reviewEvidence.detail);

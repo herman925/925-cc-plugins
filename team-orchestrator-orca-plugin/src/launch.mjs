@@ -1,4 +1,7 @@
-export function initialMembers(team) { return team.members.filter(member => !member.boss); }
+export function initialMembers(team, mode = team.configuration?.launchMode ?? 'on-demand') {
+  if (!['on-demand', 'all'].includes(mode)) throw Error('Choose a supported launch mode.');
+  return team.members.filter(member => mode === 'all' || !member.boss || team.members.some(child => child.boss === member.id));
+}
 
 export function memberLaunch(team, member, workspaceKey) {
   if (!team.id || !/^[a-z0-9-]{1,80}$/i.test(team.id)) throw new Error('Missing launch request identity.');
