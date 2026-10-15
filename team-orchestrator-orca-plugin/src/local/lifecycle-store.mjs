@@ -2,14 +2,17 @@ import { initialMembers } from '../launch.mjs';
 import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>{throw Error(message);};
+const boundedHandoff=h=>({...h,summary:h.summary.slice(0,2000),evidenceRefs:h.evidenceRefs.slice(0,10).map(r=>r.slice(0,160)),truncated:h.summary.length>2000||h.evidenceRefs.length>10||h.evidenceRefs.some(r=>r.length>160)});
 export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic,readSnapshot,write}){
  const deliveries=id=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'delivery:%' ORDER BY rowid").all().map(r=>JSON.parse(r.json)).filter(r=>r.workId===id);
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
-  const reasons=[];const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
+  const reasons=[];
+  if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>JSON.parse(r.json).workId===work.id))reasons.push('Queued member tasks await admission');
+  const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
   for(const expected of work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
-  for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
  };
@@ -59,7 +62,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
     db.prepare('DELETE FROM receipts WHERE id=?').run(`active-work:${w.teamId}`);
     w.closedAt=event.recordedAt;w.handoff={summary:d.summary,evidenceRefs:d.evidenceRefs,deliveryId:d.id};
     const goal=listGoals(w.teamId).find(g=>g.status==='queued');
-    if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=w.handoff;putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
+    if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=boundedHandoff(w.handoff);putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
     state.revision++;write(state);
    }
    persistWork(w);putPrivate(key,event);return event;
@@ -73,7 +76,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(Object.keys(team.launch?.members??{}).length)fail('Existing preparation bindings must be resolved before a fresh queued goal.');
    const old=db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%' ORDER BY rowid DESC").all().map(r=>JSON.parse(r.json)).find(w=>w.teamId===teamId&&w.status==='completed');
    if(!old)fail('Submit the first total objective with its prepared supervisor before advancing later goals.');
-   Object.assign(goal,{status:'reserved',previousWorkId:old.id,handoff:old.handoff,launchRequests:Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()])),workRequestId:randomUUID(),configVersion:team.configVersion,supervisorMemberId:team.members.find(m=>m.boss===null).id});
+   Object.assign(goal,{status:'reserved',previousWorkId:old.id,handoff:boundedHandoff(old.handoff),launchRequests:Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()])),workRequestId:randomUUID(),configVersion:team.configVersion,supervisorMemberId:team.members.find(m=>m.boss===null).id});
    putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${teamId}`,{goalId:goal.id});state.revision++;write(state);return goal;
   });},
   nextGoal(teamId){const p=readPrivate(`next-goal:${teamId}`);return p?readPrivate(`goal:${p.goalId}`):null;},

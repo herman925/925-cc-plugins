@@ -363,7 +363,7 @@ app.addEventListener('click', async event => {
         if(!decisionRequests.has(key))decisionRequests.set(key,{requestId:crypto.randomUUID(),workId:work.id,deliveryId:work.delivery.id,expectedWorkVersion:work.version,decision:action==='accept-delivery'?'accept':'rework',...(action==='rework-delivery'?{feedback:reworkDrafts.get(work.id)||''}:{})});
         result=await call('decideWork',decisionRequests.get(key));message=action==='accept-delivery'?'Delivery accepted.':'Corrections saved for the highest supervisor.';
       }
-      while(result.continue){message='Preparing fresh sessions for the next objective…';render();await new Promise(resolve=>setTimeout(resolve,10100));result=await call('startNextGoal',{teamId});}
+      while(result.continue){message='Preparing fresh sessions for the next objective…';render();await new Promise(resolve=>setTimeout(resolve,10100));result=await call('startNextGoal',{teamId,goalId:result.goalId});}
       state=validatePersistentState(result.value||(await call('storage.get',{})).value);
       if(result.pending)message=result.detail||'Next objective remains reserved. Continue after checking its saved launch evidence.';
     }catch(error){problem=error.message;if(/changed|superseded/i.test(error.message))decisionRequests.clear();try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}

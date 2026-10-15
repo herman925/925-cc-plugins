@@ -86,14 +86,14 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const decision=await lifecycle.decide(params);return {value:store.readSnapshot(),decision,teamId:store.readWork(params.workId).teamId};
         }
         if(op==='_nextGoal'){
-          const goal=store.reserveNextGoal(params.teamId);if(!goal)return {value:store.readSnapshot()};
+          const goal=params.goalId?store.nextGoal(params.teamId):store.reserveNextGoal(params.teamId);if(!goal||params.goalId&&goal.id!==params.goalId)return {value:store.readSnapshot()};
           const team=store.readSnapshot().teams.find(t=>t.id===params.teamId);
           if(team?.configVersion!==goal.configVersion)throw Error('Queued transition configuration changed.');
           const pending=Object.entries(goal.launchRequests).find(([memberId,id])=>store.readOperation(id)?.status!=='created');
           return {goalId:goal.id,...(pending?{launch:{teamId:team.id,memberId:pending[0],requestId:pending[1],configVersion:goal.configVersion}}:{ready:true})};
         }
         if(op==='_startQueuedWork'){
-          const goal=store.nextGoal(params.teamId);if(!goal)return {value:store.readSnapshot()};
+          const goal=store.nextGoal(params.teamId);if(!goal||params.goalId&&goal.id!==params.goalId)return {value:store.readSnapshot()};
           const work=await works.submit({teamId:params.teamId,requestId:goal.workRequestId,objective:goal.objective,expectedRevision:store.readSnapshot().revision});
           await dispatches.check(work.id);stopped=false;scheduleWork();return {value:store.readSnapshot(),work};
         }

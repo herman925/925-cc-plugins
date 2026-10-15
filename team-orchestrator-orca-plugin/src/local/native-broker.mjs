@@ -3,8 +3,8 @@ import { discoverCapabilities } from './capabilities.mjs';
 export async function mediateOperation({ op, input, invoke, rpc, authority }) {
   if(op==='decideWork'){
     await authority();const result=await invoke({op:'_decideWork',params:input});
-    if(input.decision!=='accept')return {ok:true,value:result};
-    return mediateOperation({op:'startNextGoal',input:{teamId:result.teamId},invoke,rpc,authority});
+    if(input.decision!=='accept'||!result.decision.nextGoalId)return {ok:true,value:result};
+    return mediateOperation({op:'startNextGoal',input:{teamId:result.teamId,goalId:result.decision.nextGoalId},invoke,rpc,authority});
   }
   if(op==='startNextGoal'){
     await authority();const plan=await invoke({op:'_nextGoal',params:input});
@@ -13,9 +13,9 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
       const launched=await mediateOperation({op:'launchSupervisor',input:plan.launch,invoke,rpc,authority});
       if(launched.value?.status!=='created')return {ok:true,value:{pending:true,detail:'Fresh launch outcome is unknown. Check saved launch evidence before continuing.'}};
       const remaining=await invoke({op:'_nextGoal',params:input});
-      if(remaining.launch)return {ok:true,value:{pending:true,continue:true}};
+      if(remaining.launch)return {ok:true,value:{pending:true,continue:true,goalId:plan.goalId}};
     }
-    await authority();return {ok:true,value:await invoke({op:'_startQueuedWork',params:input})};
+    await authority();return {ok:true,value:await invoke({op:'_startQueuedWork',params:{...input,goalId:plan.goalId}})};
   }
   if (op === 'openMember') {
     const saved = await invoke({ op: '_memberBinding', params: input });

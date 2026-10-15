@@ -224,6 +224,7 @@ test('closure rechecks user questions, preserves unknown receipts after confirme
  const decision={requestId:'accept',workId:w.id,deliveryId:'delivery',expectedWorkVersion:w.version,decision:'accept'};
  f.store.ingestQuestion(w.id,{spec:{appQuestionId:'question',summary:'Choose scope',options:['A','B'],blockingTaskKeys:[]}});
  assert.throws(()=>f.store.decideWork(decision),/Required work remains/);assert.equal(f.store.readWork(w.id).status,'awaiting_acceptance');
+ f.store.updateQuestion(w.id,'question',q=>{q.status='closed';});assert.throws(()=>f.store.decideWork(decision),/Required work remains/);f.store.updateQuestion(w.id,'question',q=>{q.status='pending';});
  f.store.queueQuestionAnswer({workId:w.id,questionId:'question',questionRevision:1,answerId:'answer',body:'A',supplement:false});
  f.store.updateQuestion(w.id,'question',q=>{q.status='answered';q.answers[0].state='unknown';});assert.throws(()=>f.store.decideWork(decision),/Required work remains/);
  f.store.updateQuestion(w.id,'question',q=>{q.answers[0].processed='confirmed';});
