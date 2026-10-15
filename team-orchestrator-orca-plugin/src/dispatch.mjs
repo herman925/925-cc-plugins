@@ -1,3 +1,4 @@
+export const WORKER_RULES='Use only approved roster members through admitted native Orca dispatch. Do not self-create provider-native subagents. Report results and questions to your original direct manager; assigned collaboration does not transfer acceptance. These are cooperative role instructions, not global provider tool interception.';
 import { declaredWriteScope } from './scheduling.mjs';
 export const DISPATCH_STATUSES = ['admitted','awaiting_start','running','unknown','pending_acceptance','accepted','rework','rejected'];
 const text = (value, limit = 4096) => typeof value === 'string' && value.length > 0 && value.length <= limit;
@@ -18,7 +19,7 @@ export function validateDispatchProtocol(row) {
 }
 export function publicDispatch(row) {
  validateDispatch(row);
- const keys=['id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
+ const keys=['workId','teamWorkId','runId','creatorDispatchId','depth','id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
  return Object.fromEntries(keys.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
 }
 export function publicDispatchProtocol(row) { return row ? {state:row.state,generation:row.generation,...(row.detail?{detail:row.detail}:{})} : undefined; }

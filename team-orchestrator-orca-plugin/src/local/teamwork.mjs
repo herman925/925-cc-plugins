@@ -1,3 +1,4 @@
+import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {publicWork} from '../work.mjs';
@@ -5,6 +6,8 @@ import {readNativeRunEvidence} from './native-run.mjs';
 const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value??null):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>`${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 export const sendFingerprint=(sessionId,body,delivery)=>createHash('sha256').update(canonical({method:'agentSession.send',sessionId,fields:{body,...(delivery?{delivery}:{})}})).digest('hex');
 export function objectiveInstructions(work,team){
+ if(work.parent)return `TEAM_MANAGER_RUN\n${JSON.stringify({teamWorkId:work.teamWorkId,runBindingId:work.id,parent:work.parent,objective:work.nativeObjective,instruction:'You are the actual assigned manager of the original parent Dispatch. Keep that umbrella Dispatch active while delegating and reviewing. Using your own inherited native identity create exactly one Run with this exact objective; do not fabricate --from. Never pass a parent Run Task as native --parent in this Run. Wait for the versioned child admission protocol. Native depth is inherited from your active parent Dispatch across Runs; if nested_worker_depth_exceeded, report that refusal and ask the highest supervisor to request Settings → Orchestration → Nested worker depth at least 2 (or the required deeper level). Never change the setting or launch a standalone replacement to bypass it. Accept only direct reports. When every descendant is accepted and questions resolved, send your own native worker_done for the ORIGINAL parent Dispatch/Task and original parent Run using the installed guide; do not stamp the child Run onto the upward report. Only the highest supervisor asks/delivers to the user. Relay questions through your real parent manager, preserving their original native question IDs. Do not self-create provider-native subagents; only approved roster members via admitted native Orca dispatch. This is a cooperative instruction and admission policy, not global provider tool interception.'})}`;
+
  const head=team.members.find(row=>row.id===work.supervisorMemberId);
  return `Team Orchestrator work protocol v1. TeamWork ${work.id}; team ${work.teamId}; supervisor member ${work.supervisorMemberId}; configuration ${work.configVersion}; role ${work.roleVersion}.\nYour saved role: ${head.brief}\nWork habits: ${head.habits}\nCollaboration: ${head.collaboration}\nProject: ${work.scope.workspaceId}; execution host: ${work.scope.executionHostId}.\nApproved prior-work handoff: ${work.handoff?JSON.stringify(work.handoff):'None'}.\nTotal objective: ${work.objective}\nUse your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
 }
@@ -18,11 +21,17 @@ export function createWorkService({store,rpc,userData,consent}){
   if(state?.status!=='connected'||!Number.isSafeInteger(state.connectionGeneration)||(expected!=null&&state.connectionGeneration!==expected))throw Error('Saved SSH host disconnected or changed generation; existing intent remains reserved.');
   return state.connectionGeneration;
  }
- async function verify(work,forSend=false){
+ async function verify(work,forSend=false,{allowSettledParent=false}={}){
   if(work.status==='completed')throw Error('Completed TeamWork is sealed.');
   await consent();
-  const binding=store.readOperation(work.binding.requestId);
-  if(!binding||!store.isActiveOperation(binding)||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
+  const binding=work.parent?work.binding:store.readOperation(work.binding.requestId);
+  if(work.parent){
+   const parentWork=(store.readCurrentWork??store.readWork)(work.parent.workId),attempt=store.listDispatches(work.parent.workId).find(a=>a.id===work.parent.attemptId);
+   if(!parentWork||!attempt||attempt.dispatchId!==work.parent.dispatchId||store.listDispatches(parentWork.id).filter(a=>a.taskKey===attempt.taskKey).at(-1)?.id!==attempt.id)throw Error('Parent manager attempt changed.');
+   await verify(parentWork,false,{allowSettledParent});
+   const proof=await readNativeParentEvidence(userData,{parentWork,attempt,active:!allowSettledParent});if(proof.state!=='verified')throw Error(proof.detail);
+  }
+  if(!binding||(!work.parent&&!store.isActiveOperation(binding))||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
   const status=await rpc('status.get');
   if(status?.runtimeId!==binding.runtimeId||!status.capabilities?.includes('orchestration.contract.v1'))throw Error('The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.');
   const selected=(await rpc('worktree.show',{worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`}))?.worktree;
@@ -120,8 +129,9 @@ export function createWorkService({store,rpc,userData,consent}){
   }catch(error){return save(work,{input:attempted&&work.input.state==='sending'?{...work.input,state:'unknown',detail:'Input may have been delivered. Checking work never resends it.'}:work.input,status:'needs_attention',error:String(error.message).slice(0,1500)});}
  }
  return {
+  async startManager(id){return serial(id,async()=>{const work=store.readWork(id);if(!work?.parent)throw Error('Manager Run binding required.');return publicWork(await deliver(work));});},
   async verifyHost(id,expected){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return verifyHost(work,expected);},
-  async verifyWork(id,forSend=false){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return withNativeRuntime(rpc,work.binding.runtimeId,()=>verify(work,forSend));},
+  async verifyWork(id,forSend=false,options){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return withNativeRuntime(rpc,work.binding.runtimeId,()=>verify(work,forSend,options));},
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readWork(id);if(!work||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},

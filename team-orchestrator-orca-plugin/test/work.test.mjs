@@ -222,7 +222,7 @@ test('closure rechecks user questions, preserves unknown receipts after confirme
  w=f.store.updateWork(w.id,w.version,{status:'active',run:{state:'verified',id:'run',consumerGeneration:1},instance:{kind:'structured',sessionId:'session-head',liveSessionId:'session-head',fence:7}});
  f.store.recordDelivery(w.id,{id:'delivery',summary:'Done',evidenceRefs:['report'],attemptIds:[],generation:1,proof:{requestId:'proof',payloadHash:'a'.repeat(64)}});w=f.store.readWork(w.id);
  const decision={requestId:'accept',workId:w.id,deliveryId:'delivery',expectedWorkVersion:w.version,decision:'accept'};
- f.store.ingestQuestion(w.id,{spec:{appQuestionId:'question',summary:'Choose scope',options:['A','B'],blockingTaskKeys:[]}});
+ f.store.ingestQuestion(w.id,{spec:{kind:'user-question',appQuestionId:'question',summary:'Choose scope',options:['A','B'],blockingTaskKeys:[]}});
  assert.throws(()=>f.store.decideWork(decision),/Required work remains/);assert.equal(f.store.readWork(w.id).status,'awaiting_acceptance');
  f.store.updateQuestion(w.id,'question',q=>{q.status='closed';});assert.throws(()=>f.store.decideWork(decision),/Required work remains/);f.store.updateQuestion(w.id,'question',q=>{q.status='pending';});
  f.store.queueQuestionAnswer({workId:w.id,questionId:'question',questionRevision:1,answerId:'answer',body:'A',supplement:false});

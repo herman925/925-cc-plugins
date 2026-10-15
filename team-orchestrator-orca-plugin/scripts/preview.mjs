@@ -30,7 +30,7 @@ async function fixture(id, mode) {
       CREATE TABLE mutation_caller_identities(transport TEXT PRIMARY KEY,caller_fingerprint TEXT);
       INSERT INTO mutation_caller_identities VALUES('local_authenticated_transport','fixture-fingerprint');
       CREATE TABLE mutation_receipts(caller_fingerprint TEXT,request_id TEXT,method TEXT,payload_hash TEXT,state TEXT,receipt TEXT,PRIMARY KEY(caller_fingerprint,request_id));
-      CREATE TABLE dispatch_contexts(id TEXT PRIMARY KEY,run_id TEXT,task_id TEXT,creator_handle TEXT,creator_pane_key TEXT,creator_orca_session_id TEXT,creator_dispatch_id TEXT,assignee_handle TEXT,assignee_pane_key TEXT,assignee_orca_session_id TEXT,process_incarnation TEXT,host_scope TEXT,status TEXT,consumer_generation INTEGER);
+      CREATE TABLE dispatch_contexts(id TEXT PRIMARY KEY,run_id TEXT,task_id TEXT,creator_handle TEXT,creator_pane_key TEXT,creator_orca_session_id TEXT,creator_dispatch_id TEXT,assignee_handle TEXT,assignee_pane_key TEXT,assignee_orca_session_id TEXT,process_incarnation TEXT,host_scope TEXT,status TEXT,consumer_generation INTEGER,depth INTEGER DEFAULT 1);
       CREATE TABLE worker_dispatches(dispatch_id TEXT PRIMARY KEY,worktree_id TEXT,agent_terminal_handle TEXT,state TEXT,runtime_epoch TEXT,start_options TEXT);
       CREATE TABLE attempt_observation_facts(id TEXT PRIMARY KEY,dispatch_id TEXT,task_id TEXT,authority_id TEXT,facet TEXT,payload TEXT);
       CREATE TABLE messages(id TEXT PRIMARY KEY,run_id TEXT,from_handle TEXT,sender_pane_key TEXT,type TEXT,body TEXT,payload TEXT);
@@ -60,10 +60,10 @@ async function fixture(id, mode) {
         const protocol = JSON.parse(text.slice('TEAM_DISPATCH_PROTOCOL\n'.length));
         const children=mode==='dispatch-scheduling'?protocol.children:protocol.children.slice(0,1);
         for(const [index,member] of children.entries()){
-        const spec = JSON.stringify({ protocol: protocol.protocol, workId: work.id, token: protocol.token, generation: protocol.generation, taskKey: mode==='dispatch-scheduling'?['edit-source','overlap-source','independent-docs'][index]:'inspect-checkout', memberId: member.memberId, configVersion: protocol.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: mode==='dispatch-scheduling'?[{path:index===0?'src':index===1?'src/app.js':'docs/readme.md',kind:index===0?'directory':'file'}]:[], instruction: 'Inspect checkout <script> safely' });
-        const task = { id: 'native-task-fixture-'+index, run_id: work.run.id, spec, status: 'ready', result: null };
+        const spec = JSON.stringify({ protocol: protocol.protocol, workerRules: protocol.workerRules, workId: work.id, token: protocol.token, generation: protocol.generation, taskKey: mode==='dispatch-scheduling'?['edit-source','overlap-source','independent-docs'][index]:'inspect-checkout', memberId: member.memberId, configVersion: protocol.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: mode==='dispatch-scheduling'?[{path:index===0?'src':index===1?'src/app.js':'docs/readme.md',kind:index===0?'directory':'file'}]:[], instruction: 'Inspect checkout <script> safely' });
+        const task = { id: 'native-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, run_id: work.run.id, spec, status: 'ready', result: null };
         nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.incarnationId : null, owner.kind === 'terminal' ? protocol.generation : null);
-        receipt(work, 'create-task-fixture-'+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
+        receipt(work, 'create-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
         }
       }
       if (mode.startsWith('dispatch-question') && text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
@@ -80,9 +80,9 @@ async function fixture(id, mode) {
         assert.equal(attempt.memberId, permit.memberId);
         if(mode==='dispatch-queued')return;
         if (mode === 'dispatch-unknown') throw Error('Native start evidence unavailable');
-        const dispatchId = 'dispatch-'+permit.nativeTaskId, handle = 'structworker_'+permit.nativeTaskId, paneKey = 'child-tab:'+permit.nativeTaskId;
-        const complete = !['dispatch-running','dispatch-scheduling'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
-        nativeDb.prepare('INSERT INTO dispatch_contexts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(dispatchId, work.run.id, permit.nativeTaskId, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'structured' ? owner.sessionId : null, null, handle, paneKey, permit.startParams.agent + '_child_'+permit.nativeTaskId, 'child-instance', JSON.stringify({ kind: 'local', hostId: 'local' }), complete ? outcome === 'succeeded' ? 'completed' : 'failed' : 'dispatched', permit.generation);
+        const dispatchId = 'dispatch-'+permit.nativeTaskId, chat=permit.startParams.terminal?.startsWith('orca_session_id:'),handle = chat?permit.startParams.terminal:'structworker_'+permit.nativeTaskId, paneKey = chat?null:'child-tab:'+permit.nativeTaskId;
+        const complete = !['dispatch-running','dispatch-scheduling','dispatch-hierarchy'].includes(mode), outcome = mode === 'dispatch-failed' ? 'failed' : 'succeeded';
+        nativeDb.prepare('INSERT INTO dispatch_contexts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(dispatchId, work.run.id, permit.nativeTaskId, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'structured' ? owner.sessionId : null, work.parent?.dispatchId??null, handle, paneKey, chat?permit.startParams.terminal.slice('orca_session_id:'.length):permit.startParams.agent + '_child_'+permit.nativeTaskId, chat?null:'child-instance', JSON.stringify({ kind: 'local', hostId: 'local' }), complete ? outcome === 'succeeded' ? 'completed' : 'failed' : 'dispatched', permit.generation, work.parent?2:1);
         nativeDb.prepare('INSERT INTO worker_dispatches VALUES (?,?,?,?,?,?)').run(dispatchId, work.scope.workspaceId, handle, complete ? outcome : 'ready', 'fixture-runtime', JSON.stringify({ resolvedWorktreeId: work.scope.workspaceId, agent: permit.startParams.agent, worktree: work.scope.workspaceId }));
         nativeDb.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
         receipt(work, 'start-'+permit.nativeTaskId, 'orchestration.workerStart', { ...permit.startParams, from, devMode: false }, { runId: work.run.id, taskId: permit.nativeTaskId, dispatchId, state: 'ready' });
@@ -128,7 +128,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
         const dispatchInput = text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
-        const work = store.listWorks().find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
+        const work = store.listWorks().flatMap(w=>store.listRunWorks(w.id)).find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;
         if (!dispatchInput && mode !== 'objective-no-run') nativeDb.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)').run('run-' + work.id, work.nativeObjective, 'this_database', instance.kind === 'terminal' ? instance.handle : null, instance.paneKey ?? null, instance.kind === 'structured' ? instance.sessionId : null, 1, 1, 0);

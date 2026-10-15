@@ -1,3 +1,4 @@
+import {WORKER_RULES} from '../dispatch.mjs';
 import { declaredWriteScope } from '../scheduling.mjs';
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
@@ -18,7 +19,8 @@ const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
 const parse=value=>{try{return JSON.parse(value);}catch{return null;}};
 function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  if(!spec||spec.protocol!=='team-dispatch/v1'||spec.workId!==work.id||spec.token!==protocol.token||spec.generation!==protocol.generation||spec.configVersion!==work.configVersion||typeof spec.taskKey!=='string'||!/^[A-Za-z0-9-]{1,120}$/.test(spec.taskKey)||typeof spec.instruction!=='string'||!spec.instruction.trim()||spec.instruction.length>8000)throw Error('Native task intent does not match this work admission protocol.');
- if(Object.keys(spec).some(key=>!['protocol','workId','token','generation','taskKey','memberId','configVersion','roleVersion','role','instruction','dependencies','previousAttemptId','writeScope'].includes(key)))throw Error('Native intent has unsupported fields.');
+ if(Object.keys(spec).some(key=>!['protocol','workId','token','generation','taskKey','memberId','configVersion','roleVersion','role','instruction','dependencies','previousAttemptId','writeScope','workerRules'].includes(key)))throw Error('Native intent has unsupported fields.');
+ if(spec.workerRules!==WORKER_RULES)throw Error('Actual worker Task must include the approved workerRules, including no provider-native subagents.');
  if(spec.dependencies!==undefined&&(!Array.isArray(spec.dependencies)||spec.dependencies.length>100||spec.dependencies.some(key=>typeof key!=='string'||!/^[A-Za-z0-9-]{1,120}$/.test(key)||key===spec.taskKey)||new Set(spec.dependencies).size!==spec.dependencies.length))throw Error('Invalid application dependencies.');
  if(spec.writeScope!==undefined)declaredWriteScope(spec.writeScope);
  const member=team.members.find(row=>row.id===spec.memberId);
@@ -28,7 +30,7 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  if(owner.kind==='terminal'&&(task.created_by_terminal_handle!==owner.handle||task.created_by_pane_key!==owner.paneKey||task.created_by_process_incarnation!==owner.incarnationId||task.created_by_run_generation!==protocol.generation))throw Error('Native terminal Task creator instance is unverified.');
  return {spec,member,nativeTaskId:task.id,taskSpec:task.spec,requestId:receipt.request_id,payloadHash:receipt.payload_hash};
 }
-export async function readNativeDispatchEvidence(userData,{work,protocol,team,owner,admitted=[]}) {
+export async function readNativeDispatchEvidence(userData,{work,protocol,team,owner,admitted=[],allowSettledParent=false}) {
  let db;
  try {
   const root=await realpath(userData),file=await realpath(join(root,'orchestration.db')),rel=relative(root,file);
@@ -38,6 +40,14 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   const run=db.prepare('SELECT id,objective,home_database,legacy,consumer_generation,coordinator_handle,coordinator_pane_key,coordinator_orca_session_id,coordinator_orca_session_id_generation FROM runs WHERE id=?').get(work.run.id);
   if(!run||run.objective!==work.nativeObjective||run.home_database!=='this_database'||run.legacy!==0||run.consumer_generation!==protocol.generation||work.run.consumerGeneration!==protocol.generation)throw Error('Native Run generation or work changed; admission is fenced.');
   if(owner.kind==='structured'?(run.coordinator_orca_session_id!==owner.sessionId||run.coordinator_orca_session_id_generation!==run.consumer_generation):(run.coordinator_handle!==owner.handle||run.coordinator_pane_key!==owner.paneKey))throw Error('Native Run owner no longer matches its supervisor.');
+  let parentDispatch;
+  if(work.parent){
+   parentDispatch=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(work.parent.dispatchId);
+   const p=parentDispatch;
+   if(!p||p.run_id!==work.parent.runId||p.task_id!==work.parent.taskId||!Number.isSafeInteger(p.depth)||p.depth<1||(owner.kind==='structured'?p.assignee_orca_session_id!==owner.sessionId:p.assignee_handle!==owner.handle||p.assignee_pane_key!==owner.paneKey||p.process_incarnation!==owner.incarnationId)||(!allowSettledParent&&!['pending','dispatched'].includes(p.status)))throw Error('Parent Dispatch is stale, settled or does not own this manager Run.');
+   const parentRun=db.prepare('SELECT * FROM runs WHERE id=?').get(p.run_id);
+   if(!parentRun||parentRun.consumer_generation!==work.parent.generation)throw Error('Parent Run generation changed; child authority is fenced.');
+  }
   const identity=db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
   if(!identity?.caller_fingerprint)throw Error('Native mutation author evidence is unavailable.');
   const receipts=(method,taskId,field='task.id')=>db.prepare(`SELECT request_id,payload_hash,state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method=? AND state='completed' AND json_valid(receipt) AND json_extract(receipt,?)=? LIMIT 3`).all(identity.caller_fingerprint,method,`$.${field}`,taskId).map(row=>({...row,value:parse(row.receipt)}));
@@ -65,7 +75,8 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    if(starts.length!==1){const present=db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(attempt.nativeTaskId);observations.push({id:attempt.id,state:starts.length||present?'unverified':'absent',detail:starts.length?'Native worker-start receipt is ambiguous.':present?'Native worker effect exists without a completed author receipt; reconcile before any new attempt.':'Waiting for the real supervisor to start the admitted Task.'});continue;}
    const start=starts[0], expected=nativeMutationFingerprint('orchestration.workerStart',{...attempt.startParams,from:caller(owner),devMode:false},owner,attempt.reuse?.binding);
    if(start.payload_hash!==expected||start.value.runId!==work.run.id||typeof start.value.dispatchId!=='string'){observations.push({id:attempt.id,state:'unverified',detail:'Native worker-start author or input does not match admission.'});continue;}
-   const d=db.prepare('SELECT id,run_id,task_id,creator_handle,creator_pane_key,creator_orca_session_id,creator_dispatch_id,assignee_handle,assignee_pane_key,assignee_orca_session_id,process_incarnation,host_scope,status,consumer_generation FROM dispatch_contexts WHERE id=?').get(start.value.dispatchId);
+   const d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(start.value.dispatchId);
+   if(parentDispatch&&(!d||d.creator_dispatch_id!==parentDispatch.id||d.depth!==parentDispatch.depth+1)){observations.push({id:attempt.id,state:'unverified',detail:'Native creator Dispatch or depth does not match the actual manager parent; a new Run cannot reset ancestry.'});continue;}
    const worker=d&&db.prepare('SELECT dispatch_id,worktree_id,agent_terminal_handle,state,runtime_epoch,start_options FROM worker_dispatches WHERE dispatch_id=?').get(d.id);
    const host=parse(d?.host_scope), options=parse(worker?.start_options),hostMatches=work.scope.executionHostId==='local'?host?.kind==='local'&&host.hostId==='local':host?.kind==='ssh'&&`ssh:${encodeURIComponent(host.targetId)}`===work.scope.executionHostId;
    if(!d||d.run_id!==work.run.id||d.task_id!==attempt.nativeTaskId||!worker||worker.worktree_id!==work.scope.workspaceId||worker.agent_terminal_handle!==d.assignee_handle||!hostMatches||(attempt.reuse?(d.assignee_orca_session_id?d.assignee_orca_session_id!==attempt.reuse.binding.sessionId:d.assignee_handle!==attempt.reuse.binding.handle||d.process_incarnation!==attempt.reuse.binding.incarnationId):options?.agent!==attempt.startParams.agent)||(owner.kind==='structured'?d.creator_orca_session_id!==owner.sessionId:d.creator_handle!==owner.handle||d.creator_pane_key!==owner.paneKey)){observations.push({id:attempt.id,state:'unverified',detail:'Native Dispatch creator, member instance or execution host is unverified.'});continue;}
@@ -82,10 +93,11 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
     if(d.status!==expectedStatus||worker.state!==report.outcome)continue;
     completion={outcome:report.outcome,result:String(message.body??'').slice(0,16000),evidenceId:fact.id};break;
    }
-   observations.push({id:attempt.id,state:'verified',dispatchId:d.id,creatorDispatchId:d.creator_dispatch_id,binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
+   observations.push({id:attempt.id,state:'verified',dispatchId:d.id,creatorDispatchId:d.creator_dispatch_id,...(Number.isSafeInteger(d.depth)?{depth:d.depth}:{}),binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
   }
   for(const attempt of admitted){
    if(!attempt.evidenceId||!attempt.reviewToken)continue;
+   if(work.parent&&!observations.some(o=>o.id===attempt.id&&o.state==='verified'&&o.completion?.evidenceId===attempt.evidenceId)){rejected.push({detail:'Descendant review requires unchanged native execution evidence.'});continue;}
    const proofs=db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskUpdate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=? ORDER BY rowid LIMIT 101").all(identity.caller_fingerprint,attempt.nativeTaskId);
    if(proofs.length>100){rejected.push({detail:'Review receipt history exceeds the verification bound.'});continue;}
    for(const proof of proofs){
@@ -102,7 +114,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    if(admitted.some(a=>a.nativeTaskId===task.id))continue;
    const spec=parse(task.spec),proof=receipts('orchestration.taskCreate',task.id);
    const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
-   const control=['team-delivery/v1','team-questions/v1'].includes(spec?.protocol)&&spec.workId===work.id&&spec.token===protocol.token&&spec.generation===protocol.generation&&proof.length===1&&proof[0].payload_hash===expected&&proof[0].value?.task?.spec===task.spec&&proof[0].value.task.run_id===work.run.id&&(owner.kind!=='terminal'||task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.incarnationId&&task.created_by_run_generation===protocol.generation)&&!db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id);
+   const control=((spec?.protocol==='team-delivery/v1'&&!work.parent)||(spec?.protocol==='team-questions/v1'&&['answer-ack','collaboration-directive','message-evidence','recovery-handoff',work.parent?'relay-question':'user-question'].includes(spec.kind)))&&spec.workId===work.id&&spec.token===protocol.token&&spec.generation===protocol.generation&&proof.length===1&&proof[0].payload_hash===expected&&proof[0].value?.task?.spec===task.spec&&proof[0].value.task.run_id===work.run.id&&(owner.kind!=='terminal'||task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.incarnationId&&task.created_by_run_generation===protocol.generation)&&!db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id);
    if(!control)unmanaged.push(task.id);
   }
   // Every native Dispatch in this Run must belong to an exact app-admitted attempt.

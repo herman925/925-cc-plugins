@@ -3,16 +3,17 @@ import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>{throw Error(message);};
 const boundedHandoff=h=>({...h,summary:h.summary.slice(0,2000),evidenceRefs:h.evidenceRefs.slice(0,10).map(r=>r.slice(0,160)),truncated:h.summary.length>2000||h.evidenceRefs.length>10||h.evidenceRefs.some(r=>r.length>160)});
-export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic,readSnapshot,write}){
+export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listRunWorks,listGoals,questions,atomic,readSnapshot,write}){
  const deliveries=id=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'delivery:%' ORDER BY rowid").all().map(r=>JSON.parse(r.json)).filter(r=>r.workId===id);
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
   const reasons=[];
-  if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>JSON.parse(r.json).workId===work.id))reasons.push('Queued member tasks await admission');
-  const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
+  if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>listRunWorks(work.id).some(w=>w.id===JSON.parse(r.json).workId)))reasons.push('Queued member tasks await admission');
+  const latest=new Map(listDispatches(work.id).map(a=>[`${a.workId}:${a.taskKey}`,a]));
   for(const expected of work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
-  for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const q of listRunWorks(work.id).flatMap(w=>questions.listQuestions(w.id)))if(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const child of listRunWorks(work.id).filter(w=>w.parent))if(child.run.state!=='verified'||child.error)reasons.push('Manager Run '+child.supervisorMemberId+' awaits verification');
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
  };
@@ -20,7 +21,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
   workClosureBlockers:workId=>blockers(readWork(workId)),
   deliveryProjection(workId){const d=current(workId);return d?{delivery:{...d,proof:undefined},closureBlockers:blockers(readWork(workId))}:{};},
   recordDelivery(workId,proposal){return atomic(()=>{
-   const w=readWork(workId);if(!w||w.status==='completed')return null;
+   const w=readWork(workId);if(w?.parent)fail('Only the highest supervisor may deliver the total objective.');if(!w||w.status==='completed')return null;
    const existing=deliveries(workId).find(d=>d.id===proposal.id);if(existing){if(existing.proof.payloadHash!==proposal.proof.payloadHash)fail('Delivery identity conflicts.');return existing;}
    const previous=current(workId);
    if((proposal.previousDeliveryId??null)!==(previous?.id??null))fail('Delivery must reference the current delivery revision.');
@@ -38,7 +39,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(input.decision==='rework'&&(typeof input.feedback!=='string'||!input.feedback.trim()||input.feedback.length>8000))fail('Describe the requested corrections (1–8000 characters).');
    if(input.decision==='accept'){
     const reasons=blockers(w);if(reasons.length)fail('Required work remains: '+reasons.join('; '));
-    const latest=[...new Map(listDispatches(w.id).map(a=>[a.taskKey,a])).values()];
+    const latest=[...new Map(listDispatches(w.id).map(a=>[`${a.workId}:${a.taskKey}`,a])).values()];
     if(latest.some(a=>!d.attemptIds.includes(a.id)||!d.evidenceRefs.includes(a.evidenceId)))fail('Delivery omits required accepted task evidence.');
    }
    const event={...input,fingerprint,recordedAt:new Date().toISOString(),input:{state:input.decision==='rework'?'not_sent':'none'}};

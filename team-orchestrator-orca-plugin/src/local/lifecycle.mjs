@@ -1,3 +1,4 @@
+import {readNativeQuestionEvidence} from './native-questions.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
 import { readNativeDispatchEvidence } from './native-dispatch.mjs';
 import { userMessage,accepted } from './dispatch.mjs';
@@ -7,11 +8,12 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
  const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
  async function evidence(id){
   const work=store.readWork(id);if(!work||work.status==='completed')return null;
-  const verified=await works.verifyWork(id,true),protocol=store.readDispatchProtocol(id);
+  const verified=await works.verifyWork(id,true,{allowSettledParent:true}),protocol=store.readDispatchProtocol(id);
   if(!protocol||protocol.generation!==work.run.consumerGeneration)throw Error('Supervisor delivery protocol is unavailable.');
-  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.readTeamVersion(work.teamId,work.configVersion),owner:verified.instance,admitted:store.listDispatches(id)});
+  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.readTeamVersion(work.teamId,work.configVersion),owner:verified.instance,admitted:store.listDispatches(id),allowSettledParent:true});
   if(native.state!=='verified')throw Error(native.detail);
-  return {work,verified,native};
+  const questionEvidence=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(id)});
+  return {work,verified,native,questionEvidence};
  }
  async function check(id){
   const row=await evidence(id);if(!row)return;
@@ -26,9 +28,15 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
    await consent();const prior=store.readWorkDecision(input.requestId);
    if(prior)return store.decideWork(input);
    const row=await evidence(input.workId);if(!row||!row.native.deliveries.some(d=>d.id===input.deliveryId))throw Error('Current native Head delivery is unavailable.');
+   if(input.decision==='accept')for(const child of store.listRunWorks(input.workId).filter(w=>w.parent)){
+    const checked=await evidence(child.id);
+    if(!checked||checked.questionEvidence.state!=='verified'||checked.questionEvidence.rejected.length||checked.native.unmanaged?.length||checked.native.rejected.length||checked.native.intents.length)throw Error('Descendant Run contains unresolved or unregistered native work.');
+    if(store.listDispatches(child.id).some(a=>a.status!=='accepted'||!checked.native.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId)))throw Error('Descendant execution or acceptance remains unverified.');
+   }
    if(input.decision==='accept'&&row.native.intents.some(i=>!store.listDispatches(input.workId).some(a=>a.nativeTaskId===i.nativeTaskId)))throw Error('Native task awaits application admission.');
    if(input.decision==='accept'&&row.native.unmanaged?.length)throw Error('Unregistered native work requires confirmation before closure.');
    if(input.decision==='accept'&&store.listDispatches(input.workId).some(a=>a.status==='accepted'&&!row.native.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId)))throw Error('Accepted task execution evidence changed; closure awaits confirmation.');
+   if(input.decision==='accept'&&(row.questionEvidence.state!=='verified'||row.questionEvidence.rejected.length))throw Error('Native question evidence needs confirmation before closure.');
    if(input.decision==='accept'&&row.native.rejected.length)throw Error('Native task evidence needs confirmation before closure.');
    await works.verifyHost(input.workId,row.verified.hostGeneration);
    const event=store.decideWork(input);
