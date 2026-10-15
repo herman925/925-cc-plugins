@@ -57,7 +57,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   }
   if(method==='orchestration.workerShow'){
    const d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(params.dispatch),w=db.prepare('SELECT * FROM worker_dispatches WHERE dispatch_id=?').get(params.dispatch);
-   return {dispatch:{id:d.id,runId:d.run_id,taskId:d.task_id,assigneeHandle:d.assignee_handle,assigneePaneKey:d.assignee_pane_key,processIncarnation:d.process_incarnation,hostScope:JSON.parse(d.host_scope),status:d.status},worker:{dispatchId:d.id,worktreeId:w.worktree_id,agentTerminalHandle:w.agent_terminal_handle,state:w.state,runtimeEpoch:w.runtime_epoch,startOptions:JSON.parse(w.start_options)},observation:{status:'live',exact:true},projection:{}};
+   return {dispatch:{id:d.id,runId:d.run_id,taskId:d.task_id,assigneeHandle:d.assignee_handle,assigneePaneKey:d.assignee_pane_key,processIncarnation:d.process_incarnation,hostScope:JSON.parse(d.host_scope),status:d.status},worker:{dispatchId:d.id,worktreeId:w.worktree_id,agentTerminalHandle:w.agent_terminal_handle,state:w.state,runtimeEpoch:w.runtime_epoch,startOptions:JSON.parse(w.start_options)},observation:{status:'live',exactWorker:true},projection:{}};
   }
   throw Error('Forbidden/unexpected native method '+method);
  };
@@ -156,4 +156,27 @@ test('a late native Task proves an ambiguous protocol input without resending th
  await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);assert.equal(protocol.state,'unknown');f.createIntent(protocol);
  f.onInput(()=>{});await service.check(f.work.id);
  assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PROTOCOL\n')).length,1);
+});
+test('wrong native execution host and obsolete Dispatch reports remain unconfirmed and cannot complete a member',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n')){const id=f.start(JSON.parse(text.split('\n').slice(1).join('\n')));f.db.prepare('UPDATE dispatch_contexts SET host_scope=? WHERE id=?').run(JSON.stringify({kind:'ssh',targetId:'wrong-host'}),id);}});
+ await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.status,'unknown');assert.equal(row.binding,undefined);assert.match(row.detail,/host/);
+ f.db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:old-report','old-dispatch','task-one','run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome:'succeeded',reportId:'worker_report:old-report'}));
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].outcome,undefined);
+});
+test('SQLite admission failure sends no permit and rollback keeps the member available for the exact corrected intent',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ const fault=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));t.after(()=>fault.close());
+ fault.exec("CREATE TRIGGER refuse_admission BEFORE INSERT ON receipts WHEN NEW.id LIKE 'dispatch:%' BEGIN SELECT RAISE(ABORT,'admission disk failure'); END");
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,0);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+ fault.exec('DROP TRIGGER refuse_admission');await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
+});
+test('unverifiable native worker observation preserves identity but does not claim an active assignment',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ const rpc=async(method,...args)=>{const value=await f.rpc(method,...args);if(method==='orchestration.workerShow')value.observation={status:'unverifiable',exactWorker:false};return value;};
+ const service=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
+ await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.status,'unknown');assert.equal(row.binding.handle,'structworker_child');
 });
