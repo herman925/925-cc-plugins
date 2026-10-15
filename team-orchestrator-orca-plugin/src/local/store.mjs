@@ -102,18 +102,31 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       for (const member of team.members) db.prepare('INSERT OR IGNORE INTO role_versions VALUES (?,?,?)').run(member.id, member.roleVersion, JSON.stringify({ brief: member.brief, habits: member.habits, collaboration: member.collaboration }));
     };
     const readOperation = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`operation:${id}`); return row ? JSON.parse(row.json) : null; };
-    const persistOperation = operation => {
+    const persistOperation = (operation, observationOnly=false) => {
       db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`operation:${operation.requestId}`, JSON.stringify(operation));
       const next = readSnapshot(), team = next.teams.find(row => row.id === operation.teamId);
-      if (!team) fail('Operation team is missing.');
+      const pointer=readPrivate(`binding:${operation.memberId}`);
+      if(!team?.members.some(member=>member.id===operation.memberId)||pointer?.requestId!==operation.requestId||(pointer.instanceGeneration??1)!==(operation.instanceGeneration??1))return;
       team.launch ??= { native: true, status: 'sending', mode: 'on-demand', workspaceKey: team.scope.workspaceKey, configVersion: operation.configVersion, members: {} };
       team.launch.members[operation.memberId] = { ...operation.public, status: operation.status, requestId: operation.requestId, ...(operation.handle ? { terminalId: operation.handle, title: operation.title, briefAccepted: operation.briefAccepted === true, executionHostId: operation.executionHostId } : {}), ...(operation.error ? { error: operation.error } : {}) };
       team.launch.status = operation.status === 'created' ? 'accepted' : 'unknown';
-      next.revision++; validatePersistentState(next); write(next);
+      if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
     let closed = false;
     return {
       readOperation,
+      listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
+      isActiveOperation(operation){const pointer=readPrivate(`binding:${operation.memberId}`);return pointer?.requestId===operation.requestId&&(pointer.instanceGeneration??1)===(operation.instanceGeneration??1)&&readSnapshot().teams.some(team=>team.id===operation.teamId&&team.members.some(member=>member.id===operation.memberId));},
+      // Retires only the app recipient pointer. Callers must separately establish lifecycle authorization.
+      retireBinding({memberId,requestId,instanceGeneration}){return atomicDispatch(()=>{
+        const pointer=readPrivate(`binding:${memberId}`);
+        if(pointer?.requestId!==requestId||(pointer.instanceGeneration??1)!==instanceGeneration)return false;
+        db.prepare('DELETE FROM receipts WHERE id=?').run(`binding:${memberId}`);
+        putPrivate(`binding-generation:${memberId}`,{generation:instanceGeneration});
+        const next=readSnapshot(),team=next.teams.find(row=>row.members.some(member=>member.id===memberId));
+        if(team?.launch?.members?.[memberId]?.requestId===requestId){delete team.launch.members[memberId];next.revision++;write(next);}
+        return true;
+      });},
       readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
         const work=readWork(workId); if(work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
@@ -136,16 +149,16 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,configVersion:work.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
         validateDispatch(attempt);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
-      updateDispatch(id,version,patch) { return atomicDispatch(()=>{
-        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
-        if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail'].includes(key)))fail('Immutable Dispatch identity cannot change.');
+      updateDispatch(id,version,patch,expectedWorkVersion) { return atomicDispatch(()=>{
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
+        if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
         if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
         if(row.evidenceId&&patch.evidenceId&&row.evidenceId!==patch.evidenceId)fail('Execution result already has immutable native evidence.');
         if(patch.binding&&listDispatches().some(other=>other.memberId!==row.memberId&&other.binding&&(patch.binding.sessionId?other.binding.sessionId===patch.binding.sessionId:other.binding.handle===patch.binding.handle&&other.binding.incarnationId===patch.binding.incarnationId)))fail('Native session is already bound to another member.');
         if(row.status==='pending_acceptance'&&patch.status&&patch.status!=='pending_acceptance')return row;
         Object.assign(row,patch,{version:version+1});validateDispatch(row);putPrivate(`dispatch:${id}`,row);
-        if(row.binding)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
+        if(row.binding&&readPrivate(`dispatch-member:${row.memberId}`)?.id===row.id)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
         return row;
       }); },
       prepareWork(input) {
@@ -194,22 +207,25 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if (!member || member.boss || team.configVersion !== input.configVersion) fail('Launch requires the current saved highest supervisor configuration.');
           const bindingKey = `binding:${input.memberId}`;
           if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
-          const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', createdAt: new Date().toISOString() };
-          db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId }));
+          const instanceGeneration=(readPrivate(`binding-generation:${input.memberId}`)?.generation??0)+1;
+          const operation = { ...intent, ...input, fingerprint: digest, status: 'unknown', instanceGeneration, version:1, createdAt: new Date().toISOString() };
+          db.prepare('INSERT INTO receipts VALUES (?,?)').run(bindingKey, JSON.stringify({ requestId: input.requestId, instanceGeneration }));
           persistOperation(operation);
           db.exec('COMMIT'); return { operation, fresh: true };
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       },
-      settleOperation(requestId, nativeOperationId, patch) {
+      settleOperation(requestId, nativeOperationId, patch, expectedVersion) {
         db.exec('BEGIN IMMEDIATE');
         try {
           const operation = readOperation(requestId);
           if (!operation || operation.nativeRequest.operationId !== nativeOperationId) fail('Launch settlement does not match its operation.');
+          if(expectedVersion!==undefined&&(operation.version??1)!==expectedVersion)fail('Operation changed while observing evidence; stale panel observation discarded.');
           // An ambiguous late response cannot erase a durable created identity.
           if (operation.status === 'created' && patch.status === 'unknown') { db.exec('COMMIT'); return operation; }
           if (operation.handle && patch.handle && (operation.kind !== patch.kind || (operation.kind === 'structured' ? operation.sessionId !== patch.sessionId : operation.handle !== patch.handle && (!operation.paneKey || operation.paneKey !== patch.paneKey)))) fail('Launch settlement conflicts with its saved identity.');
-          Object.assign(operation, patch);
-          persistOperation(operation); db.exec('COMMIT'); return operation;
+          const observationOnly=(!patch.status||patch.status===operation.status)&&(!patch.handle||patch.handle===operation.handle);
+          Object.assign(operation, patch, {version:(operation.version??1)+1});
+          persistOperation(operation,observationOnly); db.exec('COMMIT'); return operation;
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       },
       readSnapshot,

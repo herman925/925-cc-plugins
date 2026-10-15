@@ -211,3 +211,16 @@ test('an observed native start after app reservation but before permit is fenced
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));inject=true;await service.check(f.work.id);
  const row=f.store.listDispatches(f.work.id)[0];assert.equal(inject,false);assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
 });
+test('recovery reads explicit Run and exact Dispatch, labels incomplete output and never sends or releases the attempt',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createRecoveryService}=await import('../src/local/recovery.mjs');const f=await fixture(t);
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice('TEAM_DISPATCH_PERMIT\n'.length)));});await service.check(f.work.id);await f.restart();
+ let exited=false,exact=true;const readCalls=[];
+ const rpc=async(method,params)=>{readCalls.push({method,params});if(method==='orchestration.workerRead')return {dispatchId:params.dispatch,source:'terminal',sourceIdentity:'native-output',sourceExact:true,contentComplete:false,warnings:['SSH transcript was clipped'],archived:true};const result=await f.rpc(method,params);if(method==='orchestration.workerShow')result.observation={status:exited?'exited':'live',exactWorker:exact};return result;};
+ const recovery=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});const before=f.messages.length;
+ await recovery.checkWork(f.work.id);let task=f.store.dispatchProjection(f.work.id).tasks[0];assert.equal(task.recovery.state,'confirmed_effect');assert.equal(task.recovery.incomplete,true);assert.match(task.recovery.output.warnings[0],/clipped/);
+ exited=true;exact=false;await recovery.checkWork(f.work.id);assert.equal(f.store.dispatchProjection(f.work.id).tasks[0].recovery.liveness,'unknown');
+ exact=true;await recovery.checkWork(f.work.id);task=f.store.dispatchProjection(f.work.id).tasks[0];assert.equal(task.recovery.state,'stopped');assert.equal(task.status,'running','execution evidence does not rewrite business task facts');
+ assert.equal(f.messages.length,before);assert.equal(readCalls.some(row=>/inbox|ack|send|start|launch/i.test(row.method)),false);assert.equal(readCalls.find(row=>row.method==='orchestration.taskList').params.run,'run-head');
+ f.createIntent(f.store.readDispatchProtocol(f.work.id),{taskId:'blocked',taskKey:'blocked'});await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,1);
+});

@@ -1,3 +1,4 @@
+import { withNativeRuntime } from './native-runtime.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { sendFingerprint } from './teamwork.mjs';
 import { readNativeDispatchEvidence } from './native-dispatch.mjs';
@@ -20,7 +21,7 @@ function accepted(receipt,send,instance){
 }
 export function createDispatchService({store,rpc,userData,consent,works}) {
  const queues=new Map();
- const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
+ const serial=(id,fn)=>{const promise=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,promise);promise.finally(()=>{if(queues.get(id)===promise)queues.delete(id);}).catch(()=>{});return promise;};
  const project=id=>store.dispatchProjection(id);
  async function evidence(work,protocol,team,verified){return readNativeDispatchEvidence(userData,{work,protocol,team,owner:verified.instance,admitted:store.listDispatches(work.id)});}
  async function sendProtocol(work,team,protocol,verified){

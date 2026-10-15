@@ -1,3 +1,4 @@
+import { withNativeRuntime } from './native-runtime.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {publicWork} from '../work.mjs';
 import {readNativeRunEvidence} from './native-run.mjs';
@@ -9,12 +10,12 @@ export function objectiveInstructions(work,team){
 }
 export function createWorkService({store,rpc,userData,consent}){
  const queue=new Map();
- const serial=(id,fn)=>{const promise=(queue.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queue.set(id,promise);promise.finally(()=>{if(queue.get(id)===promise)queue.delete(id);}).catch(()=>{});return promise;};
+ const serial=(id,fn)=>{const promise=(queue.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queue.set(id,promise);promise.finally(()=>{if(queue.get(id)===promise)queue.delete(id);}).catch(()=>{});return promise;};
  const save=(work,patch)=>store.updateWork(work.id,work.version,patch);
  async function verify(work,forSend=false){
   await consent();
   const binding=store.readOperation(work.binding.requestId);
-  if(!binding||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
+  if(!binding||!store.isActiveOperation(binding)||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
   const status=await rpc('status.get');
   if(status?.runtimeId!==binding.runtimeId||!status.capabilities?.includes('orchestration.contract.v1'))throw Error('The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.');
   const selected=(await rpc('worktree.show',{worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`}))?.worktree;
@@ -111,7 +112,7 @@ export function createWorkService({store,rpc,userData,consent}){
   }catch(error){return save(work,{input:attempted&&work.input.state==='sending'?{...work.input,state:'unknown',detail:'Input may have been delivered. Checking work never resends it.'}:work.input,status:'needs_attention',error:String(error.message).slice(0,1500)});}
  }
  return {
-  async verifyWork(id,forSend=false){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return verify(work,forSend);},
+  async verifyWork(id,forSend=false){const work=store.readWork(id);if(!work)throw Error('Saved work not found.');return withNativeRuntime(rpc,work.binding.runtimeId,()=>verify(work,forSend));},
   async submit(input){const prepared=store.prepareWork(input);return serial(prepared.work.id,async()=>publicWork(prepared.fresh?await deliver(store.readWork(prepared.work.id)):store.readWork(prepared.work.id)));},
   async check(id){return serial(id,async()=>{let work=store.readWork(id);if(!work)throw Error('Saved TeamWork was not found.');try{return publicWork(await observe(work));}catch(error){return publicWork(save(work,{status:'needs_attention',run:{...work.run,state:work.run.state==='fenced'?'fenced':'unverified',detail:'Current native Run authority is unverified; its saved generation is retained.'},...(work.snapshot?{snapshot:{...work.snapshot,stale:true}}:{}),error:String(error.message).slice(0,1500)}));}});},
   async retry(id){return serial(id,async()=>{const work=store.readWork(id);if(!work||work.input.state!=='not_sent'||work.nativeSend)throw Error('This objective may have been submitted. Check its evidence instead of sending again.');return publicWork(await deliver(work));});},

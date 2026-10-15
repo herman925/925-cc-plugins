@@ -146,3 +146,28 @@ test('failed durable submission intent prevents native input and preserves the o
  assert.equal(work.input.state,'not_sent');assert.match(work.error,/write failure/);assert.equal(sends,0);
  assert.equal(f.store.readWork(work.id).nativeSend,undefined);
 });
+test('conditional retirement and late receipts preserve the new active member generation across restart',async t=>{
+ const f=await fixture(t),old=f.store.readOperation('launch');
+ assert.equal(f.store.retireBinding({memberId:f.head.id,requestId:'launch',instanceGeneration:old.instanceGeneration}),true);
+ const input={teamId:f.team.id,memberId:f.head.id,configVersion:1,requestId:'replacement'};
+ const next=f.store.prepareOperation(input,{...old,nativeRequest:{...old.nativeRequest,operationId:'new-native-operation'}}).operation;
+ assert.equal(next.instanceGeneration,old.instanceGeneration+1);
+ assert.equal(f.store.retireBinding({memberId:f.head.id,requestId:'launch',instanceGeneration:old.instanceGeneration}),false);
+ f.store.settleOperation('launch',old.nativeRequest.operationId,{warning:'Late old receipt retained for history'});
+ await f.restart();
+ assert.equal(f.store.readSnapshot().teams[0].launch.members[f.head.id].requestId,'replacement');
+ assert.equal(f.store.readOperation('launch').warning,'Late old receipt retained for history');
+ assert.throws(()=>f.store.settleOperation('replacement',next.nativeRequest.operationId,{warning:'stale panel'},next.version-1),/changed|stale/);
+});
+test('TeamWork observation cannot span runtime metadata rotation under the same parent PID',async t=>{
+ const {createWorkService}=await import('../src/local/teamwork.mjs'),{createNativeRpc}=await import('../src/local/native-runtime.mjs'),{createServer}=await import('node:net'),{writeFile}=await import('node:fs/promises');const f=await fixture(t);
+ const endpoint=join(f.profile,'runtime.sock');let epoch='runtime-one';const methods=[];
+ const metadata=()=>writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({runtimeId:epoch,pid:process.pid,authToken:'fixture-only',transports:[{kind:'unix',endpoint}]}));
+ const server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());methods.push(request.method);socket.end(JSON.stringify({id:request.id,ok:true,result:{runtimeId:epoch,capabilities:['orchestration.contract.v1','agent-session.structured.v1']},_meta:{runtimeId:epoch}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));await metadata();let checks=0;
+ const rpc=createNativeRpc({userData:f.profile,parentPid:process.pid,consent:async()=>{if(++checks===4){epoch='runtime-two';await metadata();}}});
+ const service=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ const work=await service.submit({teamId:f.team.id,requestId:'rotating',expectedRevision:f.store.readSnapshot().revision,objective:'Observe safely'});
+ assert.equal(work.status,'needs_attention');assert.equal(work.input.state,'not_sent');assert.match(work.error,/epoch changed/);assert.deepEqual(methods,['status.get']);
+ assert.equal(f.store.readWork(work.id).binding.runtimeId,'runtime-one');
+});
