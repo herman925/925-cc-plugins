@@ -1,4 +1,5 @@
 import { discoverCapabilities } from './capabilities.mjs';
+import { MAX_TEMPLATE_BYTES } from '../templates.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
@@ -39,8 +40,9 @@ export async function installAdapter(electron, { version, identity, internalKey 
     if (!gate.ok) return gate;
     try {
       const message = call.params.teamWorker;
-      if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > 60000) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt', 'capabilities', 'updateAgentPreferences'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      const envelopeLimit = ['previewTemplate', 'importTemplate'].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 60000;
+      if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       if (Object.keys(message.args ?? {}).some(key => !['op', 'params', 'workspaceId'].includes(key))) throw Error('Invalid public worker arguments.');
       if (message.commandId === 'team.control' && message.args?.op === 'capabilities') {
         if (!internalKey) throw Error('Native capability authority is unavailable; initialise the adapter again.');

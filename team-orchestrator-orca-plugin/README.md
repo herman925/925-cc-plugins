@@ -56,6 +56,14 @@ If you see “plugin is not enabled with current consent”, first let any refre
 
 After an unknown launch, inspect Orca before creating another team. A worker interrupted between spawning and saving its receipt cannot establish whether that spawn succeeded; its existing journal remains unresolved. There is no automatic recovery/relaunch button for that case.
 
+## New-format team templates
+
+In the current source, each saved team offers **Export template** and **Copy team**. Export opens a JSON document in **Templates**; select it and copy it using your normal keyboard shortcut to save or share it. A `.json` file can also be opened through the template file input. The opaque Orca panel does not require clipboard permission or an invented file-writing host API.
+
+Import first validates and previews the hierarchy, roles and requested agent/model/effort preferences. Confirm the intended existing Git/folder project and local/SSH execution host, then choose **Import as new team**. Copy follows the same preview and confirmation flow, for the same project or another project currently selected in Orca. Each import creates new team/member IDs and a fresh role/configuration history; it starts no sessions. Same-name teams remain independent.
+
+The versioned format contains configuration and role content, including level defaults and member override intent. It excludes active sessions, native Run/Dispatch authority, work history, account/login fields, effective model observations and full conversations. Import does not convert old mod/prototype data or provide shared control of another computer's running team. Invalid format/version/trees, stale panels and failed saves leave existing teams untouched; retries of one submitted request return its saved result without creating a second team.
+
 ## Verification
 
 With Node.js 22 or newer, inside this folder:
@@ -76,7 +84,7 @@ For a separate native Electron test executable:
 ELECTRON_TEST_BINARY=/absolute/path/to/electron npm run test:electron
 ```
 
-That test creates a disposable Electron 43.7.5 application on macOS arm64 and forks the **built worker**. Real renderer `ipcRenderer.invoke` events exercise SQLite save/role editing/reload/replay after worker restart with confirmed SSH scope, lazy activation, the nonce round trip, subframe/foreign-command/token rejection, live consent and admission gates, retry without duplicate wrappers, inspector cleanup and disable restoration. Its explicit fixture metadata mirrors the pinned 1.4.222 package; it is not the actual Orca build and never starts a provider. The browser/host tests also use fixtures; they do not establish live provider readiness.
+That test creates a disposable Electron 43.7.5 application on macOS arm64 and forks the **built worker**. Real renderer `ipcRenderer.invoke` events exercise SQLite save/role editing/template copy/reload/replay after worker restart with confirmed SSH scope, lazy activation, the nonce round trip, subframe/foreign-command/token rejection, live consent and admission gates, retry without duplicate wrappers, inspector cleanup and disable restoration. Its explicit fixture metadata mirrors the pinned 1.4.222 package; it is not the actual Orca build and never starts a provider. The browser/host tests also use fixtures; they do not establish live provider readiness.
 
 The current experimental contract is restricted to macOS arm64 Orca `1.4.222`, build `1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64`, Electron `43.7.5`, Node `24.21.0`. This is pinned source-contract and read-only package evidence plus separate Electron fixture validation, not installed-Orca/provider acceptance. Windows and other builds are explicitly unverified and refused until their contracts are validated. macOS resolves the outer application framework even when a forked worker runs from a nested Helper.app. Windows fuse inspection uses its actual executable.
 
