@@ -12,10 +12,10 @@ import { createWorkService } from '../src/local/teamwork.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
 // Scripted native-host boundary, separate from the product's proof reader.
 const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-export async function questionFixture(t,{headAgent='codex',workerAgent='claude',kind='structured'}={}) {
+export async function questionFixture(t,{headAgent='codex',workerAgent='claude',kind='structured',formOverrides={}}={}) {
  const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
- const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
+ const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,...formOverrides,agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
  const head=team.members[0], member=team.members[1], launch={teamId:team.id,memberId:head.id,configVersion:1,requestId:'launch'};
  const op=store.prepareOperation(launch,{scope,nativeRequest:nativeLaunchIntent(team,head,scope),roleVersion:1,title:'Head',executionHostId:'local',runtimeId:'runtime-one'}).operation;
  const binding={status:'created',kind,handle:kind==='structured'?'chat-head':'term-head',...(kind==='structured'?{sessionId:'codex_head'}:{paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),briefAccepted:true};

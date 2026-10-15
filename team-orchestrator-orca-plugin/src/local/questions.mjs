@@ -1,3 +1,4 @@
+import {withNativeRuntime} from './native-runtime.mjs';
 import {createHash} from 'node:crypto';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
@@ -6,32 +7,33 @@ import {userMessage,accepted} from './dispatch.mjs';
 export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,body}) {
  if(!['decision','native-fault','goal-delivery'].includes(kind))throw Error('Routine progress is not a critical notification.');
  const event=store.ensureQuestionEvent(workId,id,kind,{title,body});if(event.state!=='queued')return event;
- store.updateQuestionEvent(workId,id,{state:'attempted'});
+ if(!store.claimQuestionEvent(workId,id,'attempted'))return event;
  let state='unavailable';try{if(notify)state=(await notify({title:title.slice(0,120),body:body.slice(0,1000)}))?.delivered===true?'delivered':'unconfirmed';}catch{}
  return store.updateQuestionEvent(workId,id,{state});
 }
 export function createQuestionService({store,rpc,userData,consent,works,notify}) {
  const queues=new Map();
- const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
- const updateAnswer=(workId,id,answerId,patch)=>store.updateQuestion(workId,id,q=>{const a=q.answers.find(a=>a.id===answerId);if(!a)throw Error('Answer missing.');Object.assign(a,patch);});
+ const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
+ const updateAnswer=(workId,id,answerId,patch)=>store.updateQuestion(workId,id,q=>{const a=q.answers.find(a=>a.id===answerId);if(!a)throw Error('Answer missing.');if(patch.state==='blocked'&&a.state!=='queued')return;Object.assign(a,patch);});
  async function evidence(workId){
-  const {instance:owner}=await works.verifyWork(workId,true),work=store.readWork(workId),protocol=store.readDispatchProtocol(workId);
+  const {instance:owner,hostGeneration}=await works.verifyWork(workId,true),work=store.readWork(workId),protocol=store.readDispatchProtocol(workId);
   if(!protocol||work.run.consumerGeneration!==protocol.generation)throw Error('Saved supervisor generation is stale.');
   const native=await readNativeQuestionEvidence(userData,{work,protocol,owner,attempts:store.listDispatches(workId)});
   if(native.state!=='verified')throw Error(native.detail);
-  return {work,owner,native};
+  return {work,owner,native,hostGeneration};
  }
  async function deliver(workId,id,answerId){
   let question=store.listQuestions(workId).find(q=>q.id===id),a=question.answers.find(a=>a.id===answerId);
   if(a.state!=='queued')return;
   let sending=false;
   try{
-   await consent();const {work,owner,native}=await evidence(workId);
+   await consent();const {work,owner,native,hostGeneration}=await evidence(workId);
    if(question.generation!==work.run.consumerGeneration||question.runId!==work.run.id)throw Error('Answer target is stale. Preserve it and request a new supervisor decision.');
    if(question.origin){const thread=native.threads.find(t=>t.messageId===question.origin.messageId);if(!thread||thread.status!=='pending')throw Error('Original native question is closed, answered or unverified; this answer cannot resume it.');}
    const text='TEAM_USER_ANSWER\n'+JSON.stringify({protocol:'team-questions/v1',workId,appQuestionId:id,questionRevision:a.revision,answerId:a.id,body:a.body,origin:question.origin,instruction:'This is a saved user answer. Process it once using answerId. Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. For a two-failure decision include nextNativeTaskId of the specific permitted next Task. An input receipt is not an acknowledgement.'});
    const nativeSend=userMessage(work,owner,text);
-   updateAnswer(workId,id,answerId,{state:'sending',nativeSend});sending=true;
+   if(!store.claimQuestionAnswer(workId,id,answerId,nativeSend))return;sending=true;
+   await works.verifyHost(workId,hostGeneration);
    const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);
    if(!accepted(receipt,nativeSend,owner))throw Error('Native input receipt is unconfirmed.');
    updateAnswer(workId,id,answerId,{state:'accepted',dispatchState:receipt.value?.submission?.dispatchState??'input_accepted',detail:'Native input accepted; manager processing and native reply remain unconfirmed.'});
@@ -52,7 +54,8 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    try{
     await consent();const current=await evidence(workId);
     const text='TEAM_FAILURE_SUMMARY_NEEDED\n'+JSON.stringify({workId,taskKey:streak.taskKey,evidence:event.data.evidence,instruction:'Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. As highest supervisor publish a native team-questions/v1 user-question Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step.'});
-    const nativeSend=userMessage(current.work,current.owner,text);store.updateQuestionEvent(workId,id,{state:'sending',nativeSend});
+    const nativeSend=userMessage(current.work,current.owner,text);if(!store.claimQuestionEvent(workId,id,'sending',nativeSend))continue;
+    await works.verifyHost(workId,current.hostGeneration);
     const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);store.updateQuestionEvent(workId,id,{state:accepted(receipt,nativeSend,current.owner)?'accepted':'unknown'});
    }catch{store.updateQuestionEvent(workId,id,{state:'unknown'});}
   }
@@ -66,10 +69,10 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   }
   for(const q of store.listQuestions(workId)){
    const thread=q.origin&&native.threads.find(t=>t.messageId===q.origin.messageId);
-   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer){for(const a of saved.answers)if(a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
+   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer){for(const a of saved.answers)if(['accepted','unknown','sending'].includes(a.state)&&a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
    for(const a of q.answers){if(a.state==='sending')updateAnswer(workId,q.id,a.id,{state:'unknown',detail:'Worker restarted during answer submission; no automatic resend.'});else if(a.state==='queued')await deliver(workId,q.id,a.id);}
    if(q.notification.state==='queued'){
-    store.updateQuestion(workId,q.id,saved=>{saved.notification={state:'attempted'};});
+    if(!store.claimQuestionNotification(workId,q.id))continue;
     let state='unavailable';try{if(notify)state=(await notify({title:'Team decision needs your attention',body:q.summary.slice(0,1000)}))?.delivered===true?'delivered':'unconfirmed';}catch{}
     store.updateQuestion(workId,q.id,saved=>{saved.notification={state};});
    }

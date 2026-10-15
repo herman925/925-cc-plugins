@@ -374,7 +374,7 @@ app.whenReady().then(async () => {
     assert.equal(edited.works.find(work => work.id === terminalWork.id).processing.state, 'unknown');
     assert.equal(edited.works.find(work => work.id === structuredWork.id).processing.state, 'observed');
     for (const work of edited.works) {
-      assert.equal(work.run.state, 'verified'); assert.equal(work.snapshot.tasks.length, 1);
+      assert.equal(work.run.state, 'verified'); assert.equal(work.snapshot.tasks.length, 2, 'native member Task plus Head-authored user-question Task');
       assert.equal(work.supervisorMemberId, edited.teams.find(team => team.id === work.teamId).members[0].id);
       assert.equal(work.tasks.length, 1); assert.equal(work.tasks[0].status, 'pending_acceptance');
       assert.equal(work.tasks[0].recovery.state, 'confirmed_effect'); assert.equal(work.tasks[0].recovery.incomplete, true); assert.equal(work.tasks[0].recovery.output.archived, true);
