@@ -78,6 +78,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
   return {attemptId:prior.id,binding:saved,terminal,...(sessionFence?{sessionFence}:{}),preferences:original};
  }
  async function permit(work,attempt){
+  store.assertAdmission(work.teamId,attempt.memberId);
   if(attempt.permit.state!=='not_sent')return;
   const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.readTeamVersion(work.teamId,work.configVersion);
   const member=team.members.find(row=>row.id===attempt.memberId);
@@ -92,8 +93,8 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
   }
   const text='TEAM_DISPATCH_PERMIT\n'+JSON.stringify({workId:work.id,attemptId:attempt.id,memberId:attempt.memberId,roleVersion:attempt.roleVersion,configVersion:attempt.configVersion,nativeTaskId:attempt.nativeTaskId,generation:attempt.generation,reviewToken:attempt.reviewToken,reviewProtocol:'team-review/v1',startParams:attempt.startParams,instruction:'Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker.'});
   const nativeSend=userMessage(work,verified.instance,text,verified.status);
-  await consent();attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
-  try { await works.verifyHost(work.id,verified.hostGeneration);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:receipt.value?.queued?'Native host queued the permit for the busy supervisor; waiting for genuine worker-start evidence.':'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
+  await consent();store.assertAdmission(work.teamId,attempt.memberId);attempt=store.updateDispatch(attempt.id,attempt.version,{permit:{state:'sending',nativeSend}});
+  try { await works.verifyHost(work.id,verified.hostGeneration);store.assertAdmission(work.teamId,attempt.memberId);const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);if(!accepted(receipt,nativeSend,verified.instance))throw Error('Native permit delivery is unconfirmed; do not resend.');store.updateDispatch(attempt.id,attempt.version,{status:'awaiting_start',permit:{state:'accepted',nativeSend},detail:receipt.value?.queued?'Native host queued the permit for the busy supervisor; waiting for genuine worker-start evidence.':'Input accepted; waiting for genuine supervisor worker-start evidence.'}); }
   catch(error){store.updateDispatch(attempt.id,attempt.version,{status:'unknown',permit:{state:'unknown',nativeSend},detail:String(error.message).slice(0,1200)});}
  }
  async function check(workId){
