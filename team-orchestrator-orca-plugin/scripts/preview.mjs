@@ -46,7 +46,7 @@ http.createServer(async (req, res) => {
   const path = req.url?.split('?')[0];
   if (path === '/rpc' && req.method === 'POST') {
     try {
-      let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Fixture request too large'); }
+      let body = ''; for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > 1024 * 1024 + 8192) throw Error('Fixture request too large'); }
       const { fixtureId, mode, message } = JSON.parse(body);
       const reply = value => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, value })); };
       if (message.commandId === 'team.initialise') return reply({ ready: true });
@@ -54,7 +54,7 @@ http.createServer(async (req, res) => {
       const { op, params = {} } = message.args;
       if (op === 'ping') return reply({ nonce: message.nonce, ready: true, platform: 'darwin', appVersion: '1.4.222', workerPid: 1234 });
       if (mode === 'read-error' && op === 'load') throw Error('Team database damaged. Original data has been preserved.');
-      if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings'].includes(op)) throw Error('Disk full');
+      if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));

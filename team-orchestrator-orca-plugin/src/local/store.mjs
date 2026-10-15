@@ -2,6 +2,7 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { planTeam, SETTINGS, validatePersistentState } from '../team.mjs';
+import { exportTeamTemplate, parseTeamTemplate } from '../templates.mjs';
 const FORMAT = 'orca-team-store';
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const fingerprint = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -115,6 +116,23 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const ids = new Map(team.members.map(member => [member.id, randomUUID()]));
           team.id = randomUUID(); team.createdAt = new Date().toISOString(); team.configVersion = 1; team.scope = publicScope(scope);
           team.members = team.members.map(member => ({ ...member, id: ids.get(member.id), boss: member.boss ? ids.get(member.boss) : null, roleVersion: 1, habits: '', collaboration: '' }));
+          db.prepare('INSERT INTO scopes VALUES (?,?)').run(team.id, JSON.stringify(scope));
+          archive(team); next.teams.push(team);
+        });
+      },
+      exportTemplate(teamId) {
+        const team = readSnapshot().teams.find(row => row.id === teamId);
+        if (!team) fail('Saved team was not found.');
+        return exportTeamTemplate(team);
+      },
+      importTemplate(input, scope) {
+        return mutate('importTemplate', input, next => {
+          if (!scope?.workspaceId || !scope.executionHostId || !['git', 'folder'].includes(scope.kind)) fail('Confirm a verified project and execution host before importing.');
+          const template = parseTeamTemplate(input.template);
+          const definition = template.team;
+          const ids = new Map(definition.members.map(member => [member.ref, randomUUID()]));
+          const team = { name: definition.name, purpose: definition.purpose, structure: definition.structure, configuration: definition.configuration, id: randomUUID(), createdAt: new Date().toISOString(), configVersion: 1, scope: publicScope(scope),
+            members: definition.members.map(({ ref, boss, ...member }) => ({ ...member, id: ids.get(ref), boss: boss === null ? null : ids.get(boss), state: 'unassigned', roleVersion: 1 })) };
           db.prepare('INSERT INTO scopes VALUES (?,?)').run(team.id, JSON.stringify(scope));
           archive(team); next.teams.push(team);
         });
