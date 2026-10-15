@@ -1,7 +1,8 @@
+import {notifyQuestionEvent} from './questions.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
 import {withNativeRuntime} from './native-runtime.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
-export function createStaffingService({store,rpc,userData,works,consent}) {
+export function createStaffingService({store,rpc,userData,works,consent,notify}) {
  const current=id=>store.readCurrentWork?.(id)??store.readWork(id);
  const queues=new Map();
  const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,current(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
@@ -16,6 +17,7 @@ export function createStaffingService({store,rpc,userData,works,consent}) {
     for(const intent of native.intents)if(intent.spec.kind==='roster-ack')try{store.acknowledgeRosterDelta(work.id,intent);}catch{}
    }catch{}
   }
+  for(const proposal of store.listStaffingProposals(id))if(proposal.status==='pending')await notifyQuestionEvent(store,notify,{workId:proposal.workId,id:'staffing-'+proposal.id,kind:'decision',title:'Staffing proposal needs your decision',body:proposal.rationale});
   for(const delta of store.listRosterDeltas(id)){
    if(delta.state==='sending'){store.updateRosterDelta(delta.id,{state:'unknown',detail:'Delivery interrupted; preserve its native request identity. No automatic resend.'});continue;}
    if(delta.state!=='queued')continue;

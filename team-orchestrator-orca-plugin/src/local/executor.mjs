@@ -18,7 +18,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const works = createWorkService({ store, userData, consent, rpc });
-  const staffing=createStaffingService({store,userData,consent,rpc,works});
+  const staffing=createStaffingService({store,userData,consent,rpc,works,notify:params=>host.call('notifications.show',params)});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: input => wake.wake(input) });
   const stops = createStopService({store,rpc,userData,consent});

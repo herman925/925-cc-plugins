@@ -79,7 +79,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
  async function permit(work,attempt){
   store.assertAdmission(work.teamId,attempt.memberId);
   if(attempt.permit.state!=='not_sent')return;
-  const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.effectiveTeamForWork(work.id);
+  const verified=await works.verifyWork(work.id,true),protocol=store.readDispatchProtocol(work.id),team=store.readTeamVersion(work.teamId,attempt.configVersion);
   if(attempt.token!==protocol.token||attempt.generation!==protocol.generation)throw Error('This permit belongs to an earlier supervisor epoch; preserve its original attempt.');
   const member=team.members.find(row=>row.id===attempt.memberId);
   if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==attempt.roleVersion||(!attempt.reuse&&(attempt.startParams.agent!==member.agent||(attempt.startParams.model??'default')!==member.model||(attempt.startParams.effort??'default')!==member.effort)))throw Error('Saved permit preferences or direct supervisor do not match the frozen member.');

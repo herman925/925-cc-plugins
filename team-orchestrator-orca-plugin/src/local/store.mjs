@@ -85,7 +85,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
-    const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,atomic:atomicDispatch});
+    const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,effectiveTeamForWork:id=>staffing.effectiveTeamForWork(id),atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');

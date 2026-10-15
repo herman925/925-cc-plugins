@@ -68,11 +68,11 @@ export function staffingStore({db,readPrivate,putPrivate,readWork,readSnapshot,w
    if(!['claude','codex'].includes(source.agent)||!text(source.model,120)||!text(source.effort,120)||source.model==='default'&&source.effort!=='default')throw Error('Choose valid agent, model and effort preferences.');
    if(team.members.some(m=>m.name.toLowerCase()===source.name.toLowerCase()))throw Error('Member name already exists.');
    if(team.scope.workspaceKey!==work.scope.workspaceKey||team.scope.executionHostId!==work.scope.executionHostId)throw Error('TeamWork execution scope changed.');
-   const member={...source,id:randomUUID(),team:boss.team,role:boss.role==='ceo'?'lead':'worker',level:boss.level+1,roleVersion:1,state:'unassigned',preferenceOverride:true};
+   const member={...source,id:randomUUID(),team:boss.team,role:boss.role==='ceo'?'head':boss.level===1&&team.configuration.levels===3?'lead':'worker',level:boss.level+1,roleVersion:1,state:'unassigned',preferenceOverride:true};
    team.members.push(member);team.configVersion++;archive(team);
    const amendment=recordConfigurationAmendment(work.id,team,{requestId:input.requestId,kind:'add-member',memberIds:[member.id]});
    state.revision++;validatePersistentState(state);write(state);
-   const result={requestId:input.requestId,workId:work.id,memberId:member.id,configVersion:team.configVersion,amendmentId:amendment.id,decision:'approved',...(team.configuration.launchMode==='all'?{launch:{teamId:team.id,memberId:member.id,configVersion:team.configVersion,requestId:randomUUID()}}:{})};return decide(result);
+   const result={requestId:input.requestId,workId:work.id,from:'user',source:proposal?'proposal':'direct',recordedAt:new Date().toISOString(),memberId:member.id,configVersion:team.configVersion,amendmentId:amendment.id,decision:'approved',...(team.configuration.launchMode==='all'?{launch:{teamId:team.id,memberId:member.id,configVersion:team.configVersion,requestId:randomUUID()}}:{})};return decide(result);
   });},
  };return api;
 }
