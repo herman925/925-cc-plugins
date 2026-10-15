@@ -137,3 +137,14 @@ test('nested manager resume and parent recovery retain original lineage while us
  assert.equal((await wake.handoff('leaf-wake')).state,'approved');assert.equal(f.store.readWake('leaf-wake').handoff.runId,'run-manager');assert.equal(f.store.readWake('leaf-wake').handoff.reviewer,f.member.id);
 
 });
+
+test('accepting the total result seals every manager Run context in the same transaction',async t=>{
+ const f=await questionFixture(t,{formOverrides:{levels:3,fan:1}}),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await dispatch.check(f.work.id);
+ const parent=f.store.listDispatches(f.work.id)[0];f.db.exec('ALTER TABLE dispatch_contexts ADD COLUMN depth INTEGER DEFAULT 1');const {createHierarchyService}=await import('../src/local/hierarchy.mjs'),hierarchy=createHierarchyService({store:f.store,userData:f.profile,works:f.works});await hierarchy.check(f.work.id);let child=f.store.listRunWorks(f.work.id)[1];f.db.prepare('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)').run('run-manager',child.nativeObjective,'this_database',null,null,'claude_child',1,1,0);await hierarchy.check(f.work.id);child=f.store.readCurrentWork(child.id);f.onInput(()=>{});await dispatch.check(child.id);
+ f.complete(parent);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ const root=f.store.readCurrentWork(f.work.id),a=f.store.listDispatches(root.id)[0],protocol=f.store.readDispatchProtocol(root.id),spec=JSON.stringify({protocol:'team-delivery/v1',workId:root.id,token:protocol.token,generation:1,supervisorMemberId:root.supervisorMemberId,previousDeliveryId:null,summary:'Manager completed its scope directly',evidenceRefs:[a.evidenceId],attemptIds:[a.id]});
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run('deliver','run-head',spec,'ready',null,null,null,null,null);f.receipt('create-deliver','orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head'},{task:{id:'deliver',run_id:'run-head',spec}});
+ const {createLifecycleService}=await import('../src/local/lifecycle.mjs'),lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await lifecycle.check(root.id);await lifecycle.decide({workId:root.id,requestId:'accept-hierarchy',deliveryId:'deliver',expectedWorkVersion:f.store.readCurrentWork(root.id).version,decision:'accept'});
+ assert.equal(f.store.readCurrentWork(root.id).status,'completed');assert.equal(f.store.readCurrentWork(child.id).status,'completed');assert.equal(f.store.listWorks().length,1);await assert.rejects(dispatch.check(child.id).then(()=>f.works.verifyWork(child.id)),/sealed/);
+});

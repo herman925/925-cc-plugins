@@ -65,6 +65,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
      if(readPrivate(`dispatch-binding:${a.memberId}`)?.attemptId===a.id)db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-binding:${a.memberId}`);
     }
     db.prepare('DELETE FROM receipts WHERE id=?').run(`active-work:${w.teamId}`);
+    for(const child of listRunWorks(w.id).filter(context=>context.parent)){child.status='completed';child.closedAt=event.recordedAt;child.version++;persistWork(child);}
     w.closedAt=event.recordedAt;w.handoff={summary:d.summary,evidenceRefs:d.evidenceRefs,deliveryId:d.id};
     const goal=listGoals(w.teamId).find(g=>g.status==='queued');
     if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=boundedHandoff(w.handoff);putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
