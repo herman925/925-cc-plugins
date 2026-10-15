@@ -1,4 +1,5 @@
 import {createStaffingService} from './staffing.mjs';
+import {createHierarchyService} from './hierarchy.mjs';
 import {createWakeService} from './wake.mjs';
 import {createStopService} from './stop.mjs';
 import { createLifecycleService } from './lifecycle.mjs';
@@ -21,6 +22,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const staffing=createStaffingService({store,userData,consent,rpc,works,notify:params=>host.call('notifications.show',params)});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: input => wake.wake(input) });
+  const hierarchy=createHierarchyService({store,userData,works});
   const stops = createStopService({store,rpc,userData,consent});
   const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   const recovery = createRecoveryService({ store, rpc, userData, consent });
@@ -34,7 +36,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     try {
       await consent(); await recovery.reconcile(); await stops.reconcile();for(const row of store.listWakes()){await wake.check(row.requestId);await wake.bind(row.requestId);}
       if (!store.listCurrentWorks().some(work => work.status!=='completed' && (work.recoveryRequestId||work.input.state !== 'not_sent') && work.run.state !== 'fenced')) return;
-      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
+      await consent(); await works.reconcile(); await dispatches.reconcile(); await hierarchy.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
   }
@@ -214,7 +216,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if(op!=='checkWork')await reconcileExisting();
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id); await questions.check(work.id); await staffing.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
+        await dispatches.check(work.id); await hierarchy.check(work.id); for(const context of store.listRunWorks(work.id))await dispatches.check(context.id); await questions.check(work.id); await staffing.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }

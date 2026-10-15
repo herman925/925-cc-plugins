@@ -108,3 +108,23 @@ test('busy supervisor queue is distinct from member execution and never resends 
  await expect(tasks).toContainText('Native host queued the permit for the busy supervisor');await expect(tasks).toContainText('Awaiting native start');await expect(tasks).not.toContainText('Native assignment observed');
  await ui.getByRole('button',{name:'Check work evidence'}).click();await expect(tasks.getByRole('article')).toHaveCount(1);await expect(tasks).toContainText('Native host queued');
 });
+
+test('manager hierarchy exposes the actual parent assignment and separate child Run',async({page})=>{
+ await page.goto('/?mode=dispatch-hierarchy');const ui=panel(page);
+ await ui.getByRole('button',{name:/All-Purpose Team/}).click();
+ await ui.getByRole('button',{name:'Confirm project and host'}).click();
+ await ui.getByRole('button',{name:'Save team',exact:true}).click();
+ await ui.getByRole('button',{name:'Launch this team'}).click();
+ await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false',{timeout:40000});
+ await ui.getByLabel('Total objective').fill('Delegate through actual managers');
+ await ui.getByRole('button',{name:'Submit total objective'}).click();
+ const tasks=ui.getByRole('region',{name:'Team tasks',exact:true});
+ await expect(tasks).toContainText('Reports through parent Task');
+ await expect(tasks).toContainText('Nested worker depth of at least 2');
+ await expect(tasks.getByRole('article',{name:/Task/})).toHaveCount(2);
+ await tasks.getByRole('button',{name:'View member'}).first().click();
+ const member=ui.getByRole('region',{name:'Member details'});
+ await expect(member.getByRole('region',{name:'Manager Runs'})).toContainText('Reports through parent Task');
+ await expect(member).toContainText('Native depth');
+ await page.reload();await expect(panel(page).getByRole('region',{name:'Team tasks',exact:true})).toContainText('Reports through parent Task');
+});

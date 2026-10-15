@@ -1,3 +1,5 @@
+import {readNativeDispatchEvidence} from '../src/local/native-dispatch.mjs';
+import {WORKER_RULES} from '../src/dispatch.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {questionFixture} from './questions-fixture.mjs';
@@ -48,7 +50,7 @@ test('new approved member receives normal direct-parent admission using effectiv
  const f=await questionFixture(t),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});
  await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));await dispatch.check(f.work.id);
  f.store.saveStaffing(direct(f));await service(f).check(f.work.id);
- const member=f.store.effectiveTeamForWork(f.work.id).members.at(-1),p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-dispatch/v1',workId:f.work.id,token:p.token,generation:1,taskKey:'new-member-task',memberId:member.id,configVersion:2,roleVersion:1,role:{brief:member.brief,habits:member.habits,collaboration:member.collaboration},instruction:'Review findings.',writeScope:[]}),row={id:'new-member-task',run_id:'run-head',spec,status:'ready'};
+ const member=f.store.effectiveTeamForWork(f.work.id).members.at(-1),p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-dispatch/v1',workId:f.work.id,token:p.token,generation:1,taskKey:'new-member-task',memberId:member.id,configVersion:2,roleVersion:1,role:{brief:member.brief,habits:member.habits,collaboration:member.collaboration},instruction:'Review findings.',workerRules:WORKER_RULES,writeScope:[]}),row={id:'new-member-task',run_id:'run-head',spec,status:'ready'};
  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(row.id,row.run_id,spec,'ready',null,null,null,null,null);f.receipt('create-new-member','orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task:row});
  await dispatch.check(f.work.id);const attempts=f.store.listDispatches(f.work.id);
  assert.equal(attempts.length,2);assert.equal(attempts[0].configVersion,1);assert.equal(attempts[1].configVersion,2);assert.equal(attempts[1].permit.state,'accepted');
@@ -86,6 +88,7 @@ test('full-mode added preparation is included in closure and its exact reservati
  const patch={status:'created',kind:'structured',sessionId:'new-reviewer-session',handle:'new-reviewer-handle',briefAccepted:true};f.store.settleOperation(operation.requestId,operation.nativeRequest.operationId,{...patch,public:publicOperation({...operation,...patch})});
  await service(f).check(f.work.id);const delta=f.store.listRosterDeltas(f.work.id)[0];assert.ok(f.store.workClosureBlockers(f.work.id).some(s=>s.includes('manager processing')));
  publish(f,'roster-ack',{deltaId:delta.id,configVersion:2},{taskId:'closure-roster-ack'});await service(f).check(f.work.id);
+ const native=await readNativeDispatchEvidence(f.profile,{work:f.store.readCurrentWork(f.work.id),protocol:f.store.readDispatchProtocol(f.work.id),team,owner:(await f.works.verifyWork(f.work.id)).instance});assert.deepEqual(native.unmanaged,[]);
  f.store.recordDelivery(f.work.id,{id:'delivery',previousDeliveryId:null,summary:'Ready',evidenceRefs:['validation'],attemptIds:[],generation:1,supervisorMemberId:f.team.members[0].id,proof:{requestId:'delivery-proof',payloadHash:'fixture'}});
  f.store.decideWork({requestId:'accept-staffed-work',workId:f.work.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
  assert.equal(f.store.readWork(f.work.id).status,'completed');assert.equal(f.store.readMemberOperation(member.id),null);assert.equal(f.store.readSnapshot().teams[0].members.length,5);

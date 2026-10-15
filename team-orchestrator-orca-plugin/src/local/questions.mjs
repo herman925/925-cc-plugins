@@ -22,6 +22,13 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(native.state!=='verified')throw Error(native.detail);
   return {work,owner,native,hostGeneration};
  }
+ async function relayResolved(question,seen=new Set()){
+  if(!question.relay)return true;
+  const key=question.relay.workId+':'+question.relay.appQuestionId;if(seen.has(key))return false;seen.add(key);
+  const child=store.readWork(question.relay.workId),saved=store.listQuestions(child?.id).find(q=>q.id===question.relay.appQuestionId);
+  if(!child?.parent||child.parent.workId!==question.workId||!saved?.origin)return false;
+  try{const current=await evidence(child.id),thread=current.native.threads.find(t=>t.messageId===saved.origin.messageId);return Boolean(thread?.answer)&&await relayResolved(saved,seen);}catch{return false;}
+ }
  async function deliver(workId,id,answerId){
   let question=store.listQuestions(workId).find(q=>q.id===id),a=question.answers.find(a=>a.id===answerId);
   if(a.state!=='queued')return;
@@ -30,7 +37,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    await consent();const {work,owner,native,hostGeneration}=await evidence(workId);
    if((question.epoch??0)!==(work.epoch??0)||question.generation!==work.run.consumerGeneration||question.runId!==work.run.id)throw Error('Answer target is stale. Preserve it and request a new supervisor decision.');
    if(question.origin){const thread=native.threads.find(t=>t.messageId===question.origin.messageId);if(!thread||thread.status!=='pending')throw Error('Original native question is closed, answered or unverified; this answer cannot resume it.');}
-   const text='TEAM_USER_ANSWER\n'+JSON.stringify({protocol:'team-questions/v1',workId,appQuestionId:id,questionRevision:a.revision,answerId:a.id,body:a.body,origin:question.origin,instruction:'This is a saved user answer. Process it once using answerId. Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. For a two-failure decision include nextNativeTaskId of the specific permitted next Task. An input receipt is not an acknowledgement.'});
+   const text='TEAM_USER_ANSWER\n'+JSON.stringify({protocol:'team-questions/v1',workId,appQuestionId:id,questionRevision:a.revision,answerId:a.id,body:a.body,origin:question.origin,relay:question.relay,instruction:'This is a saved user answer. Process it once using answerId. Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. For a two-failure decision include nextNativeTaskId of the specific permitted next Task. An input receipt is not an acknowledgement.'});
    const nativeSend=userMessage(work,owner,text);
    if(!store.claimQuestionAnswer(workId,id,answerId,nativeSend))return;sending=true;
    await works.verifyHost(workId,hostGeneration);
@@ -53,25 +60,26 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    if(event.state!=='queued')continue;
    try{
     await consent();const current=await evidence(workId);
-    const text='TEAM_FAILURE_SUMMARY_NEEDED\n'+JSON.stringify({workId,taskKey:streak.taskKey,evidence:event.data.evidence,instruction:'Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. As highest supervisor publish a native team-questions/v1 user-question Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step.'});
+    const text='TEAM_FAILURE_SUMMARY_NEEDED\n'+JSON.stringify({workId,taskKey:streak.taskKey,evidence:event.data.evidence,instruction:'Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. If you are highest supervisor publish a native team-questions/v1 user-question Task; otherwise publish relay-question and ask your real parent manager to escalate it, preserving relay {workId,appQuestionId}. Include a Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step.'});
     const nativeSend=userMessage(current.work,current.owner,text);if(!store.claimQuestionEvent(workId,id,'sending',nativeSend))continue;
     await works.verifyHost(workId,current.hostGeneration);
     const receipt=await rpc(nativeSend.method,nativeSend.params,nativeSend.envelope);store.updateQuestionEvent(workId,id,{state:accepted(receipt,nativeSend,current.owner)?'accepted':'unknown'});
    }catch{store.updateQuestionEvent(workId,id,{state:'unknown'});}
   }
-  for(const intent of native.intents)if(intent.spec.kind==='user-question')try{store.ingestQuestion(workId,intent);}catch{}
+  for(const intent of native.intents)if(['user-question','relay-question'].includes(intent.spec.kind))try{if((intent.spec.kind==='relay-question'||intent.spec.relay)&&(!intent.spec.origin||!native.threads.some(t=>t.messageId===intent.spec.origin.messageId)))continue;store.ingestQuestion(workId,intent);}catch{}
   for(const intent of native.intents)if(intent.spec.kind==='collaboration-directive')try{store.ingestCollaboration(workId,intent);}catch{}
   for(const message of native.messages||[])try{store.ingestTeamMessage(workId,message);}catch{}
   for(const intent of native.intents)if(intent.spec.kind==='answer-ack'){
    const s=intent.spec,q=store.listQuestions(workId).find(q=>q.id===s.appQuestionId),a=q?.answers.find(a=>a.id===s.answerId);
-   if(!a||!['accepted','unknown','sending'].includes(a.state))continue;
+   if(!a||!['accepted','unknown','sending'].includes(a.state)||!await relayResolved(q))continue;
    store.updateQuestion(workId,q.id,saved=>{const answer=saved.answers.find(a=>a.id===s.answerId);answer.processed='confirmed';answer.acknowledgement={nativeTaskId:intent.nativeTaskId,payloadHash:intent.payloadHash};if(typeof s.nextNativeTaskId==='string')answer.nextNativeTaskId=s.nextNativeTaskId;if(saved.answers.at(-1).id===answer.id)saved.status='answered';});
   }
   for(const q of store.listQuestions(workId)){
    const thread=q.origin&&native.threads.find(t=>t.messageId===q.origin.messageId);
-   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer){for(const a of saved.answers)if(['accepted','unknown','sending'].includes(a.state)&&a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
+   const relayReady=await relayResolved(q);
+   if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer&&relayReady){if(saved.to==='manager')saved.status='answered';for(const a of saved.answers)if(['accepted','unknown','sending'].includes(a.state)&&a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
    for(const a of q.answers){if(a.state==='sending')updateAnswer(workId,q.id,a.id,{state:'unknown',detail:'Worker restarted during answer submission; no automatic resend.'});else if(a.state==='queued')await deliver(workId,q.id,a.id);}
-   if(q.notification.state==='queued'){
+   if(q.to==='user'&&q.notification.state==='queued'){
     if(!store.claimQuestionNotification(workId,q.id))continue;
     let state='unavailable';try{if(notify)state=(await notify({title:'Team decision needs your attention',body:q.summary.slice(0,1000)}))?.delivered===true?'delivered':'unconfirmed';}catch{}
     store.updateQuestion(workId,q.id,saved=>{saved.notification={state};});
@@ -83,5 +91,5 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(shown?.observation?.exactWorker!==true||shown.observation.status!=='live'||shown.dispatch?.id!==attempt.dispatchId||shown.dispatch.assigneeHandle!==attempt.binding?.handle||!wait||!['agent-approval-prompt','agent-trust-workspace','agent-hooks-review-prompt','agent-interactive-prompt','codex-trust-workspace','codex-hooks-review-prompt','codex-interactive-prompt'].includes(wait.reason))return;
   return notifyQuestionEvent(store,notify,{workId,id:`wait-${attempt.id}-${wait.reason}`,kind:'native-fault',title:'Team member needs native input',body:`${attempt.memberName}: ${wait.reason}. Open its original Orca/provider session to handle login or permission. Execution outcome remains unconfirmed.`});
  }
- return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listCurrentWorks())if(w.status!=='completed')await this.check(w.id);}};
+ return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listCurrentWorks().flatMap(w=>store.listRunWorks(w.id).reverse()))if(w.status!=='completed')await this.check(w.id);}};
 }

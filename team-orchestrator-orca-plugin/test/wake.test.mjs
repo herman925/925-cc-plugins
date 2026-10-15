@@ -88,7 +88,7 @@ test('subordinate fresh replacement accepts only its real direct manager native 
 test('an old supervisor question stays blocked until an explicit user recovery resolution preserves its unanswered history',async t=>{
  const f=await fixture(t),work=f.store.prepareWork({teamId:f.team.id,requestId:'goal',expectedRevision:f.store.readSnapshot().revision,objective:'Finish'}).work;
  f.store.updateWork(work.id,work.version,{instance:{kind:'structured',liveSessionId:'session-118',sessionId:'canonical',fence:7},run:{state:'verified',id:'run',consumerGeneration:1}});
- f.store.ingestQuestion(work.id,{spec:{appQuestionId:'old-question',summary:'Old choice',options:[],blockingTaskKeys:[]}});
+ f.store.ingestQuestion(work.id,{spec:{kind:'user-question',appQuestionId:'old-question',summary:'Old choice',options:[],blockingTaskKeys:[]}});
  f.dead=true;await f.service.wake(f.input);f.fence=8;f.dead=false;await f.service.check('wake-1');
  const wake=f.store.readWake('wake-1');f.store.rebindWake('wake-1',wake.version,work.id,{kind:'structured',liveSessionId:'session-118',sessionId:'canonical',fence:8},{state:'verified',id:'run',consumerGeneration:1});
  assert.ok(f.store.workClosureBlockers(work.id).some(r=>r.includes('User decision')));

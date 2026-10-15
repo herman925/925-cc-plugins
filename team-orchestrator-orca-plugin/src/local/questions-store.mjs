@@ -31,12 +31,15 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
   ingestQuestion(workId,intent){return atomic(()=>{
    const work=readWork(workId),s=intent.spec,key=`question:${workId}:${s.appQuestionId}`,fingerprint=hash(intent),prior=readPrivate(key);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('Question ID conflicts with existing immutable question.');return prior;}
-   const q={format:'team-question-v1',id:s.appQuestionId,workId,teamId:work.teamId,fromMemberId:work.supervisorMemberId,to:'user',runId:work.run.id,generation:work.run.consumerGeneration,epoch:work.epoch??0,revision:1,status:'pending',summary:s.summary,options:s.options,blockingTaskKeys:s.blockingTaskKeys,origin:s.origin??null,evidence:s.evidence??[],proof:intent,fingerprint,answers:[],createdAt:new Date().toISOString(),notification:{state:'queued'}};
+   if(work.parent?s.kind!=='relay-question':s.kind!=='user-question')throw Error('Only the highest supervisor asks the user; lower managers relay.');
+   if(s.relay){const child=readWork(s.relay.workId),q=list(s.relay.workId).find(q=>q.id===s.relay.appQuestionId);if(!child?.parent||child.parent.workId!==workId||!q||!s.origin||s.origin.attemptId!==child.parent.attemptId)throw Error('Relay must preserve the actual direct manager and its original parent question.');}
+   const q={format:'team-question-v1',id:s.appQuestionId,workId,teamId:work.teamId,fromMemberId:work.supervisorMemberId,to:work.parent?'manager':'user',...(s.relay?{relay:s.relay}:{}),runId:work.run.id,generation:work.run.consumerGeneration,epoch:work.epoch??0,revision:1,status:'pending',summary:s.summary,options:s.options,blockingTaskKeys:s.blockingTaskKeys,origin:s.origin??null,evidence:s.evidence??[],proof:intent,fingerprint,answers:[],createdAt:new Date().toISOString(),notification:{state:'queued'}};
    putPrivate(key,q);return q;
   });},
   queueQuestionAnswer(input){return atomic(()=>{
    if(readWork(input?.workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');
    if(!input||!text(input.answerId,120)||!/^[a-zA-Z0-9-]+$/.test(input.answerId)||!text(input.body)||typeof input.supplement!=='boolean')throw Error('Invalid user answer.');
+   if(readWork(input.workId)?.parent)throw Error('Only the highest supervisor receives user answers.');
    const q=readPrivate(`question:${input.workId}:${input.questionId}`);if(!q)throw Error('Saved question is unavailable.');
    const fingerprint=hash(input),global=readPrivate(`question-answer:${input.answerId}`);if(global&&global.fingerprint!==fingerprint)throw Error('Answer identity conflicts with another question.');
    const old=q.answers.find(a=>a.id===input.answerId);
