@@ -71,7 +71,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
  }
  async function checkWork(workId){
   const work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);
-  if(!work||!protocol||!work.instance||!work.run.id)return store.dispatchProjection(workId);
+  if(work?.status==='completed'||!work||!protocol||!work.instance||!work.run.id)return store.dispatchProjection(workId);
   const attempts=store.listDispatches(workId),team=store.readTeamVersion(work.teamId,work.configVersion);
   const evidence=()=>readNativeDispatchEvidence(userData,{work,protocol,team,owner:work.instance,admitted:attempts});
   const observations=new Map();
@@ -122,6 +122,6 @@ export function createRecoveryService({store,rpc,userData,consent}){
  return {
   checkWork:id=>serial(`work:${id}`,()=>checkWork(id)),
   checkOperation:id=>serial(`operation:${id}`,()=>checkOperation(id)),
-  async reconcile(){for(const operation of store.listOperations())if(store.isActiveOperation(operation))await this.checkOperation(operation.requestId);for(const work of store.listCurrentWorks())await this.checkWork(work.id);},
+  async reconcile(){for(const operation of store.listOperations())if(store.isActiveOperation(operation))await this.checkOperation(operation.requestId);for(const work of store.listCurrentWorks())if(work.status!=='completed')await this.checkWork(work.id);},
  };
 }

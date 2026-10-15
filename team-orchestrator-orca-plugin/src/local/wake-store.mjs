@@ -3,6 +3,14 @@ import {randomUUID,createHash} from 'node:crypto';
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export const publicWake=row=>{if(!row)return null;const {oldBinding,nativeAction,fingerprint,managerRequest,...value}=row;return {...value,...(managerRequest?{managerRequest:{state:managerRequest.state,reviewer:managerRequest.reviewer}}:{}),oldRequestId:oldBinding.requestId,oldInstanceGeneration:oldBinding.instanceGeneration??1};};
 export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persistOperation,readWork,persistWork,readCurrentWork}){
+ function updateRecipients(old,operation){
+  for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all()){
+   const work=JSON.parse(saved.json);if(work.teamId!==old.teamId||work.status==='completed')continue;
+   const rows=work.currentRecipientBindings??work.recipientBindings??[work.binding],prior=rows.find(r=>r.memberId===old.memberId);
+   if(prior&&prior.requestId!==old.requestId)continue;
+   work.currentRecipientBindings=rows.filter(r=>r.memberId!==old.memberId).concat(operation);work.version++;persistWork(work);
+  }
+ }
  const readWake=id=>readPrivate(`wake:${id}`);
  return {
   readWake,
@@ -24,6 +32,7 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
     attempt.originalSupervisorInstance??=work.instance;attempt.reviewAuthority={recoveryRequestId:id,reviewerMemberId:row.memberId,generation:run.consumerGeneration,reviewToken:randomUUID(),previousGeneration:attempt.generation,handoff:row.handoff??{decision:'native-resume',death:row.proof.death}};attempt.version++;putPrivate(saved.id,attempt);
    }
    raw.currentSupervisor={binding,instance,run,status:'active',input:{state:'not_sent'},processing:{state:'unknown'},nativeSend:undefined,error:undefined,recoveryRequestId:id,epoch:(work.epoch??0)+1};raw.version++;persistWork(raw);
+   for(const saved of db.prepare("SELECT id,json FROM receipts WHERE id LIKE 'delivery:%'").all()){const delivery=JSON.parse(saved.json);if(delivery.workId===workId&&delivery.status==='pending'){delivery.status='superseded';delivery.recoveryRequestId=id;putPrivate(saved.id,delivery);}}
    const protocol=readPrivate(`dispatch-protocol:${workId}`);if(protocol){putPrivate(`dispatch-protocol-history:${workId}:${protocol.token}`,protocol);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-protocol:${workId}`);}
    row.state='bound';row.newInstance={...row.newInstance,workId,runId:run.id,consumerGeneration:run.consumerGeneration};row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);return row;
   });},
@@ -32,7 +41,7 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
    const old=row.oldBinding,pointer=old.sourceAttemptId?{requestId:readPrivate(`dispatch-member:${old.memberId}`)?.id,instanceGeneration:old.instanceGeneration}:readPrivate(`binding:${old.memberId}`);
    if(pointer?.requestId!==old.requestId||(pointer.instanceGeneration??1)!==(old.instanceGeneration??1))throw Error('Member binding changed before replacement.');
    const operation={...intent,requestId:`replace-${id}`,memberId:old.memberId,teamId:old.teamId,configVersion:old.configVersion,status:'unknown',effectState:'intent',instanceGeneration:(old.instanceGeneration??1)+1,version:1,replaces:old.requestId,wakeRequestId:id,createdAt:new Date().toISOString()};operation.public=publicOperation(operation);
-   putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);
+   putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);updateRecipients(old,operation);
    row.state='replacing';row.newInstance={requestId:operation.requestId,instanceGeneration:operation.instanceGeneration};row.version++;putPrivate(`wake:${id}`,row);return {operation,fresh:true};
   });},
   publishWake(id,version,instance){return atomic(()=>{
@@ -41,7 +50,7 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
    const operation={...old,requestId:`wake-${id}`,instanceGeneration:(old.instanceGeneration??1)+1,version:1,runtimeId:row.proof.runtimeId,resumedFrom:old.requestId,recovery:undefined,observation:{state:'observed',ownerFence:instance.fence,detail:'Native owner acquired a newer execution fence after the exact prior owner stopped.'}};
    if(operation.sourceAttemptId){operation.originAttemptId=operation.sourceAttemptId;delete operation.sourceAttemptId;delete operation.sourceDispatchId;delete operation.sourceWorkId;}
    operation.public=publicOperation(operation);
-   putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);
+   putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);updateRecipients(old,operation);
    row.state='resumed';row.newInstance={requestId:operation.requestId,instanceGeneration:operation.instanceGeneration,...instance};row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${old.memberId}`);return row;
   });},
   claimWake(id){return atomic(()=>{const row=readWake(id);if(row?.state!=='reserved')return false;row.state='submitted';row.version++;putPrivate(`wake:${id}`,row);return true;});},

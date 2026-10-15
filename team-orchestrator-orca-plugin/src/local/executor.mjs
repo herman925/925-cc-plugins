@@ -1,6 +1,7 @@
 import {createWakeService} from './wake.mjs';
-import { initialMembers } from '../launch.mjs';
+import { createLifecycleService } from './lifecycle.mjs';
 import { createQuestionService } from './questions.mjs';
+import { initialMembers } from '../launch.mjs';
 import { createRecoveryService } from './recovery.mjs';
 import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
@@ -17,6 +18,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const works = createWorkService({ store, userData, consent, rpc });
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
+  const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   const recovery = createRecoveryService({ store, rpc, userData, consent });
   const wake = createWakeService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   let workTimer, polling = false, stopped = false;
@@ -26,8 +28,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     polling = true;
     try {
       await consent(); await recovery.reconcile();
-      if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
-      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); scheduleWork();
+      if (!store.listWorks().some(work => work.status!=='completed' && work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
+      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await lifecycle.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
   }
@@ -87,6 +89,22 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           if(latestObservation.get(row.oldBinding.scope.workspaceKey)!==params.observationId||!observed||Date.now()-observed.observedAt>30000||observed.runtimeId!==row.proof.runtimeId)throw Error('Fresh authenticated recovery capability admission is required.');
           const issue=preferenceIssue(member,observed,{requireCore:true});if(issue)throw Error(issue);
           const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
+        }
+        if(op==='_decideWork'){
+          if(!store.readWorkDecision(params.requestId))await questions.check(params.workId);
+          const decision=await lifecycle.decide(params);return {value:store.readSnapshot(),decision,teamId:store.readWork(params.workId).teamId};
+        }
+        if(op==='_nextGoal'){
+          const goal=params.goalId?store.nextGoal(params.teamId):store.reserveNextGoal(params.teamId);if(!goal||params.goalId&&goal.id!==params.goalId)return {value:store.readSnapshot()};
+          const team=store.readSnapshot().teams.find(t=>t.id===params.teamId);
+          if(team?.configVersion!==goal.configVersion)throw Error('Queued transition configuration changed.');
+          const pending=Object.entries(goal.launchRequests).find(([memberId,id])=>store.readOperation(id)?.status!=='created');
+          return {goalId:goal.id,...(pending?{launch:{teamId:team.id,memberId:pending[0],requestId:pending[1],configVersion:goal.configVersion}}:{ready:true})};
+        }
+        if(op==='_startQueuedWork'){
+          const goal=store.nextGoal(params.teamId);if(!goal||params.goalId&&goal.id!==params.goalId)return {value:store.readSnapshot()};
+          const work=await works.submit({teamId:params.teamId,requestId:goal.workRequestId,objective:goal.objective,expectedRevision:store.readSnapshot().revision});
+          await dispatches.check(work.id);stopped=false;scheduleWork();return {value:store.readSnapshot(),work};
         }
         if (op === '_launchLookup') {
           const saved = savedLaunch(params.input);
@@ -168,7 +186,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id);
+        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id); await lifecycle.check(work.id).catch(()=>{});
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
@@ -176,6 +194,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if(op==='checkWake'){await wake.check(params.requestId);return {value:await wake.bind(params.requestId)};}
       if(op==='decideWake')return {value:await wake.decide(params)};
       if(op==='checkHandoff')return {value:await wake.handoff(params.requestId)};
+      if(op==='enqueueGoal'){await consent();store.enqueueGoal(params);return {value:store.readSnapshot()};}
       if (op === 'answerQuestion') return { value: await questions.answer(params) };
       if (op === 'updateAgentPreferences') {
         const replay = store.replay(op, params); if (replay) return { value: replay };

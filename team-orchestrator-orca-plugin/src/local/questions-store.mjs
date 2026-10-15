@@ -5,8 +5,8 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
  const list=workId=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'question:%'").all().map(r=>{const q=JSON.parse(r.json);if(q.format!=='team-question-v1'||!['id','workId','teamId','fromMemberId','runId','summary'].every(k=>text(q[k]))||!Number.isSafeInteger(q.revision)||q.revision<1||!Number.isSafeInteger(q.generation)||q.generation<1||!['options','blockingTaskKeys','evidence','answers'].every(k=>Array.isArray(q[k]))||q.options.some(v=>!text(v,2000))||q.blockingTaskKeys.some(v=>!text(v,120))||q.evidence.some(v=>!text(v,2000))||!['queued','attempted','delivered','unconfirmed','unavailable'].includes(q.notification?.state)||q.answers.some(a=>!text(a.id,120)||!text(a.body)||!['queued','sending','accepted','unknown','blocked'].includes(a.state)||!['unconfirmed','confirmed'].includes(a.processed)||a.revision!==q.revision||a.from!=='user'||a.toMemberId!==q.fromMemberId)||new Set(q.answers.map(a=>a.id)).size!==q.answers.length||!['pending','answered','closed'].includes(q.status))throw Error('Saved pending question is damaged; preserve original data.');return q;}).filter(q=>q.workId===workId);
  const api={
   listQuestions:list,
-  claimQuestionAnswer(workId,id,answerId,nativeSend){return atomic(()=>{const key=`question:${workId}:${id}`,q=readPrivate(key),a=q?.answers.find(a=>a.id===answerId);if(!a||a.state!=='queued')return false;Object.assign(a,{state:'sending',nativeSend});putPrivate(key,q);return true;});},
-  claimQuestionNotification(workId,id){return atomic(()=>{const key=`question:${workId}:${id}`,q=readPrivate(key);if(q?.notification.state!=='queued')return false;q.notification={state:'attempted'};putPrivate(key,q);return true;});},
+  claimQuestionAnswer(workId,id,answerId,nativeSend){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key),a=q?.answers.find(a=>a.id===answerId);if(!a||a.state!=='queued')return false;Object.assign(a,{state:'sending',nativeSend});putPrivate(key,q);return true;});},
+  claimQuestionNotification(workId,id){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key);if(q?.notification.state!=='queued')return false;q.notification={state:'attempted'};putPrivate(key,q);return true;});},
   claimQuestionEvent(workId,id,state,nativeSend){return atomic(()=>{const key=`question-event:${workId}:${id}`,e=readPrivate(key);if(e?.state!=='queued')return false;Object.assign(e,{state,...(nativeSend?{nativeSend}:{})});putPrivate(key,e);return true;});},
   listTeamMessages(workId){return db.prepare("SELECT json FROM receipts WHERE id LIKE 'team-message:%'").all().map(r=>JSON.parse(r.json)).filter(r=>r.workId===workId);},
   ingestTeamMessage(workId,message){return atomic(()=>{
@@ -35,6 +35,7 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
    putPrivate(key,q);return q;
   });},
   queueQuestionAnswer(input){return atomic(()=>{
+   if(readWork(input?.workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');
    if(!input||!text(input.answerId,120)||!/^[a-zA-Z0-9-]+$/.test(input.answerId)||!text(input.body)||typeof input.supplement!=='boolean')throw Error('Invalid user answer.');
    const q=readPrivate(`question:${input.workId}:${input.questionId}`);if(!q)throw Error('Saved question is unavailable.');
    const fingerprint=hash(input),global=readPrivate(`question-answer:${input.answerId}`);if(global&&global.fingerprint!==fingerprint)throw Error('Answer identity conflicts with another question.');
@@ -44,7 +45,7 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
    if(q.answers.length&&!input.supplement)throw Error('An answer already exists; submit an explicit supplement.');
    const a={id:input.answerId,body:input.body,revision:q.revision,from:'user',toMemberId:q.fromMemberId,state:'queued',processed:'unconfirmed',fingerprint,createdAt:new Date().toISOString()};q.answers.push(a);q.status='pending';putPrivate(`question:${q.workId}:${q.id}`,q);putPrivate(`question-answer:${a.id}`,{workId:q.workId,questionId:q.id,fingerprint});return a;
   });},
-  updateQuestion(workId,id,change){return atomic(()=>{const key=`question:${workId}:${id}`,q=readPrivate(key);if(!q)throw Error('Question missing.');change(q);putPrivate(key,q);return q;});},
+  updateQuestion(workId,id,change){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key);if(!q)throw Error('Question missing.');change(q);putPrivate(key,q);return q;});},
   failureStreaks(workId){
    const groups=new Map();
    for(const a of listDispatches(workId)){

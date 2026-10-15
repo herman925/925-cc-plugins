@@ -32,7 +32,7 @@ let templatePreview = null;
 let templateRequest = null;
 const wakeDrafts = new Map(), wakeRequests = new Map();
 const answerDrafts = new Map(), answerRequests = new Map();
-const objectives = new Map(), workRequests = new Map();
+const objectives = new Map(), workRequests = new Map(), goalDrafts=new Map(), goalRequests=new Map(), decisionRequests=new Map(), reworkDrafts=new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -134,6 +134,7 @@ function memberTasks(team, member) {
 function workTasks(team, work) {
   const protocol = work.dispatchProtocol;
   return `<section aria-label="Team tasks"><h3>Team tasks</h3>${work.messages?.length?`<details><summary>Verified team messages (${work.messages.length})</summary>${work.messages.map(m=>`<p>${escape(team.members.find(a=>a.id===m.fromMemberId)?.name||m.fromMemberId)} → ${escape(team.members.find(a=>a.id===m.toMemberId)?.name||m.toMemberId)}: ${escape(m.body)} · Native message saved · Processing ${escape(m.processing)}</p>`).join('')}</details>`:''}${work.collaborations?.length?`<details><summary>Supervisor collaboration directives (${work.collaborations.length})</summary>${work.collaborations.map(d=>`<p>${escape(team.members.find(a=>a.id===d.fromMemberId)?.name||d.fromMemberId)} → ${escape(team.members.find(a=>a.id===d.toMemberId)?.name||d.toMemberId)} · Reports to ${escape(team.members.find(a=>a.id===d.reportToMemberId)?.name||d.reportToMemberId)} · Processing ${escape(d.processing)}</p>`).join('')}</details>`:''}${protocol ? `<p>Supervisor dispatch protocol: ${escape(protocol.state)} · Generation ${escape(protocol.generation)}</p>${protocol.detail ? `<p>${escape(protocol.detail)}</p>` : ''}` : ''}${work.tasks?.length ? taskCards(team, work.tasks) : '<p>No admitted member tasks observed yet.</p>'}${work.queuedTasks?.length?'<h4>Queued tasks</h4>'+taskCards(team,work.queuedTasks):''}<p>Declared scope coordination is not filesystem isolation. Unknown results and pending acceptance keep their scopes reserved.</p></section>`;
+
 }
 function details() {
   if (!selection) return '';
@@ -144,9 +145,19 @@ function details() {
   const reports = team.members.filter(row => row.boss === member.id);
   return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Requested model</dt><dd>${escape(member.model)}</dd><dt>Requested effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>Role version ${member.roleVersion} · Configuration version ${team.configVersion}</p>${memberTasks(team, member)}<h3>Agent preferences</h3><p class="subtle">${member.preferenceOverride ? 'Individual override' : 'Inherits level default'} · Effective model: unknown · Effective effort: unknown · Context usage: unknown</p><label class="field">Preference applies to<select data-preference-target><option value="member" ${preferenceTarget === 'member' ? 'selected' : ''}>This member</option><option value="level" ${preferenceTarget === 'level' ? 'selected' : ''}>Level ${member.level} defaults</option></select></label><div class="table-scroll"><table class="models"><thead><tr><th>Agent</th><th>Requested model</th><th>Requested effort</th></tr></thead><tbody><tr>${preferenceControls('Member', memberPreferences || member, capabilityViews.get(team.scope.workspaceKey), 'member', true)}</tr></tbody></table></div>${capabilityNotice(team.scope)}${button('Refresh host capabilities', 'refresh-capabilities', '', 'small')}${button('Save preferences', 'save-preferences', !storageAvailable ? 'disabled' : '', 'primary small')}${button('Use level default', 'inherit-preferences', '', 'small')}<p class="subtle">Saved preferences apply to future launches. Role collaboration rules guide agents; they do not intercept provider tools.</p><label class="field">Role description<textarea data-role="brief" maxlength="1500">${escape(member.brief)}</textarea></label><label class="field">Work habits<textarea data-role="habits" maxlength="1500">${escape(member.habits)}</textarea></label><label class="field">Collaboration rules<textarea data-role="collaboration" maxlength="1500">${escape(member.collaboration)}</textarea></label>${button('Save role', 'save-role', !storageAvailable ? 'disabled' : '', 'primary small')}<p class="subtle">Changes apply at the next launch or handoff. Existing work keeps its saved role version.</p></section>`;
 }
-function workSection(team) {
-  const work = state.works?.find(row => row.teamId === team.id);
-  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${workTasks(team, work)}</section>`;
+function workSection(team){
+ const history=(state.works||[]).filter(w=>w.teamId===team.id&&w.status==='completed'),goals=(state.goals||[]).filter(g=>g.teamId===team.id&&g.status!=='started');
+ const queue=`<section class="section" aria-label="Queued objectives"><h3>Next total objectives</h3><label class="field">Queue a later objective<textarea data-goal="${team.id}" maxlength="8000">${escape(goalDrafts.get(team.id)||'')}</textarea></label>${button('Queue objective','enqueue-goal',`data-team="${team.id}"`,'small')}<p>Queueing saves the goal. It starts after you accept the current delivery, using fresh conversations.</p>${goals.map(g=>`<p>${escape(g.objective)} · ${escape(g.status)}</p>`).join('')}${(goals.some(g=>g.status==='reserved')||history.length&&!state.works?.some(w=>w.teamId===team.id&&w.status!=='completed')&&goals.length)?button('Continue next objective','start-next',`data-team="${team.id}"`,'small'):''}</section>`;
+ const past=history.length?`<details><summary>Accepted work history (${history.length})</summary>${history.map(w=>`<p>${escape(w.objective)} · Accepted by you · ${escape(w.closedAt)}</p><p>${escape(w.handoff?.summary||'')}</p>`).join('')}</details>`:'';
+ return activeWorkSection(team)+queue+past;
+}
+function deliverySection(work){
+ const d=work.delivery;if(!d)return '';
+ return `<section aria-label="Overall delivery"><h3>Overall delivery · ${escape(d.status)}</h3><p>${escape(d.summary)}</p><p>Evidence: ${escape(d.evidenceRefs.join(' · '))}</p><p>Delivery revision ${d.revision} · Highest supervisor verified</p>${work.closureBlockers?.length?`<p>Required work remains: ${escape(work.closureBlockers.join('; '))}</p>`:''}${d.status==='pending'?`${button('Accept delivery','accept-delivery',`data-work="${work.id}" ${work.closureBlockers?.length?'disabled':''}`,'primary small')}<label class="field">Requested corrections<textarea data-rework="${work.id}" maxlength="8000">${escape(reworkDrafts.get(work.id)||'')}</textarea></label>${button('Request rework','rework-delivery',`data-work="${work.id}"`,'small')}`:''}</section>`;
+}
+function activeWorkSection(team) {
+  const work = state.works?.find(row => row.teamId === team.id&&row.status!=='completed');
+  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}</section>`;
   const head = team.members.find(member => member.boss === null);
   if (team.launch?.members?.[head.id]?.status !== 'created') return '';
   return `<section class="section"><h3>Start team work</h3><label class="field">Total objective<textarea data-objective="${team.id}" rows="3" maxlength="8000">${escape(objectives.get(team.id) || '')}</textarea></label>${button('Submit total objective', 'submit-work', `data-team="${team.id}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small')}<p class="subtle">Uses the prepared highest supervisor and this team's saved project. One total objective may remain in progress at a time.</p></section>`;
@@ -358,6 +369,26 @@ app.addEventListener('click', async event => {
     } catch (error) { problem = error.message; if (/Another panel changed/.test(error.message)) workRequests.delete(target.dataset.team); canRetry = true; }
     finally { busy = false; render(); }
   }
+  else if(['enqueue-goal','accept-delivery','rework-delivery','start-next'].includes(action)){
+    busy=true;problem='';render();
+    try{
+      let result,teamId=target.dataset.team;
+      if(action==='enqueue-goal'){
+        if(!goalRequests.has(teamId))goalRequests.set(teamId,mutation({teamId,objective:goalDrafts.get(teamId)||''}));
+        result=await call('enqueueGoal',goalRequests.get(teamId));goalRequests.delete(teamId);goalDrafts.delete(teamId);message='Later objective queued.';
+      }else if(action==='start-next')result=await call('startNextGoal',{teamId});
+      else{
+        const work=state.works.find(w=>w.id===target.dataset.work);teamId=work.teamId;
+        const key=work.delivery.id+action;
+        if(!decisionRequests.has(key))decisionRequests.set(key,{requestId:crypto.randomUUID(),workId:work.id,deliveryId:work.delivery.id,expectedWorkVersion:work.version,decision:action==='accept-delivery'?'accept':'rework',...(action==='rework-delivery'?{feedback:reworkDrafts.get(work.id)||''}:{})});
+        result=await call('decideWork',decisionRequests.get(key));message=action==='accept-delivery'?'Delivery accepted.':'Corrections saved for the highest supervisor.';
+      }
+      while(result.continue){message='Preparing fresh sessions for the next objective…';render();await new Promise(resolve=>setTimeout(resolve,10100));result=await call('startNextGoal',{teamId,goalId:result.goalId});}
+      state=validatePersistentState(result.value||(await call('storage.get',{})).value);
+      if(result.pending)message=result.detail||'Next objective remains reserved. Continue after checking its saved launch evidence.';
+    }catch(error){problem=error.message;if(/changed|superseded/i.test(error.message))decisionRequests.clear();try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    finally{busy=false;render();}
+  }
   else if (action === 'answer-question') {
     const work=state.works.find(w=>w.id===target.dataset.work),q=work.questions.find(q=>q.id===target.dataset.question),key=work.id+':'+q.id;
     if(!answerRequests.has(key))answerRequests.set(key,{workId:work.id,questionId:q.id,questionRevision:q.revision,answerId:crypto.randomUUID(),body:answerDrafts.get(key)||'',supplement:q.answers.length>0});
@@ -372,6 +403,8 @@ app.addEventListener('click', async event => {
 });
 app.addEventListener('input', event => {
   const target = event.target;
+  if(target.dataset.goal){goalDrafts.set(target.dataset.goal,target.value);goalRequests.delete(target.dataset.goal);return;}
+  if(target.dataset.rework){reworkDrafts.set(target.dataset.rework,target.value);return;}
   if (target.dataset.answer) { answerDrafts.set(target.dataset.answer,target.value); answerRequests.delete(target.dataset.answer); }
   else if (target.dataset.objective) { objectives.set(target.dataset.objective, target.value); workRequests.delete(target.dataset.objective); }
   else if (target.hasAttribute('data-template')) { templateText = target.value; }

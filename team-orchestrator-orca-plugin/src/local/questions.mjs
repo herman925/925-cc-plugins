@@ -41,7 +41,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
  }
  async function check(workId){
   const work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);
-  if(!protocol||work?.run.state!=='verified')return;
+  if(work?.status==='completed'||!protocol||work?.run.state!=='verified')return;
   let native;
   try{({native}=await evidence(workId));}catch{return;}
   for(const streak of store.failureStreaks(workId).filter(s=>s.escalationNeeded)){
@@ -83,5 +83,5 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(shown?.observation?.exactWorker!==true||shown.observation.status!=='live'||shown.dispatch?.id!==attempt.dispatchId||shown.dispatch.assigneeHandle!==attempt.binding?.handle||!wait||!['agent-approval-prompt','agent-trust-workspace','agent-hooks-review-prompt','agent-interactive-prompt','codex-trust-workspace','codex-hooks-review-prompt','codex-interactive-prompt'].includes(wait.reason))return;
   return notifyQuestionEvent(store,notify,{workId,id:`wait-${attempt.id}-${wait.reason}`,kind:'native-fault',title:'Team member needs native input',body:`${attempt.memberName}: ${wait.reason}. Open its original Orca/provider session to handle login or permission. Execution outcome remains unconfirmed.`});
  }
- return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listCurrentWorks())await this.check(w.id);}};
+ return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listCurrentWorks())if(w.status!=='completed')await this.check(w.id);}};
 }
