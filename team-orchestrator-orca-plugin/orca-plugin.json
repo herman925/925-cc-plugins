@@ -48,6 +48,9 @@
     },
     {
       "kind": "events:subscribe"
+    },
+    {
+      "kind": "notifications:show"
     }
   ],
   "main": "main.mjs"
