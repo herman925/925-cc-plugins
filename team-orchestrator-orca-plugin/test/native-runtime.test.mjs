@@ -25,3 +25,11 @@ for(const failure of ['wrong-runtime','wrong-id','truncated','oversized'])test(`
  const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{},maxBytes:1024,timeoutMs:100});
  await assert.rejects(rpc('status.get'),/runtime|response|Native/);
 });
+test('native error text cannot disclose the runtime credential, socket or profile',async t=>{
+ const profile=await mkdtemp(join(tmpdir(),'native-private-')),endpoint=join(profile,'runtime.sock');
+ const server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());socket.end(JSON.stringify({id:request.id,ok:false,error:{message:`private-token ${profile} ${endpoint}`},_meta:{runtimeId:'runtime-one'}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});
+ await writeFile(join(profile,'orca-runtime.json'),JSON.stringify({runtimeId:'runtime-one',pid:process.pid,transports:[{kind:'unix',endpoint}],authToken:'private-token'}));
+ const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});
+ await assert.rejects(rpc('status.get'),error=>!error.message.includes('private-token')&&!error.message.includes(profile)&&!error.message.includes(endpoint));
+});

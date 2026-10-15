@@ -8,10 +8,10 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
   if(!METHODS.has(method))throw Error('Native method is not allowed for team work.');
   if(Object.keys(envelope).some(key=>!['orchestrationRequestId'].includes(key)))throw Error('Native caller overrides are not allowed.');
   await consent();
-  let metadata,transport;
+  let metadata,transport,profile;
   try{
    if(!isAbsolute(userData||''))throw Error();
-   const profile=await realpath(userData),path=await realpath(join(profile,'orca-runtime.json')),rel=relative(profile,path);
+   profile=await realpath(userData);const path=await realpath(join(profile,'orca-runtime.json')),rel=relative(profile,path);
    if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error();
    const content=await readFile(path,'utf8');if(Buffer.byteLength(content)>65536)throw Error();metadata=JSON.parse(content);
    transport=(metadata.transports??[metadata.transport]).find(item=>['unix','named-pipe'].includes(item?.kind));
@@ -26,6 +26,7 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
    socket.on('connect',async()=>{try{await consent();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope})+'\n');}catch(error){finish(error);}});
    socket.on('error',()=>finish(Error('Native runtime connection failed; delivery is unconfirmed.')));
    socket.on('close',()=>finish(Error('Native runtime closed before a receipt; delivery is unconfirmed.')));
+   const publicError = value => [metadata.authToken,transport.endpoint,profile,userData].reduce((message,secret)=>secret?message.split(secret).join('[private runtime data]'):message,String(value||'Native operation refused')).slice(0,1500);
    socket.on('data',chunk=>{
     buffer+=chunk;if(Buffer.byteLength(buffer)>maxBytes)return finish(Error('Native runtime response exceeded its bounded limit.'));
     for(let index;(index=buffer.indexOf('\n'))>=0;){
@@ -33,7 +34,7 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
      let response;try{response=JSON.parse(line);}catch{return finish(Error('Native runtime returned malformed evidence.'));}
      if(response?._keepalive===true)continue;
      if(response?.id!==id||response?._meta?.runtimeId!==metadata.runtimeId)return finish(Error('Native response identity or runtime changed; evidence is unverified.'));
-     if(response.ok!==true)return finish(Object.assign(Error(String(response.error?.message||'Native operation refused').slice(0,1500)),{code:response.error?.code,native:true}));
+     if(response.ok!==true)return finish(Object.assign(Error(publicError(response.error?.message)),{code:response.error?.code,native:true}));
      finish(null,response.result);return;
     }
    });
