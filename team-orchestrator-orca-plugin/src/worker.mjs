@@ -1,10 +1,13 @@
 import { bootstrap } from './local/bootstrap.mjs';
 import { locateCli, createCliRunner } from './local/cli.mjs';
 import { createExecutor } from './local/executor.mjs';
+import { openTeamStore } from './local/store.mjs';
 export default function activate(orca) {
   let ready;
   let initialising = false;
   let executorPromise;
+  let storePromise;
+  let storeProfile;
   const publicReport = ({ cliPaths, ...report }) => report;
   // Register immediately: Orca's worker ready deadline is shorter than a bootstrap attempt.
   const initialise = () => {
@@ -29,7 +32,12 @@ export default function activate(orca) {
     if (!args || args.op === 'ping') return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
     if (!report.ready) throw new Error(report.detail);
     if (!report.cliPaths) throw new Error('Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.');
-    executorPromise ??= locateCli(undefined, undefined, report.cliPaths).then(command => createExecutor(orca.host, createCliRunner(command)));
+    if (storeProfile && storeProfile !== report.cliPaths.userData) throw new Error('Orca profile changed; restart the plugin worker before continuing.');
+    storeProfile = report.cliPaths.userData;
+    storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
+    executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
+      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store }))
+      .catch(error => { executorPromise = null; throw error; });
     return (await executorPromise).execute(args);
   });
   for (const event of ['worktree.created', 'agent.status.changed']) orca.events.on(event, () => initialise());

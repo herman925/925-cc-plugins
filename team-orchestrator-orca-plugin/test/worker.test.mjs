@@ -27,3 +27,26 @@ test('worker checks consent before injection and recovers from denied host call 
   assert.ok(calls.every(call => call.method === 'storage.get'));
   assert.equal((await commands.get('team.control')({ op: 'ping' })).injections, 2);
 });
+
+test('worker retains its SQLite service and confirmed selections across initialization retries', async t => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const { DEFAULT_FORM } = await import('../src/team.mjs');
+  const profile = await mkdtemp(join(tmpdir(), 'worker-store-'));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const built = await build({ entryPoints: ['src/worker.mjs'], bundle: true, write: false, platform: 'node', format: 'esm', define: { __PLUGIN_DISPLAY_VERSION__: '"test"' }, plugins: [{ name: 'host-boundary', setup(api) {
+    api.onLoad({ filter: /local\/bootstrap\.mjs$/ }, () => ({ contents: `export async function bootstrap() { return { ready:true, platform:'darwin', detail:'fixture', cliPaths:{appData:${JSON.stringify(profile)},userData:${JSON.stringify(profile)}} }; }`, loader: 'js' }));
+    api.onLoad({ filter: /local\/cli\.mjs$/ }, () => ({ contents: `export async function locateCli() { return {}; } export function createCliRunner() { return async () => ({worktree:{id:'folder:/fixture',hostId:'local',displayName:'Fixture'}}); }`, loader: 'js' }));
+  } }] });
+  const activate = (await import('data:text/javascript;base64,' + Buffer.from(built.outputFiles[0].text).toString('base64'))).default;
+  const commands = new Map();
+  activate({ commands: { register: (id, handler) => commands.set(id, handler) }, events: { on() {} }, log() {}, host: { call: async () => ({ value: null }) } });
+  const control = commands.get('team.control');
+  const selected = await control({ op: 'context', workspaceId: 'folder:/fixture' });
+  const first = await control({ op: 'createTeam', params: { requestId: 'first', expectedRevision: 0, form: DEFAULT_FORM, selectionToken: selected.selectionToken } });
+  await commands.get('team.initialise')();
+  const second = await control({ op: 'createTeam', params: { requestId: 'second', expectedRevision: 1, form: DEFAULT_FORM, selectionToken: selected.selectionToken } });
+  assert.equal(second.value.teams.length, 2);
+  assert.equal(second.value.teams[0].id, first.value.teams[0].id);
+  assert.deepEqual((await control({ op: 'load' })).value, second.value);
+});

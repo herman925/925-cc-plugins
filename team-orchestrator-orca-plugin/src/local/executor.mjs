@@ -1,24 +1,34 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { startupCommand } from './startup-command.mjs';
-import { validateState } from '../team.mjs';
+import { memberLaunch } from '../launch.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-const KEY = 'team-definitions-v1';
-export function createExecutor(host, cli) {
+export function createExecutor(host, cli, { store } = {}) {
+  const selections = new Map();
   const starts = new Map();
   const jobs = new Set();
-  const get = async key => (await host.call('storage.get', { key }))?.value ?? null;
-  const set = async (key, value) => host.call('storage.set', { key, value });
+  const get = async key => store.readReceipt(key);
+  const set = async (key, value) => store.writeReceipt(key, value);
   async function workspaceRecord(workspaceId) {
     if (typeof workspaceId !== 'string' || !workspaceId || workspaceId.length > 4096) throw new Error('No verified desktop workspace selection.');
     const selector = workspaceId.startsWith('folder:') ? workspaceId : `id:${workspaceId}`;
     const result = await cli(['worktree', 'show', '--worktree', selector]);
     const workspace = result?.worktree;
-    if (!workspace?.id) throw new Error('Open the intended workspace first; Orca returned no active workspace identity.');
+    if (!workspace?.id || workspace.id !== workspaceId) throw new Error('Open the intended workspace first; Orca returned no active workspace identity.');
     return workspace;
   }
-  async function context(workspaceId) {
-    const workspace = await workspaceRecord(workspaceId);
-    return { displayName: workspace.displayName || workspace.branch || 'Workspace', branch: workspace.branch || '', workspaceKey: hash(workspace.id), nativeAgentLaunch: true };
+  function verifiedScope(workspace) {
+    const executionHostId = workspace.hostId ?? workspace.identity?.executionHostId;
+    if (typeof executionHostId !== 'string' || !/^(local|ssh:[^\s|]+)$/.test(executionHostId)) throw new Error('Orca did not verify a supported local or SSH execution host for this workspace.');
+    return { workspaceId: workspace.id, executionHostId, kind: workspace.id.startsWith('folder:') ? 'folder' : 'git', displayName: workspace.displayName || workspace.branch || 'Workspace', branch: workspace.branch || '', workspaceKey: hash(JSON.stringify([workspace.id, executionHostId])) };
+  }
+  const publicScope = ({ workspaceId, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
+  async function context(workspaceId, teamId) {
+    if (teamId) return publicScope(store.readScope(teamId));
+    const scope = verifiedScope(await workspaceRecord(workspaceId));
+    const selectionToken = randomUUID();
+    if (selections.size >= 128) selections.delete(selections.keys().next().value);
+    selections.set(selectionToken, scope);
+    return { ...publicScope(scope), selectionToken };
   }
   function validateLaunch(value) {
     if (!value || !/^[a-zA-Z0-9-]{1,120}$/.test(value.requestId) || !/^[a-f0-9]{64}$/.test(value.workspaceKey) || !['codex', 'claude'].includes(value.agent) || typeof value.title !== 'string' || !value.title || value.title.length > 160 || typeof value.brief !== 'string' || !value.brief || value.brief.length > 16384) throw new Error('Invalid member launch request.');
@@ -27,6 +37,15 @@ export function createExecutor(host, cli) {
   }
   async function start(params, workspaceId) {
     validateLaunch(params);
+    const team = store.readSnapshot().teams.find(row => row.id === params.teamId);
+    if (!team?.launch) throw new Error('Begin launching a saved team first.');
+    const frozen = store.readTeamVersion(team.id, team.launch.configVersion);
+    const member = frozen.members.find(row => row.id === params.memberId);
+    if (!member) throw new Error('Member does not belong to the saved team.');
+    const expected = memberLaunch(frozen, member, team.scope.workspaceKey);
+    if (Object.keys(params).length !== Object.keys(expected).length || Object.keys(expected).some(key => params[key] !== expected[key])) throw new Error('Launch input conflicts with the saved role/configuration version.');
+    const scope = store.readScope(team.id);
+    workspaceId = scope.workspaceId;
     const fingerprint = hash(JSON.stringify(params));
     const active = starts.get(params.requestId);
     if (active) { if (active.fingerprint !== fingerprint) throw new Error('Request identity conflicts with an existing launch.'); return active.promise; }
@@ -38,7 +57,7 @@ export function createExecutor(host, cli) {
         return { requestId: params.requestId, status: saved.status };
       }
       const workspace = await workspaceRecord(workspaceId);
-      if (hash(workspace.id) !== params.workspaceKey) throw new Error('The active workspace changed. No new agent was launched.');
+      if (verifiedScope(workspace).workspaceKey !== scope.workspaceKey) throw new Error('The bound workspace or execution host changed. No new agent was launched.');
       const schema = await cli(['agent-context']);
       const commands = schema.commands ?? [];
       const modern = commands.some(value => value.command === 'agent launch');
@@ -82,16 +101,20 @@ export function createExecutor(host, cli) {
   }
   return {
     async execute({ op, params = {}, workspaceId } = {}) {
-      if (op === 'context') return context(workspaceId);
-      if (op === 'load') {
-        const state = validateState(await get(KEY));
-        for (const team of state.teams) if (team.launch?.native) for (const member of team.members) {
-          const receipt = await get(`launch:${team.id}-${member.id}`);
-          if (receipt?.handle) team.launch.members[member.id] = { status: 'created', terminalId: receipt.handle, title: receipt.title, briefAccepted: receipt.briefAccepted, executionHostId: receipt.executionHostId ?? null, ...(receipt.status === 'naming' ? { error: 'Tab created; naming observation was interrupted. Inspect that tab.' } : receipt.warning ? { error: receipt.warning } : {}) };
-        }
-        return { value: validateState(state) };
+      if (op === 'context') return context(workspaceId, params.teamId);
+      if (op === 'load') return { value: store.readSnapshot() };
+      if (op === 'createTeam') {
+        const previous = store.replay('createTeam', params);
+        if (previous) return { value: previous };
+        const selected = selections.get(params.selectionToken);
+        if (!selected) throw new Error('Confirm the project and execution host again before saving.');
+        const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
+        if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The selected execution host changed. Confirm the project again.');
+        return { value: store.createTeam(params, selected) };
       }
-      if (op === 'save') { await set(KEY, validateState(params.value)); return { ok: true }; }
+      if (op === 'updateRole') return { value: store.updateRole(params) };
+      if (op === 'updateSettings') return { value: store.updateSettings(params) };
+      if (op === 'beginLaunch') return { value: store.beginLaunch(params) };
       if (op === 'start') return start(params, workspaceId);
       if (op === 'receipt') {
         if (!/^[a-zA-Z0-9-]{1,120}$/.test(params.requestId)) throw new Error('Invalid request identity.');

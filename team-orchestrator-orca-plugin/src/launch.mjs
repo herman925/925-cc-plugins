@@ -9,10 +9,10 @@ export function memberLaunch(team, member, workspaceKey) {
   const reports = team.members.filter(row => row.boss === member.id);
   const roster = team.members.map(row => `${row.id}: ${row.name} (${row.role}, ${row.agent}), boss=${row.boss ?? 'user'}`).join('\n');
   return {
-    requestId: `${team.id}-${member.id}`, workspaceKey, title: `${team.name}/${member.name}`, agent: member.agent,
+    requestId: `${team.id}-${member.id}`, teamId: team.id, memberId: member.id, workspaceKey, title: `${team.name}/${member.name}`, agent: member.agent,
     ...(member.model !== 'default' ? { model: member.model } : {}),
     ...(member.effort !== 'default' ? { effort: member.effort } : {}),
-    brief: `You are ${member.name}, the ${member.role} of @${team.name}. Your session name is ${team.name}/${member.name}.\nGoal: ${team.purpose || 'Wait for the user to provide the team goal.'}\nReport to: ${boss?.name ?? 'the user'}. Direct reports: ${reports.map(row => row.name).join(', ') || 'none'}.\n${member.brief}\nThis roster contains exactly ${team.members.length} members. The user is outside the roster; do not create extra members or launch teammates.\nRoster:\n${roster}\nSave your role and this roster in .orca/team-orchestrator/${team.name}/roles/${member.id}.md. Acknowledge your identity and readiness, then wait for an assignment. Managers will use Orca's version-matched orchestration skill for later supervised work; report access blockers rather than inventing results.`
+    brief: `You are ${member.name}, the ${member.role} of @${team.name}. Your session name is ${team.name}/${member.name}.\nGoal: ${team.purpose || 'Wait for the user to provide the team goal.'}\nReport to: ${boss?.name ?? 'the user'}. Direct reports: ${reports.map(row => row.name).join(', ') || 'none'}.\n${member.brief}\nWork habits: ${member.habits || 'None specified'}.\nCollaboration rules: ${member.collaboration || 'None specified'}.\nRole version: ${member.roleVersion ?? 1}; configuration version: ${team.configVersion ?? 1}.\nThis roster contains exactly ${team.members.length} members. The user is outside the roster; do not create extra members or launch teammates.\nRoster:\n${roster}\nThe plugin has saved your role and roster; do not claim to persist or change their authoritative versions. Acknowledge your identity and readiness, then wait for an assignment. Managers will use Orca's version-matched orchestration skill for later supervised work; report access blockers rather than inventing results.`
   };
 }
 

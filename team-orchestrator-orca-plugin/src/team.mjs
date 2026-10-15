@@ -99,3 +99,24 @@ export function validateState(value) {
   if (value.settings && typeof value.settings.chart === 'boolean' && ['stacked', 'columns'].includes(value.settings.layout)) validated.settings = { chart: value.settings.chart, layout: value.settings.layout };
   return validated;
 }
+
+// v2 is deliberately isolated from the prototype KV format. Member IDs and
+// saved roles are authoritative; presets describe the initial shape only.
+export const emptyTeamState = () => ({ format: 'orca-team-store', version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
+export function validatePersistentState(value) {
+  if (!value || value.format !== 'orca-team-store' || value.version !== 2 || !Number.isInteger(value.revision) || value.revision < 0 || !Array.isArray(value.teams) || value.teams.length > 100) throw new Error('Saved team data has an unsupported format. It has been left untouched.');
+  const teamIds = new Set(), memberIds = new Set();
+  for (const team of value.teams) {
+    const uuid = id => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id);
+    if (!uuid(team.id) || teamIds.has(team.id) || !Number.isInteger(team.configVersion) || team.configVersion < 1 || !team.scope || !['git', 'folder'].includes(team.scope.kind) || ! /^(local|ssh:[^\s|]+)$/.test(team.scope.executionHostId) || !/^[a-f0-9]{64}$/.test(team.scope.workspaceKey) || typeof team.scope.displayName !== 'string') throw new Error('Saved team identity or project binding is invalid. It has been left untouched.');
+    const { configuration, scope, ...roster } = team;
+    validateState({ version: 1, teams: [roster] });
+    for (const member of team.members) {
+      if (!uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some(text => typeof text !== 'string' || text.length > 1500)) throw new Error('Saved role identity/version is invalid. It has been left untouched.');
+      memberIds.add(member.id);
+    }
+    teamIds.add(team.id);
+  }
+  if (typeof value.settings?.chart !== 'boolean' || !['stacked', 'columns'].includes(value.settings.layout)) throw new Error('Saved display settings are invalid. It has been left untouched.');
+  return value;
+}

@@ -31,9 +31,9 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
     },
     async call(action, params) {
       if (!connected) throw new Error('Test the local worker connection first.');
-      if (action === 'workspace.readContext') return rpc('context');
+      if (action === 'workspace.readContext') return rpc('context', params);
+      if (['createTeam', 'updateRole', 'updateSettings', 'beginLaunch'].includes(action)) return rpc(action, params);
       if (action === 'storage.get') return rpc('load');
-      if (action === 'storage.set') return rpc('save', params);
       if (action !== 'terminal.createAgent') throw new Error('Unknown worker operation.');
       await rpc('start', params);
       const deadline = Date.now() + 120000;

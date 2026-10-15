@@ -2,6 +2,7 @@
 const { app, ipcMain, BrowserWindow } = require('electron');
 const { fork } = require('node:child_process');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
 app.setName('Orca');
 app.setPath('appData', __dirname + '/redirected-app-data');
 app.setPath('userData', __dirname + '/redirected-runtime-profile');
@@ -71,6 +72,21 @@ app.whenReady().then(async () => {
     const ping = await ipc('plugins:panelAction', envelope());
     assert.equal(ping.value.nonce, 'panel-nonce'); assert.equal(ping.value.workerPid, child.pid);
     assert.equal(ping.value.cliPaths, undefined); assert.equal(ping.value.liveProviderVerified, false);
+    const control = async (op, params) => {
+      const request = envelope('team.control', op); request.params.teamWorker.args.params = params;
+      const result = await ipc('plugins:panelAction', request);
+      assert.equal(result.ok, true, JSON.stringify(result)); return result.value;
+    };
+    const selection = await control('context', {});
+    assert.equal(selection.executionHostId, 'ssh:fixture'); assert.equal(selection.kind, 'git');
+    const form = { name: 'Saved-Team', structure: 'team', levels: 2, fan: 3, groups: '', purpose: '', agents: ['codex','codex','codex'], models: ['default','default','default'], efforts: ['default','default','default'] };
+    const create = { requestId: 'electron-create', expectedRevision: 0, selectionToken: selection.selectionToken, form };
+    const saved = (await control('createTeam', create)).value;
+    assert.equal(saved.teams.length, 1); assert.equal(saved.teams[0].launch, undefined);
+    assert.equal(JSON.stringify(saved).includes('/remote/project'), false);
+    assert.equal(readFileSync(__dirname + '/cli-calls.jsonl','utf8').trim().split('\n').map(JSON.parse).every(args => args[0] === 'worktree'), true, 'save must not launch');
+    const edited = (await control('updateRole', { requestId: 'electron-role', expectedRevision: 1, teamId: saved.teams[0].id, memberId: saved.teams[0].members[0].id, brief: 'Review evidence', habits: 'Read results first', collaboration: 'Escalate blockers' })).value;
+    assert.equal(edited.teams[0].members[0].roleVersion, 2);
     assert.equal((await ipc('plugins:panelAction', envelope('foreign.command'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'arbitrary.runtime'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'ping', 'foreign-token'))).code, 'invalid_request');
@@ -83,6 +99,13 @@ app.whenReady().then(async () => {
     await new Promise(resolve => setTimeout(resolve, 800));
     const retry = await ipc('plugins:panelAction', envelope('team.initialise'));
     assert.equal(retry.value.reused, true); assert.equal(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
+    assert.deepEqual((await control('load', {})).value, edited);
+    // Recycle only this isolated fixture worker: real SQLite persists, old KV is untouched.
+    await new Promise(resolve => { child.once('exit', resolve); child.kill(); });
+    start = undefined;
+    assert.deepEqual((await control('load', {})).value, edited);
+    assert.deepEqual((await control('createTeam', create)).value, saved, 'recover completed save after worker restart');
+    assert.equal(data.size, 0, 'new format must not write legacy KV');
     await new Promise(resolve => setTimeout(resolve, 800));
     let inspectorOpen = true;
     try { await fetch('http://127.0.0.1:9229/json/list', { signal: AbortSignal.timeout(500) }); } catch { inspectorOpen = false; }
@@ -90,7 +113,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame IPC, SQLite save/role/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); app.exit(1); }
 });

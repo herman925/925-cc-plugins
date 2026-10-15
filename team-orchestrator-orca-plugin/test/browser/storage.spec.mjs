@@ -1,0 +1,48 @@
+import { test, expect } from '@playwright/test';
+const panel = page => page.frameLocator('#panel');
+test('save a bound team without launching, edit roles, and restore its identities and role versions', async ({ page }) => {
+ await page.goto('/'); const ui = panel(page);
+ await ui.getByRole('button', { name: /Squad/ }).click();
+ await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
+ await ui.getByRole('button', { name: 'Confirm project and host' }).click();
+ await ui.getByRole('button', { name: 'Save team', exact: true }).click();
+ await expect(ui.getByRole('heading', { name: '@Squad' })).toBeVisible();
+ expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'start').length)).toBe(0);
+ await expect(ui.locator('.team-card')).toContainText('Demo workspace');
+ await ui.getByRole('button', { name: 'Head', exact: true }).click();
+ await ui.getByLabel('Role description').fill('Review every reported result');
+ await ui.getByLabel('Work habits').fill('Summarize blockers first');
+ await ui.getByLabel('Collaboration rules').fill('Ask before changing scope');
+ await ui.getByRole('button', { name: 'Save role' }).click();
+ await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Role version 2');
+ await page.reload();
+ await panel(page).getByRole('button', { name: 'Head', exact: true }).click();
+ await expect(panel(page).getByLabel('Work habits')).toHaveValue('Summarize blockers first');
+ await expect(panel(page).getByLabel('Role description')).toHaveValue('Review every reported result');
+});
+test('stale panels receive a conflict instead of overwriting saved roles', async ({ page }) => {
+ await page.goto('/'); const first = panel(page);
+ await first.getByRole('button', { name: /Squad/ }).click();
+ await first.getByRole('button', { name: 'Confirm project and host' }).click();
+ await first.getByRole('button', { name: 'Save team', exact: true }).click();
+ await expect(first.getByRole('heading', { name: '@Squad' })).toBeVisible();
+ const secondPage = await page.context().newPage(); await secondPage.goto('/'); const second = panel(secondPage);
+ await second.getByRole('button', { name: 'Head', exact: true }).click();
+ await first.getByRole('button', { name: 'Head', exact: true }).click();
+ await first.getByLabel('Role description').fill('Keep this newer role'); await first.getByRole('button', { name: 'Save role' }).click();
+ await expect(first.getByRole('region', { name: 'Member details' })).toContainText('Role version 2');
+ await second.getByLabel('Role description').fill('Stale overwrite'); await second.getByRole('button', { name: 'Save role' }).click();
+ await expect(second.getByRole('alert')).toContainText('Another panel changed');
+ await secondPage.reload(); await panel(secondPage).getByRole('button', { name: 'Head', exact: true }).click();
+ await expect(panel(secondPage).getByLabel('Role description')).toHaveValue('Keep this newer role');
+});
+test('new folder teams leave legacy prototype data untouched and do not import it', async ({ page }) => {
+ await page.goto('/?mode=folder');
+ await page.evaluate(() => localStorage.setItem('team-definitions-v1', '{"version":1,"teams":[{"name":"Legacy"}]}'));
+ await page.reload(); const ui = panel(page);
+ await expect(ui.getByRole('heading', { name: 'No team yet' })).toBeVisible();
+ await ui.getByRole('button', { name: /Squad/ }).click();
+ await ui.getByRole('button', { name: 'Confirm project and host' }).click(); await ui.getByRole('button', { name: 'Save team', exact: true }).click();
+ await expect(ui.locator('.team-card')).toContainText('Demo folder');
+ expect(await page.evaluate(() => localStorage.getItem('team-definitions-v1'))).toBe('{"version":1,"teams":[{"name":"Legacy"}]}');
+});
