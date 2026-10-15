@@ -1,3 +1,4 @@
+import { wakeStore, publicWake } from './wake-store.mjs';
 import { stopStore } from './stop-store.mjs';
 import { lifecycleStore } from './lifecycle-store.mjs';
 import { questionStore } from './questions-store.mjs';
@@ -65,28 +66,39 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.exec('COMMIT');
     }
     const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`) ?? db.prepare('SELECT json FROM receipts WHERE id=?').get(`native-run-binding:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
+    const readCurrentWork = id => {
+      const raw=readWork(id),work=raw?.currentSupervisor?{...raw,...raw.currentSupervisor,nativeSend:raw.currentSupervisor.nativeSend,error:raw.currentSupervisor.error,originalBinding:raw.binding}:raw;
+      if(work?.parent){const parent=readWork(work.parent.workId),epoch=parent?.currentSupervisor,attempt=readPrivate(`dispatch:${work.parent.attemptId}`);if(epoch&&attempt?.reviewAuthority?.recoveryRequestId===epoch.recoveryRequestId&&attempt.reviewAuthority.generation===epoch.run.consumerGeneration)work.parentAuthority={generation:epoch.run.consumerGeneration,recoveryRequestId:epoch.recoveryRequestId};}
+      return work;
+    };
+    const listCurrentWorks = () => listWorks().map(work=>readCurrentWork(work.id));
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
     const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(work));
+    const persistCurrentWork = work => {
+      const raw=readWork(work.id);if(!raw?.currentSupervisor)return persistWork(work);
+      for(const key of ['status','input','processing','run','snapshot','error','instance','nativeSend'])raw.currentSupervisor[key]=work[key];
+      raw.version=work.version;for(const key of ['closedAt','handoff'])if(work[key]!==undefined)raw[key]=work[key];if(work.status==='completed')raw.status='completed';persistWork(raw);
+    };
     const readPrivate = key => { const row=db.prepare('SELECT json FROM receipts WHERE id=?').get(key); return row?JSON.parse(row.json):null; };
     const putPrivate = (key,value) => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(key,JSON.stringify(value));
     const readDispatchProtocol = workId => { const row=readPrivate(`dispatch-protocol:${workId}`); return row?validateDispatchProtocol(row):null; };
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%' ORDER BY rowid").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
-    const listRunWorks = id => { const root=readWork(id);if(!root)return [];const teamWorkId=root.teamWorkId??root.id;return [readWork(teamWorkId),...db.prepare("SELECT json FROM receipts WHERE id LIKE 'native-run-binding:%' ORDER BY rowid").all().map(r=>validateWork(JSON.parse(r.json))).filter(w=>w.teamWorkId===teamWorkId)]; };
+    const listRunWorks = id => { const root=readCurrentWork(id);if(!root)return [];const teamWorkId=root.teamWorkId??root.id;return [readCurrentWork(teamWorkId),...db.prepare("SELECT json FROM receipts WHERE id LIKE 'native-run-binding:%' ORDER BY rowid").all().map(r=>readCurrentWork(JSON.parse(r.json).id)).filter(w=>w.teamWorkId===teamWorkId)]; };
     const listTeamDispatches = id => {const ids=new Set(listRunWorks(id).map(w=>w.id));return listDispatches().filter(a=>ids.has(a.workId));};
     const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
     const dispatchProjection = workId => ({queuedTasks:listRunWorks(workId).flatMap(w=>queuedTasks(w.id)),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listTeamDispatches(workId).map(publicDispatch),nativeRuns:listRunWorks(workId).map(w=>({id:w.id,teamWorkId:w.teamWorkId??w.id,supervisorMemberId:w.supervisorMemberId,run:w.run,parent:w.parent,input:{state:w.input.state},error:w.error,questions:questions.listQuestions(w.id).map(q=>({id:q.id,summary:q.summary,status:q.status,to:q.to,relay:q.relay})),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(w.id))}))});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
-    const questions = questionStore({db,readPrivate,putPrivate,readWork,listDispatches,atomic:atomicDispatch});
+    const questions = questionStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
     };
-    const write = ({ works, goals, stops: ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
-    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches:listTeamDispatches,listRunWorks,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
+    const write = ({ works, goals, recoveries, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches:listTeamDispatches,listRunWorks,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
     readSnapshot();
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
@@ -128,9 +140,11 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     let closed = false;
     return {
       ...questions,
+      ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation,persistOperation,readWork,persistWork,readCurrentWork}),
       ...stops,
       ...lifecycle,
       readOperation,
+      readMemberDispatch(memberId) {const pointer=readPrivate(`dispatch-member:${memberId}`);return pointer?listDispatches(pointer.workId).find(a=>a.id===pointer.id):null;},
       readMemberOperation(memberId) { const pointer=readPrivate(`binding:${memberId}`); return pointer?readOperation(pointer.requestId):null; },
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
       isActiveOperation(operation){const pointer=readPrivate(`binding:${operation.memberId}`);return pointer?.requestId===operation.requestId&&(pointer.instanceGeneration??1)===(operation.instanceGeneration??1)&&readSnapshot().teams.some(team=>team.id===operation.teamId&&team.members.some(member=>member.id===operation.memberId));},
@@ -160,12 +174,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const goal={id:randomUUID(),teamId:team.id,objective:input.objective,status:'queued',createdAt:new Date().toISOString()};
         putPrivate(`goal:${goal.id}`,goal);putPrivate(key,{id:goal.id,fingerprint:digest});state.revision++;write(state);return goal;
       });},
+      readCurrentWork, listCurrentWorks,
       readWork, listWorks, readDispatchProtocol, listDispatches, listRunWorks, listTeamDispatches, dispatchProjection,
-      readOwningWork(workId,memberId){const root=readWork(workId),team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===memberId);return listRunWorks(workId).filter(w=>w.supervisorMemberId===member?.boss).at(-1)??null;},
+      readOwningWork(workId,memberId){const root=readCurrentWork(workId),team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===memberId);return listRunWorks(workId).filter(w=>w.supervisorMemberId===member?.boss).at(-1)??null;},
       prepareManagerRun(parentWorkId,attemptId){return atomicDispatch(()=>{
-        const parentWork=readWork(parentWorkId),attempt=listDispatches(parentWorkId).find(a=>a.id===attemptId);
+        const parentWork=readCurrentWork(parentWorkId),attempt=listDispatches(parentWorkId).find(a=>a.id===attemptId);
         const prior=listRunWorks(parentWorkId).find(w=>w.parent?.attemptId===attemptId);if(prior)return prior;
-        const root=readWork(parentWork.teamWorkId??parentWork.id);
+        const root=readCurrentWork(parentWork.teamWorkId??parentWork.id);
         const team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===attempt?.memberId);
         if(root.status==='completed'||parentWork.run.state!=='verified'||attempt?.status!=='running'||attempt.admission!=='committed'||!attempt.dispatchId||!attempt.binding||attempt.supervisorMemberId!==parentWork.supervisorMemberId||!team.members.some(m=>m.boss===member?.id)||listDispatches(parentWorkId).filter(a=>a.taskKey===attempt.taskKey).at(-1)?.id!==attempt.id)fail('A current genuine manager parent assignment is required.');
         const id=randomUUID(),protocolToken=randomUUID(),b=attempt.binding;
@@ -174,7 +189,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         validateWork(work);persistWork(work);return work;
       });},
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
-        const work=readWork(workId); if(work?.status==='completed'||work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
+        const work=readCurrentWork(workId); if(work?.status==='completed'||work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
         const prior=readDispatchProtocol(workId); if(prior) { if(prior.generation!==work.run.consumerGeneration)fail('Dispatch protocol belongs to an older Run generation.'); return prior; }
         const protocol={format:'team-dispatch-protocol-v1',workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
       }); },
@@ -189,7 +204,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         putPrivate(`dispatch-queue:${workId}:${intent.nativeTaskId}`,{workId,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,memberId:intent.member.id,memberName:intent.member.name,supervisorMemberId:readWork(workId).supervisorMemberId,configVersion:intent.spec.configVersion,roleVersion:intent.spec.roleVersion,status:'queued',instruction:intent.spec.instruction,dependencies:intent.spec.dependencies??[],writeScope:intent.spec.writeScope,detail:String(detail).slice(0,1200)});
       }); },
       prepareDispatch(workId,intent,startParams,reuse) { return atomicDispatch(()=>{
-        const work=readWork(workId),protocol=readDispatchProtocol(workId);
+        const work=readCurrentWork(workId),protocol=readDispatchProtocol(workId);
         if(work?.status==='completed'||work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
         if(work.parent){const parent=readWork(work.parent.workId),a=listDispatches(parent.id).find(a=>a.id===work.parent.attemptId);if(readWork(work.teamWorkId)?.status==='completed'||a?.status!=='running'||a.evidenceId||a.dispatchId!==work.parent.dispatchId||listDispatches(parent.id).filter(r=>r.taskKey===a.taskKey).at(-1)?.id!==a.id)fail('Parent attempt is stale or settled; child admission is fenced.');}
         const key=`dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId?`:${intent.spec.previousAttemptId}`:''}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
@@ -199,7 +214,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const team=this.effectiveTeamForWork?.(workId)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,work.configVersion)?.json??'null'),member=team?.members.find(row=>row.id===intent.spec.memberId);
         if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==intent.spec.roleVersion)fail('Only the true direct supervisor can admit this frozen member role.');
         const history=listDispatches(workId),previous=history.filter(row=>row.taskKey===intent.spec.taskKey).at(-1);
-        if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||previous.status!=='rework'||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
+        const recovery=reuse?.recoveryRequestId&&readPrivate(`wake:${reuse.recoveryRequestId}`),recoveredPrior=recovery&&recovery.handoff?.decision==='replace'&&recovery.handoff.reviewer===work.supervisorMemberId&&(recovery.oldBinding.sourceAttemptId===previous?.id||previous?.reuse?.requestId===recovery.oldBinding.requestId)&&recovery.newInstance?.requestId===reuse.requestId;
+        if(previous&&(!intent.spec.previousAttemptId||intent.spec.previousAttemptId!==previous.id||(previous.status!=='rework'&&!recoveredPrior)||previous.memberId!==member.id))fail('A new attempt requires the current direct supervisor rework decision.');
         if(!previous&&intent.spec.previousAttemptId)fail('Rework attempt does not exist in this TeamWork.');
         const stopAttempts=new Set(stops.listStops().filter(row=>['intent','submitted','unknown'].includes(row.state)).map(row=>row.target.attemptId));
         const writeScope=declaredWriteScope(intent.spec.writeScope),conflict=scopeBlocker(listTeamDispatches(work.teamWorkId??work.id).filter(a=>a.id!==work.parent?.attemptId).map(a=>({...a,originalTaskKey:a.taskKey,...(stopAttempts.has(a.id)?{status:'unknown'}:{}),taskKey:`${a.workId}:${a.taskKey}`})),`${workId}:${intent.spec.taskKey}`,writeScope);
@@ -211,15 +227,18 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         const reservation=readPrivate(`dispatch-member:${member.id}`),retained=reservation&&history.find(row=>row.id===reservation.id);
         const preparedPointer=readPrivate(`binding:${member.id}`),prepared=preparedPointer&&readOperation(preparedPointer.requestId);
         if(preparedPointer&&(!reuse||reuse.kind==='prepared'&&(reuse.requestId!==preparedPointer.requestId||(reuse.instanceGeneration??1)!==(preparedPointer.instanceGeneration??1)||prepared?.status!=='created'||prepared.memberId!==member.id||prepared.teamId!==work.teamId||prepared.scope?.workspaceKey!==work.scope.workspaceKey)))fail('This member already has an active launch binding; verify it before reuse.');
-        if(reuse?.kind==='prepared'&&(!prepared||reservation||startParams.terminal!==reuse.terminal))fail('Prepared member reservation changed.');
-        if(reservation&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
+        const recoveredMember=recovery&&recovery.newInstance?.requestId===prepared?.requestId&&(recovery.oldBinding.sourceAttemptId===retained?.id||retained?.reuse?.requestId===recovery.oldBinding.requestId)&&(['accepted','rework'].includes(retained?.status)||recovery.handoff?.decision==='replace'&&recovery.handoff.reviewer===work.supervisorMemberId);
+        if(reuse?.kind==='prepared'&&(!prepared||reservation&&!recoveredMember||startParams.terminal!==reuse.terminal))fail('Prepared member reservation changed.');
+        if(reservation&&!recoveredMember&&(!reuse||retained?.id!==reuse.attemptId||!['accepted','rework'].includes(retained.status)||JSON.stringify(retained.binding)!==JSON.stringify(reuse.binding)||startParams.terminal!==reuse.terminal))fail('This member already has a reserved or active binding. Reconcile it before another dispatch.');
         if(reuse&&reuse.kind!=='prepared'&&!reservation)fail('Retained member reservation changed.');
-        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,workId,teamWorkId:work.teamWorkId??work.id,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:team.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
+        const instanceGeneration=reuse?.instanceGeneration??retained?.instanceGeneration??(readPrivate(`binding-generation:${member.id}`)?.generation??0)+1;
+        const id=randomUUID(),attempt={format:'team-dispatch-v1',id,attemptId:id,instanceGeneration,workId,teamWorkId:work.teamWorkId??work.id,runId:work.run.id,teamId:work.teamId,supervisorMemberId:work.supervisorMemberId,memberId:member.id,memberName:member.name,nativeTaskId:intent.nativeTaskId,taskKey:intent.spec.taskKey,taskSpec:intent.taskSpec,dependencies,writeScope,reviewToken:randomUUID(),...(previous?{previousAttemptId:previous.id}:{}),configVersion:team.configVersion,roleVersion:member.roleVersion,role:intent.spec.role,instruction:intent.spec.instruction,token:protocol.token,generation:protocol.generation,scope:work.scope,startParams,...(reuse?{reuse}:{}),createRequestId:intent.requestId,createPayloadHash:intent.payloadHash,admission:intent.unadmitted?'unadmitted':'committed',status:intent.unadmitted?'unknown':'admitted',permit:{state:intent.unadmitted?'unknown':'not_sent'},...(intent.unadmitted?{detail:'Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent.'}:{}),version:1,createdAt:new Date().toISOString()};
         validateDispatch(attempt);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);putPrivate(`dispatch:${id}`,attempt);putPrivate(key,{id,fingerprint:digest});putPrivate(`dispatch-member:${member.id}`,{id,workId});return {attempt,fresh:true};
       }); },
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
-        const row=validateDispatch(readPrivate(`dispatch:${id}`)),work=readWork(row.workId),current=listDispatches(row.workId).filter(other=>other.taskKey===row.taskKey).at(-1);
+        const row=validateDispatch(readPrivate(`dispatch:${id}`)),work=readCurrentWork(row.workId),current=listDispatches(row.workId).filter(other=>other.taskKey===row.taskKey).at(-1);
         if(row.review){if(row.review.requestId===review.requestId&&row.review.payloadHash===review.payloadHash)return row;fail('This attempt already has an immutable supervisor decision.');}
+        if(current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||(row.reviewAuthority?.generation??row.generation)!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
         if(work?.status==='completed'||current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
         if(review.decision==='accept')for(const child of listRunWorks(row.teamWorkId??row.workId).filter(w=>w.parent?.attemptId===row.id)){
           if(child.run.state!=='verified'||listDispatches(child.id).some(a=>a.status!=='accepted')||queuedTasks(child.id).length||questions.listQuestions(child.id).some(q=>q.status!=='answered'))fail('Manager acceptance awaits descendant results and questions.');
@@ -238,6 +257,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(patch.binding&&listDispatches().some(other=>other.memberId!==row.memberId&&other.binding&&(patch.binding.sessionId?other.binding.sessionId===patch.binding.sessionId:other.binding.handle===patch.binding.handle&&other.binding.incarnationId===patch.binding.incarnationId)))fail('Native session is already bound to another member.');
         if(row.evidenceId){if(patch.recovery){row.recovery=patch.recovery;row.version=version+1;putPrivate(`dispatch:${id}`,row);}return row;} // Execution facts and the independent review are immutable.
         Object.assign(row,patch,{version:version+1});validateDispatch(row);putPrivate(`dispatch:${id}`,row);
+        if(row.binding&&row.reuse?.recoveryRequestId){const wake=readPrivate(`wake:${row.reuse.recoveryRequestId}`);if(wake&&wake.newInstance?.requestId===row.reuse.requestId&&wake.state==='replacing'){wake.state='bound';wake.newInstance={...wake.newInstance,attemptId:row.id,dispatchId:row.dispatchId};wake.version++;putPrivate(`wake:${wake.requestId}`,wake);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);}}
         if(row.binding&&readPrivate(`dispatch-member:${row.memberId}`)?.id===row.id)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
         return row;
       }); },
@@ -275,8 +295,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if(work.status==='completed')fail('Completed TeamWork is sealed.');
           const permitted=['status','input','processing','run','snapshot','error','instance','nativeSend'];
           if(Object.keys(patch).some(key=>!permitted.includes(key))) fail('Immutable TeamWork identity cannot be changed.');
-          Object.assign(work,patch,{version:version+1});validateWork(work);persistWork(work);
-          db.exec('COMMIT');return work;
+          if(work.currentSupervisor){Object.assign(work.currentSupervisor,patch);work.version=version+1;}else Object.assign(work,patch,{version:version+1});validateWork(work);persistWork(work);
+          db.exec('COMMIT');return readCurrentWork(id);
         }catch(error){db.exec('ROLLBACK');throw error;}
       },
       prepareOperation(input, intent) {

@@ -19,7 +19,7 @@ export function validateDispatchProtocol(row) {
 }
 export function publicDispatch(row) {
  validateDispatch(row);
- const keys=['workId','teamWorkId','runId','creatorDispatchId','depth','id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
+ const keys=['workId','teamWorkId','runId','creatorDispatchId','depth','id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','instanceGeneration','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
  return Object.fromEntries(keys.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
 }
 export function publicDispatchProtocol(row) { return row ? {state:row.state,generation:row.generation,...(row.detail?{detail:row.detail}:{})} : undefined; }

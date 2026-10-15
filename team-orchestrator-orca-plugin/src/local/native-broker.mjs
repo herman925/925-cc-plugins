@@ -34,7 +34,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
     return { ok: true, value: { opened: true } };
   }
   let recovery;
-  if (op !== 'capabilities') {
+  if (op !== 'capabilities' && op !== 'replaceMember') {
     recovery = await invoke({ op: '_launchLookup', params: { input, recover: op === 'recoverLaunch' } });
     if (recovery?.receipt) return { ok: true, value: recovery.receipt };
     if (op === 'recoverLaunch') throw Error('Saved launch operation was not found; checking cannot start a new session.');
@@ -44,7 +44,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
   await authority();
   const observed = await invoke({ op: '_capabilityResult', params: { observationId: prepared.observationId, value } });
   if (op === 'capabilities') return { ok: true, value: observed };
-  const launch = recovery ?? await invoke({ op: '_launchPrepare', params: { input, observationId: prepared.observationId } });
+  const launch = recovery ?? await invoke({ op: op==='replaceMember'?'_wakeFreshPrepare':'_launchPrepare', params: { input, observationId: prepared.observationId } });
   if (launch.receipt) return { ok: true, value: launch.receipt };
   let result, error;
   try {
@@ -69,7 +69,11 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
       await rpc('terminal.rename', { terminal: saved.handle, title: saved.title });
       const status = (await rpc('terminal.agentStatus', { terminal: saved.handle }))?.agentStatus;
       if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.', ...(shown.incarnationId ? { incarnationId: shown.incarnationId } : {}) };
-    } else warning = [warning, 'Native structured naming is unavailable; the plugin label is retained. Provider start/login observation is unknown.'].filter(Boolean).join(' ');
+    } else {
+      const history=await rpc('agentSession.history',{sessionId:saved.sessionId,direction:'tail',limit:1});
+      if(history?.ok===true&&history.page?.sessionId===saved.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>0)observation={...observation,ownerFence:history.page.fence};
+      warning = [warning, 'Native structured naming is unavailable; the plugin label is retained. Provider start/login observation is unknown.'].filter(Boolean).join(' ');
+    }
   } catch (failure) { warning = [warning, failure.message].filter(Boolean).join(' ').slice(0, 1200); }
   return { ok: true, value: await invoke({ op: '_launchFollowup', params: { phaseId: settled.phaseId, warning, observation } }) };
 }

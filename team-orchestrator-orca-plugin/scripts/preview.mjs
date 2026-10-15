@@ -23,6 +23,7 @@ async function fixture(id, mode) {
     };
     const internalKey = `fixture-${id}`;
     let executor; const history = new Map(); const agents = new Map();
+    const journal=new DatabaseSync(join(profile,'agent-session-journal.db'));journal.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');
     const nativeDb = new DatabaseSync(join(profile, 'orchestration.db'));
     nativeDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER); PRAGMA user_version=43');
     nativeDb.exec(`
@@ -129,6 +130,8 @@ async function fixture(id, mode) {
       if (method === 'orchestration.sessionAddress') return { orcaSessionId: `orca_session_id:${params.sessionId}` };
       if (method === 'orchestration.partyLocation') { const sessionId = params.address.slice('orca_session_id:'.length), row = [...launches.values()].find(row => row.outcome.sessionId === sessionId); return { location: row ? { kind: 'chat', sessionId, worktreeId: row.worktreeId } : null }; }
       if (method === 'agentSession.reveal' && launch) return { ok: true, sessionId: params.sessionId, workspaceId: launch.worktreeId, agent: agents.get(launch.outcome.handle), readable: true };
+      if(method==='agentSession.restartResumable')return {sessions:[...launches.values()].filter(v=>v.outcome.sessionId).map(v=>({sessionId:v.outcome.sessionId,workspaceId:v.worktreeId,executionHostId:host,agent:agents.get(v.outcome.handle)}))};
+      if(method==='agentSession.restartContinue'){assert.equal(params.sessionIds.length,1);return {continued:[{sessionId:params.sessionIds[0],outcome:'refused'}]};}
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
@@ -140,6 +143,7 @@ async function fixture(id, mode) {
         if (dispatchInput) supervisorInput(work, text);
         if (mode === 'objective-unknown') throw Error('Objective delivery outcome unknown');
         if (method === 'agentSession.send') {
+          if(mode==='dispatch-wake-refused'&&!dispatchInput)journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(params.envelope.sessionId,JSON.stringify({schemaVersion:2,sessionId:params.envelope.sessionId,provider:agents.get(work.binding.handle),location:work.scope,lease:{sessionId:params.envelope.sessionId,runtimeFence:7,claimStatus:'released',deathEvidence:{kind:'exit-observed',ownerFence:7,observedAt:Date.now()}}}));
           const messageId = params.envelope.clientOperationId;
           if(mode==='dispatch-queued'&&text.startsWith('TEAM_DISPATCH_PERMIT')){assert.equal(params.delivery,'queue-if-active');return {ok:true,value:{clientMessageId:messageId,queued:{messageId:'queue-'+messageId,state:'waiting',position:1}}};}
           if (!dispatchInput) history.set(params.envelope.sessionId, { submissions: [{ clientMessageId: messageId, dispatchState: 'accepted', providerItemId: 'provider-item' }], latestTurn: { turn: { userItemId: 'orca:' + messageId, turnId: 'turn-one', state: 'running' } } });
@@ -157,7 +161,7 @@ async function fixture(id, mode) {
       throw Error('Unknown fixture read');
     };
     executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
-    return { profile, store, executor, nativeDb, async mediate(op, input) {
+    return { profile, store, executor, nativeDb, journal, async mediate(op, input) {
       if(op==='stopMember'){
         const row=await executor.execute({op:'_stopPrepare',params:input,internalKey}),plan=await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
         if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
@@ -202,7 +206,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
-      if (['stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember'].includes(op)) return reply(await f.mediate(op, params));
+      if (['stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {
@@ -212,6 +216,6 @@ http.createServer(async (req, res) => {
   else { res.writeHead(404); res.end(); }
 }).listen(port, '127.0.0.1', () => console.log(`Sandbox test host: http://127.0.0.1:${port}`));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
-  for (const promise of fixtures.values()) { const f = await promise; f.executor.stopWork(); f.nativeDb.close(); f.store.close(); await rm(f.profile, { recursive: true, force: true }); }
+  for (const promise of fixtures.values()) { const f = await promise; f.executor.stopWork(); f.nativeDb.close();f.journal.close(); f.store.close(); await rm(f.profile, { recursive: true, force: true }); }
   process.exit(0);
 });

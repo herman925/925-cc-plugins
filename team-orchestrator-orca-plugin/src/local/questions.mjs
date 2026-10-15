@@ -13,10 +13,10 @@ export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,bod
 }
 export function createQuestionService({store,rpc,userData,consent,works,notify}) {
  const queues=new Map();
- const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
+ const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
  const updateAnswer=(workId,id,answerId,patch)=>store.updateQuestion(workId,id,q=>{const a=q.answers.find(a=>a.id===answerId);if(!a)throw Error('Answer missing.');if(patch.state==='blocked'&&a.state!=='queued')return;Object.assign(a,patch);});
  async function evidence(workId){
-  const {instance:owner,hostGeneration}=await works.verifyWork(workId,true),work=store.readWork(workId),protocol=store.readDispatchProtocol(workId);
+  const {instance:owner,hostGeneration}=await works.verifyWork(workId,true),work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);
   if(!protocol||work.run.consumerGeneration!==protocol.generation)throw Error('Saved supervisor generation is stale.');
   const native=await readNativeQuestionEvidence(userData,{work,protocol,owner,attempts:store.listDispatches(workId)});
   if(native.state!=='verified')throw Error(native.detail);
@@ -35,7 +35,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   let sending=false;
   try{
    await consent();const {work,owner,native,hostGeneration}=await evidence(workId);
-   if(question.generation!==work.run.consumerGeneration||question.runId!==work.run.id)throw Error('Answer target is stale. Preserve it and request a new supervisor decision.');
+   if((question.epoch??0)!==(work.epoch??0)||question.generation!==work.run.consumerGeneration||question.runId!==work.run.id)throw Error('Answer target is stale. Preserve it and request a new supervisor decision.');
    if(question.origin){const thread=native.threads.find(t=>t.messageId===question.origin.messageId);if(!thread||thread.status!=='pending')throw Error('Original native question is closed, answered or unverified; this answer cannot resume it.');}
    const text='TEAM_USER_ANSWER\n'+JSON.stringify({protocol:'team-questions/v1',workId,appQuestionId:id,questionRevision:a.revision,answerId:a.id,body:a.body,origin:question.origin,relay:question.relay,instruction:'This is a saved user answer. Process it once using answerId. Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. For a two-failure decision include nextNativeTaskId of the specific permitted next Task. An input receipt is not an acknowledgement.'});
    const nativeSend=userMessage(work,owner,text);
@@ -47,7 +47,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   }catch(error){updateAnswer(workId,id,answerId,{state:sending?'unknown':'blocked',detail:sending?'Answer delivery is unknown; it will not be automatically sent again.':String(error.message).slice(0,1200)});}
  }
  async function check(workId){
-  const work=store.readWork(workId),protocol=store.readDispatchProtocol(workId);
+  const work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);
   if(work?.status==='completed'||!protocol||work?.run.state!=='verified')return;
   let native;
   try{({native}=await evidence(workId));}catch{return;}
@@ -91,5 +91,5 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(shown?.observation?.exactWorker!==true||shown.observation.status!=='live'||shown.dispatch?.id!==attempt.dispatchId||shown.dispatch.assigneeHandle!==attempt.binding?.handle||!wait||!['agent-approval-prompt','agent-trust-workspace','agent-hooks-review-prompt','agent-interactive-prompt','codex-trust-workspace','codex-hooks-review-prompt','codex-interactive-prompt'].includes(wait.reason))return;
   return notifyQuestionEvent(store,notify,{workId,id:`wait-${attempt.id}-${wait.reason}`,kind:'native-fault',title:'Team member needs native input',body:`${attempt.memberName}: ${wait.reason}. Open its original Orca/provider session to handle login or permission. Execution outcome remains unconfirmed.`});
  }
- return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listWorks().flatMap(w=>store.listRunWorks(w.id).reverse()))if(w.status!=='completed')await this.check(w.id);}};
+ return {nativeWait,check:id=>serial(id,()=>check(id)),answer:input=>serial(input.workId,async()=>{store.queueQuestionAnswer(input);await deliver(input.workId,input.questionId,input.answerId);return store.readSnapshot();}),async reconcile(){for(const w of store.listCurrentWorks().flatMap(w=>store.listRunWorks(w.id).reverse()))if(w.status!=='completed')await this.check(w.id);}};
 }

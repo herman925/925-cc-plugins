@@ -14,7 +14,7 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
       try { return await send('workspace.readContext', { teamWorker: { protocol: 1, nonce: token, commandId: 'team.control', args: { op, params } } }, { timeoutMs: 30000 }); }
       catch (error) {
         // A rate refusal precedes execution; transport ambiguity never qualifies for replay.
-        if (['launchSupervisor', 'recoverLaunch', 'openMember'].includes(op) || error.code !== 'rate_limited' || attempt >= 3) throw error;
+        if (['launchSupervisor', 'recoverLaunch', 'openMember', 'wakeMember', 'resolveRecoveryQuestion', 'replaceMember'].includes(op) || error.code !== 'rate_limited' || attempt >= 3) throw error;
         await pause(1100);
       }
     }
@@ -32,7 +32,7 @@ export function createWorkerBridge(raw, { nonce = () => crypto.randomUUID(), pol
     async call(action, params) {
       if (!connected) throw new Error('Test the local worker connection first.');
       if (action === 'workspace.readContext') return rpc('context', params);
-      if (['setAdmission','stopMember','checkStop','createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(action)) return rpc(action, params);
+      if (['setAdmission','stopMember','checkStop','createTeam', 'submitWork', 'enqueueGoal', 'decideWork', 'startNextGoal', 'answerQuestion', 'wakeMember', 'resolveRecoveryQuestion', 'checkWake', 'decideWake', 'checkHandoff', 'replaceMember', 'checkWork', 'retryObjective', 'updateRole', 'updateSettings', 'launchSupervisor', 'recoverLaunch', 'openMember', 'capabilities', 'updateAgentPreferences', 'exportTemplate', 'previewTemplate', 'importTemplate'].includes(action)) return rpc(action, params);
       if (action === 'storage.get') return rpc('load');
       if (action === 'receipt') return rpc('receipt', params);
       throw new Error('Unknown worker operation.');

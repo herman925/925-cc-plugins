@@ -20,10 +20,14 @@ export function validateWork(work) {
   }else if(work.nativeSend.method!=='terminal.send'||request.terminal!==binding.handle||instance.handle!==binding.handle||instance.paneKey!==binding.paneKey||!text(instance.incarnationId)||request.agentPrompt!==true||request.enter!==true||!text(request.text,30000)||! /^[0-9a-f-]{36}$/.test(work.nativeSend.envelope?.orchestrationRequestId))fail();
  }
 
+ if(work.currentSupervisor){
+  const current=work.currentSupervisor;if(!Number.isSafeInteger(current.epoch)||current.epoch<1||!text(current.recoveryRequestId,120))fail();
+  validateWork({...work,...current,currentSupervisor:undefined,nativeSend:current.nativeSend});
+ }
  return work;
 }
 export function publicWork(work) {
  validateWork(work);
- const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','status','processing','run','snapshot','error','closedAt','handoff'];
+ const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','epoch','recoveryRequestId','status','processing','run','snapshot','error','closedAt','handoff'];
  return { ...Object.fromEntries(fields.filter(key=>work[key]!==undefined).map(key=>[key,work[key]])), scope:{displayName:work.scope.displayName,kind:work.scope.kind,executionHostId:work.scope.executionHostId},input:{state:work.input.state,...(work.input.source?{source:work.input.source}:{}),...(work.input.dispatchState?{dispatchState:work.input.dispatchState}:{}),...(work.input.queued?{queued:work.input.queued}:{}),...(work.input.messageId?{messageId:work.input.messageId}:{}),...(work.input.detail?{detail:work.input.detail}:{})} };
 }
