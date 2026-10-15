@@ -8,14 +8,15 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
   const reasons=[];
+  if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some(r=>{const row=JSON.parse(r.json);return row.teamId===work.teamId&&!['bound','resumed'].includes(row.state);}))reasons.push('Member recovery or handoff remains unresolved');
   for(const row of db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%'").all()){
    const stop=JSON.parse(row.json);if(stop.target.workId===work.id&&['intent','submitted','unknown'].includes(stop.state))reasons.push('Stop outcome remains unconfirmed; preserve the exact member reservation');
   }
   if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all().some(r=>JSON.parse(r.json).workId===work.id))reasons.push('Queued member tasks await admission');
   const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
-  for(const expected of work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
+  for(const expected of work.currentRecipientBindings??work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
-  for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const q of questions.listQuestions(work.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))reasons.push(`User decision ${q.id} awaits processing`);
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
  };
@@ -27,8 +28,8 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    const existing=deliveries(workId).find(d=>d.id===proposal.id);if(existing){if(existing.proof.payloadHash!==proposal.proof.payloadHash)fail('Delivery identity conflicts.');return existing;}
    const previous=current(workId);
    if((proposal.previousDeliveryId??null)!==(previous?.id??null))fail('Delivery must reference the current delivery revision.');
-   if(proposal.generation!==w.run.consumerGeneration)fail('Delivery Run generation changed.');
-   const d={...proposal,workId,revision:(previous?.revision??0)+1,status:'pending',createdAt:new Date().toISOString()};
+   if((proposal.epoch??0)!==(w.epoch??0)||w.epoch&&proposal.protocolToken!==readPrivate(`dispatch-protocol:${workId}`)?.token||proposal.generation!==w.run.consumerGeneration)fail('Delivery Run generation changed.');
+   const d={...proposal,workId,epoch:w.epoch??0,revision:(previous?.revision??0)+1,status:'pending',createdAt:new Date().toISOString()};
    putPrivate(`delivery:${workId}:${d.id}`,d);w.status='awaiting_acceptance';w.version++;persistWork(w);return d;
   });},
   readWorkDecision(requestId){return readPrivate(`work-decision:${requestId}`);},
@@ -37,7 +38,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    const key=`work-decision:${input.requestId}`,fingerprint=digest(input),prior=readPrivate(key);
    if(prior){if(prior.fingerprint!==fingerprint)fail('User decision identity conflicts.');return prior;}
    const w=readWork(input.workId),d=current(input.workId);
-   if(!w||w.version!==input.expectedWorkVersion||w.status!=='awaiting_acceptance'||d?.id!==input.deliveryId||d.status!=='pending')fail('Delivery changed or was superseded. Reload before deciding.');
+   if(!w||w.version!==input.expectedWorkVersion||w.status!=='awaiting_acceptance'||d?.id!==input.deliveryId||d.status!=='pending'||(d.epoch??0)!==(w.epoch??0))fail('Delivery changed or was superseded. Reload before deciding.');
    if(input.decision==='rework'&&(typeof input.feedback!=='string'||!input.feedback.trim()||input.feedback.length>8000))fail('Describe the requested corrections (1–8000 characters).');
    if(input.decision==='accept'){
     const reasons=blockers(w);if(reasons.length)fail('Required work remains: '+reasons.join('; '));
@@ -50,7 +51,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(input.decision==='accept'){
     if(readPrivate(`active-work:${w.teamId}`)?.workId!==w.id)fail('Active TeamWork pointer changed.');
     const state=readSnapshot(),team=state.teams.find(t=>t.id===w.teamId);
-    const expectedRecipients=w.recipientBindings??[w.binding];
+    const expectedRecipients=w.currentRecipientBindings??w.recipientBindings??[w.binding];
     if(Object.values(team.launch?.members??{}).some(r=>!expectedRecipients.some(e=>e.requestId===r.requestId)))fail('Current member binding changed during Work; reconcile before closure.');
     for(const expected of expectedRecipients){
      const pointer=readPrivate(`binding:${expected.memberId}`);

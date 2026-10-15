@@ -1,0 +1,9 @@
+import {test,expect} from '@playwright/test';
+const panel=page=>page.frameLocator('#panel');
+test('closed supervisor retains its roster and requires a checked user handoff before creating a fresh replacement',async({page})=>{
+ await page.goto('/?mode=dispatch-wake-refused');const ui=panel(page);
+ await ui.getByRole('button',{name:/Squad/}).click();await ui.getByRole('button',{name:'Confirm project and host'}).click();await ui.getByRole('button',{name:'Save team',exact:true}).click();await ui.getByRole('button',{name:'Launch this team'}).click();await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');await ui.getByLabel('Total objective').fill('Recover the same team');await ui.getByRole('button',{name:'Submit total objective'}).click();await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');
+ await ui.getByRole('button',{name:'Wake closed member'}).first().click();const recovery=ui.getByRole('article',{name:'Member recovery'});await expect(recovery).toContainText('needs_decision');await expect(recovery).toContainText('Assignment pause and removal are separate');await recovery.getByLabel('Checked handoff summary').fill('Checked original task <script> and evidence.');await recovery.getByRole('button',{name:'Approve fresh supervisor'}).click();await expect(recovery).toContainText('approved');await expect(recovery.locator('script')).toHaveCount(0);
+ await page.reload();await panel(page).getByRole('button',{name:/Needs your attention/}).click();await expect(panel(page).getByRole('article',{name:'Member recovery'})).toContainText('Checked original task <script> and evidence.');
+ await panel(page).getByRole('button',{name:'Create approved replacement'}).click();await expect(panel(page).getByRole('article',{name:'Member recovery'})).toContainText('replacing');
+});
