@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { cliEnvironment } from '../src/local/cli.mjs';
 import { nativeLaunchFingerprint, readNativeLaunchLedger } from '../src/local/native-launch-ledger.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { sendFingerprint } from '../src/local/teamwork.mjs';
+import { readNativeRunEvidence } from '../src/local/native-run.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
 const revision = '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
@@ -24,7 +26,7 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
@@ -44,6 +46,20 @@ const bundle = async name => {
 };
 try {
   const before = await bundle('before');
+  const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'A separate total objective' }] };
+  const sendEnvelope = { sessionId: 'head-session', clientOperationId: `${Date.now()}-0123456789abcdef0123456789abcdef`, expectedRuntimeFence: 7, payloadFingerprint: sendFingerprint('head-session', body) };
+  assert.equal(before.SendParams.safeParse({ envelope: sendEnvelope, body }).success, true);
+  assert.equal(before.SendParams.safeParse({ envelope: sendEnvelope, body: { ...body, role: 'assistant' } }).success, false);
+  assert.equal(sendEnvelope.payloadFingerprint, before.computeAgentSessionPayloadFingerprint({ method: 'agentSession.send', sessionId: 'head-session', fields: { body } }));
+  assert.deepEqual(before.resolveRpcCallerIdentity(undefined), { kind: 'local-cli' });
+  assert.equal(before.rpcCallerOperationKey(before.resolveRpcCallerIdentity(undefined)), 'trusted-local:runtime');
+  const runDb = new DatabaseSync(join(root, 'orchestration.db'));
+  runDb.exec(before.createCoreTablesSql()); runDb.exec('PRAGMA user_version=43');
+  runDb.prepare('INSERT INTO runs (id,objective,coordinator_orca_session_id,coordinator_orca_session_id_generation,consumer_generation,legacy) VALUES (?,?,?,?,?,?)').run('run-proof', 'exact-issued-objective', 'head-session', 2, 2, 0);
+  assert.equal(before.currentRunCoordinatorOrcaSessionId({ coordinator_orca_session_id: 'head-session', coordinator_orca_session_id_generation: 1, consumer_generation: 2 }), null);
+  runDb.close();
+  assert.equal((await readNativeRunEvidence(root, { objective: 'exact-issued-objective', owner: { kind: 'structured', sessionId: 'head-session' } })).state, 'verified');
+
   const nativeInput = { operationId: `${Date.now()}-0123456789abcdef0123456789abcdef`, agent: 'claude', target: { kind: 'existing', worktree: 'folder:/verified' }, prompt: { text: 'role brief', delivery: 'submit' }, sessionOptions: { model: 'opaque-model', effort: 'max' } };
   assert.equal(before.AgentLaunchReplay.safeParse(nativeInput).success, true);
   assert.equal(before.AgentLaunchReplay.safeParse({ ...nativeInput, operationId: 'plain-uuid' }).success, false);

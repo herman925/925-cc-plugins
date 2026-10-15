@@ -2,6 +2,7 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { planTeam, SETTINGS, validatePersistentState } from '../team.mjs';
+import { workInput, validateWork, publicWork } from '../work.mjs';
 import { exportTeamTemplate, parseTeamTemplate } from '../templates.mjs';
 const FORMAT = 'orca-team-store';
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -57,14 +58,17 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.prepare('INSERT INTO snapshot VALUES (1,?)').run(JSON.stringify(empty()));
       db.exec('COMMIT');
     }
+    const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
+    const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
+    const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`work:${work.id}`, JSON.stringify(work));
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return validatePersistentState(value);
+      return { ...validatePersistentState(value), works: listWorks().map(publicWork) };
     };
     readSnapshot();
-    const write = value => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const write = ({ works, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -103,6 +107,39 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     let closed = false;
     return {
       readOperation,
+      readWork, listWorks,
+      prepareWork(input) {
+        workInput(input); const digest=fingerprint(input);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const request=db.prepare('SELECT json FROM receipts WHERE id=?').get(`work-request:${input.requestId}`);
+          if(request) { const saved=JSON.parse(request.json); if(saved.fingerprint!==digest) fail('Objective request identity conflicts with another input.'); const work=readWork(saved.workId); if(!work) fail('Saved objective is missing.'); db.exec('COMMIT'); return {work,fresh:false}; }
+          const state=readSnapshot(),team=state.teams.find(row=>row.id===input.teamId),supervisor=team?.members.find(row=>row.boss===null);
+          if(!supervisor) fail('Saved team supervisor is missing.');
+          if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`active-work:${team.id}`)) fail('This team already has a total objective in progress. Check its active work.');
+          if(state.revision!==input.expectedRevision) fail('Another panel changed team data. Reload before submitting the objective.');
+          const requestId=team.launch?.members?.[supervisor.id]?.requestId, binding=requestId&&readOperation(requestId);
+          if(binding?.status!=='created'||binding.teamId!==team.id||binding.memberId!==supervisor.id||!binding.handle) fail('Launch and verify the registered highest supervisor before submitting a total objective.');
+          if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? 'default') || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? 'default')) fail('The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.');
+          if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`session-work:${requestId}`)) fail('This preparation session has already accepted a total objective.');
+          const scope=JSON.parse(db.prepare('SELECT json FROM scopes WHERE team_id=?').get(team.id).json);
+          const id=randomUUID(),protocolToken=randomUUID();
+          const work={format:'team-work-v1',id,teamId:team.id,requestId:input.requestId,objective:input.objective,configVersion:team.configVersion,roleVersion:supervisor.roleVersion,supervisorMemberId:supervisor.id,scope,binding,protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${input.objective}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'}};
+          persistWork(work);
+          for(const [key,value] of [[`work-request:${input.requestId}`,{workId:id,fingerprint:digest}],[`active-work:${team.id}`,{workId:id}],[`session-work:${requestId}`,{workId:id}]]) db.prepare('INSERT INTO receipts VALUES (?,?)').run(key,JSON.stringify(value));
+          state.revision++; write(state); db.exec('COMMIT'); return {work,fresh:true};
+        }catch(error){db.exec('ROLLBACK');throw error;}
+      },
+      updateWork(id,version,patch) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const work=readWork(id);if(!work||work.version!==version) fail('TeamWork changed while native evidence was being observed.');
+          const permitted=['status','input','processing','run','snapshot','error','instance','nativeSend'];
+          if(Object.keys(patch).some(key=>!permitted.includes(key))) fail('Immutable TeamWork identity cannot be changed.');
+          Object.assign(work,patch,{version:version+1});validateWork(work);persistWork(work);
+          db.exec('COMMIT');return work;
+        }catch(error){db.exec('ROLLBACK');throw error;}
+      },
       prepareOperation(input, intent) {
         const digest = fingerprint(input);
         db.exec('BEGIN IMMEDIATE');
