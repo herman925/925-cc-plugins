@@ -92,6 +92,7 @@ test('full-mode added preparation is included in closure and its exact reservati
  f.store.recordDelivery(f.work.id,{id:'delivery',previousDeliveryId:null,summary:'Ready',evidenceRefs:['validation'],attemptIds:[],generation:1,supervisorMemberId:f.team.members[0].id,proof:{requestId:'delivery-proof',payloadHash:'fixture'}});
  f.store.decideWork({requestId:'accept-staffed-work',workId:f.work.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
  assert.equal(f.store.readWork(f.work.id).status,'completed');assert.equal(f.store.readMemberOperation(member.id),null);assert.equal(f.store.readSnapshot().teams[0].members.length,5);
+ const next=f.store.prepareOperation({...added.launch,requestId:'next-work-preparation'},{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'});assert.equal(next.fresh,true);assert.equal(next.operation.instanceGeneration,2);
 });
 import {createHierarchyService} from '../src/local/hierarchy.mjs';
 test('lower manager genuine Run proposes a direct child and receives the versioned roster under that same parent',async t=>{

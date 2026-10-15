@@ -314,7 +314,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const team = readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
           if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
-          staffing.assertStaffingPreparation(member.id);
+          staffing.assertStaffingPreparation(member.id,input.requestId);
           const nextGoal=lifecycle.nextGoal(input.teamId);
           if(nextGoal&&(nextGoal.launchRequests[input.memberId]!==input.requestId||nextGoal.configVersion!==input.configVersion))fail('Queued transition requires its saved fresh launch identity.');
           const bindingKey = `binding:${input.memberId}`;

@@ -157,7 +157,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if (op === '_launchValidate') {
           const phase = launchPlans.get(params.phaseId), saved = phase && store.readOperation(phase.requestId);
           if (!saved || latestObservation.get(saved.scope.workspaceKey) !== params.observationId) throw Error('Launch admission is stale.');
-          store.assertStaffingPreparation(saved.memberId);
+          store.assertStaffingPreparation(saved.memberId,saved.requestId);
           const observed = capabilities.get(saved.scope.workspaceKey);
           if (!saved.runtimeId || observed?.runtimeId !== saved.runtimeId) throw Error('Native runtime identity changed; the unknown launch remains reserved until its original ledger can be corroborated.');
           const issue = preferenceIssue({ agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? 'default', effort: saved.nativeRequest.sessionOptions?.effort ?? 'default' }, observed, { requireCore: true });
