@@ -3,11 +3,11 @@ import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>{throw Error(message);};
 const boundedHandoff=h=>({...h,summary:h.summary.slice(0,2000),evidenceRefs:h.evidenceRefs.slice(0,10).map(r=>r.slice(0,160)),truncated:h.summary.length>2000||h.evidenceRefs.length>10||h.evidenceRefs.some(r=>r.length>160)});
-export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listRunWorks,listGoals,questions,atomic,readSnapshot,write}){
+export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listRunWorks,listGoals,questions,staffing,atomic,readSnapshot,write}){
  const deliveries=id=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'delivery:%' ORDER BY rowid").all().map(r=>JSON.parse(r.json)).filter(r=>r.workId===id);
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
-  const reasons=[];
+  const reasons=[...(staffing?.().staffingClosureBlockers(work.id)??[])];
   if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some(r=>{const row=JSON.parse(r.json);return row.teamId===work.teamId&&!['bound','resumed'].includes(row.state);}))reasons.push('Member recovery or handoff remains unresolved');
   for(const row of db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%'").all()){
    const stop=JSON.parse(row.json);if(listRunWorks(work.id).some(w=>w.id===stop.target.workId)&&['intent','submitted','unknown'].includes(stop.state))reasons.push('Stop outcome remains unconfirmed; preserve the exact member reservation');
@@ -52,7 +52,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    if(input.decision==='accept'){
     if(readPrivate(`active-work:${w.teamId}`)?.workId!==w.id)fail('Active TeamWork pointer changed.');
     const state=readSnapshot(),team=state.teams.find(t=>t.id===w.teamId);
-    const expectedRecipients=w.currentRecipientBindings??w.recipientBindings??[w.binding];
+    const expectedRecipients=[...(w.currentRecipientBindings??w.recipientBindings??[w.binding]),...(staffing?.().staffingRecipientBindings(w.id)??[])];
     if(Object.values(team.launch?.members??{}).some(r=>!expectedRecipients.some(e=>e.requestId===r.requestId)))fail('Current member binding changed during Work; reconcile before closure.');
     for(const expected of expectedRecipients){
      const pointer=readPrivate(`binding:${expected.memberId}`);
