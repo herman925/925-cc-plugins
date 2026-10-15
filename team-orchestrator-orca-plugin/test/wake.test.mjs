@@ -69,3 +69,29 @@ test('resumed highest supervisor only regains work authority after genuine nativ
  db.exec("UPDATE runs SET coordinator_orca_session_id='canonical-head'");await service.bind('wake-1');
  assert.equal(f.store.readCurrentWork(work.id).instance.fence,8);assert.equal(f.store.readCurrentWork(work.id).binding.instanceGeneration,2);assert.equal(f.store.readWork(work.id).binding.requestId,'launch');assert.equal(f.store.readWork(work.id).instance.fence,7);
 });
+import {questionFixture} from './questions-fixture.mjs';
+import {createDispatchService} from '../src/local/dispatch.mjs';
+test('subordinate fresh replacement accepts only its real direct manager native checked handoff',async t=>{
+ const f=await questionFixture(t,{formOverrides:{launchMode:'all'}}),scope=f.store.readScope(f.team.id),member=f.member;
+ const dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await dispatch.check(f.work.id);
+ const op=f.store.prepareOperation({teamId:f.team.id,memberId:member.id,requestId:'child-launch',configVersion:1},{scope,nativeRequest:nativeLaunchIntent(f.team,member,scope),runtimeId:'runtime-one',roleVersion:1,title:'Child',executionHostId:'local'}).operation;
+ const patch={status:'created',kind:'structured',handle:'child',sessionId:'child-live',observation:{ownerFence:7}};f.store.settleOperation(op.requestId,op.nativeRequest.operationId,{...patch,public:publicOperation({...op,...patch})});
+ const db=new DatabaseSync(join(f.profile,'agent-session-journal.db'));t.after(()=>db.close());db.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');db.prepare('INSERT INTO agent_session_records VALUES(?,?)').run('child-live',JSON.stringify({schemaVersion:2,sessionId:'child-live',provider:'claude',location:scope,lease:{sessionId:'child-live',runtimeFence:7,claimStatus:'released',deathEvidence:{kind:'exit-observed',ownerFence:7,observedAt:Date.now()}}}));
+ const rpc=async(method,params,envelope)=>{if(method==='agentSession.restartResumable')return {sessions:[{sessionId:'child-live',workspaceId:scope.workspaceId,executionHostId:'local',agent:member.agent}]};if(method==='agentSession.restartContinue')return {continued:[{sessionId:'child-live',outcome:'refused'}]};return f.rpc(method,params,envelope);};
+ const service=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});await service.wake({teamId:f.team.id,memberId:member.id,requestId:'child-wake',bindingRequestId:op.requestId});
+ await assert.rejects(service.decide({requestId:'child-wake'}),/direct manager/);await assert.rejects(service.handoff('child-wake'),/genuine direct manager/);
+ const spec=JSON.stringify({protocol:'team-questions/v1',kind:'recovery-handoff',workId:f.work.id,token:f.store.readDispatchProtocol(f.work.id).token,generation:1,appQuestionId:'child-wake',memberId:member.id,oldRequestId:op.requestId,decision:'replace',summary:'Checked the original task and native stop evidence.',evidence:['original-task','native-owner-death:7']});
+ const task={id:'handoff-task',run_id:'run-head',spec};f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,null,null,null,null);f.receipt('handoff-request','orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});
+ assert.equal((await service.handoff('child-wake')).state,'approved');assert.equal(f.store.readWake('child-wake').handoff.reviewer,f.team.members[0].id);
+ const fresh=await service.prepareFresh('child-wake');assert.equal(fresh.operation.memberId,member.id);assert.equal(fresh.operation.instanceGeneration,2);
+});
+test('an old supervisor question stays blocked until an explicit user recovery resolution preserves its unanswered history',async t=>{
+ const f=await fixture(t),work=f.store.prepareWork({teamId:f.team.id,requestId:'goal',expectedRevision:f.store.readSnapshot().revision,objective:'Finish'}).work;
+ f.store.updateWork(work.id,work.version,{instance:{kind:'structured',liveSessionId:'session-118',sessionId:'canonical',fence:7},run:{state:'verified',id:'run',consumerGeneration:1}});
+ f.store.ingestQuestion(work.id,{spec:{appQuestionId:'old-question',summary:'Old choice',options:[],blockingTaskKeys:[]}});
+ f.dead=true;await f.service.wake(f.input);f.fence=8;f.dead=false;await f.service.check('wake-1');
+ const wake=f.store.readWake('wake-1');f.store.rebindWake('wake-1',wake.version,work.id,{kind:'structured',liveSessionId:'session-118',sessionId:'canonical',fence:8},{state:'verified',id:'run',consumerGeneration:1});
+ assert.ok(f.store.workClosureBlockers(work.id).some(r=>r.includes('User decision')));
+ await f.service.resolveQuestion({requestId:'wake-1',workId:work.id,questionId:'old-question',note:'Superseded question reviewed; the recovered supervisor will ask again if needed.'});
+ const q=f.store.listQuestions(work.id)[0];assert.equal(q.status,'closed');assert.equal(q.answers.length,0);assert.equal(q.resolution.by,'user');assert.equal(q.resolution.recoveryRequestId,'wake-1');assert.equal(f.store.workClosureBlockers(work.id).some(r=>r.includes('User decision')),false);
+});

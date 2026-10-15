@@ -51,7 +51,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
    terminal=saved.handle;binding={kind:'terminal',handle:terminal,paneKey:saved.paneKey,incarnationId:live.incarnationId,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
   }
   if(!store.isActiveOperation(saved))throw Error('Prepared member generation changed during verification.');
-  return {kind:'prepared',requestId:saved.requestId,...(saved.instanceGeneration?{instanceGeneration:saved.instanceGeneration}:{}),binding,terminal,...(sessionFence?{sessionFence}:{}),preferences};
+  return {kind:'prepared',requestId:saved.requestId,...(saved.wakeRequestId?{recoveryRequestId:saved.wakeRequestId}:{}),...(saved.instanceGeneration?{instanceGeneration:saved.instanceGeneration}:{}),binding,terminal,...(sessionFence?{sessionFence}:{}),preferences};
  }
  async function retainedSession(work,member,prior){
   if(!prior?.binding||!['accepted','rework'].includes(prior.status)||prior.workId!==work.id||prior.roleVersion!==member.roleVersion)throw Error('Member has an unresolved reservation; do not launch another session.');
@@ -114,7 +114,9 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
      const currentIntent=fresh.intents.find(row=>row.nativeTaskId===intent.nativeTaskId&&row.payloadHash===intent.payloadHash);
      if(fresh.state!=='verified'||!currentIntent)throw Error('Native intent changed during admission.');
      const prior=store.listDispatches(workId).filter(row=>row.memberId===intent.member.id).at(-1);
-     const prepared=store.readMemberOperation(intent.member.id),reuse=prior?await retainedSession(work,intent.member,prior):prepared?await preparedSession(work,intent.member,prepared):undefined;
+     const prepared=store.readMemberOperation(intent.member.id),recovery=prepared?.wakeRequestId&&store.readWake(prepared.wakeRequestId);
+     const recovered=prior&&recovery&&recovery.newInstance?.requestId===prepared.requestId&&(recovery.oldBinding.sourceAttemptId===prior.id||prior.reuse?.requestId===recovery.oldBinding.requestId);
+     const reuse=recovered?await preparedSession(work,intent.member,prepared):prior?await retainedSession(work,intent.member,prior):prepared?await preparedSession(work,intent.member,prepared):undefined;
      const startParams={task:intent.nativeTaskId,worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`,agent:intent.member.agent,run:work.run.id,...(intent.member.model!=='default'?{model:intent.member.model}:{}),...(intent.member.effort!=='default'?{effort:intent.member.effort}:{})};
      if(reuse){delete startParams.agent;delete startParams.model;delete startParams.effort;startParams.terminal=reuse.terminal;}
      const admitted=store.prepareDispatch(workId,currentIntent,startParams,reuse);if(admitted.fresh&&!currentIntent.unadmitted)await permit(work,admitted.attempt);

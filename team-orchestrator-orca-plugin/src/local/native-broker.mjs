@@ -69,7 +69,11 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
       await rpc('terminal.rename', { terminal: saved.handle, title: saved.title });
       const status = (await rpc('terminal.agentStatus', { terminal: saved.handle }))?.agentStatus;
       if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.', ...(shown.incarnationId ? { incarnationId: shown.incarnationId } : {}) };
-    } else warning = [warning, 'Native structured naming is unavailable; the plugin label is retained. Provider start/login observation is unknown.'].filter(Boolean).join(' ');
+    } else {
+      const history=await rpc('agentSession.history',{sessionId:saved.sessionId,direction:'tail',limit:1});
+      if(history?.ok===true&&history.page?.sessionId===saved.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>0)observation={...observation,ownerFence:history.page.fence};
+      warning = [warning, 'Native structured naming is unavailable; the plugin label is retained. Provider start/login observation is unknown.'].filter(Boolean).join(' ');
+    }
   } catch (failure) { warning = [warning, failure.message].filter(Boolean).join(' ').slice(0, 1200); }
   return { ok: true, value: await invoke({ op: '_launchFollowup', params: { phaseId: settled.phaseId, warning, observation } }) };
 }

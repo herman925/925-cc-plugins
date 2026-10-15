@@ -15,8 +15,20 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   return {requestId:input.bindingRequestId,sourceAttemptId:attempt.id,sourceDispatchId:attempt.dispatchId,sourceWorkId:attempt.workId,teamId:attempt.teamId,memberId:attempt.memberId,configVersion:attempt.configVersion,roleVersion:attempt.roleVersion,version:attempt.version,instanceGeneration:attempt.instanceGeneration??1,status:'created',kind:b.kind,handle:b.handle,sessionId:b.liveSessionId??b.sessionId,paneKey:b.paneKey,scope:attempt.scope,runtimeId:b.runtimeId,executionHostId:b.executionHostId,title:member.name,nativeRequest:{agent:member.agent,sessionOptions:{model:member.model,effort:member.effort}},observation:{ownerFence:b.sessionFence,incarnationId:b.incarnationId},recovery:attempt.recovery};
  };
  const active=op=>op.sourceAttemptId?store.readMemberDispatch?.(op.memberId)?.id===op.sourceAttemptId:store.isActiveOperation(op);
+ async function hostGeneration(scope,expected){
+  if(!scope.executionHostId.startsWith('ssh:'))return null;
+  const state=(await rpc('ssh.getState',{targetId:decodeURIComponent(scope.executionHostId.slice(4))}))?.state;
+  if(state?.status!=='connected'||!Number.isSafeInteger(state.connectionGeneration)||(expected!=null&&state.connectionGeneration!==expected))throw Error('Saved recovery host disconnected or changed generation.');return state.connectionGeneration;
+ }
  const memberFor=row=>store.readSnapshot().teams.find(t=>t.id===row.teamId)?.members.find(m=>m.id===row.memberId);
- async function stopped(row){return row.oldBinding.kind==='structured'&&await readSessionDeath(userData,row.oldBinding.sessionId,row.proof.death.ownerFence,row.oldBinding.scope);}
+ async function stopped(row){
+  const op=row.oldBinding;
+  if(op.kind==='structured')return readSessionDeath(userData,op.sessionId,row.proof.death?.ownerFence??op.observation?.ownerFence,op.scope);
+  const proof=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});
+  if(!proof||!(['native-exact-stop','native-pty-exit','native-worker-exit'].includes(proof.kind)))return null;
+  try{const shown=(await rpc('terminal.show',{terminal:op.handle}))?.terminal;if(shown?.connected===true)return null;}catch(error){if(!error.native&&!/not found|missing|not_found/i.test(error.message))return null;}
+  return proof;
+ }
  async function requestDecision(row){
   if(row.state!=='needs_decision')return row;
   const member=memberFor(row),work=store.readCurrentWork(row.oldBinding.sourceWorkId)??store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed');
@@ -31,11 +43,17 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   return row;
  }
  return {
+ async resolveQuestion(input){
+  const row=store.readWake(input?.requestId),work=store.readCurrentWork(input?.workId),question=work&&store.listQuestions(work.id).find(q=>q.id===input.questionId);
+  if(row?.state!=='bound'||row.newInstance?.workId!==work?.id||work.recoveryRequestId!==row.requestId||!question||(question.epoch??0)>=(work.epoch??0)||typeof input.note!=='string'||!input.note.trim()||input.note.length>4000)throw Error('Review the exact superseded question and provide a resolution note.');
+  await consent();return store.updateQuestion(work.id,question.id,q=>{if(q.resolution){if(q.resolution.recoveryRequestId!==row.requestId||q.resolution.note!==input.note)throw Error('Question already has an immutable user resolution.');return;}q.status='closed';q.resolution={kind:'superseded-by-recovery',by:'user',recoveryRequestId:row.requestId,note:input.note,recordedAt:new Date().toISOString()};});
+ },
  async bind(id){
   const row=store.readWake(id);if(!row||!['resumed','replacing'].includes(row.state))return publicWake(row);
   const binding=store.readOperation(row.newInstance.requestId),work=store.listCurrentWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.supervisorMemberId===row.memberId&&w.status!=='completed');
   if(!work||binding?.status!=='created')return publicWake(row);
   await consent();return withNativeRuntime(rpc,binding.runtimeId,async()=>{
+   await hostGeneration(binding.scope,row.proof.hostGeneration);
    if((await rpc('status.get'))?.runtimeId!==binding.runtimeId||!store.isActiveOperation(binding))throw Error('Recovered supervisor runtime or recipient changed.');
    let instance;
    if(binding.kind==='structured'){
@@ -58,7 +76,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  },
  async handoff(id){
   const row=store.readWake(id),member=row&&memberFor(row);if(!row||row.state!=='needs_decision'||!member?.boss)throw Error('A subordinate pending handoff is required.');
-  const work=store.readCurrentWork(row.oldBinding.sourceWorkId)??store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed');
+  const root=store.listCurrentWorks().find(w=>w.teamId===row.teamId&&w.status!=='completed'),work=store.readOwningWork?.(root?.id,row.memberId)??store.readCurrentWork(row.oldBinding.sourceWorkId)??root;
   if(!work||work.supervisorMemberId!==member.boss||!works)throw Error('The actual direct manager Run must be verified before this handoff.');
   const verified=await works.verifyWork(work.id),protocol=store.readDispatchProtocol(work.id),native=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(work.id)});
   const intent=native.state==='verified'&&native.intents.find(i=>i.spec.kind==='recovery-handoff'&&i.spec.appQuestionId===id&&i.spec.memberId===member.id&&i.spec.oldRequestId===row.oldBinding.requestId&&i.spec.decision==='replace'&&typeof i.spec.summary==='string'&&i.spec.summary.trim()&&i.spec.summary.length<=4000&&Array.isArray(i.spec.evidence)&&i.spec.evidence.length&&i.spec.evidence.every(v=>typeof v==='string'&&v.length<=1000));
@@ -77,6 +95,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   if(row?.state!=='approved'||row.handoff?.decision!=='replace')throw Error('A checked handoff decision is required before fresh replacement.');
   await consent();return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{
    if((await rpc('status.get'))?.runtimeId!==row.proof.runtimeId||!await stopped(row))throw Error('Previous execution is not proven stopped in this recovery runtime.');
+   await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);
    const team=store.readSnapshot().teams.find(t=>t.id===row.teamId),member=memberFor(row);if(!member||team.configVersion!==row.oldBinding.configVersion)throw Error('Saved recovery member configuration changed.');
    const nativeRequest=nativeLaunchIntent(team,member,row.oldBinding.scope);
    const work=store.listCurrentWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed');
@@ -87,6 +106,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  async check(id){
   const row=store.readWake(id);if(!row||!['accepted','unknown'].includes(row.state))return publicWake(row);
   await consent();return withNativeRuntime(rpc,row.proof.runtimeId,async()=>{
+   await hostGeneration(row.oldBinding.scope,row.proof.hostGeneration);
    if((await rpc('status.get'))?.runtimeId!==row.proof.runtimeId)throw Error('Recovery runtime changed; reservation retained.');
    const owner=await resumedOwner(userData,row.oldBinding,row.proof.death.ownerFence);if(!owner)return publicWake(row);
    const history=await rpc('agentSession.history',{sessionId:row.oldBinding.sessionId,direction:'tail',limit:1});
@@ -102,23 +122,25 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   await consent();
   const status=await rpc('status.get');
   return withNativeRuntime(rpc,status.runtimeId,async()=>{
+   const generation=await hostGeneration(op.scope,op.hostGeneration);
    const work=store.listCurrentWorks().find(w=>w.binding.requestId===op.requestId),fence=work?.instance?.fence??op.observation?.ownerFence;
-   const death=op.kind==='structured'&&await readSessionDeath(userData,op.sessionId,fence,op.scope);
+   const death=await stopped({oldBinding:op,proof:{death:{ownerFence:fence}}});
    if(!death)return {state:'blocked',detail:'The exact previous execution has not been proven stopped. Reconcile native death evidence before waking this member.'};
    const selected=(await rpc('worktree.show',{worktree:op.scope.workspaceId.startsWith('folder:')?op.scope.workspaceId:`id:${op.scope.workspaceId}`}))?.worktree;
    if(selected?.id!==op.scope.workspaceId||(selected.hostId??selected.identity?.executionHostId)!==op.scope.executionHostId)throw Error('Saved recovery project or host changed.');
-   const offers=await rpc('agentSession.restartResumable',{sessionIds:[op.sessionId]});
+   const offers=op.kind==='structured'?await rpc('agentSession.restartResumable',{sessionIds:[op.sessionId]}):null;
    const offer=offers?.sessions?.find(s=>s.sessionId===op.sessionId&&s.workspaceId===op.scope.workspaceId&&s.executionHostId===op.scope.executionHostId&&s.agent===op.nativeRequest.agent);
    let action=offer?{method:'agentSession.restartContinue',params:{sessionIds:[op.sessionId]}}:null;
-   if(!offer){
+   if(!offer&&op.kind==='structured'){
     const history=await rpc('agentSession.history',{sessionId:op.sessionId,direction:'tail',limit:1});
     if(history?.ok===true&&history.page?.sessionId===op.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>=fence){
      action=userMessage({binding:op},{kind:'structured',fence:history.page.fence},`TEAM_MEMBER_WAKE\nMember ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id??'preparation'}. Continue this existing conversation after its previous execution was confirmed stopped. ${work?`Use your own native identity to run-use ${work.run.id??'the existing exact objective Run'} and verify its objective ${JSON.stringify(work.nativeObjective)}; never override caller identity.`:''} Preserve original Task and Dispatch report identity. Await verified supervisor admission before new tasks; do not create another worker.`,status);
     }
    }
-   const prepared=store.prepareWake(input,op,{death,runtimeId:status.runtimeId},action);
+   const prepared=store.prepareWake(input,op,{death,...(op.kind==='terminal'?{stop:death}:{}),runtimeId:status.runtimeId,hostGeneration:generation},action);
    if(!prepared.fresh||!action)return publicWake(await requestDecision(prepared.row));
-   await consent();if(!await readSessionDeath(userData,op.sessionId,fence,op.scope))throw Error('Previous execution is no longer proven stopped.');
+   await consent();if(!await stopped({oldBinding:op,proof:{death}}))throw Error('Previous execution is no longer proven stopped.');
+   await hostGeneration(op.scope,generation);if((await rpc('status.get'))?.runtimeId!==status.runtimeId)throw Error('Recovery runtime changed before continuation.');
    if(!store.claimWake(input.requestId))return publicWake(store.readWake(input.requestId));
    let patch;
    try{

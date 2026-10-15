@@ -12,7 +12,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
   const latest=new Map(listDispatches(work.id).map(a=>[a.taskKey,a]));
   for(const expected of work.currentRecipientBindings??work.recipientBindings??[work.binding])if(readPrivate(`operation:${expected.requestId}`)?.status!=='created')reasons.push('Preparation member launch remains unknown');
   for(const a of latest.values())if(a.status!=='accepted')reasons.push(`Task ${a.taskKey}: ${a.status}`);
-  for(const q of questions.listQuestions(work.id))if(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed'))reasons.push(`User decision ${q.id} awaits processing`);
+  for(const q of questions.listQuestions(work.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))reasons.push(`User decision ${q.id} awaits processing`);
   if(work.run.state!=='verified')reasons.push('Supervisor Run authority is unverified');
   return reasons;
  };

@@ -190,6 +190,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
+      if(op==='resolveRecoveryQuestion')return {value:await wake.resolveQuestion(params)};
       if(op==='wakeMember')return {value:await wake.wake(params)};
       if(op==='checkWake'){await wake.check(params.requestId);return {value:await wake.bind(params.requestId)};}
       if(op==='decideWake')return {value:await wake.decide(params)};

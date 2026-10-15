@@ -23,6 +23,6 @@ export function validateWork(work) {
 }
 export function publicWork(work) {
  validateWork(work);
- const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','status','processing','run','snapshot','error','closedAt','handoff'];
+ const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','epoch','recoveryRequestId','status','processing','run','snapshot','error','closedAt','handoff'];
  return { ...Object.fromEntries(fields.filter(key=>work[key]!==undefined).map(key=>[key,work[key]])), scope:{displayName:work.scope.displayName,kind:work.scope.kind,executionHostId:work.scope.executionHostId},input:{state:work.input.state,...(work.input.source?{source:work.input.source}:{}),...(work.input.dispatchState?{dispatchState:work.input.dispatchState}:{}),...(work.input.queued?{queued:work.input.queued}:{}),...(work.input.messageId?{messageId:work.input.messageId}:{}),...(work.input.detail?{detail:work.input.detail}:{})} };
 }
