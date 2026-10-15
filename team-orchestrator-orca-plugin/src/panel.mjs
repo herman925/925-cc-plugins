@@ -7,7 +7,7 @@ const app = document.getElementById('app');
 const rawCall = createBridge(window.parent);
 const worker = createWorkerBridge(rawCall);
 const call = (action, params) => worker.call(action, params);
-let connection = 'Checking the bundled local executor…';
+let connection = 'Panel loaded · worker activation unknown · compatibility layer checking…';
 let connectionReady = false;
 const KEY = 'team-definitions-v1';
 let state = validateState(null);
@@ -115,17 +115,17 @@ function render() {
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
 function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
-async function load() {
+async function load(retry = false) {
   busy = true; problem = ''; canRetry = false; render();
   try {
-    const report = await worker.connect();
+    const report = await worker.connect({ retry });
     connectionReady = true;
-    connection = `Local executor connected · ${report.platform} · Orca ${report.appVersion} · worker ${report.workerPid}`;
+    connection = `Panel loaded · worker activated · compatibility layer available · ${report.platform} · Orca ${report.appVersion} · worker ${report.workerPid} · agent readiness not verified`;
     const result = await call('storage.get', { key: KEY });
     state = validateState(result?.value ?? null);
     loaded = true; storageAvailable = true;
   } catch (error) {
-    if (!connectionReady) { loaded = true; storageAvailable = false; connection = 'Bundled executor is not connected. Bootstrap starts on agent/workspace activity; the Orca command “Team Orchestrator: Initialise local adapter” also starts it.'; problem = error.message; }
+    if (!connectionReady) { loaded = true; storageAvailable = false; connection = `Panel loaded · worker ${error.report ? 'activated' : 'activation unverified'} · compatibility layer unavailable. Run the Orca command “Team Orchestrator: Initialise local adapter” to initialise or retry; its diagnostics explain failures.`; problem = error.message; }
     else if (['panel_forbidden', 'unknown_method', 'invalid_request'].includes(error.code)) { loaded = true; storageAvailable = false; }
     else { loaded = false; problem = error.message; canRetry = true; }
   } finally { busy = false; await refreshTargets(); render(); }
@@ -194,7 +194,7 @@ app.addEventListener('click', async event => {
     } catch (error) { busy = false; message = ''; problem = error.message; canRetry = false; render(); }
   } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
-  else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(); }
+  else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
   else if (action === 'refresh-tabs') { await refreshTargets(); render(); }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }

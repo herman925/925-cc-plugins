@@ -31,20 +31,22 @@ test('adapter binds only its panel, preserves consent/owner gates, captures desk
   handlers.set('plugins:invokeCommand', async (_, args) => { commands.push(args); return { nonce: args.args.nonce }; });
   handlers.set('plugins:setEnabled', async (_, args) => { enabled = args.enabled; });
   handlers.set('session:get', async () => ({ activeWorktreeId: 'repo::/server/project' }));
-  const original = handlers.get('plugins:panelAction'); const event = { sender: { id: 7 } };
+  const mainFrame = {}; const original = handlers.get('plugins:panelAction'); const event = { sender: { id: 7, mainFrame }, senderFrame: mainFrame };
   const options = { version: 'test', identity: 'test-digest' };
   assert.equal((await installAdapter({ ipcMain }, options)).ready, true);
   assert.equal((await installAdapter({ ipcMain }, options)).reused, true);
-  const action = (sender = event, commandId = 'team.control') => handlers.get('plugins:panelAction')(sender, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, commandId, nonce: 'nonce', args: { op: 'context', workspaceId: 'forged' } } } });
-  assert.equal((await action()).ok, false);
+  const action = (sender = event, commandId = 'team.control', op = 'context') => handlers.get('plugins:panelAction')(sender, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, commandId, nonce: 'nonce', args: { op, workspaceId: 'forged' } } } });
+  assert.equal((await action({ ...event, senderFrame: {} })).ok, false);
   await handlers.get('plugins:readPanelEntry')(event, { pluginKey: 'foreign.plugin', panelId: 'team' });
-  assert.equal((await action()).ok, false);
+  assert.equal((await action({ ...event, senderFrame: {} })).ok, false);
   await handlers.get('plugins:readPanelEntry')(event, { pluginKey: 'herman925.team-orchestrator', panelId: 'team' });
   assert.equal((await action()).value.nonce, 'nonce');
   assert.equal(commands[0].args.workspaceId, 'repo::/server/project');
   assert.equal(commands[0].pluginKey, 'herman925.team-orchestrator');
   assert.equal((await action({ sender: { id: 8 } })).ok, false);
   assert.equal((await action(event, 'foreign.command')).ok, false);
+  assert.equal((await action(event, 'team.control', 'arbitrary.runtime')).ok, false);
+  assert.equal((await action({ ...event, senderFrame: {} })).ok, false);
   enabled = false; assert.equal((await action()).code, 'consent_required');
   assert.equal(commands.length, 1);
   await handlers.get('plugins:setEnabled')(event, { pluginKey: 'herman925.team-orchestrator', enabled: false });
@@ -139,9 +141,9 @@ test('adapter binds an already open panel without triggering the refresh that re
   let refreshes = 0; let invocations = 0;
   const handlers = new Map();
   const ipcMain = { _invokeHandlers: handlers, handle: (key, fn) => handlers.set(key, fn), removeHandler: key => handlers.delete(key) };
-  const sender = { id: 55, isDestroyed: () => false };
+  const mainFrame = {}; const sender = { id: 55, mainFrame, isDestroyed: () => false };
   handlers.set('plugins:readPanelEntry', async (event, args) => {
-    assert.equal(event.sender, sender); assert.equal(args.pluginKey, 'herman925.team-orchestrator');
+    assert.equal(event.senderFrame, mainFrame); assert.equal(event.sender, sender); assert.equal(args.pluginKey, 'herman925.team-orchestrator');
     return { sessionToken: 'already-open-token' };
   });
   handlers.set('plugins:panelAction', async (_, args) => { assert.deepEqual(args.params, {}); return { ok: true }; });
@@ -149,7 +151,7 @@ test('adapter binds an already open panel without triggering the refresh that re
   handlers.set('plugins:refresh', async () => { refreshes++; throw Error('plugin is not enabled with current consent'); });
   const electron = { ipcMain, BrowserWindow: { getAllWindows: () => [{ webContents: sender }] } };
   await installAdapter(electron, { version: 'test', identity: 'open-panel-regression' });
-  const result = await handlers.get('plugins:panelAction')({ sender }, { sessionToken: 'already-open-token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'existing-panel', commandId: 'team.control', args: { op: 'ping' } } } });
+  const result = await handlers.get('plugins:panelAction')({ sender, senderFrame: mainFrame }, { sessionToken: 'already-open-token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'existing-panel', commandId: 'team.control', args: { op: 'ping' } } } });
   assert.equal(result.value.nonce, 'existing-panel'); assert.equal(invocations, 1);
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(refreshes, 0);
@@ -181,4 +183,57 @@ test('child CLI resolves the exact desktop runtime profile when worker APPDATA i
     delete command.env.APPDATA;
     assert.equal((await createCliRunner(command)(['worktree', 'show'])).profile, paths.userData);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('bootstrap resolves macOS framework fuses and reports missing/disabled files before debugger activation', async () => {
+  const { bootstrap } = await import('../src/local/bootstrap.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'orca-fuse-'));
+  try {
+    const executable = join(root, 'Orca.app/Contents/MacOS/Orca');
+    const framework = join(root, 'Orca.app/Contents/Frameworks/Electron Framework.framework/Electron Framework');
+    await mkdir(join(root, 'Orca.app/Contents/MacOS'), { recursive: true });
+    await writeFile(executable, 'launcher');
+    const options = { executable, platform: 'darwin', parentPid: 98765, activate: async () => { throw Error('activation reached'); } };
+    assert.equal((await bootstrap(options)).code, 'fuse_file_missing');
+    await mkdir(join(root, 'Orca.app/Contents/Frameworks/Electron Framework.framework'), { recursive: true });
+    await writeFile(framework, Buffer.concat([Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'), Buffer.from([1, 4, 49, 49, 49, 48])]));
+    assert.equal((await bootstrap(options)).code, 'fuse_disabled');
+    assert.equal((await bootstrap({ ...options, executable: join(root, 'Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper') })).code, 'fuse_disabled');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('runtime contract admits only the pinned build and capabilities, explicitly refuses unverified Windows', async () => {
+  const { validateRuntime } = await import('../src/local/runtime-contract.mjs');
+  const observed = { appName: 'Orca', appVersion: '1.4.222', platform: 'darwin', arch: 'arm64', electron: '43.7.5', node: '24.21.0', sqlite: true, build: { buildId: '1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64', version: '1.4.222', commit: '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43', platform: 'darwin', architecture: 'arm64' } };
+  assert.equal(validateRuntime(observed).verification, 'pinned-contract');
+  assert.throws(() => validateRuntime({ ...observed, appVersion: '1.4.223' }), /Unsupported.*build/);
+  assert.throws(() => validateRuntime({ ...observed, platform: 'win32' }), /Windows.*unverified/);
+  assert.throws(() => validateRuntime({ ...observed, sqlite: false }), /SQLite/);
+  assert.throws(() => validateRuntime({ ...observed, build: null }), /build/);
+});
+
+test('connection reports worker activation separately from an unavailable adapter and retries its own initialisation command', async () => {
+  const calls = [];
+  const bridge = createWorkerBridge(async (_, { teamWorker: message }) => {
+    calls.push(message.commandId);
+    if (message.commandId === 'team.initialise') return { ready: false };
+    return { nonce: message.nonce, ready: false, workerPid: 123, platform: 'darwin', code: 'unsupported_build', detail: 'Unsupported Orca build.' };
+  }, { nonce: () => 'n', spacingMs: 0 });
+  await assert.rejects(bridge.connect({ retry: true }), error => error.report?.workerPid === 123 && error.message === 'Unsupported Orca build.');
+  assert.deepEqual(calls, ['team.initialise', 'team.control']);
+});
+
+test('bootstrap refuses an occupied non-inspector port without activating any process', async () => {
+  const { bootstrap } = await import('../src/local/bootstrap.mjs');
+  const { createServer } = await import('node:http');
+  const server = createServer((_, response) => { response.end('not an inspector'); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const root = await mkdtemp(join(tmpdir(), 'orca-port-'));
+  try {
+    const executable = join(root, 'Orca.exe');
+    await writeFile(executable, Buffer.concat([Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'), Buffer.from([1, 4, 49, 49, 49, 49])]));
+    let activated = false;
+    const report = await bootstrap({ platform: 'win32', executable, parentPid: 98765, port: server.address().port, activate: async () => { activated = true; } });
+    assert.equal(report.code, 'port_conflict'); assert.equal(activated, false);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });

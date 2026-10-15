@@ -1,14 +1,14 @@
 // Validate the shipped manifest, panel envelope and worker storage against unmodified Orca sources.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cliEnvironment } from '../src/local/cli.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
-const revision = 'dc146c09e2b12c229cc38434b7b1d4d9c012fdc5';
-const root = await mkdtemp(join(tmpdir(), 'orca-plugin-contract-'));
+const revision = '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
+const root = await realpath(await mkdtemp(join(tmpdir(), 'orca-plugin-contract-')));
 const project = fileURLToPath(new URL('../', import.meta.url));
 const source = async path => {
   try { return await readFile(path, 'utf8'); } catch {}
@@ -26,8 +26,9 @@ const bundle = async name => {
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
+      api.onResolve({ filter: /^electron$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onResolve({ filter: /safe-storage-availability$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
-      api.onLoad({ filter: /.*/, namespace: 'contract-fake' }, () => ({ contents: 'export const guardedSafeStorage = { isEncryptionAvailable: () => false };', loader: 'js' }));
+      api.onLoad({ filter: /.*/, namespace: 'contract-fake' }, () => ({ contents: 'export const guardedSafeStorage = { isEncryptionAvailable: () => false }; export const safeStorage = guardedSafeStorage;', loader: 'js' }));
       api.onResolve({ filter: /^zod$/ }, () => ({ path: fileURLToPath(import.meta.resolve('zod')) }));
       api.onResolve({ filter: /^\./ }, args => {
         if (!args.importer.startsWith(root)) return;
@@ -94,7 +95,7 @@ try {
   assert.equal(sessions.resolve('renderer:21', existingToken), null);
   const installed = await installAdapter({ ipcMain }, { version: 'contract', identity: 'contract' });
   assert.equal(installed.ready, true);
-  const event = { sender: { id: 20 } };
+  const mainFrame = {}; const event = { sender: { id: 20, mainFrame }, senderFrame: mainFrame };
   await handlers.get('plugins:readPanelEntry')(event, { pluginKey: base.pluginId, panelId: 'team' });
   const call = { sessionToken: 'approved-token', action: envelope.action, params: envelope.params };
   assert.equal((await handlers.get('plugins:panelAction')(event, call)).value.nonce, 'roundtrip');

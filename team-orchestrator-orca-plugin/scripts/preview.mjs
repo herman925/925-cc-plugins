@@ -14,9 +14,11 @@ window.addEventListener('message',event=>{
  const mode=new URLSearchParams(location.search).get('mode');
  const reply=(value,ok=true,errorCode,error)=>frame.contentWindow.postMessage({type:'orca-panel-action-result',requestId,ok,value,errorCode,error},'*');
  const message=params?.teamWorker;
- if(action!=='workspace.readContext'||message?.protocol!==1||message.commandId!=='team.control')return reply(null,false,'invalid_params','Unsupported worker envelope');
+ if(action!=='workspace.readContext'||message?.protocol!==1||!['team.control','team.initialise'].includes(message.commandId))return reply(null,false,'invalid_params','Unsupported worker envelope');
  if(mode==='unpatched')return reply({displayName:'Stock context'});
  if(mode==='timeout')return;
+ if(message.commandId==='team.initialise')return reply({ready:true});
+ if(mode==='unsupported-build')return reply({nonce:message.nonce,ready:false,platform:'darwin',workerPid:1234,code:'unsupported_build',detail:'Unsupported Orca build. Revalidate this package before enabling the compatibility layer.'});
  const {op,params:input={}}=message.args;
  if(op==='ping')return reply({nonce:message.nonce,ready:true,platform:'linux',appVersion:'1.4.224',workerPid:1234});
  if(op==='context')return reply(mode==='no-workspace'?null:{displayName:'Demo workspace',branch:'main',workspaceKey:'a'.repeat(64),nativeAgentLaunch:true});

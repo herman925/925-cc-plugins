@@ -6,15 +6,17 @@ export async function installAdapter(electron, { version, identity }) {
   const handlers = ipc?._invokeHandlers;
   if (!(handlers instanceof Map)) throw new Error('This Electron build has no compatible IPC handler registry.');
   const existing = globalThis[SLOT];
-  if (existing?.identity === identity && existing.isCurrent()) { await existing.bindOpenPanels(); return { ready: true, version, reused: true }; }
+  if (existing?.identity === identity && existing.isCurrent()) { return { ready: true, version, reused: true }; }
   existing?.restore();
   const names = ['plugins:readPanelEntry', 'plugins:panelAction', 'plugins:invokeCommand'];
   const originals = new Map(names.map(name => [name, handlers.get(name)]));
   if ([...originals.values()].some(handler => typeof handler !== 'function')) throw new Error('Orca plugin IPC handlers are not ready or compatible.');
+  const isMainFrame = event => Boolean(event?.senderFrame && event.senderFrame === event.sender?.mainFrame && !event.sender?.isDestroyed?.());
   const leases = new Map();
   const wrappers = new Map();
   const wrap = (name, fn) => { wrappers.set(name, fn); ipc.removeHandler(name); ipc.handle(name, fn); };
   wrap(names[0], async (event, args) => {
+    if (!isMainFrame(event)) throw new Error('Team Orchestrator requires a live main-frame IPC event.');
     const entry = await originals.get(names[0])(event, args);
     if (args?.pluginKey === KEY && args.panelId === 'team' && entry?.sessionToken) {
       for (const [token, owner] of leases) if (owner === event.sender.id) leases.delete(token);
@@ -25,6 +27,11 @@ export async function installAdapter(electron, { version, identity }) {
   });
   wrap(names[1], async (event, call) => {
     if (call?.action !== CHANNEL || !call.params?.teamWorker) return originals.get(names[1])(event, call);
+    if (!isMainFrame(event)) return { ok: false, code: 'invalid_request', error: 'Main-frame IPC is required.' };
+    // Existing panels are rebound only using this actual IPC event; never manufacture a sender.
+    if (leases.get(call.sessionToken) !== event.sender.id) {
+      try { await wrappers.get(names[0])(event, { pluginKey: KEY, panelId: 'team' }); } catch {}
+    }
     if (leases.get(call.sessionToken) !== event.sender.id) return { ok: false, code: 'invalid_request', error: 'This panel is not bound to Team Orchestrator.' };
     // Reuse Orca's current session, consent, manifest, owner and rate checks on every invocation.
     const gate = await originals.get(names[1])(event, { ...call, params: {} });
@@ -32,6 +39,7 @@ export async function installAdapter(electron, { version, identity }) {
     try {
       const message = call.params.teamWorker;
       if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > 60000) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'save', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;
       if (['context', 'start'].includes(message.args?.op)) {
@@ -59,15 +67,6 @@ export async function installAdapter(electron, { version, identity }) {
       return result;
     });
   }
-  const bindOpenPanels = async () => {
-    // Orca reuses the token for the same owner/panel/revision; no discovery refresh is needed.
-    for (const window of electron.BrowserWindow?.getAllWindows() ?? []) {
-      if (window.webContents.isDestroyed()) continue;
-      try { await wrappers.get(names[0])({ sender: window.webContents }, { pluginKey: KEY, panelId: 'team' }); }
-      catch {} // A closed/unapproved window remains unbound; the original gate still decides authority.
-    }
-  };
-  globalThis[SLOT] = { identity, restore, bindOpenPanels, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
-  await bindOpenPanels();
+  globalThis[SLOT] = { identity, restore, isCurrent: () => [...wrappers].every(([name, handler]) => handlers.get(name) === handler) };
   return { ready: true, version, reused: false };
 }

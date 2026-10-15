@@ -26,8 +26,8 @@ export default function activate(orca) {
   orca.commands.register('team.initialise', async () => { if (!initialising) ready = null; return publicReport(await initialise()); });
   orca.commands.register('team.control', async args => {
     const report = await initialise();
-    if (!report.ready) throw new Error(report.detail);
     if (!args || args.op === 'ping') return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
+    if (!report.ready) throw new Error(report.detail);
     if (!report.cliPaths) throw new Error('Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.');
     executorPromise ??= locateCli(undefined, undefined, report.cliPaths).then(command => createExecutor(orca.host, createCliRunner(command)));
     return (await executorPromise).execute(args);
