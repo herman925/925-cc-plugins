@@ -4,8 +4,10 @@ const { fork } = require('node:child_process');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
 const { join } = require('node:path');
-const { readFileSync } = require('node:fs');
+const { readFileSync, writeFileSync } = require('node:fs');
+const { createServer } = require('node:net');
 app.setName('Orca');
+app.on('window-all-closed', () => {}); // Keep the fixture host alive while its panel is closed.
 app.setPath('appData', __dirname + '/redirected-app-data');
 app.setPath('userData', __dirname + '/redirected-runtime-profile');
 const KEY = 'herman925.team-orchestrator';
@@ -36,21 +38,57 @@ function startWorker() {
     });
   });
 }
-const runtimeReads = [], launched = new Map();
+const runtimeReads = [], launched = new Map(), objectiveSends = new Map();
+let terminalStatus = 'permission', nativeDb, nativeSocket, objectiveAttempts = 0;
+const nativeToken = 'fixture-private-runtime-token';
+const history = new Map();
+function savedWorks() {
+  const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
+  try { return db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row => JSON.parse(row.json)); } finally { db.close(); }
+}
+function createSupervisorRun(work) {
+  const instance = work.instance;
+  nativeDb.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)').run('run-' + work.id, work.nativeObjective, 'this_database', instance.kind === 'terminal' ? instance.handle : null, instance.paneKey ?? null, instance.kind === 'structured' ? instance.sessionId : null, 1, 1, 0);
+}
+async function startNativeSocket() {
+  nativeDb = new DatabaseSync(join(app.getPath('userData'), 'orchestration.db'));
+  nativeDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER); PRAGMA user_version=43');
+  // Short path stays within macOS Unix-domain socket limits; metadata remains in the verified profile.
+  const endpoint = '/tmp/orca-fixture-' + process.pid + '.sock';
+  nativeSocket = createServer(socket => {
+    socket.setEncoding('utf8'); let buffer = '';
+    socket.on('data', chunk => {
+      buffer += chunk; const index = buffer.indexOf('\n'); if (index < 0) return;
+      const request = JSON.parse(buffer.slice(0, index)); buffer = buffer.slice(index + 1);
+      void (async () => {
+        try {
+          assert.equal(request.authToken, nativeToken);
+          for (const forbidden of ['clientKind', 'sessionIdentity', 'orchestrationCompatibilityEvidence', 'from']) assert.equal(Object.hasOwn(request, forbidden), false, 'use native local-user authority');
+          const result = await runtimeResult(request.method, request.params, request, 'socket');
+          socket.end(JSON.stringify({ id: request.id, ok: true, result, _meta: { runtimeId: 'fixture-runtime' } }) + '\n');
+        } catch (error) { socket.end(JSON.stringify({ id: request.id, ok: false, error: { message: error.message }, _meta: { runtimeId: 'fixture-runtime' } }) + '\n'); }
+      })();
+    });
+  });
+  await new Promise(resolve => nativeSocket.listen(endpoint, resolve));
+  writeFileSync(join(app.getPath('userData'), 'orca-runtime.json'), JSON.stringify({ runtimeId: 'fixture-runtime', pid: process.pid, transports: [{ kind: 'unix', endpoint }], authToken: nativeToken, startedAt: Date.now() }));
+}
 function savedOperation(nativeId) {
   const db = new DatabaseSync(join(app.getPath('userData'), 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'), { readOnly: true });
   try { const row = db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%' AND json_extract(json,'$.nativeRequest.operationId')=?").get(nativeId); return row && JSON.parse(row.json); } finally { db.close(); }
 }
-ipcMain.handle('runtime:call', async (event, { method, params }) => {
-  mainFrame(event); runtimeReads.push({ method, params });
+async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
+  runtimeReads.push({ method, params, transport });
   let result;
-  if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+  if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+  else if (method === 'worktree.show') result = { worktree: { id: 'repo::/remote/project', hostId: 'ssh:fixture' } };
   else if (method === 'settings.get') result = { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } };
   else if (method === 'ssh.getState') result = { state: { status: 'connected', connectionGeneration: 1 } };
   else if (method === 'preflight.detectRemoteAgents') result = ['codex', 'claude'];
   else if (method === 'agentSession.agents') result = { agents: [] };
   else if (method === 'agentSession.createSupport') result = { supported: false, reason: 'remote' };
   else if (method === 'agent.launchReplay') {
+    assert.equal(transport, 'ipc', 'initial launch preserves the genuine renderer event');
     const operation = savedOperation(params.operationId);
     assert.equal(operation.status, 'unknown', 'intent must commit before native launch');
     assert.equal(operation.roleVersion > 0, true); assert.equal(Object.hasOwn(params, 'agentArgs'), false);
@@ -64,15 +102,51 @@ ipcMain.handle('runtime:call', async (event, { method, params }) => {
     const db = new DatabaseSync(join(app.getPath('userData'), 'agent-session-journal.db'));
     db.exec('PRAGMA user_version=4; CREATE TABLE IF NOT EXISTS agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
     db.prepare('INSERT OR REPLACE INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${params.operationId}`, JSON.stringify({ callerKey: 'trusted-local:desktop', operationId: params.operationId, fingerprint: nativeLaunchFingerprint(params), operationTimestamp: Number(params.operationId.split('-')[0]), recordedAt: Date.now(), expiresAt: Date.now() + 86400000, outcome: { status: 'succeeded', sessionId: result.outcome.sessionId ?? '', launch: result } })); db.close();
-  } else if (method === 'terminal.show') result = { terminal: { handle: 'fixture-terminal', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', tabId: 'fixture-tab', leafId: 'fixture-leaf' } };
+  } else if (method === 'terminal.show') result = { terminal: { handle: 'fixture-terminal', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', tabId: 'fixture-tab', leafId: 'fixture-leaf', incarnationId: 'fixture-incarnation', agentIdentity: 'codex', connected: true, writable: true } };
   else if (method === 'terminal.rename') { const nativeId = [...launched.keys()][0]; assert.equal(savedOperation(nativeId).status, 'created', 'identity commit must precede rename'); result = { rename: { handle: params.terminal, tabId: 'fixture-tab', title: params.title } }; }
-  else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: 'permission' } };
+  else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: terminalStatus } };
   else if (method === 'terminal.focus') result = { focus: { handle: params.terminal } };
   else if (method === 'orchestration.sessionAddress') result = { orcaSessionId: 'orca_session_id:fixture-chat' };
   else if (method === 'orchestration.partyLocation') result = { location: { kind: 'chat', sessionId: 'codex:fixture-chat', worktreeId: 'repo::/remote/project' } };
   else if (method === 'agentSession.reveal') result = { ok: true, sessionId: params.sessionId, workspaceId: 'repo::/remote/project', agent: 'codex', readable: true };
+  else if (method === 'agentSession.history') result = { ok: true, page: { sessionId: params.sessionId, fence: 7, items: [], submissions: [], ...history.get(params.sessionId) } };
+  else if (method === 'agentSession.send' || method === 'terminal.send') {
+    objectiveAttempts++;
+    assert.equal(transport, 'socket', 'objectives use genuine native local RPC, never synthesized IPC events');
+    const operationId = params.envelope?.clientOperationId ?? envelope.orchestrationRequestId;
+    const work = savedWorks().find(row => row.nativeSend?.params.envelope?.clientOperationId === operationId || row.nativeSend?.envelope.orchestrationRequestId === operationId);
+    assert.ok(work, 'SQLite objective intent must commit before input');
+    assert.equal(work.input.state, 'sending');
+    assert.deepEqual(work.nativeSend.params, params, 'frozen native input survives the process boundary');
+    assert.equal(objectiveSends.has(operationId), false, 'no duplicate native user input');
+    objectiveSends.set(operationId, work.id);
+    if (method === 'agentSession.send') {
+      assert.deepEqual(Object.keys(params).sort(), ['body', 'envelope']);
+      assert.deepEqual(Object.keys(params.body).sort(), ['blocks', 'kind', 'role']);
+      assert.equal(params.body.kind, 'message'); assert.equal(params.body.role, 'user');
+      assert.deepEqual(Object.keys(params.envelope).sort(), ['clientOperationId', 'expectedRuntimeFence', 'payloadFingerprint', 'sessionId']);
+      assert.equal(params.body.blocks.length, 1); assert.equal(params.body.blocks[0].type, 'text');
+      assert.equal(params.body.blocks[0].text.includes(JSON.stringify(work.nativeObjective)), true, 'supervisor receives its exact issued Run objective');
+      assert.equal(params.envelope.expectedRuntimeFence, 7);
+      assert.equal(params.envelope.sessionId, 'codex:fixture-chat');
+      assert.match(params.envelope.payloadFingerprint, /^[a-f0-9]{64}$/);
+      result = { ok: true, fence: 7, value: { clientMessageId: operationId, submission: { clientMessageId: operationId, dispatchState: 'pending' } } };
+    } else {
+      assert.match(envelope.orchestrationRequestId, /^[a-f0-9-]{36}$/);
+      assert.equal(params.orchestrationRequestId, undefined);
+      assert.equal(params.terminal, 'fixture-terminal'); assert.equal(params.enter, true); assert.equal(params.agentPrompt, true);
+      assert.deepEqual(params.client, { id: 'team-orchestrator', type: 'desktop' });
+      assert.equal(params.from, undefined);
+      assert.equal(params.text.includes(JSON.stringify(work.nativeObjective)), true, 'terminal supervisor receives the same versioned Run contract');
+      result = { send: { handle: params.terminal, accepted: true, prompt: { requestId: operationId, processIncarnation: 'fixture-incarnation', stages: ['input_accepted'], observation: 'supported' } } };
+    }
+  } else if (method === 'orchestration.runShow') result = { run: nativeDb.prepare('SELECT id,objective,consumer_generation FROM runs WHERE id=?').get(params.id) };
+  else if (method === 'orchestration.taskList') { assert.ok(nativeDb.prepare('SELECT id FROM runs WHERE id=?').get(params.run)); assert.equal(params.from, undefined); result = { tasks: [{ id: 'task-' + params.run, run_id: params.run, status: 'pending', task_title: 'Fixture native task' }] }; }
   else throw Error('Unexpected runtime read ' + method);
-  return { id: 'desktop-ipc', ok: true, result };
+  return result;
+}
+ipcMain.handle('runtime:call', async (event, { method, params }) => {
+  mainFrame(event); return { id: 'desktop-ipc', ok: true, result: await runtimeResult(method, params) };
 });
 ipcMain.handle('session:get', async event => { mainFrame(event); return { activeWorktreeId: 'repo::/remote/project' }; });
 ipcMain.handle('plugins:readPanelEntry', async (event, args) => {
@@ -97,12 +171,13 @@ ipcMain.handle('plugins:invokeCommand', async (event, args) => {
 ipcMain.handle('plugins:setEnabled', async (event, args) => { mainFrame(event); enabled = args.enabled; return []; });
 ipcMain.handle('plugins:remove', async event => { mainFrame(event); enabled = false; return []; });
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: false, webPreferences: { preload: __dirname + '/preload.cjs', contextIsolation: true, sandbox: false, nodeIntegrationInSubFrames: true } });
+  await startNativeSocket();
+  let window = new BrowserWindow({ show: false, webPreferences: { preload: __dirname + '/preload.cjs', contextIsolation: true, sandbox: false, nodeIntegrationInSubFrames: true } });
   await window.loadFile(__dirname + '/index.html');
   const ipc = (channel, args, frame = window.webContents.mainFrame) => frame.executeJavaScript(`window.fixture.invoke(${JSON.stringify(channel)},${JSON.stringify(args)})`);
-  const watchdog = setTimeout(() => { console.error('Electron proof timed out'); child?.kill(); app.exit(1); }, 40000);
+  const watchdog = setTimeout(() => { console.error('Electron proof timed out'); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }, 40000);
   try {
-    const entry = await ipc('plugins:readPanelEntry', { pluginKey: KEY, panelId: 'team' });
+    let entry = await ipc('plugins:readPanelEntry', { pluginKey: KEY, panelId: 'team' });
     assert.equal(child, undefined, 'panel load must not imply worker activation');
     const envelope = (commandId = 'team.control', op = 'ping', sessionToken = entry.sessionToken) => ({ sessionToken, action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'panel-nonce', commandId, args: { op } } } });
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'invalid_params');
@@ -156,6 +231,43 @@ app.whenReady().then(async () => {
     assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle); assert.equal(launched.size, 2);
     assert.equal(runtimeReads.filter(row => row.method === 'terminal.rename').length, 1, 'structured rename must not use terminal methods');
     edited = (await control('load', {})).value;
+    terminalStatus = 'idle';
+    const objectiveRequests = edited.teams.map((team, index) => ({ requestId: `electron-objective-${index}`, teamId: team.id, expectedRevision: edited.revision, objective: `Verify native objective ${index}` }));
+    const terminalWork = (await control('submitWork', objectiveRequests[0])).work;
+    assert.equal(terminalWork.input.state, 'accepted', JSON.stringify(terminalWork));
+    assert.equal(terminalWork.run.state, 'unverified', 'accepted input does not create a Run');
+    assert.equal(terminalWork.processing.state, 'unknown', 'input receipt does not prove a turn');
+    assert.equal((await control('submitWork', objectiveRequests[0])).work.id, terminalWork.id);
+    objectiveRequests[1].expectedRevision = (await control('load', {})).value.revision;
+    const structuredWork = (await control('submitWork', objectiveRequests[1])).work;
+    assert.equal(structuredWork.input.state, 'accepted', JSON.stringify(structuredWork));
+    assert.equal(structuredWork.processing.state, 'unknown', 'journaled input is not observed processing');
+    assert.equal(structuredWork.run.state, 'unverified');
+    assert.equal(objectiveSends.size, 2);
+    // The fixture supervisor creates Runs only after input. Native SQLite is the owner-evidence boundary.
+    for (const work of savedWorks()) createSupervisorRun(work);
+    const structuredIntent = savedWorks().find(work => work.id === structuredWork.id);
+    const messageId = structuredIntent.nativeSend.params.envelope.clientOperationId;
+    history.set('codex:fixture-chat', { submissions: [{ clientMessageId: messageId, dispatchState: 'accepted' }], latestTurn: { turn: { userItemId: 'orca:' + encodeURIComponent(messageId), turnId: 'fixture-objective-turn', state: 'running' } } });
+    // Close the genuine renderer; the worker must reconcile through the local socket without any IPC event.
+    window.destroy();
+    const reconcileDeadline = Date.now() + 12000;
+    while (savedWorks().some(work => work.run.state !== 'verified') && Date.now() < reconcileDeadline) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(savedWorks().every(work => work.run.state === 'verified'), true, 'closed panel still permits background Run reconciliation');
+    window = new BrowserWindow({ show: false, webPreferences: { preload: __dirname + '/preload.cjs', contextIsolation: true, sandbox: false, nodeIntegrationInSubFrames: true } });
+    await window.loadFile(__dirname + '/index.html');
+    entry = await ipc('plugins:readPanelEntry', { pluginKey: KEY, panelId: 'team' });
+    edited = (await control('load', {})).value;
+    assert.equal(edited.works.length, 2);
+    assert.equal(edited.works.find(work => work.id === terminalWork.id).processing.state, 'unknown');
+    assert.equal(edited.works.find(work => work.id === structuredWork.id).processing.state, 'observed');
+    for (const work of edited.works) {
+      assert.equal(work.run.state, 'verified'); assert.equal(work.snapshot.tasks.length, 1);
+      assert.equal(work.supervisorMemberId, edited.teams.find(team => team.id === work.teamId).members[0].id);
+      assert.equal(work.nativeSend, undefined); assert.equal(work.protocolToken, undefined);
+    }
+    for (const secret of [nativeToken, app.getPath('userData'), '/remote/project', structuredIntent.protocolToken]) assert.equal(JSON.stringify(edited).includes(secret), false, 'private runtime and correlation evidence stays private');
+    const stableSnapshot = value => ({ revision: value.revision, teams: value.teams, works: value.works.map(work => ({ id: work.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, objective: work.objective, configVersion: work.configVersion, roleVersion: work.roleVersion, input: work.input, processing: work.processing, runId: work.run.id, consumerGeneration: work.run.consumerGeneration })) });
 
     assert.equal((await ipc('plugins:panelAction', envelope('foreign.command'))).code, 'invalid_params');
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', 'arbitrary.runtime'))).code, 'invalid_params');
@@ -169,16 +281,19 @@ app.whenReady().then(async () => {
     await new Promise(resolve => setTimeout(resolve, 800));
     const retry = await ipc('plugins:panelAction', envelope('team.initialise'));
     assert.equal(retry.value.reused, true); assert.equal(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
-    assert.deepEqual((await control('load', {})).value, edited);
+    assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited));
     // Recycle only this isolated fixture worker: real SQLite persists, old KV is untouched.
     await new Promise(resolve => { child.once('exit', resolve); child.kill(); });
     start = undefined;
-    assert.deepEqual((await control('load', {})).value, edited);
+    assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited));
     assert.deepEqual((await control('createTeam', create)).value, saved, 'recover completed save after worker restart');
     assert.deepEqual((await control('importTemplate', importRequest)).value, imported, 'recover completed import after worker restart');
-    assert.deepEqual((await control('load', {})).value, edited, 'replay never overwrites the latest snapshot');
+    assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited), 'replay never overwrites the latest snapshot');
     assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle);
     assert.equal(launched.size, 2, 'worker restart cannot relaunch a bound member');
+    for (const request of objectiveRequests) assert.equal((await control('submitWork', request)).work.id, edited.works.find(work => work.teamId === request.teamId).id);
+    assert.equal(objectiveSends.size, 2, 'original native input identities remain stable');
+    assert.equal(objectiveAttempts, 2, 'duplicate submit and worker restart must not repeat user input');
     assert.equal(data.size, 0, 'new format must not write legacy KV');
     await new Promise(resolve => setTimeout(resolve, 800));
     let inspectorOpen = true;
@@ -187,7 +302,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
-    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus, durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
-    clearTimeout(watchdog); child.kill(); app.exit(0);
-  } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); app.exit(1); }
+    console.log('REAL_ELECTRON_WORKER_PASS: genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, panel-closed reconciliation and restart input deduplication; durable intent-before-effect and identity-before-naming, exactly two supervisor sessions, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
+  } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });
