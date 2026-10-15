@@ -3,7 +3,7 @@ import { randomUUID,createHash } from 'node:crypto';
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=message=>{throw Error(message);};
 const boundedHandoff=h=>({...h,summary:h.summary.slice(0,2000),evidenceRefs:h.evidenceRefs.slice(0,10).map(r=>r.slice(0,160)),truncated:h.summary.length>2000||h.evidenceRefs.length>10||h.evidenceRefs.some(r=>r.length>160)});
-export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic,readSnapshot,write}){
+export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic,readSnapshot,write,applyOrganization}){
  const deliveries=id=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'delivery:%' ORDER BY rowid").all().map(r=>JSON.parse(r.json)).filter(r=>r.workId===id);
  const current=id=>deliveries(id).at(-1);
  const blockers=work=>{
@@ -65,6 +65,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
     }
     db.prepare('DELETE FROM receipts WHERE id=?').run(`active-work:${w.teamId}`);
     w.closedAt=event.recordedAt;w.handoff={summary:d.summary,evidenceRefs:d.evidenceRefs,deliveryId:d.id};
+    applyOrganization?.(w,team);
     const goal=listGoals(w.teamId).find(g=>g.status==='queued');
     if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=boundedHandoff(w.handoff);putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
     state.revision++;write(state);

@@ -16,7 +16,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'goal-lifecycle' || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('idle-replacement') || mode === 'goal-lifecycle' || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       throw Error('CLI launch fallback is forbidden');
@@ -118,9 +118,9 @@ async function fixture(id, mode) {
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
-        const structured = mode === 'goal-lifecycle' || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
+        const structured = mode?.startsWith('idle-replacement') || mode === 'goal-lifecycle' || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
-        launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); return result;
+        launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
       }
       const launch = [...launches.values()].find(row => row.outcome.handle === params?.terminal || row.outcome.sessionId === params?.sessionId);
       if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
@@ -132,7 +132,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.reveal' && launch) return { ok: true, sessionId: params.sessionId, workspaceId: launch.worktreeId, agent: agents.get(launch.outcome.handle), readable: true };
       if(method==='agentSession.restartResumable')return {sessions:[...launches.values()].filter(v=>v.outcome.sessionId).map(v=>({sessionId:v.outcome.sessionId,workspaceId:v.worktreeId,executionHostId:host,agent:agents.get(v.outcome.handle)}))};
       if(method==='agentSession.restartContinue'){assert.equal(params.sessionIds.length,1);return {continued:[{sessionId:params.sessionIds[0],outcome:'refused'}]};}
-      if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
+      if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...(mode?.startsWith('idle-replacement')?{latestTurn:{itemId:'turn-idle',turn:{state:mode==='idle-replacement-busy'?'running':mode==='idle-replacement-unknown'?'unverifiable':'completed'}},queuedMessages:[],backgroundTasks:null}:{}), ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
         const dispatchInput = text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');

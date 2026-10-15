@@ -1,3 +1,4 @@
+import { organizationStore } from './organization-store.mjs';
 import { wakeStore, publicWake } from './wake-store.mjs';
 import { stopStore } from './stop-store.mjs';
 import { lifecycleStore } from './lifecycle-store.mjs';
@@ -89,11 +90,10 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), organizationChanges:organization.organizationProjection(), recoveries:db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map(r=>publicWake(JSON.parse(r.json))), works: listCurrentWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
     };
-    const write = ({ works, goals, recoveries, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
-    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
-    readSnapshot();
+    const write = ({ works, goals, recoveries, organizationChanges, stops:ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork:readCurrentWork,persistWork:persistCurrentWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write,applyOrganization:(work,team)=>organization.applyOrganization(work,team)});
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -120,6 +120,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.prepare('INSERT INTO team_versions VALUES (?,?,?)').run(team.id, team.configVersion, JSON.stringify(team));
       for (const member of team.members) db.prepare('INSERT OR IGNORE INTO role_versions VALUES (?,?,?)').run(member.id, member.roleVersion, JSON.stringify({ brief: member.brief, habits: member.habits, collaboration: member.collaboration }));
     };
+    const organization=organizationStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readSnapshot,write,readWork:readCurrentWork,archive,validate:team=>validatePersistentState({...readSnapshot(),teams:[team]})});
+    readSnapshot();
     const readOperation = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`operation:${id}`); return row ? JSON.parse(row.json) : null; };
     const persistOperation = (operation, observationOnly=false) => {
       db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`operation:${operation.requestId}`, JSON.stringify(operation));
@@ -131,10 +133,32 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       team.launch.status = initialMembers(team).every(member => team.launch.members[member.id]?.status === 'created') ? 'accepted' : 'unknown';
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
+    const assertReplacementIdle=memberId=>{
+      if(stops.listStops().some(r=>r.target.memberId===memberId&&['intent','submitted','unknown'].includes(r.state)))fail('Unresolved Stop blocks idle replacement.');
+      for(const a of listDispatches().filter(a=>a.memberId===memberId||a.supervisorMemberId===memberId))if(!['accepted','rework'].includes(a.status)||!a.evidenceId)fail('Member has running, unknown or unreviewed execution.');
+      for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all()){const q=JSON.parse(saved.json);if(q.memberId===memberId||q.supervisorMemberId===memberId)fail('Queued execution blocks idle replacement.');}
+      const roots=listCurrentWorks().filter(w=>w.status!=='completed');
+      for(const w of roots)for(const q of questions.listQuestions(w.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))fail('Unresolved question blocks idle replacement.');
+    };
+    const replacementTeam=teamId=>{const work=listCurrentWorks().find(w=>w.teamId===teamId&&w.status!=='completed');return readSnapshot().teams.find(t=>t.id===teamId);};
     let closed = false;
     return {
       ...questions,
-      ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation,persistOperation,readWork,persistWork,readCurrentWork}),
+      ...organization,
+      assertReplacementIdle,
+      reserveIdleReplacement(input,operation,proof){return mutate('reserveIdleReplacement',input,next=>{
+        const team=next.teams.find(t=>t.id===input.teamId),member=team?.members.find(m=>m.id===input.memberId),current=operation.sourceAttemptId?readPrivate(`dispatch:${operation.sourceAttemptId}`):readOperation(operation.requestId);
+        if(!member||current?.version!==operation.version)fail('Current member execution changed; reload.');
+        const pointer=readPrivate(operation.sourceAttemptId?`dispatch-member:${member.id}`:`binding:${member.id}`);
+        if((pointer?.requestId??pointer?.id)!==operation.requestId||readPrivate(`wake-member:${member.id}`))fail('Current member replacement reservation changed.');
+        assertReplacementIdle(member.id);
+        if(!['codex','claude'].includes(input.agent)||[input.model,input.effort].some(v=>typeof v!=='string'||!v.trim()||v.length>120)||(input.model==='default'&&input.effort!=='default'))fail('Choose valid requested agent/model/effort preferences.');
+        team.admission??={paused:false,members:{}};team.admission.members[member.id]=true;
+        Object.assign(member,{agent:input.agent,model:input.model,effort:input.effort,preferenceOverride:true});team.configVersion++;archive(team);
+        const row={requestId:input.requestId,teamId:team.id,memberId:member.id,bindingRequestId:operation.requestId,mode:'idle-replacement',oldBinding:operation,proof,state:'approved',version:1,createdAt:new Date().toISOString(),handoff:{reviewer:'user',decision:'replace',summary:input.summary,evidenceRefs:input.evidenceRefs,oldRequestId:operation.requestId},detail:'Confirmed idle application recipient retirement. The old native conversation may remain open for inspection; no process death is claimed.'};
+        putPrivate(`wake:${row.requestId}`,row);putPrivate(`wake-member:${member.id}`,{requestId:row.requestId});
+      });},
+      ...wakeStore({db,readPrivate,putPrivate,atomic:atomicDispatch,readOperation,persistOperation,readWork,persistWork,readCurrentWork,replacementTeam,assertReplacementIdle}),
       ...stops,
       ...lifecycle,
       readOperation,
@@ -158,7 +182,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         team.admission??={paused:false,members:{}};
         if(input.memberId)team.admission.members[input.memberId]=input.paused;else team.admission.paused=input.paused;
       }); },
-      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.');if(stops.listStops().some(row=>row.target.teamId===teamId&&row.target.memberId===memberId&&['intent','submitted','unknown'].includes(row.state)))fail('Stop outcome is unresolved; reconcile this member before a new assignment.'); },
+      assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some(r=>{const wake=JSON.parse(r.json);if(wake.mode!=='idle-replacement'||wake.teamId!==teamId||['bound','resumed'].includes(wake.state))return false;let member=team.members.find(m=>m.id===memberId);while(member){if(member.id===wake.memberId)return true;member=team.members.find(m=>m.id===member.boss);}return false;}))fail('Member replacement handoff is reserved; new assignments are paused.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.');if(stops.listStops().some(row=>row.target.teamId===teamId&&row.target.memberId===memberId&&['intent','submitted','unknown'].includes(row.state)))fail('Stop outcome is unresolved; reconcile this member before a new assignment.'); },
       listGoals,
       enqueueGoal(input){workInput(input);return atomicDispatch(()=>{
         const key=`goal-request:${input.requestId}`,digest=fingerprint(input),prior=readPrivate(key);

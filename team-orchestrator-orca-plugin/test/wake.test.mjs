@@ -105,3 +105,15 @@ for(const agent of ['codex','claude'])test(`${agent} terminal wake consumes exac
  await f.service.decide({requestId:'wake-1',version:row.version,decision:'replace',summary:'Checked exact terminal stop and original task.',evidenceRefs:['stop-terminal']});
  const fresh=await f.service.prepareFresh('wake-1');assert.equal(fresh.operation.instanceGeneration,2);assert.equal(fresh.operation.nativeRequest.agent,agent);assert.equal(fresh.operation.nativeRequest.resumeFrom,undefined);
 });
+for(const agent of ['codex','claude'])test(`${agent} idle replacement retires only the app recipient and preserves original native history`,async t=>{
+ const f=await fixture(t,agent),other=agent==='codex'?'claude':'codex';let idle=true;
+ const rpc=async(method,params)=>method==='agentSession.history'?{ok:true,page:{sessionId:f.op.sessionId,fence:7,latestTurn:{itemId:'turn',turn:{state:idle?'completed':'running'}},backgroundTasks:null,queuedMessages:[],submissions:[]}}:f.rpc(method,params);
+ const service=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ const input={...f.input,expectedRevision:f.store.readSnapshot().revision,agent:other,model:'default',effort:'default',summary:'Checked all accepted results. Continue with the current saved role.',evidenceRefs:['saved-results']};
+ idle=false;await assert.rejects(service.requestReplacement(input),/idle|execution/);assert.equal(f.store.readMemberOperation(f.member.id).requestId,'launch');
+ idle=true;const row=await service.requestReplacement(input);assert.equal(row.state,'approved');assert.equal(f.store.readSnapshot().teams[0].admission.members[f.member.id],true);
+ const fresh=await service.prepareFresh(row.requestId);assert.equal(fresh.operation.nativeRequest.agent,other);assert.equal(fresh.operation.configVersion,2);assert.equal(fresh.operation.memberId,f.member.id);assert.equal(fresh.operation.instanceGeneration,2);
+ assert.equal(f.store.readOperation('launch').status,'created');assert.equal(f.store.readOperation('launch').nativeRequest.agent,agent);assert.equal(f.calls.some(c=>/restartContinue|close|stop|cancel/.test(c.method)),false);
+ f.store.settleOperation('launch',f.op.nativeRequest.operationId,{warning:'late old evidence'});assert.equal(f.store.readMemberOperation(f.member.id).requestId,fresh.operation.requestId);
+ idle=false;await assert.rejects(service.validateFresh(row.requestId),/idle|execution/);
+});
