@@ -83,3 +83,13 @@ test('reopened task shows scoped recovery evidence and incomplete archive warnin
  await expect(tasks.getByRole('button',{name:/retry|restart|replace/i})).toHaveCount(0);
  await tasks.getByRole('button',{name:'View member'}).click();await expect(panel(page).getByRole('region',{name:'Member details'})).toContainText('Recovery: confirmed_effect');
 });
+
+for(const [mode,label] of [['dispatch-accepted','Accepted by direct supervisor'],['dispatch-rework','Rework requested'],['dispatch-missing-review','Supervisor review evidence missing']])test(`${mode}: review and original evidence remain readable in task and member views`,async({page})=>{
+ const ui=await preparedDispatch(page,mode),tasks=ui.getByRole('region',{name:'Team tasks',exact:true});
+ await expect(tasks).toContainText(label);await expect(tasks).toContainText('Checkout evidence <b>verified</b>');
+ if(mode!=='dispatch-missing-review'){await expect(tasks).toContainText('Supervisor checked <b>validation</b>.');await expect(tasks).toContainText('Reviewer:');await expect(tasks).toContainText('test:checkout');}
+ await expect(tasks.locator('b,script')).toHaveCount(0);
+ await tasks.getByRole('button',{name:'View member'}).click();await expect(ui.getByRole('region',{name:'Member details'})).toContainText(label);
+ await page.reload();await expect(panel(page).getByRole('region',{name:'Team tasks',exact:true})).toContainText(label);
+ await expect(panel(page).getByRole('button',{name:/accept task|approve task|rework task/i})).toHaveCount(0);
+});

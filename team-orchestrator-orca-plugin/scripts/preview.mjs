@@ -70,6 +70,13 @@ async function fixture(id, mode) {
         if (complete) {
           nativeDb.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?,?)').run('report-fixture', work.run.id, handle, paneKey, 'worker_done', outcome === 'succeeded' ? 'Checkout evidence <b>verified</b>' : 'Checkout verification failed', JSON.stringify({ taskId: permit.nativeTaskId, dispatchId, outcome }));
           nativeDb.prepare('INSERT INTO attempt_observation_facts VALUES (?,?,?,?,?,?)').run('worker_report:report-fixture', dispatchId, permit.nativeTaskId, 'run_home:' + work.run.id, 'worker_report', JSON.stringify({ status: 'accepted', outcome, reportId: 'worker_report:report-fixture' }));
+          if (['dispatch-accepted','dispatch-rework','dispatch-missing-review'].includes(mode)) {
+            const result = JSON.stringify({protocol:'team-review/v1',workId:work.id,token:attempt.token,generation:permit.generation,taskKey:attempt.taskKey,attemptId:attempt.id,nativeTaskId:attempt.nativeTaskId,dispatchId,reviewToken:permit.reviewToken,reviewerMemberId:work.supervisorMemberId,decision:mode==='dispatch-rework'?'rework':'accept',evidenceRefs:mode==='dispatch-missing-review'?[]:['worker_report:report-fixture','test:checkout'],summary:'Supervisor checked <b>validation</b>.'});
+            const task={...nativeDb.prepare('SELECT * FROM tasks WHERE id=?').get(attempt.nativeTaskId),status:'completed',result};
+            nativeDb.prepare('UPDATE tasks SET status=?,result=? WHERE id=?').run('completed',result,attempt.nativeTaskId);
+            receipt(work,'review-task-fixture','orchestration.taskUpdate',{id:attempt.nativeTaskId,status:'completed',result,run:work.run.id,callerTerminalHandle:from},{task});
+          }
+
         }
       }
     };
