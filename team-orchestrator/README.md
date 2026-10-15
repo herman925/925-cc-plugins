@@ -7,7 +7,7 @@ start when they are first needed, close when they have been idle, and reopen whe
 A guard keeps the members inside their roles: members with reports plan and delegate instead of writing files, and
 nobody starts subagents unless you allow it.
 
-Version 0.5.36. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.37. What changed in each version is in the [changelog](#changelog-05x).
 
 ## Contents
 
@@ -565,7 +565,7 @@ Removing changes only the roster. No tab is closed and no session is stopped. Be
 | Tool | What it does |
 |---|---|
 | `team_launch` | Launches a team as Orca tabs in the current workspace, members ordered boss first. Optional model, effort and short name per member. From 0.5.17, a taken team name needs `ifExists: "add"` or `"merge"`. |
-| `team_adopt` | Puts sessions that are already running onto the roster, without launching anything. The named team's members become exactly the adopted sessions. Records which CLI each tab runs. |
+| `team_adopt` | Puts sessions that are already running onto the roster, without launching anything. The named team's members become exactly the adopted sessions. Records which CLI each tab runs. A name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore) is refused, as the name goes into the command that reopens the member (0.5.37). |
 | `team_message` | Messages a teammate on the roster. Starts or reopens it first when needed. `startHere: true`, only after your yes, starts a fresh copy of a member from another computer here. |
 | `member_add` (0.5.17) | Adds a new member that starts on its boss's first message. From a head or lead below the top, it is a request within its purview, which you approve. The team top adds only after asking you in the same turn, and applies a request with `{ request, approve }`. |
 | `member_move` | Moves one member to another team, under a given boss or that team's head. Refused while others report to the member. |
@@ -811,6 +811,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.37 | Subagents' and teammates' turns no longer mark a member working: Claude Code now reports them to `turn.start` too, so the hook skips any turn with an `agentId`. `team_adopt` refuses a name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore), since the name goes into the command that reopens the member; a name saved before goes into that command in its cleaned form. Text uses `weight` instead of the deprecated `bold`. |
 | 0.5.36 | `team_message` answers when it runs out of time. On a busy machine the hook could outrun its 10 s budget after the message had gone out; the engine then reported "no tool.call hook answered this call", and senders sent the same message again. A `.catch` handler now answers a timeout with "most likely delivered: do not send it again", and any other failure with its kind. |
 | 0.5.35 | A new member starts fresh. `member_add` resets the status file of its name first: a file left by an earlier member of that name named the old session, and refresh took that id onto the new row and reopened the old conversation (or failed with "No conversation found"). A name taken in the same team can now be replaced: `member_add` refuses a taken name and says to ask the user and call it again with `replace: true`; with it, the old row goes (its queued messages failed, its session and tab left alone and never resumed) and a fresh member takes the name. Not for a member of another team, the team top, the one who asks, or a member others report to. The user is asked first, as for any add. Tests: `adding.test.ts`. |
 | 0.5.34 | Removing a member fails the messages still waiting for it. Before, a message queued for a member that never answered stayed pending after `member_remove`; a new member later added under the same name was started by the top's queue round and handed the old briefs. `remove()` now marks every pending or sending queue entry for a removed member (or team) failed, with the error "<name> was removed from the roster". Test: `requeue.test.ts`. |

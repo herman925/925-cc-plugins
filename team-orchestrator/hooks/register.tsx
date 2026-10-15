@@ -752,11 +752,14 @@ async function writeRoles($: any, list: Member[]) {
 // The command that starts a member: its role pointer in the system prompt, and an optional first prompt. A shell types
 // it (cmd.exe on Windows, bash or zsh elsewhere), so the texts go in double quotes and carry nothing a shell would
 // expand (pointer() and WELCOME see to that). The name is quoted too: unquoted, "Mod Builder 2" splits into --name Mod
-// and a first prompt "Builder".
+// and a first prompt "Builder". Inside double quotes bash still runs $(...) and backticks, so a name outside SAFE_NAME
+// (only an adopted one can be, from before 0.5.37) goes into the command in its cleaned form.
+const SAFE_NAME = /^[\p{L}\p{N} ._-]{1,64}$/u
+const shellName = (name: string) => (SAFE_NAME.test(name) ? name : clean(name))
 const startCmd = (m: Member, list: Member[], sessionId: string, resume: boolean, name = m.name, model = m.model, effort = m.effort, first = '') =>
-  `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name "${name}"${flags(model, effort)}` +
+  `claude ${resume ? `--resume ${sessionId}` : `--session-id ${sessionId}`} --name "${shellName(name)}"${flags(model, effort)}` +
   `${memberSettings.path ? ` --settings "${memberSettings.path}"` : ''}` +
-  ` --append-system-prompt "${pointer({ ...m, name }, list)}"${first ? ` "${first}"` : ''}`
+  ` --append-system-prompt "${pointer({ ...m, name: shellName(name) }, list)}"${first ? ` "${first}"` : ''}`
 
 // Browser-automation plugins (Chrome DevTools, Playwright) start an idle server in every session. A member starts with
 // the ones the person enabled turned off, by a settings file of its own (--settings, on this machine), so the person's
@@ -2757,6 +2760,12 @@ export const register: Register = (on, options) => {
     const held = await onHold($, 'team_adopt')
     if (held) return held
     const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
+    // an adopted name is the running session's own; it goes into the shell command that reopens the member
+    const unsafe = (input.members ?? []).find(m => !SAFE_NAME.test(String(m.name ?? '')))
+    if (unsafe)
+      return {
+        result: `Refused: the name "${String(unsafe.name ?? '')}" has characters a shell could act on. A member name is letters, digits, spaces, dot, dash or underscore (at most 64). Rename that session, then adopt again.`,
+      } as any
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
     const team = clean(input.team || '') || 'team'
@@ -2878,6 +2887,8 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
+    // subagents' and teammates' turns arrive here too; only the member's own turn makes it working
+    if ((e as any).agentId !== undefined) return next(e)
     void writeMine($, { state: 'working', turnStart: Date.now() })
     return next(e)
   })
@@ -3155,7 +3166,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Box>
-          <Text bold inverse={plainLook} backgroundColor={plainLook ? undefined : 'cyan'} color={plainLook ? undefined : 'black'}>
+          <Text weight="bold" inverse={plainLook} backgroundColor={plainLook ? undefined : 'cyan'} color={plainLook ? undefined : 'black'}>
             {` ◆ Team Orchestrator${cfg.version ? ` v${cfg.version}` : ''} `}
           </Text>
           <Text> </Text>
@@ -3163,10 +3174,10 @@ export const register: Register = (on, options) => {
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
             <Text>
-              <Text color="yellow" bold>●</Text>
+              <Text color="yellow" weight="bold">●</Text>
               <Text color="cyan">┬</Text>
               {[0, 1, 2].map(i => (
-                <Text color={i === lit ? 'green' : undefined} bold={i === lit} dimColor={i !== lit}>
+                <Text color={i === lit ? 'green' : undefined} weight={(i === lit) ? 'bold' : undefined} dimColor={i !== lit}>
                   {i === lit ? '●' : '○'}
                 </Text>
               ))}
@@ -3222,7 +3233,7 @@ async function panel($: any, ui: any, v: View, cols: number) {
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
         <Box>
-          <Text bold color="cyan">
+          <Text weight="bold" color="cyan">
             ◆ TEAM ORCHESTRATOR
           </Text>
           <Text dimColor>{cfg.version ? ` v${cfg.version}` : ''}{'  '}</Text>
@@ -3315,16 +3326,16 @@ async function settingsView($: any, ui: any) {
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
       <Text color="cyan">┤ SETTINGS ├</Text>
       <Box>
-        <Text bold>{'Layout'.padEnd(13)}</Text>
+        <Text weight="bold">{'Layout'.padEnd(13)}</Text>
         {Seg(ui, 'layout', [['stacked', 'Stacked'], ['columns', 'Side by side'], ['dock', 'Dock right']], s.layout, v => void layout(v))}
       </Box>
       <Text dimColor>{' '.repeat(13)}Side by side: team cards in columns where two fit. Dock right: a pane beside the transcript in the fullscreen layout (from 110 columns); on the main screen the pane sits above the prompt.</Text>
       <Box>
-        <Text bold>{'Org chart'.padEnd(13)}</Text>
+        <Text weight="bold">{'Org chart'.padEnd(13)}</Text>
         {Seg(ui, 'chart', [['1', 'Show'], ['0', 'Hide']], s.chart ? '1' : '0', v => void set({ chart: v === '1' }))}
       </Box>
       <Box>
-        <Text bold>{'Columns'.padEnd(13)}</Text>
+        <Text weight="bold">{'Columns'.padEnd(13)}</Text>
         <Box flexWrap="wrap" columnGap={1}>
           {COLS.map(c => (
             <Button
@@ -3337,59 +3348,59 @@ async function settingsView($: any, ui: any) {
         </Box>
       </Box>
       <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
-      <Text bold>Workers</Text>
+      <Text weight="bold">Workers</Text>
       <Text dimColor>
         Shared by the whole team (.claude/team-orchestrator/settings.json). A worker that said "clean" and stayed idle for the set minutes is closed; a message to it reopens it. Anyone with reports is never closed.
       </Text>
       <Box>
-        <Text bold>{'Auto-close'.padEnd(13)}</Text>
+        <Text weight="bold">{'Auto-close'.padEnd(13)}</Text>
         {Seg(ui, 'ts-auto', [['1', 'On'], ['0', 'Off']], ts.autoClose ? '1' : '0', v => void setTeam({ autoClose: v === '1' }))}
       </Box>
       <Box>
-        <Text bold>{'Idle minutes'.padEnd(13)}</Text>
+        <Text weight="bold">{'Idle minutes'.padEnd(13)}</Text>
         {Seg(ui, 'ts-idle', [['5', '5'], ['10', '10'], ['20', '20'], ['30', '30'], ['60', '60']], String(ts.idleMinutes), v => void setTeam({ idleMinutes: Number(v) }))}
       </Box>
       <Box>
-        <Text bold>{'Reopen as'.padEnd(13)}</Text>
+        <Text weight="bold">{'Reopen as'.padEnd(13)}</Text>
         {Seg(ui, 'ts-reopen', [['resume', 'Resume (keep context)'], ['fresh', 'Fresh (briefed again)']], ts.reopen, v => void setTeam({ reopen: v as TeamSettings['reopen'] }))}
       </Box>
       <Box>
-        <Text bold>{'Max open'.padEnd(13)}</Text>
+        <Text weight="bold">{'Max open'.padEnd(13)}</Text>
         {Seg(ui, 'ts-max', [['0', 'No cap'], ['6', '6'], ['8', '8'], ['10', '10'], ['12', '12']], String(ts.maxOpen), v => void setTeam({ maxOpen: Number(v) }))}
       </Box>
       <Box>
-        <Text bold>{'Launch'.padEnd(13)}</Text>
+        <Text weight="bold">{'Launch'.padEnd(13)}</Text>
         {Seg(ui, 'ts-launch', [['demand', 'On demand'], ['all', 'All at Create']], ts.launch, v => void setTeam({ launch: v as TeamSettings['launch'] }))}
       </Box>
       <Box>
-        <Text bold>{'Batch size'.padEnd(13)}</Text>
+        <Text weight="bold">{'Batch size'.padEnd(13)}</Text>
         {Seg(ui, 'ts-batch', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4'], ['6', '6']], String(ts.batch), v => void setTeam({ batch: Number(v) }))}
       </Box>
       <Text dimColor>
         {' '.repeat(13)}On demand: Create starts only the top and the team heads; leads and workers start, fresh and briefed, the first time their boss messages them. Either way sessions start a batch at a time, 5 s apart.
       </Text>
       <Box>
-        <Text bold>{'Scratch'.padEnd(13)}</Text>
+        <Text weight="bold">{'Scratch'.padEnd(13)}</Text>
         {Seg(ui, 'ts-scratch', [['1', 'Auto-approve clean-up'], ['0', 'Ask each time']], ts.autoScratch ? '1' : '0', v => void setTeam({ autoScratch: v === '1' }))}
       </Box>
       <Box>
-        <Text bold>{'Scratch dir'.padEnd(13)}</Text>
+        <Text weight="bold">{'Scratch dir'.padEnd(13)}</Text>
         <Input key="ts-scratchdir" value={ts.scratchDir} placeholder=".claude/scratch" onInput={(v: string) => void setTeam({ scratchDir: v })} onSubmit={() => {}} />
       </Box>
       <Text dimColor>
         {' '.repeat(13)}Workers may delete inside their own session's temporary folder without asking; heads and leads may also clean the system temp folder and this project folder. Any other delete still asks.
       </Text>
-      <Text bold>Assumptions</Text>
+      <Text weight="bold">Assumptions</Text>
       <Text dimColor>
         {' '.repeat(13)}Each member's open assumptions from Session Panel: the count on its row, and Confirm or Wrong for its boss and the team top. Needs Session Panel installed and enabled in this session.
       </Text>
       <Box>
-        <Text bold>{'Show'.padEnd(13)}</Text>
+        <Text weight="bold">{'Show'.padEnd(13)}</Text>
         {Seg(ui, 'ts-assume', [['1', 'On'], ['0', 'Off']], ts.assumptions ? '1' : '0', v => void setAssumptions(v === '1'))}
       </Box>
       {workers.length > 0 && (
         <Box>
-          <Text bold>{'Never close'.padEnd(13)}</Text>
+          <Text weight="bold">{'Never close'.padEnd(13)}</Text>
           <Box flexWrap="wrap" columnGap={1}>
             {workers.map(m => (
               <Button
@@ -3404,7 +3415,7 @@ async function settingsView($: any, ui: any) {
       )}
       {list.length > 0 && (
         <Box flexDirection="column">
-          <Text bold>Permissions</Text>
+          <Text weight="bold">Permissions</Text>
           <Text dimColor>
             A roster member may not use subagents (Agent); a member with reports may not Write or Edit (its own memory folder is open). Both are off until you switch them on here, or for one turn by typing #allow-subagent or #allow-write in your own message.
           </Text>
@@ -3454,18 +3465,18 @@ function emptyState($: any, ui: any, t: number) {
   const lit = f >= 2 && f <= 4 ? f - 2 : -1
   // head, line and workers share three columns (2, 7, 12) so the dots sit under each other
   const w = (i: number) => (
-    <Text color={i === lit ? 'green' : undefined} bold={i === lit} dimColor={i !== lit}>
+    <Text color={i === lit ? 'green' : undefined} weight={(i === lit) ? 'bold' : undefined} dimColor={i !== lit}>
       {i === lit ? '●' : '○'}
     </Text>
   )
   return (
     <Box borderStyle="double" borderColor="cyan" paddingX={2} flexDirection="column">
-      <Text bold color="cyan">◆ NO TEAM YET</Text>
+      <Text weight="bold" color="cyan">◆ NO TEAM YET</Text>
       <Text dimColor>A team is a set of Claude Code sessions, one Orca tab each, that report up a chain.</Text>
       <Text> </Text>
       <Text>
-        <Text color="yellow" bold={f === 0}>{'       ●'}</Text>
-        <Text bold>{'          Head'}</Text>
+        <Text color="yellow" weight={(f === 0) ? 'bold' : undefined}>{'       ●'}</Text>
+        <Text weight="bold">{'          Head'}</Text>
         <Text dimColor>{'     you talk to it; it plans, delegates and reviews'}</Text>
       </Text>
       <Text color={f >= 1 ? 'cyan' : undefined} dimColor={f < 1}>{'  ┌────┼────┐'}</Text>
@@ -3476,7 +3487,7 @@ function emptyState($: any, ui: any, t: number) {
         {w(1)}
         {'    '}
         {w(2)}
-        <Text bold>{'      Workers'}</Text>
+        <Text weight="bold">{'      Workers'}</Text>
         <Text dimColor>{'  run the tasks and report to their boss'}</Text>
       </Text>
       <Text> </Text>
@@ -3666,7 +3677,7 @@ function orgChart(ui: any, list: Member[], t: number, cols: number, go?: (key: s
             s.h && go ? (
               <Button key={`node-${s.h}`} label={s.s} plain onPress={() => go(s.h as string)} />
             ) : (
-              <Text color={s.k} bold={s.b} dimColor={s.d}>
+              <Text color={s.k} weight={(s.b) ? 'bold' : undefined} dimColor={s.d}>
                 {s.s}
               </Text>
             ),
@@ -3697,7 +3708,7 @@ function Seg(ui: any, id: string, items: [string, string][], value: string, pick
       {items.map(([v, label]) =>
         v === value ? (
           <Box key={`${id}-${v}`}>
-            <Text color={CHOSEN} bold>{`[ ${label} ]`}</Text>
+            <Text color={CHOSEN} weight="bold">{`[ ${label} ]`}</Text>
           </Box>
         ) : (
           <Button key={`${id}-${v}`} label={label} onPress={() => pick(v)} />
@@ -3713,7 +3724,7 @@ function Field(ui: any, label: string, hint: string, input: any) {
   return (
     <Box flexDirection="column">
       <Box>
-        <Text bold>{label.padEnd(13)}</Text>
+        <Text weight="bold">{label.padEnd(13)}</Text>
         <Box borderStyle="round" borderColor="cyan" paddingX={1} width={48}>
           {input}
         </Box>
@@ -3776,7 +3787,7 @@ async function formView($: any, ui: any) {
       <Box>
         {bar}
         <Text color={gc}>{g} </Text>
-        <Text bold>{`${levelName(l, f)} ×${count}`.padEnd(14)}</Text>
+        <Text weight="bold">{`${levelName(l, f)} ×${count}`.padEnd(14)}</Text>
         {mid}
         {dd(`m${l}`, (f as any)[`m${l}`])}
         {mid}
@@ -3824,7 +3835,7 @@ async function formView($: any, ui: any) {
   return (
     <Box flexDirection="column">
       <Box borderStyle="double" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">{pulse} NEW TEAM</Text>
+        <Text weight="bold" color="cyan">{pulse} NEW TEAM</Text>
         <Text dimColor>{'   ① Setup  →  ② Models  →  ③ Preview  →  ▶ Launch'}</Text>
       </Box>
 
@@ -3849,7 +3860,7 @@ async function formView($: any, ui: any) {
           <Input key="fn" value={f.fn} placeholder="What the team is for" onInput={(v: string) => void set({ fn: v })} onSubmit={() => {}} />,
         )}
         <Box>
-          <Text bold>{'Quick start'.padEnd(13)}</Text>
+          <Text weight="bold">{'Quick start'.padEnd(13)}</Text>
           <Box flexWrap="wrap" columnGap={1}>
             {PRESETS.map(p => (
               <Button
@@ -3862,7 +3873,7 @@ async function formView($: any, ui: any) {
           </Box>
         </Box>
         <Box>
-          <Text bold>{'Structure'.padEnd(13)}</Text>
+          <Text weight="bold">{'Structure'.padEnd(13)}</Text>
           {Seg(ui, 'struct', [['0', 'One team'], ['1', 'CEO over several teams']], f.ceo, v => void set({ ceo: v, levels: v === '1' ? '3' : '2' }))}
         </Box>
         {org ? (
@@ -3874,12 +3885,12 @@ async function formView($: any, ui: any) {
           )
         ) : (
           <Box>
-            <Text bold>{'Levels'.padEnd(13)}</Text>
+            <Text weight="bold">{'Levels'.padEnd(13)}</Text>
             {Seg(ui, 'levels', [['1', '1 · Head only'], ['2', '2 · Head + workers'], ['3', '3 · Head + leads + workers']], f.levels, v => void set({ levels: v }))}
           </Box>
         )}
         <Box>
-          <Text bold>{(org ? 'Workers each' : 'Reports each').padEnd(13)}</Text>
+          <Text weight="bold">{(org ? 'Workers each' : 'Reports each').padEnd(13)}</Text>
           {Seg(ui, 'fan', [['1', ' 1 '], ['2', ' 2 '], ['3', ' 3 '], ['4', ' 4 '], ['5', ' 5 ']], f.fan, v => void set({ fan: v }))}
         </Box>
       </Box>
@@ -3889,11 +3900,11 @@ async function formView($: any, ui: any) {
         <Text color="cyan">{rule('┌', '┬', '┐')}</Text>
         <Text color="cyan">
           {'│ '}
-          <Text bold>{'LEVEL'.padEnd(W[0] ?? 0)}</Text>
+          <Text weight="bold">{'LEVEL'.padEnd(W[0] ?? 0)}</Text>
           {' │ '}
-          <Text bold>{'MODEL'.padEnd(W[1] ?? 0)}</Text>
+          <Text weight="bold">{'MODEL'.padEnd(W[1] ?? 0)}</Text>
           {' │ '}
-          <Text bold>{'EFFORT'.padEnd(W[2] ?? 0)}</Text>
+          <Text weight="bold">{'EFFORT'.padEnd(W[2] ?? 0)}</Text>
           {' │'}
         </Text>
         <Text color="cyan">{rule('├', '┼', '┤')}</Text>
@@ -3918,7 +3929,7 @@ async function formView($: any, ui: any) {
             <Text>
               <Text color="cyan">{on ? '▸ ' : '  '}</Text>
               <Text dimColor>{l.prefix}</Text>
-              <Text color={on ? 'green' : color} bold={on}>
+              <Text color={on ? 'green' : color} weight={(on) ? 'bold' : undefined}>
                 {glyph} {l.name}
               </Text>
               {org && lv === 2 ? <Text dimColor>{'  @' + (specOf.get(l.name)?.team ?? '')}</Text> : null}
@@ -4153,9 +4164,9 @@ async function rosterView($: any, ui: any, cols: number) {
           </Box>
         ) : (
           <Box flexDirection="column">
-            <Text bold>Tab</Text>
+            <Text weight="bold">Tab</Text>
             {Seg(ui, `addtab-${ti}`, a.tabs.map(x => [x.handle, x.title] as [string, string]), a.handle, v => void setAct({ handle: v }))}
-            <Text bold>Boss</Text>
+            <Text weight="bold">Boss</Text>
             {Seg(ui, `addboss-${ti}`, [['user', 'user'], ...list.filter(m => m.team === team).map(m => [m.name, m.name] as [string, string])], a.boss, v => void setAct({ boss: v }))}
             <Input
               key={`addrole-${ti}`}
@@ -4195,11 +4206,11 @@ async function rosterView($: any, ui: any, cols: number) {
         <Box flexDirection="column">
           <Input key={`newname-${ti}`} label="▸ Name " value={a.name} placeholder="unique in the project, e.g. Worker-4" onInput={(v: string) => typed({ name: v })} onSubmit={() => {}} />
           <Input key={`newrole-${ti}`} label="▸ Role " value={a.role} placeholder="what it does" onInput={(v: string) => typed({ role: v })} onSubmit={() => {}} />
-          <Text bold>Boss</Text>
+          <Text weight="bold">Boss</Text>
           {Seg(ui, `newboss-${ti}`, list.filter(m => m.team === team).map(m => [m.name, m.name] as [string, string]), a.boss, v => void setAct({ boss: v }))}
-          <Text bold>Model</Text>
+          <Text weight="bold">Model</Text>
           {Seg(ui, `newmodel-${ti}`, MODELS.map(o => [o, nice(o)] as [string, string]), a.model, v => void setAct({ model: v }))}
-          <Text bold>Effort</Text>
+          <Text weight="bold">Effort</Text>
           {Seg(ui, `neweffort-${ti}`, EFFORTS.map(o => [o, nice(o)] as [string, string]), a.effort, v => void setAct({ effort: v }))}
           <Box>
             <Button key={`newgo-${ti}`} label="Add" variant="primary" onPress={add} />
@@ -4277,7 +4288,7 @@ async function rosterView($: any, ui: any, cols: number) {
       {list.length === 0 && emptyState($, ui, t)}
       {list.length > 0 && s.chart && (
         <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-          <Text bold color="cyan">◆ LIVE ORG</Text>
+          <Text weight="bold" color="cyan">◆ LIVE ORG</Text>
           {orgChart(ui, list, t, cols, k => {
             const m = list.find(x => keyOf(x) === k)
             if (m) void goTo($, m).then(msg => setAct({ ...ACT0, to: m.team, msg }))
@@ -4297,7 +4308,7 @@ async function rosterView($: any, ui: any, cols: number) {
         const top = `╔═ TEAM @${team} ═ ${mine.length} member${mine.length === 1 ? '' : 's'}, head ${head?.name ?? '-'} `
         return (
           <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column" width={cardW}>
-            <Text bold color="cyan">
+            <Text weight="bold" color="cyan">
               {fit(top, inner - 1).padEnd(inner - 1, '═')}╗
             </Text>
             <Input
@@ -4373,7 +4384,7 @@ async function rosterView($: any, ui: any, cols: number) {
               <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row" flexWrap="wrap" columnGap={3}>
                 {TEAM_MENU.map(g => (
                   <Box flexDirection="column">
-                    <Text bold color={g.color}>{`${g.glyph} ${g.title.toUpperCase()}`}</Text>
+                    <Text weight="bold" color={g.color}>{`${g.glyph} ${g.title.toUpperCase()}`}</Text>
                     {g.items.map(([v, label]) => (
                       <Box>
                         <Text color={g.color}>{'  '}{g.glyph} </Text>

@@ -728,3 +728,14 @@ test('dock right packs cards like side by side; stacked keeps one full-width car
   await pane.press({ key: 'tab-roster' })
   expect(cardWidths(await pane.drawn())).toEqual([60, 60])
 })
+
+test('adopt refuses a name with characters a shell could act on, and adopts nobody', async ($, on) => {
+  const files = world(on, [], [])
+  for (const name of ['x$(touch pwned)', 'a`id`b', 'say "hi"']) {
+    const out: any = await adopt($, [{ ...W, name }])
+    expect(JSON.stringify(out)).toContain('Refused: the name')
+  }
+  expect(files.has('C:/proj/.claude/team-orchestrator/roster.json')).toBe(false)
+  const ok: any = await adopt($, [W])
+  expect(JSON.stringify(ok)).not.toContain('Refused: the name')
+})

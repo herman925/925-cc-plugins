@@ -10,7 +10,7 @@ const manifest = (on: any) =>
 test('the band shows a filled title pill with the version, and the button beside it opens the panel', async ($, on) => {
   manifest(on)
   const band = await mountBand($)
-  const pill = (await band.findAll({ type: 'Text' })).find((t: any) => t.props.bold === true && t.props.backgroundColor === 'cyan')
+  const pill = (await band.findAll({ type: 'Text' })).find((t: any) => t.props.weight === 'bold' && t.props.backgroundColor === 'cyan')
   expect(pill?.text).toContain('Team Orchestrator v9.9.99')
   await band.press({ key: 'main' })
   expect(await band.find({ key: 'tab-roster' })).toBeDefined()
