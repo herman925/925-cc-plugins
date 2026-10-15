@@ -7,9 +7,12 @@ start when they are first needed, close when they have been idle, and reopen whe
 A guard keeps the members inside their roles: members with reports plan and delegate instead of writing files, and
 nobody starts subagents unless you allow it.
 
+Version 0.5.36. What changed in each version is in the [changelog](#changelog-05x).
+
 ## Contents
 
 - [Features](#features)
+- [Team Orchestrator for Orca](#team-orchestrator-for-orca)
 - [Install](#install)
   - [Requirements](#requirements)
   - [Install the mod](#install-the-mod)
@@ -61,6 +64,24 @@ nobody starts subagents unless you allow it.
 | Two computers | A team can span computers that share one project folder |
 | Other CLIs | Tabs that run another CLI can sit on the roster, unmanaged |
 | Windows, macOS and Linux | Every platform Orca runs on |
+
+## Team Orchestrator for Orca
+
+A separate Orca plugin lives in [`team-orchestrator-orca-plugin/`](../team-orchestrator-orca-plugin/README.md)
+(release 0.1.06). It brings this mod's team creation into Orca's own plugin panel: the quick starts (Squad, All-Purpose
+Team, Tech Team) and custom hierarchies, the organisation tree, the roster and member details. It launches each member
+as a named Codex or Claude Code agent tab on the selected workspace, through a bundled local Node worker and an
+in-memory runtime adapter. It needs no separate installer and no change to Orca's own files.
+
+How it differs from this mod:
+
+- You install it in Orca (**Settings → Plugins**), not with `claude plugin install`.
+- It keeps its teams in Orca's plugin storage, not in `.claude/team-orchestrator/`, so a team made in one does not
+  show in the other.
+- It covers launching a team. Later on-demand starts, task dispatch, messaging between members, questions, live status
+  and recovery are not in it yet.
+- It uses private Orca interfaces, so an Orca update can break it, and live launching on an installed Orca is not yet
+  verified. Its README lists the checks it runs and its limits.
 
 ## Install
 
@@ -614,9 +635,10 @@ each member with `--settings` pointing at it. Your own sessions keep the plugins
 
 ### Assumptions from Session Panel
 
-Session Panel is a separate mod. It writes each session's open assumptions to
-`<project>/.claude/session-panel/assumptions/<session id>.json`. This mod reads those files and never writes them
-(0.5.25). It needs Session Panel to do anything.
+Session Panel is a separate mod. It writes each session's assumptions to one file in
+`<project>/.claude/session-panel/assumptions/`, named by the session's name (see [Cross-mod functions](#cross-mod-functions)).
+This mod reads every file in that folder, matches each one to its member by the `sessionId` inside it, and never
+writes them (0.5.25). It needs Session Panel to do anything.
 
 **Off by default.** Turn it on in **Settings → Assumptions → Show → On** (0.5.27). It is a team setting, kept in
 `settings.json`: the team top writes it, and a change made in another session waits for the team top, like the other
@@ -777,21 +799,22 @@ working folder.
 
 These texts are shared with Session Panel's README, so both mods describe the same thing in the same words.
 
-- Session Panel band: the title " Session Panel " with its version (" v0.3.32") when known, read from the plugin's own manifest.
-- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
-- Toasts (Session Panel side): "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
-- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm and Wrong, which send the status line as a team message. Others see the count and list only. Team-orchestrator never writes an assumptions file.
-- Shared files: `<project root>/.claude/session-panel/assumptions/<session id>.json` with version, member (the session id for now), sessionId, and entries (id, text, status, kind, turn). `.claude/session-panel/` has a `.gitignore` with `*`.
-- What needs what: Confirm and Wrong need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
+- Session Panel band: the title " Session Panel " with its version (for example " v0.3.62") when known, read from the plugin's own manifest.
+- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>`, `SESSION-PANEL: wrong <id>` or `SESSION-PANEL: delete <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
+- Toasts (Session Panel side), as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "Assumption <id> deleted." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
+- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm, Wrong and Delete, which send the status line as a team message; Delete asks first. Others see the count and list only. Team-orchestrator never writes an assumptions file.
+- Shared files: one file per session in `<project root>/.claude/session-panel/assumptions/`, named by the session's name (`<name>.json`), by its session id when it has no name, or `<name>-<first 8 of the session id>.json` when another live session holds the name. Each holds version, member, sessionId and entries (id, text, status, kind, turn, path and paths on flagged entries only, at, resolvedAt, sessionId). Team-orchestrator reads every file in the folder and matches each one to its member by the `sessionId` inside it. `.claude/session-panel/` has a `.gitignore` with `*`.
+- What needs what: Confirm, Wrong and Delete need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the Team Orchestrator band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
+- Detection: team-orchestrator detects Session Panel from `enabledPlugins["session-panel@herman-mods"]` in `.claude/settings.local.json`, then `.claude/settings.json`, then the user `settings.json`. It rechecks on each roster refresh (every 30 s). After enabling Session Panel, run `/reload-plugins`.
 
 ### Changelog (0.5.x)
 
 | Version | Change |
 |---|---|
-| 0.5.33 | Refresh heals a stale "not yet". A member the roster still calls not started (`pending`), or keeps without a session id, is set running once its session is proved to run: its own status file is fresh and names the roster's session id (or the roster has none), or this PC's registry and process list hold that id. The writer clears `pending`, takes a missing session id, and counts it briefed (every start carries the role pointer), on the roster as it is now; nothing else of the row changes. Rosters left stale by the EACCES and slow-round bugs (fixed in 0.5.30–0.5.32) now correct themselves on the next refresh. Test: `heal.test.ts`. |
-| 0.5.34 | Removing a member fails the messages still waiting for it. Before, a message queued for a member that never answered stayed pending after `member_remove`; a new member later added under the same name was started by the top's queue round and handed the old briefs. `remove()` now marks every pending or sending queue entry for a removed member (or team) failed, with the error "<name> was removed from the roster". Test: `requeue.test.ts`. |
-| 0.5.35 | A new member starts fresh. `member_add` resets the status file of its name first: a file left by an earlier member of that name named the old session, and refresh took that id onto the new row and reopened the old conversation (or failed with "No conversation found"). A name taken in the same team can now be replaced: `member_add` refuses a taken name and says to ask the user and call it again with `replace: true`; with it, the old row goes (its queued messages failed, its session and tab left alone and never resumed) and a fresh member takes the name. Not for a member of another team, the team top, the one who asks, or a member others report to. The user is asked first, as for any add. Tests: `adding.test.ts`. |
 | 0.5.36 | `team_message` answers when it runs out of time. On a busy machine the hook could outrun its 10 s budget after the message had gone out; the engine then reported "no tool.call hook answered this call", and senders sent the same message again. A `.catch` handler now answers a timeout with "most likely delivered: do not send it again", and any other failure with its kind. |
+| 0.5.35 | A new member starts fresh. `member_add` resets the status file of its name first: a file left by an earlier member of that name named the old session, and refresh took that id onto the new row and reopened the old conversation (or failed with "No conversation found"). A name taken in the same team can now be replaced: `member_add` refuses a taken name and says to ask the user and call it again with `replace: true`; with it, the old row goes (its queued messages failed, its session and tab left alone and never resumed) and a fresh member takes the name. Not for a member of another team, the team top, the one who asks, or a member others report to. The user is asked first, as for any add. Tests: `adding.test.ts`. |
+| 0.5.34 | Removing a member fails the messages still waiting for it. Before, a message queued for a member that never answered stayed pending after `member_remove`; a new member later added under the same name was started by the top's queue round and handed the old briefs. `remove()` now marks every pending or sending queue entry for a removed member (or team) failed, with the error "<name> was removed from the roster". Test: `requeue.test.ts`. |
+| 0.5.33 | Refresh heals a stale "not yet". A member the roster still calls not started (`pending`), or keeps without a session id, is set running once its session is proved to run: its own status file is fresh and names the roster's session id (or the roster has none), or this PC's registry and process list hold that id. The writer clears `pending`, takes a missing session id, and counts it briefed (every start carries the role pointer), on the roster as it is now; nothing else of the row changes. Rosters left stale by the EACCES and slow-round bugs (fixed in 0.5.30–0.5.32) now correct themselves on the next refresh. Test: `heal.test.ts`. |
 | 0.5.32 | Roster changes are no longer lost in a slow round. The top's refresh used to snapshot the roster, wait minutes on Orca, then write the snapshot back and mark changes that landed meanwhile as applied, so they vanished (a running worker went back to "not started"). Refresh now writes only the fields it changed, onto the roster as it is at write time, and a roster-file field only while nobody else changed it since the snapshot (a reopen's new session id is not replaced by an older transcript's). An "add" for a member already on the roster only fills missing fields, so a re-sent stale row cannot roll back `pending`, `briefed`, `sessionId` or `handle`; when two sessions add the same member, the first now wins. `pull` runs under the same lock as roster and change writes. Tests: `reset.test.ts`, `reopen-id.test.ts`; 301 pass on Linux. |
 | 0.5.31 | Linux and reliability. **No second copy:** before any reopen, the mod checks this PC's session registry and the process, and a member whose session is still held is sent to, never started again (a hung Orca call had made `claude --resume` copy a live worker). Reopen saves the roster before the status file, and finding a live tab clears `pending`, so a running member is no longer taken for one not yet started. A start counts as ready only once the new session registers (checked each second, up to 60 s); before that, the first brief could go to a Claude still loading. `startHere` also starts a fresh copy of a member of this PC whose session has stopped (it applied only to members of another PC). SendMessage to a member the mod starts answers with an object (it failed with "SendMessage output is not an object"). **Machine name:** when the environment gives none (Linux does not export `HOSTNAME`), `scutil --get LocalHostName` (macOS), then `uname -n`, once per load; names compare before any domain, and a member with no machine gets this PC once its transcript shows it ran here. **Scratch-delete auto-approval:** single-letter `/x` words are switches only for cmd's `rd`, `del`, `erase` and `rmdir` (`rm … /c` was approved, the whole C: drive in Git Bash); braces are refused; paths compare case-sensitively off Windows; the Claude temp folder `claude-<uid>` is recognised. **Browser tools:** members start with `--settings` pointing at `<config>/team-orchestrator/member-settings.json`, which turns off the browser-automation plugins the person enabled, so no idle browser server starts in each tab; the person's own sessions keep them. **Tests:** Windows-style test paths work on Linux, and the crypto tests use a cheaper Argon2id cost; 298 pass on Linux. |
 | 0.5.30 | macOS and Linux: a team folder made under a parent whose default ACL gives its owner `rw-` came out without its x bit, so every status write failed with EACCES and workers could not start. Every write now goes through `putFile`: refused with EACCES, it makes each folder on the way enterable (`chmod u+rwx`), sets a mended folder's default ACL to pass `rwx` on, and writes once more. |

@@ -2,6 +2,8 @@
 
 An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://github.com/herman925/925-cc-plugins/tree/main/team-orchestrator), with the organisation tree and Setup → Models → Preview → Launch selection flow.
 
+It is separate from that Claude Code mod (0.5.36), which runs inside each Claude Code session. This plugin keeps its teams in Orca's plugin-private storage, not in the mod's `.claude/team-orchestrator/` files, so a team made in one does not appear in the other. It covers launching a team; the mod's messaging, on-demand starts, guard and live roster stay in the mod.
+
 Release **0.1.06** (strict SemVer `0.1.6`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
 ## How it works

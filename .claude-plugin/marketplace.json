@@ -20,7 +20,7 @@
     {
       "name": "session-panel",
       "source": "./session-panel",
-      "description": "Session Panel: a prompt enhancer and a calm step checklist above the prompt, with hidden tool details, in-band choices and grouped settings."
+      "description": "Session Panel: a calm step checklist above the prompt with hidden tool details, a prompt enhancer, an assumptions list, a question-box rule for AskUserQuestion, and tabbed settings."
     }
   ]
 }

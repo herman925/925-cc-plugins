@@ -12,9 +12,9 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 
 - **Title:** ` Session Panel ` (or ` Session Panel · off ` when hidden), then the version.
 - **Hide details / Show details** and `/simple on|off` toggle the hiding. The setting is kept between sessions. It starts on.
-- **Settings** opens the grouped settings (below).
+- **Settings** opens the Settings card (below).
 - **Stop** appears only while a turn is running. It cancels that turn. The toast is `Stopped`, or `Nothing to stop: the turn has ended.` if the turn already ended.
-- **Checklist:** Claude plans the job with `mcp__session-panel__plan_steps`, reports progress with `mcp__session-panel__report_progress`, and asks questions with `mcp__session-panel__ask_choices` (numbered choices in the band, when `/askchoices on` is set).
+- **Checklist:** Claude plans the job with `mcp__session-panel__plan_steps` and reports progress with `mcp__session-panel__report_progress`. Questions go through AskUserQuestion while the question box is on (the default); with it off and `/askchoices on`, `mcp__session-panel__ask_choices` shows numbered choices in the band.
 - `NO_COLOR` is honoured. `NO_MOTION`, `REDUCE_MOTION` or `PREFERS_REDUCED_MOTION` gives a static meter.
 
 ### Commands
@@ -25,7 +25,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 | `/simple bars`, `/simple list` | Sets the progress look. |
 | `/progress` | Flips between the bar view and the list view. |
 | `/progress-clear` | Removes the finished bars. |
-| `/askchoices on`, `/askchoices off` | Turns the `ask_choices` picker on or off. Off by default. |
+| `/askchoices on`, `/askchoices off` | Turns the `ask_choices` picker on or off. Off by default. While the question box is on, the picker is refused even when this is on. |
 | `/enhance` | Enhances the text in the prompt box. |
 | `/enhance <draft>` | Enhances a draft given in the command. From the prompt box, the result goes back in the box, as Enhance does. Elsewhere (for example `claude -p`), it shows the result and the model that answered (`via`), with its notes. |
 | `/enhance-key` | Adds Ctrl+X E for Enhance to your `keybindings.json`. |
@@ -34,9 +34,9 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 
 Settings → Questions holds three switches:
 
-- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act and for choices that change scope, cost, files or direction. Questions from /grilling, /grill-me and /grill-with-docs go through it. While it is on, the ask_choices picker is refused.
-- **Picker above the prompt**: the ask_choices buttons. Off while the question box is on.
-- **Warn on prose questions** (on by default): a toast when a reply ends with a question that was not asked in the question box. It cannot make Claude ask again.
+- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act (edits, deletes, sends, pushes, installs) and for choices that change scope, cost, files or direction. Routine details are not asked; Claude decides them and states them as `ASSUMPTION:` lines. Every question from /grilling, /grill-me and /grill-with-docs goes through it, one call per question, the recommended option first. The rule is in the system-prompt section `session-panel:rules`; it is an instruction, so Claude can still miss it. While it is on, the ask_choices picker is refused with `The question box is on: ask this with AskUserQuestion instead.`
+- **Picker above the prompt** (off by default): the ask_choices buttons. It works only while the question box is off.
+- **Warn on prose questions** (on by default): when a reply ends with a question and no AskUserQuestion call was made in that turn, a toast says `Claude asked in prose instead of the question box. Turn the warning off in Settings → Questions if it is not wanted.` It needs the question box on. It only warns; it cannot make Claude ask again.
 
 ## The plan gate
 
@@ -72,19 +72,19 @@ The enhancer rewrites the prompt box so Claude can act on it, using the project 
 
 - **Model:** Haiku by default. Settings offer Haiku, Sonnet and Opus.
 - **Chat context** (a setting):
-  - **Haiku + recent** (default): sends the last 6 user and assistant text turns to the model on the chosen model. Each turn is capped at 1500 characters, and the whole excerpt at 6000 characters, keeping the newest end.
-  - **Full chat (session model)**: asks the session itself, so the model sees the whole conversation. It falls back to the chosen model only if there is nothing to ask yet.
+  - **Recent** (default): sends the last 6 user and assistant text turns to the model on the chosen model, Haiku unless you pick another. Each turn is capped at 1500 characters, and the whole excerpt at 6000 characters, keeping the newest end.
+  - **Full chat**: asks the session itself, on the session's model, so the model sees the whole conversation. It falls back to the chosen model only if there is nothing to ask yet.
 
 ### Context sources
 
-Each source has its own toggle in Settings > Enhancer. Each is capped at 4000 characters.
+Each source has its own toggle in Settings → Enhancer, under a short name. Each is capped at 4000 characters.
 
-| Source | Default | What it reads |
-|---|---|---|
-| CLAUDE.md and AGENTS.md (project and global) | on | The global `~/.claude/CLAUDE.md`, and the `CLAUDE.md` and `AGENTS.md` files in the folders above the session. |
-| Project skills list | on | The folder names in `~/.claude/skills` and `.claude/skills`. A missing folder counts as none. |
-| CONTEXT.md, PRD, ADRs and glossary | on | `CONTEXT.md`, `PRD.md`, `GLOSSARY.md`, and the file names in `docs/adr`. |
-| GitHub (wayfinder map, else recent issues) | off | The open issue labelled `wayfinder:map`: its body, with the titles of its open child tickets (GitHub sub-issues). If there is no open map, `gh issue list --limit 10`. gh runs in the session's folder, so that folder must be a GitHub repository. A gh that is missing or not signed in gives nothing. |
+| Source | Name in Settings | Default | What it reads |
+|---|---|---|---|
+| CLAUDE.md and AGENTS.md (project and global) | CLAUDE.md, AGENTS.md | on | The global `~/.claude/CLAUDE.md`, and the `CLAUDE.md` and `AGENTS.md` files in the folders above the session. |
+| Project skills list | Skills list | on | The folder names in `~/.claude/skills` and `.claude/skills`. A missing folder counts as none. |
+| CONTEXT.md, PRD, ADRs and glossary | Context docs | on | `CONTEXT.md`, `PRD.md`, `GLOSSARY.md`, and the file names in `docs/adr`. |
+| GitHub (wayfinder map, else recent issues) | GitHub | off | The open issue labelled `wayfinder:map`: its body, with the titles of its open child tickets (GitHub sub-issues). If there is no open map, `gh issue list --limit 10`. gh runs in the session's folder, so that folder must be a GitHub repository. A gh that is missing or not signed in gives nothing. |
 
 Each file's digest is cached by its modification time, in the plugin store. A file that cannot be read is skipped.
 
@@ -96,19 +96,23 @@ The first interactive session with no saved setup asks five questions, once:
 2. `Which model should the enhancer use?` (Haiku, Sonnet, Opus)
 3. `Which band view by default?` (List, Bars)
 4. `Which context sources should the enhancer read?` (All, Instructions and skills only, None)
-5. `How much chat should the enhancer read?` (Haiku + recent, Full chat)
+5. `How much chat should the enhancer read?` (Haiku + recent, Full chat (session model)). In Settings these are called Recent and Full chat.
 
-The answers are saved. Settings > Setup > **Run setup again** asks the questions again.
+The answers are saved. Settings → Setup → **Run setup again** asks the questions again.
 
 ## Settings
 
-Settings is a button on the band. It has five groups; only Enhancer is open at first. Each group collapses.
+**Settings** on the band opens a card under the button. The card floats over the band, with a solid background, so opening it or switching tabs does not move the checklist or anything else in the band. While it is open, the band keeps at least enough height for the whole card (14 rows), so the card's bottom border always shows; a band that is already taller does not change.
 
-- **Band:** Hide tool details; Ask choices; Progress look (List, Bars).
-- **Enhancer:** Enhancer (on or off); Auto-enhance on Enter; Add Ctrl+X E for Enhance (a button); Model; Chat context; the four context sources.
+- **Tabs:** Band, Enhancer, Questions, Assumptions, Shelf and Setup. The open tab is a filled label with a gap in the rule under it; the others sit on the rule.
+- **Table:** each tab is a table with three columns: the control (ON or OFF, the choices, or a button such as `[Add]` or `[Run]`), the setting's name, and what it does. Each column is as wide as its widest entry on that tab, so every row's name and description start at the same place, on every page of the tab. A description too long for its column wraps onto the next line, in the same column. On a card too narrow for a 30-character description column, each description goes on the lines under its name instead.
+- **Pages:** the card shows 6 lines of settings. A tab with more has pages; **◀ Prev**, the page number and **Next ▶** sit on the card's title line, so they stay in view. Switching tabs goes back to the first page.
+- **Band:** Hide tool details; Progress look (List, Bars).
+- **Enhancer:** Enhancer (on or off); Auto-enhance on Enter; Add Ctrl+X E for Enhance (`[Add]`); Model (Haiku, Sonnet, Opus); Chat context (Recent, Full chat); the four context sources.
+- **Questions:** Picker above the prompt; Question box; Warn on prose questions. See [Questions](#questions).
 - **Assumptions:** Track assumptions; Flag undeclared edits; Decision step (off by default); Keep threshold (0.4 to 0.8, default 0.5); Jev pass (off by default).
 - **Shelf:** placeholder, coming in a later stage.
-- **Setup:** Run setup again.
+- **Setup:** Run setup again (`[Run]`).
 
 ## Migration from clean-view
 
@@ -149,7 +153,7 @@ The rule is a system-prompt section, `session-panel:assume`, on when Track assum
 
 Each session keeps its list in one file, written on every change and read back when the session starts:
 
-`<project root>/.claude/session-panel/assumptions/<session id>.json`
+`<project root>/.claude/session-panel/assumptions/<name>.json`
 
 - The file name is the session's name, with the team-orchestrator rule: any run of characters that is not a letter, a digit, `.`, `_` or `-` becomes `_` (so `Mod Builder 2` is `Mod_Builder_2.json`). The name comes from the session registry (`<config dir>/sessions/<pid>.json`, field `name`), matched by this session's id. With no name, the file is the session id's file, as before.
 - Takeover: when a session closes and a new one starts with the same name, the new session takes over the same file. It keeps the old entries (each still tagged with its old `sessionId`) and sets the file's top-level `sessionId` to itself.
@@ -228,10 +232,10 @@ A status line changes an entry's status without a model turn. It is one line, al
 
 ## Cross-mod functions
 
-- Session Panel band: the title " Session Panel " with its version (" v0.3.32") when known, read from the plugin's own manifest.
-- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>` or `SESSION-PANEL: wrong <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
-- Toasts, as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
-- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm and Wrong, which send the status line as a team message. Others see the count and list only. Team-orchestrator never writes an assumptions file.
-- Shared files: `<project root>/.claude/session-panel/assumptions/<name>.json` with version, member, sessionId, and entries (id, text, status, kind, turn, path (flagged entries only), paths (flagged entries only), at, resolvedAt, sessionId). `.claude/session-panel/` has a `.gitignore` with `*`.
-- What needs what: Confirm and Wrong need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the Team Orchestrator band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
+- Session Panel band: the title " Session Panel " with its version (for example " v0.3.62") when known, read from the plugin's own manifest.
+- Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>`, `SESSION-PANEL: wrong <id>` or `SESSION-PANEL: delete <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
+- Toasts (Session Panel side), as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "Assumption <id> deleted." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
+- Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm, Wrong and Delete, which send the status line as a team message; Delete asks first. Others see the count and list only. Team-orchestrator never writes an assumptions file.
+- Shared files: one file per session in `<project root>/.claude/session-panel/assumptions/`, named by the session's name (`<name>.json`), by its session id when it has no name, or `<name>-<first 8 of the session id>.json` when another live session holds the name. Each holds version, member, sessionId and entries (id, text, status, kind, turn, path and paths on flagged entries only, at, resolvedAt, sessionId). Team-orchestrator reads every file in the folder and matches each one to its member by the `sessionId` inside it. `.claude/session-panel/` has a `.gitignore` with `*`.
+- What needs what: Confirm, Wrong and Delete need Session Panel installed and enabled in the member's session. The counts need the files, which only Session Panel writes. Settings → Assumptions → Show (key `assumptions`), off by default, in the Team Orchestrator band's team Settings: team-orchestrator reads the files only when it is on AND Session Panel is present and enabled.
 - Detection: team-orchestrator detects Session Panel from `enabledPlugins["session-panel@herman-mods"]` in `.claude/settings.local.json`, then `.claude/settings.json`, then the user `settings.json`. It rechecks on each roster refresh (every 30 s). After enabling Session Panel, run `/reload-plugins`.
