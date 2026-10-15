@@ -28,7 +28,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
    const existing=deliveries(workId).find(d=>d.id===proposal.id);if(existing){if(existing.proof.payloadHash!==proposal.proof.payloadHash)fail('Delivery identity conflicts.');return existing;}
    const previous=current(workId);
    if((proposal.previousDeliveryId??null)!==(previous?.id??null))fail('Delivery must reference the current delivery revision.');
-   if(proposal.generation!==w.run.consumerGeneration)fail('Delivery Run generation changed.');
+   if((proposal.epoch??0)!==(w.epoch??0)||w.epoch&&proposal.protocolToken!==readPrivate(`dispatch-protocol:${workId}`)?.token||proposal.generation!==w.run.consumerGeneration)fail('Delivery Run generation changed.');
    const d={...proposal,workId,epoch:w.epoch??0,revision:(previous?.revision??0)+1,status:'pending',createdAt:new Date().toISOString()};
    putPrivate(`delivery:${workId}:${d.id}`,d);w.status='awaiting_acceptance';w.version++;persistWork(w);return d;
   });},
