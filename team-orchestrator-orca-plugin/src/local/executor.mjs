@@ -1,4 +1,5 @@
 import { initialMembers } from '../launch.mjs';
+import { createQuestionService } from './questions.mjs';
 import { createRecoveryService } from './recovery.mjs';
 import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
@@ -13,7 +14,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const works = createWorkService({ store, userData, consent, rpc });
-  const dispatches = createDispatchService({ store, userData, consent, rpc, works });
+  const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
+  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
   const recovery = createRecoveryService({ store, rpc, userData, consent });
   let workTimer, polling = false, stopped = false;
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
@@ -23,7 +25,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     try {
       await consent(); await recovery.reconcile();
       if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
-      await consent(); await works.reconcile(); await dispatches.reconcile(); scheduleWork();
+      await consent(); await works.reconcile(); await dispatches.reconcile(); await questions.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
   }
@@ -157,10 +159,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
         const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
-        await dispatches.check(work.id); await recovery.checkWork(work.id);
+        await dispatches.check(work.id); await questions.check(work.id); await recovery.checkWork(work.id);
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
+      if (op === 'answerQuestion') return { value: await questions.answer(params) };
       if (op === 'updateAgentPreferences') {
         const replay = store.replay(op, params); if (replay) return { value: replay };
         const scope = store.readScope(params.teamId);

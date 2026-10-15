@@ -30,6 +30,7 @@ let preferenceTarget = 'member';
 let templateText = '';
 let templatePreview = null;
 let templateRequest = null;
+const answerDrafts = new Map(), answerRequests = new Map();
 const objectives = new Map(), workRequests = new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
@@ -131,7 +132,7 @@ function memberTasks(team, member) {
 }
 function workTasks(team, work) {
   const protocol = work.dispatchProtocol;
-  return `<section aria-label="Team tasks"><h3>Team tasks</h3>${protocol ? `<p>Supervisor dispatch protocol: ${escape(protocol.state)} · Generation ${escape(protocol.generation)}</p>${protocol.detail ? `<p>${escape(protocol.detail)}</p>` : ''}` : ''}${work.tasks?.length ? taskCards(team, work.tasks) : '<p>No admitted member tasks observed yet.</p>'}${work.queuedTasks?.length?'<h4>Queued tasks</h4>'+taskCards(team,work.queuedTasks):''}<p>Declared scope coordination is not filesystem isolation. Unknown results and pending acceptance keep their scopes reserved.</p></section>`;
+  return `<section aria-label="Team tasks"><h3>Team tasks</h3>${work.messages?.length?`<details><summary>Verified team messages (${work.messages.length})</summary>${work.messages.map(m=>`<p>${escape(team.members.find(a=>a.id===m.fromMemberId)?.name||m.fromMemberId)} → ${escape(team.members.find(a=>a.id===m.toMemberId)?.name||m.toMemberId)}: ${escape(m.body)} · Native message saved · Processing ${escape(m.processing)}</p>`).join('')}</details>`:''}${work.collaborations?.length?`<details><summary>Supervisor collaboration directives (${work.collaborations.length})</summary>${work.collaborations.map(d=>`<p>${escape(team.members.find(a=>a.id===d.fromMemberId)?.name||d.fromMemberId)} → ${escape(team.members.find(a=>a.id===d.toMemberId)?.name||d.toMemberId)} · Reports to ${escape(team.members.find(a=>a.id===d.reportToMemberId)?.name||d.reportToMemberId)} · Processing ${escape(d.processing)}</p>`).join('')}</details>`:''}${protocol ? `<p>Supervisor dispatch protocol: ${escape(protocol.state)} · Generation ${escape(protocol.generation)}</p>${protocol.detail ? `<p>${escape(protocol.detail)}</p>` : ''}` : ''}${work.tasks?.length ? taskCards(team, work.tasks) : '<p>No admitted member tasks observed yet.</p>'}${work.queuedTasks?.length?'<h4>Queued tasks</h4>'+taskCards(team,work.queuedTasks):''}<p>Declared scope coordination is not filesystem isolation. Unknown results and pending acceptance keep their scopes reserved.</p></section>`;
 }
 function details() {
   if (!selection) return '';
@@ -159,18 +160,29 @@ function templatesView() {
   return `<h1>Team templates</h1><p>Exchange configuration and roles as JSON. Imported teams have new identities and no sessions or work history. Legacy mod/prototype formats are not supported.</p><label class="field">Template JSON<textarea data-template rows="10" spellcheck="false" ${templatePreview ? 'readonly' : ''}>${escape(templateText)}</textarea></label><div class="actions">${button('Select JSON to copy', 'select-template', !templateText ? 'disabled' : '', 'secondary small')}${button(templatePreview ? 'Edit template JSON' : 'Preview template', templatePreview ? 'edit-template' : 'preview-template', !loaded || !storageAvailable ? 'disabled' : '', 'primary small')}</div><label class="field">Open template file<input type="file" data-template-file accept="application/json,.json"></label>
   ${preview ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview.name)}</h2><p>${preview.members.length} members · ${escape(preview.structure)}</p><p>${escape(preview.purpose)}</p><div class="tree-scroll">${tree(preview.members.map(member => ({ ...member, id: member.ref })))}</div>${preview.members.map(member => `<details><summary>${escape(member.name)} · ${escape(member.agent)} · ${escape(member.model)} · ${escape(member.effort)} · ${member.preferenceOverride ? 'Member override' : 'Level preference'}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || 'None specified')}</p><p>Collaboration rules: ${escape(member.collaboration || 'None specified')}</p></details>`).join('')}</section>${projectControls()}<div class="actions">${button('Import as new team', 'import-template', !confirmedWorkspace || !loaded || !storageAvailable ? 'disabled' : '', 'primary')}</div>` : ''}`;
 }
+function attentionCount() { return (state.works || []).reduce((count,w)=>count+(w.questions||[]).filter(q=>q.status==='pending').length,0); }
+function attentionView() {
+ return `<section aria-label="Needs your attention"><h1>Needs your attention</h1><p>Answers go to the saved highest supervisor. Independent tasks continue while a decision is pending.</p>${(state.works||[]).map(work=>{
+ const team=state.teams.find(t=>t.id===work.teamId),head=team?.members.find(m=>m.id===work.supervisorMemberId);
+ const waiting=(work.failureStreaks||[]).filter(s=>s.escalationNeeded&&!(work.questions||[]).some(q=>s.evidence.slice(-2).every(e=>q.evidence.includes(e.evidenceId))));
+ return `<h2>${escape(team?.name||'Team')} · ${escape(work.objective)}</h2>${button('Check work evidence','check-work',`data-work="${escape(work.id)}"`,'small')}${waiting.map(s=>`<article class="task-card"><h3>${escape(s.taskKey)}</h3><p>Two proven execution failures. Waiting for supervisor summary and options.</p><details><summary>Failure evidence</summary>${s.evidence.map(e=>`<p>${escape(e.evidenceId)} · ${escape(e.attemptId)}</p>`).join('')}</details></article>`).join('')}${(work.questions||[]).map(q=>{
+ const key=work.id+':'+q.id,supplement=q.answers.length>0;
+ return `<article class="task-card" aria-label="Question ${escape(q.id)}"><h3>${escape(q.summary)}</h3><p>From ${escape(head?.name||q.fromMemberId)} · ${escape(q.status)}</p>${q.options.length?`<p>Options: ${q.options.map(escape).join(' · ')}</p>`:''}<p>Blocks: ${q.blockingTaskKeys.map(escape).join(', ')||'No independent tasks'}</p>${q.answers.map(a=>`<div class="notice"><p>${escape(a.body)}</p><small>Native input: ${escape(a.state)} · Manager processing: ${escape(a.processed)}</small>${a.nativeAnswer?`<p>Native question answered: ${escape(a.nativeAnswer.messageId)}</p>`:''}${a.detail?`<p>${escape(a.detail)}</p>`:''}</div>`).join('')}${q.status!=='closed'?`<label class="field">${supplement?'Your supplement':'Your answer'}<textarea data-answer="${escape(key)}" rows="3" maxlength="8000">${escape(answerDrafts.get(key)||'')}</textarea></label>${button(supplement?'Send supplement':'Send answer','answer-question',`data-work="${escape(work.id)}" data-question="${escape(q.id)}"`,'primary small')}`:'<p>Original requester is no longer active. Ask the supervisor for a new decision.</p>'}<details><summary>Question evidence</summary><p>Question ${escape(q.id)} · Work ${escape(work.id)} · Run ${escape(q.runId)} · Generation ${escape(q.generation)}</p>${q.origin?`<p>Origin reference (${q.nativeQuestion?'verified native question':'awaiting native verification'}): attempt ${escape(q.origin.attemptId)} · Dispatch ${escape(q.origin.dispatchId)} · Native question ${escape(q.origin.messageId)}</p>`:''}${q.nativeQuestion?`<p>Native question: ${escape(q.nativeQuestion.status)} · Original requester resumed: ${escape(q.nativeQuestion.requesterResumed)}</p>`:''}<p>Notification: ${escape(q.notification.state)}</p></details></article>`;
+ }).join('')}`;
+ }).join('')}${!(state.works||[]).some(w=>w.questions?.length||w.failureStreaks?.some(s=>s.escalationNeeded))?'<p>No pending decisions.</p>':''}</section>`;
+}
 function settingsView() {
   return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
-  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['templates', 'Templates'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['templates', 'Templates'], ['attention', `Needs your attention (${attentionCount()})`], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
     ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map(team => `${escape(team.name)} · ${escape(team.scope.displayName)} · ${escape(team.scope.executionHostId)}`).join(' | ')}</div>` : ''}
     <div class="notice" role="status">${escape(connection)} ${button('Test connection', 'test-connection', busy ? 'disabled' : '', 'small')}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : roster()}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : roster()}
     </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
@@ -241,7 +253,7 @@ app.addEventListener('click', async event => {
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
-  if (['roster', 'new', 'templates', 'settings'].includes(action)) { view = action; message = ''; render(); }
+  if (['roster', 'new', 'templates', 'settings', 'attention'].includes(action)) { view = action; message = ''; render(); }
   else if (action === 'preset') { Object.assign(form, PRESETS[Number(target.dataset.index)].form); view = 'new'; message = ''; render(); }
   else if (action === 'pick') {
     const field = target.dataset.field;
@@ -326,6 +338,13 @@ app.addEventListener('click', async event => {
     } catch (error) { problem = error.message; if (/Another panel changed/.test(error.message)) workRequests.delete(target.dataset.team); canRetry = true; }
     finally { busy = false; render(); }
   }
+  else if (action === 'answer-question') {
+    const work=state.works.find(w=>w.id===target.dataset.work),q=work.questions.find(q=>q.id===target.dataset.question),key=work.id+':'+q.id;
+    if(!answerRequests.has(key))answerRequests.set(key,{workId:work.id,questionId:q.id,questionRevision:q.revision,answerId:crypto.randomUUID(),body:answerDrafts.get(key)||'',supplement:q.answers.length>0});
+    busy=true;problem='';render();
+    try{const result=await call('answerQuestion',answerRequests.get(key));state=validatePersistentState(result.value);answerRequests.delete(key);answerDrafts.delete(key);message='Answer saved. Native input and manager processing are shown separately.';}catch(error){problem=error.message;}
+    finally{busy=false;render();}
+  }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }
     catch (error) { problem = error.message; canRetry = false; render(); }
@@ -333,7 +352,8 @@ app.addEventListener('click', async event => {
 });
 app.addEventListener('input', event => {
   const target = event.target;
-  if (target.dataset.objective) { objectives.set(target.dataset.objective, target.value); workRequests.delete(target.dataset.objective); }
+  if (target.dataset.answer) { answerDrafts.set(target.dataset.answer,target.value); answerRequests.delete(target.dataset.answer); }
+  else if (target.dataset.objective) { objectives.set(target.dataset.objective, target.value); workRequests.delete(target.dataset.objective); }
   else if (target.hasAttribute('data-template')) { templateText = target.value; }
   else if (target.dataset.form) { form[target.dataset.form] = target.value; updatePreview(); }
 });
