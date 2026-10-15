@@ -61,7 +61,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   }
   throw Error('Forbidden/unexpected native method '+method);
  };
- const works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});
+ let works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});
  const work=await works.submit({teamId:team.id,requestId:'goal',expectedRevision:store.readSnapshot().revision,objective:'Audit'});
  const actor=params=>kind==='structured'?{...params,__orcaCallerOrcaSessionId:'codex_head'}:Object.fromEntries(Object.entries(params).map(([k,v])=>[['from','callerTerminalHandle','terminal'].includes(k)?k:k,['from','callerTerminalHandle'].includes(k)?{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}:v]));
  const from=kind==='structured'?'orca_session_id:codex_head':'term-head';
@@ -83,7 +83,7 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   return id;
  };
  t.after(async()=>{db.close();store.close();await rm(profile,{recursive:true,force:true});});
- return {profile,store,team,member,work,works,rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;}};
+ return {profile,get store(){return store;},team,member,work,get works(){return works;},rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;},async restart(){store.close();store=await openTeamStore({userData:profile});works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});}};
 }
 test('genuine supervisor intent commits admission before native member start and records execution pending acceptance',async t=>{
  const {createDispatchService}=await import('../src/local/dispatch.mjs');
@@ -103,4 +103,57 @@ test('genuine supervisor intent commits admission before native member start and
  f.db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:report-one',task.dispatchId,'task-one','run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome:'succeeded',reportId:'worker_report:report-one'}));
  await service.check(f.work.id);task=f.store.listDispatches(f.work.id)[0];assert.equal(task.status,'pending_acceptance');assert.equal(task.outcome,'succeeded');assert.match(task.result,/Inspection finished/);
  await service.check(f.work.id);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
+});
+test('already-started native work is retained as unadmitted uncertainty and reserves its member without a new permit',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.start({nativeTaskId:'task-one',startParams:{task:'task-one',worktree:'folder:/work',agent:'claude',run:'run-head'}});
+ await service.check(f.work.id);
+ const rows=f.store.listDispatches(f.work.id);assert.equal(rows.length,1);assert.equal(rows[0].admission,'unadmitted');assert.equal(rows[0].status,'unknown');
+ assert.equal(rows[0].permit.state,'unknown');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+ f.createIntent(protocol,{taskId:'task-two',taskKey:'task-key-two'});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+});
+test('forged native caller, indirect member, and revoked Run generation cannot authorize a permit',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.createIntent(protocol,{forged:true});await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,0);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/author proof/);
+ f.createIntent(protocol,{taskId:'task-root',taskKey:'root',memberId:f.team.members[0].id});await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,0);
+ f.db.exec('UPDATE runs SET consumer_generation=3,coordinator_orca_session_id_generation=3');
+ f.createIntent(protocol,{taskId:'after-takeover',taskKey:'after-takeover'});await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,0);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
+});
+test('two distinct members cannot adopt the same active native session even when native receipts otherwise match',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
+ f.createIntent(protocol);await service.check(f.work.id);
+ f.createIntent(protocol,{taskId:'task-other',taskKey:'other-member',memberId:f.team.members[2].id});await service.check(f.work.id);
+ const tasks=f.store.listDispatches(f.work.id);assert.equal(tasks.length,2);assert.equal(tasks[0].status,'running');
+ assert.equal(tasks[1].status,'unknown');assert.equal(tasks[1].binding,undefined);assert.match(tasks[1].detail,/another member/);
+});
+test('unknown permit survives worker restart and late native start settles only its saved attempt without another input',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ const make=()=>createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});let service=make();
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));let savedPermit;
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n')){savedPermit=JSON.parse(text.split('\n').slice(1).join('\n'));throw Error('lost permit receipt');}});
+ await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].status,'unknown');
+ await f.restart();service=make();await service.check(f.work.id);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
+ f.start(savedPermit);await service.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].status,'running');assert.equal(f.store.listDispatches(f.work.id).length,1);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,1);
+});
+for(const kind of ['structured','terminal'])test(`Claude supervisor to Codex member uses actual ${kind} identity and preserves native caller proof`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{headAgent:'claude',workerAgent:'codex',kind}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
+ await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.startParams.agent,'codex');assert.equal(row.status,'running');
+ assert.ok(f.calls.includes(kind==='terminal'?'terminal.send':'agentSession.send'));
+});
+test('a late native Task proves an ambiguous protocol input without resending the protocol',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PROTOCOL\n'))throw Error('lost protocol receipt');});
+ await service.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);assert.equal(protocol.state,'unknown');f.createIntent(protocol);
+ f.onInput(()=>{});await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PROTOCOL\n')).length,1);
 });

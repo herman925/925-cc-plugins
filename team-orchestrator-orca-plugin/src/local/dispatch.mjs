@@ -47,15 +47,17 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
    const verified=await works.verifyWork(workId),team=store.readTeamVersion(work.teamId,work.configVersion);
    let protocol=store.ensureDispatchProtocol(workId);
    let native=await evidence(work,protocol,team,verified);if(native.state!=='verified')throw Error(native.detail);
+   if(protocol.state==='sending')protocol=store.updateDispatchProtocol(workId,protocol.version,{state:'unknown',detail:'Protocol submission was interrupted; it is not automatically sent again.'});
+   if(protocol.state==='unknown'&&native.intents.length)protocol=store.updateDispatchProtocol(workId,protocol.version,{state:'accepted',detail:'Native supervisor-authored Task proves receipt of this exact admission protocol.'});
    protocol=await sendProtocol(work,team,protocol,verified);if(protocol.state!=='accepted')return project(workId);
    native=await evidence(work,protocol,team,verified);if(native.state!=='verified')throw Error(native.detail);
    for(const intent of native.intents){
     try{
-     const caps=await discoverCapabilities(rpc,work.scope),issue=preferenceIssue(intent.member,caps,{requireCore:true});if(issue)throw Error(issue);
+     if(!intent.unadmitted){const caps=await discoverCapabilities(rpc,work.scope),issue=preferenceIssue(intent.member,caps,{requireCore:true});if(issue)throw Error(issue);}
      const current=await works.verifyWork(workId),fresh=await evidence(store.readWork(workId),protocol,team,current);
      if(fresh.state!=='verified'||!fresh.intents.some(row=>row.nativeTaskId===intent.nativeTaskId&&row.payloadHash===intent.payloadHash))throw Error('Native intent changed during admission.');
      const startParams={task:intent.nativeTaskId,worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`,agent:intent.member.agent,run:work.run.id,...(intent.member.model!=='default'?{model:intent.member.model}:{}),...(intent.member.effort!=='default'?{effort:intent.member.effort}:{})};
-     const admitted=store.prepareDispatch(workId,intent,startParams);if(admitted.fresh)await permit(work,admitted.attempt);
+     const admitted=store.prepareDispatch(workId,intent,startParams);if(admitted.fresh&&!intent.unadmitted)await permit(work,admitted.attempt);
     }catch(error){protocol=store.updateDispatchProtocol(workId,store.readDispatchProtocol(workId).version,{detail:String(error.message).slice(0,1200)});}
    }
    // Resume only unsent, committed permits; sending/unknown never becomes a fresh input.
@@ -68,7 +70,7 @@ export function createDispatchService({store,rpc,userData,consent,works}) {
     if(shown?.dispatch?.id!==observed.dispatchId||shown.dispatch.runId!==work.run.id||shown.dispatch.taskId!==attempt.nativeTaskId||shown.dispatch.assigneeHandle!==observed.binding.handle||shown.worker?.worktreeId!==work.scope.workspaceId)throw Error('Native worker projection does not match admitted member identity.');
     const final=await evidence(store.readWork(workId),protocol,team,await works.verifyWork(workId)),settled=final.observations.find(row=>row.id===attempt.id);
     if(final.state!=='verified'||settled?.state!=='verified'||settled.dispatchId!==observed.dispatchId||JSON.stringify(settled.binding)!==JSON.stringify(observed.binding))throw Error('Native Dispatch changed during observation.');
-    store.updateDispatch(attempt.id,attempt.version,{dispatchId:settled.dispatchId,binding:settled.binding,nativeState:settled.nativeState,startRequestId:settled.startRequestId,startPayloadHash:settled.startPayloadHash,...(settled.completion?{status:'pending_acceptance',...settled.completion,detail:'Native execution report recorded. Direct supervisor acceptance is still required.'}:{status:settled.nativeState==='ready'?'running':'unknown',detail:'Native assignment observed; execution result is not yet proven.'})});
+    try { store.updateDispatch(attempt.id,attempt.version,{dispatchId:settled.dispatchId,binding:settled.binding,permit:{...attempt.permit,state:'accepted',source:'native-worker-start'},nativeState:settled.nativeState,startRequestId:settled.startRequestId,startPayloadHash:settled.startPayloadHash,...(settled.completion?{status:'pending_acceptance',...settled.completion,detail:'Native execution report recorded. Direct supervisor acceptance is still required.'}:{status:settled.nativeState==='ready'?'running':'unknown',detail:'Native assignment observed; execution result is not yet proven.'})}); } catch(error) { store.updateDispatch(attempt.id,attempt.version,{status:'unknown',detail:String(error.message).slice(0,1200)}); }
    }
    if(native.rejected.length)store.updateDispatchProtocol(workId,store.readDispatchProtocol(workId).version,{detail:native.rejected[0].detail});
   }catch(error){const protocol=store.readDispatchProtocol(workId);if(protocol)store.updateDispatchProtocol(workId,protocol.version,{detail:String(error.message).slice(0,1200)});}

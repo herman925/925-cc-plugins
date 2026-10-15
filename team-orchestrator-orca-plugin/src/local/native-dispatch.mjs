@@ -42,12 +42,14 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   for(const task of tasks){
    const spec=parse(task.spec);if(spec?.protocol!=='team-dispatch/v1'||spec.workId!==work.id||admitted.some(row=>row.nativeTaskId===task.id))continue;
    try{
-    if(!['ready','pending'].includes(task.status)||db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id))throw Error('Native task started before plugin admission; it is not adopted.');
     const proof=receipts('orchestration.taskCreate',task.id);if(proof.length!==1)throw Error('Native Task creation receipt is missing or ambiguous.');
-    intents.push(verifyIntent(task,spec,work,protocol,team,owner,proof[0]));
+    const intent=verifyIntent(task,spec,work,protocol,team,owner,proof[0]);
+    intent.unadmitted=!['ready','pending'].includes(task.status)||Boolean(db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id));
+    intents.push(intent);
    }catch(error){rejected.push({nativeTaskId:task.id,detail:error.message});}
   }
   for(const attempt of admitted){
+   if(attempt.admission==='unadmitted'){observations.push({id:attempt.id,state:'unverified',detail:'This native work began before app admission; its member remains reserved for reconciliation.'});continue;}
    const starts=receipts('orchestration.workerStart',attempt.nativeTaskId,'taskId');
    if(starts.length!==1){observations.push({id:attempt.id,state:'unverified',detail:starts.length?'Native worker-start receipt is ambiguous.':'Waiting for the real supervisor to start the admitted Task.'});continue;}
    const start=starts[0], expected=nativeMutationFingerprint('orchestration.workerStart',{...attempt.startParams,from:caller(owner),devMode:false},owner);
