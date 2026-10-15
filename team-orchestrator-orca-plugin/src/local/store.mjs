@@ -73,7 +73,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     };
     const listCurrentWorks = () => listWorks().map(work=>readCurrentWork(work.id));
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
-    const persistWork = work => db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(work));
+    const persistWork = work => {const {parentAuthority,...saved}=work;return db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(saved));};
     const persistCurrentWork = work => {
       const raw=readWork(work.id);if(!raw?.currentSupervisor)return persistWork(work);
       for(const key of ['status','input','processing','run','snapshot','error','instance','nativeSend'])raw.currentSupervisor[key]=work[key];

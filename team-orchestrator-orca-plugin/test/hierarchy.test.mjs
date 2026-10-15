@@ -23,8 +23,15 @@ test('a genuinely assigned manager owns a separate Run in one TeamWork and stale
  assert.equal(child.run.id,'run-manager');assert.equal(child.run.state,'verified');
  assert.equal(f.store.readOwningWork(f.work.id,f.team.members.find(m=>m.boss===f.member.id).id).id,child.id);
  assert.equal(f.store.readSnapshot().works[0].nativeRuns.length,2);
+ f.db.prepare('UPDATE dispatch_contexts SET creator_orca_session_id=? WHERE id=?').run('forged-parent-caller',parent.dispatchId);await assert.rejects(f.works.verifyWork(child.id),/creator|Creator/);f.db.prepare('UPDATE dispatch_contexts SET creator_orca_session_id=? WHERE id=?').run('codex_head',parent.dispatchId);
  f.db.prepare("UPDATE dispatch_contexts SET status='completed' WHERE id=?").run(parent.dispatchId);
  await assert.rejects(f.works.verifyWork(child.id),/parent|Parent/);
+ const second=f.team.members.find(m=>m.boss===f.team.members[0].id&&m.id!==f.member.id),protocol=f.store.readDispatchProtocol(f.work.id);
+ f.createIntent(protocol,{taskId:'second-manager-task',taskKey:'second-manager',memberId:second.id});
+ f.onInput(text=>{if(!text.startsWith('TEAM_DISPATCH_PERMIT\n'))return;const p=JSON.parse(text.slice(text.indexOf('\n')+1));assert.equal(p.memberId,second.id);f.db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run('second-manager-dispatch','run-head',p.nativeTaskId,null,null,'codex_head',null,'second-manager','second-tab:second-leaf','second-session','second-instance',JSON.stringify({kind:'local',hostId:'local'}),'dispatched',1,1);f.db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run('second-manager-dispatch',f.store.readScope(f.team.id).workspaceId,'second-manager','ready','runtime-one',JSON.stringify({agent:second.agent}));f.receipt('start-second-manager','orchestration.workerStart',{...p.startParams,from:'orca_session_id:codex_head',devMode:false},{runId:'run-head',taskId:p.nativeTaskId,dispatchId:'second-manager-dispatch',state:'ready'});});
+ await dispatch.check(f.work.id);await hierarchy.check(f.work.id);let secondRun=f.store.listRunWorks(f.work.id).find(w=>w.supervisorMemberId===second.id);assert.ok(secondRun,'an independently assigned manager continues despite stale sibling parent');
+ f.db.prepare('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)').run('run-second-manager',secondRun.nativeObjective,'this_database',null,null,'second-session',1,1,0);await hierarchy.check(f.work.id);secondRun=f.store.readCurrentWork(secondRun.id);assert.equal(secondRun.run.id,'run-second-manager');assert.equal(secondRun.run.state,'verified');assert.equal(f.store.listRunWorks(f.work.id).length,3);assert.equal(f.store.listWorks().length,1);
+
 });
 
 test('native child depth and creator must match its actual manager parent before acceptance',async t=>{
