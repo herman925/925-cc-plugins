@@ -1,19 +1,9 @@
+import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
 import { declaredWriteScope } from '../scheduling.mjs';
-import { createHash } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
-import { join, relative, isAbsolute, sep } from 'node:path';
-const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().filter(key=>value[key]!==undefined).map(key=>[key,canonical(value[key])])):value;
-export const nativeMutationFingerprint=(method,params,owner,target)=>{
- const stable={...params}; delete stable.waitSubmitMs;
- if(owner.kind==='structured')stable.__orcaCallerOrcaSessionId=owner.sessionId;
- if(typeof stable.terminal==='string'&&target?.kind==='terminal'&&target.paneKey){const parts=target.paneKey.split(':');stable.terminal=parts.length===2&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(parts[1])?{paneLeafId:parts[1]}:{paneKey:target.paneKey};}
- for(const key of ['from','callerTerminalHandle'])if(typeof stable[key]==='string'&&owner.paneKey){
-  const parts=owner.paneKey.split(':'),leaf=parts[1];
-  stable[key]=parts.length===2&&parts[0]&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(leaf)?{paneLeafId:leaf}:{paneKey:owner.paneKey};
- }
- return createHash('sha256').update(JSON.stringify(canonical({method,params:stable}))).digest('hex');
-};
+import {canonical,nativeMutationFingerprint} from './native-mutation.mjs';
+export {nativeMutationFingerprint} from './native-mutation.mjs';
+import {isHistoricalControl,isHistoricalReview,changedRecordedControls} from './native-history.mjs';
 const caller=owner=>owner.kind==='structured'?`orca_session_id:${owner.sessionId}`:owner.handle;
 const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
 const parse=value=>{try{return JSON.parse(value);}catch{return null;}};
@@ -30,13 +20,9 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  if(owner.kind==='terminal'&&(task.created_by_terminal_handle!==owner.handle||task.created_by_pane_key!==owner.paneKey||task.created_by_process_incarnation!==owner.incarnationId||task.created_by_run_generation!==protocol.generation))throw Error('Native terminal Task creator instance is unverified.');
  return {spec,member,nativeTaskId:task.id,taskSpec:task.spec,requestId:receipt.request_id,payloadHash:receipt.payload_hash};
 }
-export async function readNativeDispatchEvidence(userData,{work,protocol,team,owner,admitted=[],allowSettledParent=false}) {
- let db;
+export async function readNativeDispatchEvidence(userData,{work,protocol,team,owner,admitted=[],allowSettledParent=false,nativeHistory={authorities:[],controls:[]}}) {
  try {
-  const root=await realpath(userData),file=await realpath(join(root,'orchestration.db')),rel=relative(root,file);
-  if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error('Native evidence path is outside the verified profile.');
-  const {DatabaseSync}=await import('node:sqlite');db=new DatabaseSync(file,{readOnly:true});db.exec('BEGIN');
-  if(db.prepare('PRAGMA user_version').get().user_version!==43)throw Error('Native orchestration evidence schema is unsupported.');
+  return await withOrchestrationSnapshot(userData,{pathError:'Native evidence path is outside the verified profile.',schemaError:'Native orchestration evidence schema is unsupported.'},db=>{
   const run=db.prepare('SELECT id,objective,home_database,legacy,consumer_generation,coordinator_handle,coordinator_pane_key,coordinator_orca_session_id,coordinator_orca_session_id_generation FROM runs WHERE id=?').get(work.run.id);
   if(!run||run.objective!==work.nativeObjective||run.home_database!=='this_database'||run.legacy!==0||run.consumer_generation!==protocol.generation||work.run.consumerGeneration!==protocol.generation)throw Error('Native Run generation or work changed; admission is fenced.');
   if(owner.kind==='structured'?(run.coordinator_orca_session_id!==owner.sessionId||run.coordinator_orca_session_id_generation!==run.consumer_generation):(run.coordinator_handle!==owner.handle||run.coordinator_pane_key!==owner.paneKey))throw Error('Native Run owner no longer matches its supervisor.');
@@ -101,9 +87,11 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    if(work.parent&&!observations.some(o=>o.id===attempt.id&&o.state==='verified'&&o.completion?.evidenceId===attempt.evidenceId)){rejected.push({detail:'Descendant review requires unchanged native execution evidence.'});continue;}
    const proofs=db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskUpdate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=? ORDER BY rowid LIMIT 101").all(identity.caller_fingerprint,attempt.nativeTaskId);
    if(proofs.length>100){rejected.push({detail:'Review receipt history exceeds the verification bound.'});continue;}
+   if(attempt.review&&!proofs.some(p=>p.request_id===attempt.review.requestId&&p.payload_hash===attempt.review.payloadHash))rejected.push({detail:'Recorded supervisor review evidence is missing or changed.'});
    for(const proof of proofs){
     const task=parse(proof.receipt)?.task,review=parse(task?.result);
-    if(review?.protocol!=='team-review/v1')continue;
+    if(review?.protocol!=='team-review/v1'){if(attempt.review?.requestId===proof.request_id)rejected.push({detail:'Recorded supervisor review evidence is malformed.'});continue;}
+    if(isHistoricalReview(work,attempt,proof,task,review,nativeHistory))continue;
     const status=attempt.outcome==='succeeded'?'completed':'failed';
     const expected=nativeMutationFingerprint('orchestration.taskUpdate',{id:attempt.nativeTaskId,status,result:task.result,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
     if(proof.payload_hash!==expected||task.run_id!==work.run.id||task.status!==status||review.workId!==work.id||review.token!==protocol.token||review.generation!==protocol.generation||review.taskKey!==attempt.taskKey||review.attemptId!==attempt.id||review.nativeTaskId!==attempt.nativeTaskId||review.dispatchId!==attempt.dispatchId||review.reviewToken!==(attempt.reviewAuthority?.reviewToken??attempt.reviewToken)||review.reviewerMemberId!==attempt.supervisorMemberId||!team.members.some(m=>m.id===attempt.memberId&&m.boss===review.reviewerMemberId)||!['accept','rework'].includes(review.decision)||!Array.isArray(review.evidenceRefs)||review.evidenceRefs.length>100||!review.evidenceRefs.includes(attempt.evidenceId)||review.evidenceRefs.some(ref=>typeof ref!=='string'||!ref||ref.length>2000)||typeof review.summary!=='string'||!review.summary.trim()||review.summary.length>8000){rejected.push({detail:'Supervisor review author, attempt or validation evidence is unverified.'});continue;}
@@ -112,7 +100,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   }
   const unmanaged=[];
   for(const task of tasks){
-   if(admitted.some(a=>a.nativeTaskId===task.id))continue;
+   if(admitted.some(a=>a.nativeTaskId===task.id)||isHistoricalControl(db,work,task,nativeHistory))continue;
    const spec=parse(task.spec),proof=receipts('orchestration.taskCreate',task.id);
    const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
    const control=((spec?.protocol==='team-delivery/v1'&&!work.parent)||(spec?.protocol==='team-questions/v1'&&['answer-ack','collaboration-directive','message-evidence','recovery-handoff','staffing-proposal','roster-ack',work.parent?'relay-question':'user-question'].includes(spec.kind)))&&spec.workId===work.id&&spec.token===protocol.token&&spec.generation===protocol.generation&&proof.length===1&&proof[0].payload_hash===expected&&proof[0].value?.task?.spec===task.spec&&proof[0].value.task.run_id===work.run.id&&(owner.kind!=='terminal'||task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.incarnationId&&task.created_by_run_generation===protocol.generation)&&!db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id);
@@ -120,7 +108,8 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   }
   // Every native Dispatch in this Run must belong to an exact app-admitted attempt.
   for(const d of db.prepare('SELECT id FROM dispatch_contexts WHERE run_id=?').all(work.run.id))if(!admitted.some(a=>a.dispatchId===d.id))unmanaged.push(d.id);
+  rejected.push(...changedRecordedControls(db,work,nativeHistory));
   return {state:'verified',intents,rejected,observations,reviews,deliveries,unmanaged};
+  });
  }catch(error){return {state:'unverified',detail:error.code?'Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime.':String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
- finally{if(db){try{db.exec('ROLLBACK');}catch{}db.close();}}
 }

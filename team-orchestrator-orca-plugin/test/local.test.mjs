@@ -189,3 +189,19 @@ test('bootstrap refuses an occupied non-inspector port without activating any pr
     assert.equal(report.code, 'port_conflict'); assert.equal(activated, false);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
+
+test('public worker aliases remain available while private broker operations are refused at both panel boundaries',async()=>{
+ const seen=[],bridge=createWorkerBridge(async(_, {teamWorker:m})=>{seen.push(m.args);return m.args.op==='ping'?{nonce:m.nonce,ready:true,platform:'darwin',workerPid:7}:m.args;},{nonce:()=> 'allowlist-test',spacingMs:0});
+ await bridge.connect();assert.equal((await bridge.call('workspace.readContext',{teamId:'team'})).op,'context');assert.deepEqual(await bridge.call('storage.get',{ignored:true}),{op:'load',params:{}});assert.equal((await bridge.call('receipt',{requestId:'saved'})).op,'receipt');
+ for(const op of ['_stopPrepare','_stopValidate','_stopSettle','_launchPrepare','_launchSettle','_nativePlan','constructor','toString'])await assert.rejects(bridge.call(op,{}),/Unknown worker operation/);
+ assert.equal(seen.length,4);
+ globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore();const handlers=new Map(),mainFrame={},sender={id:81,mainFrame,isDestroyed:()=>false};let invoked=0;
+ handlers.set('plugins:readPanelEntry',async()=>({sessionToken:'allowlist-panel'}));handlers.set('plugins:panelAction',async()=>({ok:true}));handlers.set('plugins:invokeCommand',async()=>{invoked++;return {};});
+ await installAdapter({ipcMain:{_invokeHandlers:handlers,handle:(name,fn)=>handlers.set(name,fn),removeHandler:name=>handlers.delete(name)}},{version:'test',identity:'allowlist-test',internalKey:'private-test-key'});
+ try{
+  for(const op of ['_stopPrepare','_stopValidate','_stopSettle','_launchPrepare','_launchSettle','_nativePlan','constructor','toString']){
+   const result=await handlers.get('plugins:panelAction')({sender,senderFrame:mainFrame},{sessionToken:'allowlist-panel',action:'workspace.readContext',params:{teamWorker:{protocol:1,nonce:'public-test',commandId:'team.control',args:{op,params:{}}}}});assert.equal(result.code,'invalid_params');
+  }
+  assert.equal(invoked,0);
+ }finally{globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore();}
+});

@@ -1,18 +1,21 @@
+import {createKeyedSerializer} from './keyed-serializer.mjs';
+import {latestBusinessAttempts} from './acceptance.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
 import { readNativeDispatchEvidence } from './native-dispatch.mjs';
 import { userMessage,accepted } from './dispatch.mjs';
 import { notifyQuestionEvent } from './questions.mjs';
 export function createLifecycleService({store,rpc,userData,consent,works,notify}){
- const queues=new Map();
- const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
+ const serialize=createKeyedSerializer();
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
  async function evidence(id){
   const work=store.readCurrentWork(id);if(!work||work.status==='completed')return null;
   const verified=await works.verifyWork(id,true,{allowSettledParent:true}),protocol=store.readDispatchProtocol(id);
   if(!protocol||protocol.generation!==work.run.consumerGeneration)throw Error('Supervisor delivery protocol is unavailable.');
-  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id),allowSettledParent:true});
+  const nativeHistory=store.readNativeHistory(id);
+  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id),allowSettledParent:true,nativeHistory});
   if(native.state!=='verified')throw Error(native.detail);
-  const questionEvidence=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(id)});
+  const questionEvidence=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(id),nativeHistory});
   return {work,verified,native,questionEvidence};
  }
  async function check(id){
@@ -31,7 +34,7 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
    if(input.decision==='accept')for(const child of store.listRunWorks(input.workId).filter(w=>w.parent)){
     const checked=await evidence(child.id);
     if(!checked||checked.questionEvidence.state!=='verified'||checked.questionEvidence.rejected.length||checked.native.unmanaged?.length||checked.native.rejected.length||checked.native.intents.length)throw Error('Descendant Run contains unresolved or unregistered native work.');
-    if(store.listDispatches(child.id).some(a=>a.status!=='accepted'||!checked.native.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId)))throw Error('Descendant execution or acceptance remains unverified.');
+    if(latestBusinessAttempts(store.listDispatches(child.id)).some(a=>a.status!=='accepted'||!checked.native.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId)))throw Error('Descendant execution or acceptance remains unverified.');
    }
    if(input.decision==='accept'&&row.native.intents.some(i=>!store.listDispatches(input.workId).some(a=>a.nativeTaskId===i.nativeTaskId)))throw Error('Native task awaits application admission.');
    if(input.decision==='accept'&&row.native.unmanaged?.length)throw Error('Unregistered native work requires confirmation before closure.');

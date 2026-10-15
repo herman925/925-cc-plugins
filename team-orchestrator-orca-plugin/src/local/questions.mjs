@@ -1,3 +1,4 @@
+import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {withNativeRuntime} from './native-runtime.mjs';
 import {createHash} from 'node:crypto';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
@@ -12,8 +13,8 @@ export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,bod
  return store.updateQuestionEvent(workId,id,{state});
 }
 export function createQuestionService({store,rpc,userData,consent,works,notify}) {
- const queues=new Map();
- const serial=(id,fn)=>{const p=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));queues.set(id,p);p.finally(()=>{if(queues.get(id)===p)queues.delete(id);}).catch(()=>{});return p;};
+ const serialize=createKeyedSerializer();
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
  const updateAnswer=(workId,id,answerId,patch)=>store.updateQuestion(workId,id,q=>{const a=q.answers.find(a=>a.id===answerId);if(!a)throw Error('Answer missing.');if(patch.state==='blocked'&&a.state!=='queued')return;Object.assign(a,patch);});
  async function evidence(workId){
   const {instance:owner,hostGeneration}=await works.verifyWork(workId,true),work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);

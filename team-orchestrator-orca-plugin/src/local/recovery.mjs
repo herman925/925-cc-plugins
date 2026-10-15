@@ -1,3 +1,4 @@
+import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {realpath} from 'node:fs/promises';
 import {join,relative,isAbsolute,sep} from 'node:path';
 import {withNativeRuntime} from './native-runtime.mjs';
@@ -23,8 +24,8 @@ export async function readSessionDeath(userData,sessionId,ownerFence,scope){
  }catch{return null;}finally{db?.close();}
 }
 export function createRecoveryService({store,rpc,userData,consent}){
- const queues=new Map();
- const serial=(key,action)=>{const pending=(queues.get(key)??Promise.resolve()).catch(()=>{}).then(action);queues.set(key,pending);pending.finally(()=>{if(queues.get(key)===pending)queues.delete(key);}).catch(()=>{});return pending;};
+ const serialize=createKeyedSerializer();
+ const serial=serialize;
  async function host(scope){
   if(!scope.executionHostId.startsWith('ssh:'))return null;
   const state=(await rpc('ssh.getState',{targetId:decodeURIComponent(scope.executionHostId.slice(4))}))?.state;
