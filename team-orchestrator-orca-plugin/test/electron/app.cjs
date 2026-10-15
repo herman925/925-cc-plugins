@@ -224,7 +224,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
     const w = nativeDb.prepare('SELECT * FROM worker_dispatches WHERE dispatch_id=?').get(params.dispatch);
     result = { dispatch: { id: d.id, runId: d.run_id, taskId: d.task_id, assigneeHandle: d.assignee_handle, assigneePaneKey: d.assignee_pane_key, processIncarnation: d.process_incarnation, hostScope: JSON.parse(d.host_scope), status: d.status }, worker: { dispatchId: d.id, worktreeId: w.worktree_id, agentTerminalHandle: w.agent_terminal_handle, state: w.state, runtimeEpoch: w.runtime_epoch, startOptions: JSON.parse(w.start_options) }, observation: { status: 'live', exactWorker: true }, projection: {} };
   }
-  else if (method === 'orchestration.taskList') { assert.ok(nativeDb.prepare('SELECT id FROM runs WHERE id=?').get(params.run)); assert.equal(params.from, undefined); result = { tasks: [{ id: 'task-' + params.run, run_id: params.run, status: 'pending', task_title: 'Fixture native task' }] }; }
+  else if (method === 'orchestration.taskList') { assert.ok(nativeDb.prepare('SELECT id FROM runs WHERE id=?').get(params.run)); assert.equal(params.from, undefined); result = { tasks: nativeDb.prepare('SELECT id,run_id,status FROM tasks WHERE run_id=?').all(params.run) }; }
   else throw Error('Unexpected runtime read ' + method);
   return result;
 }

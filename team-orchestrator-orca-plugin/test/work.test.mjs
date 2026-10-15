@@ -171,3 +171,9 @@ test('TeamWork observation cannot span runtime metadata rotation under the same 
  assert.equal(work.status,'needs_attention');assert.equal(work.input.state,'not_sent');assert.match(work.error,/epoch changed/);assert.deepEqual(methods,['status.get']);
  assert.equal(f.store.readWork(work.id).binding.runtimeId,'runtime-one');
 });
+test('two SQLite panel connections cannot settle an obsolete observation over a newer member record',async t=>{
+ const f=await fixture(t),second=await openTeamStore({userData:f.profile});t.after(()=>second.close());const observed=f.store.readOperation('launch');
+ second.settleOperation('launch',observed.nativeRequest.operationId,{recovery:{state:'confirmed_effect',observedAt:'newer'}},observed.version);
+ assert.throws(()=>f.store.settleOperation('launch',observed.nativeRequest.operationId,{recovery:{state:'stopped',observedAt:'older'}},observed.version),/changed|stale/);
+ assert.equal(f.store.readOperation('launch').recovery.observedAt,'newer');
+});

@@ -88,11 +88,13 @@ export function createRecoveryService({store,rpc,userData,consent}){
     for(const attempt of attempts){
      const found=native.observations.find(row=>row.id===attempt.id);
      let recovery={state:'unknown',liveness:'unknown',observedAt:stamp(),source:'native-dispatch-ledger',detail:found?.detail??'Native execution evidence is unavailable; the member remains reserved.'};
+     if(!tasks.tasks.some(task=>task.id===attempt.nativeTaskId)){observations.set(attempt.id,{recovery:{...recovery,detail:'Saved native Task is absent from this Run snapshot. Its execution and reservation remain unresolved.'}});continue;}
      if(found?.state!=='verified'){
       if(found?.state==='absent'&&attempt.permit.state==='not_sent')recovery={...recovery,state:'intent',detail:'Permit intent has not been sent. Native absence is not proof that an older execution stopped.'};
       observations.set(attempt.id,{recovery});continue;
      }
-     const matches=shown=>shown?.dispatch?.id===found.dispatchId&&shown.dispatch.runId===work.run.id&&shown.dispatch.taskId===attempt.nativeTaskId&&shown.dispatch.assigneeHandle===found.binding.handle&&shown.dispatch.assigneePaneKey===found.binding.paneKey&&shown.dispatch.processIncarnation===found.binding.incarnationId&&shown.worker?.dispatchId===found.dispatchId&&shown.worker.worktreeId===work.scope.workspaceId&&shown.worker.runtimeEpoch===found.binding.runtimeId;
+     const hostMatches=host=>work.scope.executionHostId==='local'?host?.kind==='local'&&host.hostId==='local':host?.kind==='ssh'&&`ssh:${encodeURIComponent(host.targetId)}`===work.scope.executionHostId;
+     const matches=shown=>hostMatches(shown?.dispatch?.hostScope)&&(shown.dispatch.creatorDispatchId??null)===(found.creatorDispatchId??null)&&shown?.dispatch?.id===found.dispatchId&&shown.dispatch.runId===work.run.id&&shown.dispatch.taskId===attempt.nativeTaskId&&shown.dispatch.assigneeHandle===found.binding.handle&&shown.dispatch.assigneePaneKey===found.binding.paneKey&&shown.dispatch.processIncarnation===found.binding.incarnationId&&shown.worker?.dispatchId===found.dispatchId&&shown.worker.worktreeId===work.scope.workspaceId&&shown.worker.runtimeEpoch===found.binding.runtimeId;
      // workerShow/Read can reconcile old native starting/stopping states into unknown.
      let shown=await rpc('orchestration.workerShow',{dispatch:found.dispatchId});
      if(!matches(shown))throw Error('Native worker identity changed; the saved attempt remains reserved.');
