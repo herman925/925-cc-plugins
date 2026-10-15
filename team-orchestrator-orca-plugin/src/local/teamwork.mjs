@@ -21,17 +21,21 @@ export function createWorkService({store,rpc,userData,consent}){
   if(state?.status!=='connected'||!Number.isSafeInteger(state.connectionGeneration)||(expected!=null&&state.connectionGeneration!==expected))throw Error('Saved SSH host disconnected or changed generation; existing intent remains reserved.');
   return state.connectionGeneration;
  }
- async function verify(work,forSend=false,{allowSettledParent=false}={}){
+ async function verify(work,forSend=false,{allowSettledParent=false,retirementRequestId}={}){
   if(work.status==='completed')throw Error('Completed TeamWork is sealed.');
   await consent();
   const binding=work.parent&&!work.recoveryRequestId?work.binding:store.readOperation(work.binding.requestId);let parentAssignee;
   if(work.parent){
    const parentWork=(store.readCurrentWork??store.readWork)(work.parent.workId),attempt=store.listDispatches(work.parent.workId).find(a=>a.id===work.parent.attemptId);
    if(!parentWork||!attempt||attempt.dispatchId!==work.parent.dispatchId||store.listDispatches(parentWork.id).filter(a=>a.taskKey===attempt.taskKey).at(-1)?.id!==attempt.id)throw Error('Parent manager attempt changed.');
-   await verify(parentWork,false,{allowSettledParent});
+   await verify(parentWork,false,{allowSettledParent,retirementRequestId});
    const proof=await readNativeParentEvidence(userData,{parentWork,attempt,active:!allowSettledParent});if(proof.state!=='verified')throw Error(proof.detail);parentAssignee=proof.assignee;
   }
-  if(!binding||((!work.parent||work.recoveryRequestId)&&!store.isActiveOperation(binding))||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
+  const retirement=retirementRequestId&&store.readWake(retirementRequestId),reserved=retirement?.mode==='idle-replacement'&&retirement.state==='replacing'&&retirement.oldBinding.requestId===binding?.requestId&&store.readMemberOperation(retirement.memberId)?.requestId===retirement.newInstance?.requestId;
+  // Only the private read-only pre-launch check may inspect the retired owner. Normal input
+  // and admission still require the current active recipient and cannot use this exception.
+  if(reserved){if(forSend)throw Error('Retired supervisor cannot receive input.');store.assertReplacementIdle(retirement.memberId);}
+  if(!binding||((!work.parent||work.recoveryRequestId)&&!store.isActiveOperation(binding)&&!reserved)||binding.status!=='created'||['memberId','teamId','kind','handle','sessionId','runtimeId'].some(key=>binding[key]!==work.binding[key])||binding.scope?.workspaceKey!==work.scope.workspaceKey)throw Error('Saved supervisor binding changed; no objective can be redirected.');
   const status=await rpc('status.get');
   if(status?.runtimeId!==binding.runtimeId||!status.capabilities?.includes('orchestration.contract.v1'))throw Error('The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.');
   const selected=(await rpc('worktree.show',{worktree:work.scope.workspaceId.startsWith('folder:')?work.scope.workspaceId:`id:${work.scope.workspaceId}`}))?.worktree;

@@ -1,19 +1,19 @@
 import {resumedOwner} from './wake-evidence.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
 // This proves safe application retirement, never native process death.
-export async function verifyIdleReplacement({store,rpc,userData,works,operation}){
+export async function verifyIdleReplacement({store,rpc,userData,works,operation,retirementRequestId}){
  const op=operation,root=store.listCurrentWorks().find(w=>w.teamId===op.teamId&&w.status!=='completed'),contexts=root?(store.listRunWorks?.(root.id)??[root]):[];
  store.assertReplacementIdle(op.memberId);
  for(const context of contexts){
   if(!works)throw Error('Current native execution evidence is required before idle replacement.');
-  const verified=await works.verifyWork(context.id,true,{allowSettledParent:true}),team=store.effectiveTeamForWork?.(context.id)??store.readTeamVersion(context.teamId,context.configVersion),attempts=store.listDispatches(context.id);
+  const verified=await works.verifyWork(context.id,false,{allowSettledParent:true,retirementRequestId}),team=store.effectiveTeamForWork?.(context.id)??store.readTeamVersion(context.teamId,context.configVersion),attempts=store.listDispatches(context.id);
   const evidence=await readNativeDispatchEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),team,owner:verified.instance,admitted:attempts});
   if(evidence.state!=='verified'||evidence.unmanaged?.length||evidence.rejected.length||evidence.intents.some(i=>i.spec.memberId===op.memberId||context.supervisorMemberId===op.memberId))throw Error('Native unadmitted or unknown execution prevents idle replacement.');
   for(const a of attempts.filter(a=>a.memberId===op.memberId||a.supervisorMemberId===op.memberId))if(!evidence.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId))throw Error('Accepted execution evidence changed; idle replacement is blocked.');
   await works.verifyHost(context.id,verified.hostGeneration);
  }
  if(op.kind==='structured'){
-  const fence=op.observation?.ownerFence;
+  const fence=contexts.find(w=>w.supervisorMemberId===op.memberId&&w.binding.requestId===op.requestId)?.instance?.fence??op.observation?.ownerFence;
   const owner=await resumedOwner(userData,op,0),history=await rpc('agentSession.history',{sessionId:op.sessionId,direction:'tail',limit:1}),p=history?.page;
   if(!Number.isSafeInteger(fence)||owner?.fence!==fence||history?.ok!==true||p?.sessionId!==op.sessionId||p.fence!==fence||p.latestTurn?.turn?.state!=='completed'||p.backgroundTasks!==null||!Array.isArray(p.queuedMessages)||p.queuedMessages.length||!Array.isArray(p.submissions)||p.submissions.some(s=>['pending','unknown','dispatching'].includes(s.dispatchState))||(await resumedOwner(userData,op,0))?.fence!==fence)throw Error('Current native idle turn, empty queue and owner fence are required; unknown execution needs exact stop.');
   return {kind:'confirmed-idle-app-retirement',ownerFence:fence,turnId:p.latestTurn.itemId};

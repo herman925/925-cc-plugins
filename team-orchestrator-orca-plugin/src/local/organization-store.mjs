@@ -12,7 +12,7 @@ function reorganize(team,changes){
  const ordered=[],visited=new Set();
  function visit(member,level){if(level>3||visited.has(member.id))throw Error('Reporting tree has a cycle or unsupported depth.');visited.add(member.id);member.level=level;ordered.push(member);for(const child of members.filter(m=>m.boss===member.id))visit(child,level+1);}
  visit(heads[0],1);if(ordered.length!==members.length)throw Error('Reporting tree has a cycle, removed parent or foreign supervisor.');
- for(const m of ordered){const previous=team.members.find(p=>p.id===m.id);if(m.boss!==previous.boss||m.level!==previous.level)m.roleVersion++;}
+ for(const m of ordered){const previous=team.members.find(p=>p.id===m.id);if(m.boss!==null&&ordered.some(c=>c.boss===m.id)&&m.role==='worker')m.role='lead';if(m.boss!==previous.boss||m.level!==previous.level||m.role!==previous.role)m.roleVersion++;}
  return ordered;
 }
 export function organizationStore({db,readPrivate,putPrivate,atomic,readSnapshot,write,readWork,archive,validate}){

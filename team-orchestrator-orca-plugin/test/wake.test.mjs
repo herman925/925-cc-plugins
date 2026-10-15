@@ -117,3 +117,24 @@ for(const agent of ['codex','claude'])test(`${agent} idle replacement retires on
  f.store.settleOperation('launch',f.op.nativeRequest.operationId,{warning:'late old evidence'});assert.equal(f.store.readMemberOperation(f.member.id).requestId,fresh.operation.requestId);
  idle=false;await assert.rejects(service.validateFresh(row.requestId),/idle|execution/);
 });
+test('active supervisor idle retirement rechecks its original native authority before launch without reviving old send authority',async t=>{
+ const f=await questionFixture(t),op=f.store.readOperation('launch');const db=new DatabaseSync(join(f.profile,'agent-session-journal.db'));t.after(()=>db.close());db.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');db.prepare('INSERT INTO agent_session_records VALUES(?,?)').run(op.sessionId,JSON.stringify({schemaVersion:2,sessionId:op.sessionId,provider:'codex',location:op.scope,lease:{sessionId:op.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'owner'}}}));
+ const rpc=async(method,params,envelope)=>method==='agentSession.history'?{ok:true,page:{sessionId:op.sessionId,fence:7,latestTurn:{itemId:'done-turn',turn:{state:'completed'}},backgroundTasks:null,queuedMessages:[],submissions:[]}}:f.rpc(method,params,envelope);
+ const service=createWakeService({store:f.store,rpc,userData:f.profile,works:f.works,consent:async()=>{}});
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ const input={requestId:'active-idle',teamId:f.team.id,memberId:f.team.members[0].id,bindingRequestId:'launch',expectedRevision:f.store.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Review the existing native Run and preserve the objective.',evidenceRefs:['run-head']};
+ await service.requestReplacement(input);await service.prepareFresh(input.requestId);await service.validateFresh(input.requestId);
+ await assert.rejects(f.works.verifyWork(f.work.id,true),/binding changed/);assert.throws(()=>f.store.assertAdmission(f.team.id,f.member.id),/replacement/);
+ assert.equal(f.store.readWork(f.work.id).binding.requestId,'launch');assert.equal(f.store.readWake(input.requestId).state,'replacing');
+});
+test('unknown Stop and queued or unreviewed attempts cannot be discharged by idle replacement',async t=>{
+ const f=await fixture(t);f.store.prepareStop({requestId:'unknown-stop'},{memberId:f.member.id,teamId:f.team.id,operationRequestId:'launch',instanceGeneration:1});
+ const rpc=async(method,params)=>method==='agentSession.history'?{ok:true,page:{sessionId:f.op.sessionId,fence:7,latestTurn:{turn:{state:'completed'}},backgroundTasks:null,queuedMessages:[],submissions:[]}}:f.rpc(method,params),service=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ await assert.rejects(service.requestReplacement({...f.input,expectedRevision:f.store.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'A requested change',evidenceRefs:['history']}),/Unresolved Stop/);
+ assert.equal(f.store.readSnapshot().teams[0].configVersion,1);assert.equal(f.store.readMemberOperation(f.member.id).requestId,'launch');
+});
+test('fresh handoff uses saved updated role while retaining old launch role provenance',async t=>{
+ const f=await fixture(t);f.dead=true;f.outcome='refused';await f.service.wake(f.input);const row=f.store.readWake('wake-1');await f.service.decide({requestId:row.requestId,version:row.version,decision:'replace',summary:'Read the saved role before taking over.',evidenceRefs:['role-update']});
+ f.store.updateRole({requestId:'new-role',expectedRevision:f.store.readSnapshot().revision,teamId:f.team.id,memberId:f.member.id,brief:'CURRENT ROLE CHECKS',habits:'Verify results',collaboration:'Direct manager only'});
+ const fresh=await f.service.prepareFresh(row.requestId);assert.equal(fresh.operation.roleVersion,2);assert.equal(fresh.operation.configVersion,2);assert.match(fresh.operation.nativeRequest.prompt.text,/CURRENT ROLE CHECKS/);assert.equal(f.store.readOperation('launch').roleVersion,1);
+});
