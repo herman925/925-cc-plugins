@@ -39,10 +39,10 @@ export async function installAdapter(electron, { version, identity }) {
     try {
       const message = call.params.teamWorker;
       if (message.protocol !== 1 || typeof message.nonce !== 'string' || !message.nonce || message.nonce.length > 128 || !['team.control', 'team.initialise'].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > 60000) return { ok: false, code: 'invalid_params', error: 'Invalid worker command envelope.' };
-      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'save', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
+      if (message.commandId === 'team.control' && !['ping', 'context', 'load', 'createTeam', 'updateRole', 'updateSettings', 'beginLaunch', 'start', 'receipt'].includes(message.args?.op)) return { ok: false, code: 'invalid_params', error: 'Unknown worker operation.' };
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;
-      if (['context', 'start'].includes(message.args?.op)) {
+      if (message.args?.op === 'context' && !message.args?.params?.teamId) {
         const session = handlers.get('session:get');
         if (typeof session !== 'function') throw new Error('Orca has no compatible desktop workspace selection handler.');
         workspaceId = (await session(event))?.activeWorktreeId;

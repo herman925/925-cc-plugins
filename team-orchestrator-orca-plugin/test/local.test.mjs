@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectorFuse, packageType } from '../src/local/bootstrap.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
+import { openTeamStore } from '../src/local/store.mjs';
+import { DEFAULT_FORM } from '../src/team.mjs';
+import { memberLaunch } from '../src/launch.mjs';
 import { createExecutor } from '../src/local/executor.mjs';
 import { startupCommand } from '../src/local/startup-command.mjs';
 import { createCliRunner, locateCli, cliEnvironment } from '../src/local/cli.mjs';
@@ -52,24 +55,30 @@ test('adapter binds only its panel, preserves consent/owner gates, captures desk
   await handlers.get('plugins:setEnabled')(event, { pluginKey: 'herman925.team-orchestrator', enabled: false });
   assert.equal(handlers.get('plugins:panelAction'), original);
 });
-function executorFixture({ modern = true, failure, workspaceId = 'repo::/server/project' } = {}) {
-  const data = new Map(); const calls = []; let creates = 0;
-  const host = { call: async (method, { key, value }) => { if (method === 'storage.get') return { value: data.get(key) }; data.set(key, structuredClone(value)); return { ok: true }; } };
+async function executorFixture(t, { modern = true, failure, workspaceId = 'repo::/server/project' } = {}) {
+  const profile = await mkdtemp(join(tmpdir(), 'executor-')); const store = await openTeamStore({ userData: profile });
+  t.after(async () => { store.close(); await rm(profile, { recursive: true, force: true }); });
+  const data = { get: key => store.readReceipt(key) }; const calls = []; let creates = 0;
+  const host = { call: async () => { throw Error('Legacy KV access is forbidden'); } };
   const cli = async args => {
     calls.push(args);
-    if (args[0] === 'worktree') return { worktree: { id: workspaceId, displayName: 'Server', path: '/server/project' } };
+    if (args[0] === 'worktree') return { worktree: { id: workspaceId, displayName: 'Server', path: '/server/project', hostId: 'ssh:server' } };
     if (args[0] === 'agent-context') return { commands: [{ command: modern ? 'agent launch' : 'terminal create', flags: ['shell'] }] };
     if (args[1] === 'launch' || args[1] === 'create') { creates++; if (failure === 'create') throw new Error('transport unknown'); return modern ? { outcome: { handle: 'child-1' }, prompt: { outcome: 'handed-to-terminal' } } : { terminal: { handle: 'child-1' } }; }
     if (args[1] === 'rename' && failure === 'rename') throw new Error('rename failed');
     if (args[1] === 'show') return { terminal: { title: 'Squad/Head', executionHostId: 'ssh:server' } };
     return {};
   };
-  const executor = createExecutor(host, cli);
-  const params = { requestId: 'team-head-1', workspaceKey: digest(workspaceId), agent: 'codex', title: 'Squad/Head', model: 'gpt-6.1-sol', effort: 'high', brief: 'Head role\nWorkers: W1 W2 W3' };
-  return { executor, data, calls, params, workspaceId, count: () => creates };
+  const scope = { workspaceId, executionHostId: 'ssh:server', kind: 'git', displayName: 'Server', workspaceKey: digest(JSON.stringify([workspaceId, 'ssh:server'])) };
+  const state = store.createTeam({ requestId: 'create', expectedRevision: 0, form: { ...DEFAULT_FORM, models: ['gpt-6.1-sol','default','default'], efforts: ['high','default','default'] } }, scope);
+  const team = state.teams[0];
+  store.beginLaunch({ requestId: 'begin', expectedRevision: 1, teamId: team.id, mode: 'on-demand' });
+  const executor = createExecutor(host, cli, { store });
+  const params = memberLaunch(team, team.members[0], scope.workspaceKey);
+  return { executor, store, data, calls, params, workspaceId, count: () => creates };
 }
-test('executor journals before background launch, preserves real handles, fences workspace and replays without duplication', async () => {
-  const f = executorFixture();
+test('executor journals before background launch, preserves real handles, fences scope and replays without duplication', async t => {
+  const f = await executorFixture(t);
   const request = { op: 'start', params: f.params, workspaceId: f.workspaceId };
   const results = await Promise.all([f.executor.execute(request), f.executor.execute(request)]);
   assert.ok(results.every(row => row.status === 'starting'));
@@ -79,24 +88,24 @@ test('executor journals before background launch, preserves real handles, fences
   assert.equal(f.calls[0][3], 'id:repo::/server/project');
   await f.executor.execute(request); assert.equal(f.count(), 1);
   await assert.rejects(f.executor.execute({ ...request, params: { ...f.params, agent: 'claude' } }), /conflicts/);
-  await assert.rejects(f.executor.execute({ ...request, params: { ...f.params, requestId: 'another', workspaceKey: 'a'.repeat(64) } }), /workspace changed/);
+  await assert.rejects(f.executor.execute({ ...request, params: { ...f.params, workspaceKey: 'a'.repeat(64) } }), /conflicts/);
   assert.equal(f.count(), 1);
-  const restarted = createExecutor({ call: async (_, { key }) => ({ value: f.data.get(key) }) }, async () => { throw Error('must not spawn'); });
+  const restarted = createExecutor({}, async () => { throw Error('must not spawn'); }, { store: f.store });
   assert.equal((await restarted.execute(request)).status, 'created');
 });
-for (const failure of ['create', 'rename']) test(`executor retains ${failure} failure evidence and never repeats the spawn`, async () => {
-  const f = executorFixture({ failure }); const request = { op: 'start', params: f.params, workspaceId: f.workspaceId };
+for (const failure of ['create', 'rename']) test(`executor retains ${failure} failure evidence and never repeats the spawn`, async t => {
+  const f = await executorFixture(t, { failure }); const request = { op: 'start', params: f.params, workspaceId: f.workspaceId };
   await f.executor.execute(request); await f.executor.settle();
   const receipt = f.data.get('launch:' + f.params.requestId);
   assert.equal(receipt.status, failure === 'create' ? 'unknown' : 'created');
   assert.match(receipt.warning || receipt.error, new RegExp(failure === 'create' ? 'transport' : 'rename'));
   await f.executor.execute(request); assert.equal(f.count(), 1);
 });
-test('legacy CLI creates a named agent carrying its initial prompt, with no send to existing terminals', async () => {
-  const f = executorFixture({ modern: false });
+test('legacy CLI creates a named agent carrying its initial prompt, with no send to existing terminals', async t => {
+  const f = await executorFixture(t, { modern: false });
   await f.executor.execute({ op: 'start', params: f.params, workspaceId: f.workspaceId }); await f.executor.settle();
   const call = f.calls.find(args => args[1] === 'create');
-  assert.equal(call[5], 'Squad/Head'); assert.match(call[7], /codex.*model_reasoning_effort=high.*Head role Workers/);
+  assert.equal(call[5], 'Squad/Head'); assert.match(call[7], /codex.*model_reasoning_effort=high/);
   assert.ok(f.calls.every(args => args[1] !== 'send'));
 });
 test('POSIX startup quoting keeps hostile text in one inert prompt argument and detects Windows quoting', () => {
