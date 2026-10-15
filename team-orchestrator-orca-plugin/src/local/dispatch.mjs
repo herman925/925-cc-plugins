@@ -7,14 +7,14 @@ export function dispatchInstructions(work,team,protocol) {
  const children=team.members.filter(row=>row.boss===work.supervisorMemberId).map(row=>({memberId:row.id,name:row.name,agent:row.agent,model:row.model,effort:row.effort,roleVersion:row.roleVersion,role:{brief:row.brief,habits:row.habits,collaboration:row.collaboration}}));
  return 'TEAM_DISPATCH_PROTOCOL\n'+JSON.stringify({protocol:'team-dispatch/v1',workId:work.id,token:protocol.token,generation:protocol.generation,configVersion:work.configVersion,runId:work.run.id,children,instructions:'You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction. Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Results await your later separate acceptance protocol.'});
 }
-function userMessage(work,instance,text){
+export function userMessage(work,instance,text){
  if(work.binding.kind==='structured'){
   const body={kind:'message',role:'user',blocks:[{type:'text',text}]},sessionId=work.binding.sessionId;
   return {method:'agentSession.send',params:{envelope:{sessionId,clientOperationId:`${Date.now()}-${randomBytes(16).toString('hex')}`,expectedRuntimeFence:instance.fence,payloadFingerprint:sendFingerprint(sessionId,body)},body},envelope:{}};
  }
  return {method:'terminal.send',params:{terminal:work.binding.handle,text,enter:true,agentPrompt:true,waitSubmitMs:1000,client:{id:'team-orchestrator',type:'desktop'}},envelope:{orchestrationRequestId:randomUUID()}};
 }
-function accepted(receipt,send,instance){
+export function accepted(receipt,send,instance){
  if(send.method==='agentSession.send')return receipt?.ok===true&&receipt.value?.clientMessageId===send.params.envelope.clientOperationId&&['pending','accepted'].includes(receipt.value.submission?.dispatchState);
  return receipt?.send?.accepted===true&&receipt.send.handle===instance.handle&&receipt.send.prompt?.requestId===send.envelope.orchestrationRequestId&&receipt.send.prompt.processIncarnation===instance.incarnationId;
 }

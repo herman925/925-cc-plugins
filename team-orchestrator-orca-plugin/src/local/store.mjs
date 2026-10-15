@@ -1,3 +1,4 @@
+import { questionStore } from './questions-store.mjs';
 import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
@@ -68,11 +69,12 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const listDispatches = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch:%'").all().map(row=>validateDispatch(JSON.parse(row.json))).filter(row=>!workId||row.workId===workId);
     const dispatchProjection = workId => ({dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
+    const questions = questionStore({db,readPrivate,putPrivate,readWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id)})) };
+      return { ...validatePersistentState(value), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id)})) };
     };
     readSnapshot();
     const write = ({ works, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
@@ -113,6 +115,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     };
     let closed = false;
     return {
+      ...questions,
       readOperation,
       readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
