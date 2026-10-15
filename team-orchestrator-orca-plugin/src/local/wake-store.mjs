@@ -2,7 +2,7 @@ import {publicOperation} from './native-launch.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export const publicWake=row=>{if(!row)return null;const {oldBinding,nativeAction,fingerprint,managerRequest,...value}=row;return {...value,...(managerRequest?{managerRequest:{state:managerRequest.state,reviewer:managerRequest.reviewer}}:{}),oldRequestId:oldBinding.requestId,oldInstanceGeneration:oldBinding.instanceGeneration??1};};
-export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persistOperation,readWork,persistWork,readCurrentWork}){
+export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persistOperation,readWork,persistWork,readCurrentWork,replacementTeam,assertReplacementIdle}){
  function currentPointer(old){
   const pointer=readPrivate(`binding:${old.memberId}`);if(!old.sourceAttemptId)return pointer;
   if(pointer?.requestId!==old.sourceOperationRequestId)return null;
@@ -41,11 +41,19 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
    const protocol=readPrivate(`dispatch-protocol:${workId}`);if(protocol){putPrivate(`dispatch-protocol-history:${workId}:${protocol.token}`,protocol);db.prepare('DELETE FROM receipts WHERE id=?').run(`dispatch-protocol:${workId}`);}
    row.state='bound';row.newInstance={...row.newInstance,workId,runId:run.id,consumerGeneration:run.consumerGeneration};row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);return row;
   });},
+  finishIdleReplacement(id){return atomic(()=>{
+   const row=readWake(id),op=row?.newInstance&&readOperation(row.newInstance.requestId);
+   if(row?.mode!=='idle-replacement'||row.state!=='replacing'||op?.status!=='created')return row;
+   const pointer=readPrivate(`binding:${row.memberId}`);if(pointer?.requestId!==op.requestId)throw Error('Current replacement binding changed.');
+   assertReplacementIdle(row.memberId);row.state='bound';row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);return row;
+  });},
   prepareWakeReplacement(id,version,intent){return atomic(()=>{
    const row=readWake(id);if(!row||row.version!==version||row.state!=='approved'||!row.handoff)throw Error('A checked handoff decision is required.');
    const old=row.oldBinding,pointer=currentPointer(old);
    if(pointer?.requestId!==old.requestId||(pointer.instanceGeneration??1)!==(old.instanceGeneration??1))throw Error('Member binding changed before replacement.');
-   const operation={...intent,requestId:`replace-${id}`,memberId:old.memberId,teamId:old.teamId,configVersion:old.configVersion,status:'unknown',effectState:'intent',instanceGeneration:(old.instanceGeneration??1)+1,version:1,replaces:old.requestId,wakeRequestId:id,createdAt:new Date().toISOString()};operation.public=publicOperation(operation);
+   if(row.mode==='idle-replacement')assertReplacementIdle(old.memberId);
+   const team=replacementTeam(old.teamId),member=team?.members.find(m=>m.id===old.memberId);if(!member||intent.configVersion!==team.configVersion||intent.roleVersion!==member.roleVersion)throw Error('Replacement configuration changed; review the saved handoff again.');
+   const operation={...intent,requestId:`replace-${id}`,memberId:old.memberId,teamId:old.teamId,configVersion:intent.configVersion,status:'unknown',effectState:'intent',instanceGeneration:(old.instanceGeneration??1)+1,version:1,replaces:old.requestId,wakeRequestId:id,createdAt:new Date().toISOString()};operation.public=publicOperation(operation);
    putPrivate(`binding-generation:${old.memberId}`,{generation:operation.instanceGeneration});putPrivate(`binding:${old.memberId}`,{requestId:operation.requestId,instanceGeneration:operation.instanceGeneration});persistOperation(operation);updateRecipients(old,operation);
    row.state='replacing';row.newInstance={requestId:operation.requestId,instanceGeneration:operation.instanceGeneration};row.version++;putPrivate(`wake:${id}`,row);return {operation,fresh:true};
   });},
