@@ -1,3 +1,5 @@
+import { createNativeRpc } from './native-runtime.mjs';
+import { createWorkService } from './teamwork.mjs';
 import { readNativeLaunchLedger } from './native-launch-ledger.mjs';
 import { preferenceIssue } from '../capabilities.mjs';
 import { timingSafeEqual } from 'node:crypto';
@@ -5,7 +7,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { launchInput, nativeLaunchIntent, launchReceipt, publicOperation } from './native-launch.mjs';
 import { parseTeamTemplate } from '../templates.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-export function createExecutor(host, cli, { store, internalKey, userData } = {}) {
+export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc } = {}) {
+  const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
+  const works = createWorkService({ store, userData, consent, rpc: nativeRpc ?? createNativeRpc({ userData, parentPid, consent }) });
+  let workTimer, polling = false, stopped = false;
+  const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
+  async function resumeWork() {
+    if (polling || stopped) return;
+    polling = true;
+    try {
+      if (!store.listWorks().some(work => work.input.state !== 'not_sent' && work.run.state !== 'fenced')) return;
+      await consent(); await works.reconcile(); scheduleWork();
+    } catch { stopped = true; }
+    finally { polling = false; }
+  }
   const selections = new Map();
   const observations = new Map(), capabilities = new Map(), latestObservation = new Map();
   const previews = new Map();
@@ -51,6 +66,8 @@ export function createExecutor(host, cli, { store, internalKey, userData } = {})
     return store.settleOperation(operation.requestId, operation.nativeRequest.operationId, { ...patch, public: publicValue });
   };
   return {
+    resumeWork,
+    stopWork() { stopped = true; clearTimeout(workTimer); workTimer = null; },
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
@@ -136,6 +153,12 @@ export function createExecutor(host, cli, { store, internalKey, userData } = {})
           return params.value;
         }
         throw Error('Unknown internal observation phase.');
+      }
+      if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
+        if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');
+        const work = op === 'submitWork' ? await works.submit(params) : op === 'checkWork' ? await works.check(params.workId) : await works.retry(params.workId);
+        stopped = false; scheduleWork();
+        return { value: store.readSnapshot(), work };
       }
       if (op === 'updateAgentPreferences') {
         const replay = store.replay(op, params); if (replay) return { value: replay };

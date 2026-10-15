@@ -10,6 +10,15 @@ export default function activate(orca) {
   let executorPromise;
   let storePromise;
   let storeProfile;
+  const executorFor = async report => {
+    if (storeProfile && storeProfile !== report.cliPaths.userData) throw new Error('Orca profile changed; restart the plugin worker before continuing.');
+    storeProfile = report.cliPaths.userData;
+    storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
+    executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
+      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid }))
+      .catch(error => { executorPromise = null; throw error; });
+    return executorPromise;
+  };
   const publicReport = ({ cliPaths, internalKey: ignoredKey, ...report }) => report;
   // Register immediately: Orca's worker ready deadline is shorter than a bootstrap attempt.
   const initialise = () => {
@@ -20,6 +29,7 @@ export default function activate(orca) {
       await orca.host.call('storage.get', { key: 'team-definitions-v1' });
       const report = await bootstrap({ version: __PLUGIN_DISPLAY_VERSION__, internalKey });
       orca.log(report.detail);
+      if (report.ready) void executorFor(report).then(executor => executor.resumeWork()).catch(() => orca.log('Team storage or pending work is unavailable; inspect the panel recovery details.'));
       return report;
     }).catch(error => {
       ready = null;
@@ -34,13 +44,7 @@ export default function activate(orca) {
     if (!args || args.op === 'ping') return { nonce: args?.nonce, ...publicReport(report), workerPid: process.pid };
     if (!report.ready) throw new Error(report.detail);
     if (!report.cliPaths) throw new Error('Orca bootstrap did not resolve the local runtime profile. Retry Initialise local adapter.');
-    if (storeProfile && storeProfile !== report.cliPaths.userData) throw new Error('Orca profile changed; restart the plugin worker before continuing.');
-    storeProfile = report.cliPaths.userData;
-    storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
-    executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
-      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile }))
-      .catch(error => { executorPromise = null; throw error; });
-    return (await executorPromise).execute(args);
+    return (await executorFor(report)).execute(args);
   });
   for (const event of ['worktree.created', 'agent.status.changed']) orca.events.on(event, () => initialise());
   // A subscribed event or the Initialise command starts this lazy worker.

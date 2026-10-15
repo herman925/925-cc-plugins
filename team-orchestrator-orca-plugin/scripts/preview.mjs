@@ -1,6 +1,7 @@
 import { mediateOperation } from '../src/local/native-broker.mjs';
 // Development/test host only: real plugin persistence/service, fake Orca boundary.
 import http from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +20,12 @@ async function fixture(id, mode) {
       throw Error('CLI launch fallback is forbidden');
     };
     const internalKey = `fixture-${id}`;
-    const executor = createExecutor({}, cli, { store, internalKey, userData: profile });
-    const runtime = async (method, params) => {
-      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+    let executor; const history = new Map(); const agents = new Map();
+    const nativeDb = new DatabaseSync(join(profile, 'orchestration.db'));
+    nativeDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER); PRAGMA user_version=43');
+    const runtime = async (method, params, envelope) => {
+      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];
@@ -34,19 +38,36 @@ async function fixture(id, mode) {
         if (mode === 'partial' || mode === 'launch-unknown') throw Error('Agent launch outcome unknown');
         const structured = mode === 'structured';
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
-        launches.set(params.operationId, result); if (structured) sessionIds.add(result.outcome.sessionId); return result;
+        launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); return result;
       }
       const launch = [...launches.values()].find(row => row.outcome.handle === params?.terminal || row.outcome.sessionId === params?.sessionId);
-      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId } }; }
+      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
       if (method === 'terminal.rename') { title = params.title; return { rename: { handle: params.terminal, title, tabId: 'tab-1' } }; }
       if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'permission' ? 'permission' : 'idle' } };
       if (method === 'terminal.focus') return { focus: { handle: params.terminal } };
       if (method === 'orchestration.sessionAddress') return { orcaSessionId: `orca_session_id:${params.sessionId}` };
       if (method === 'orchestration.partyLocation') { const sessionId = params.address.slice('orca_session_id:'.length), row = [...launches.values()].find(row => row.outcome.sessionId === sessionId); return { location: row ? { kind: 'chat', sessionId, worktreeId: row.worktreeId } : null }; }
       if (method === 'agentSession.reveal' && launch) return { ok: true, sessionId: params.sessionId, workspaceId: launch.worktreeId, agent: 'codex', readable: true };
+      if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...history.get(params.sessionId) } };
+      if (method === 'agentSession.send' || method === 'terminal.send') {
+        const work = store.listWorks().find(row => row.input.state === 'sending' && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
+        if (!work) throw Error('No durable objective intent');
+        const instance = work.instance;
+        if (mode !== 'objective-no-run') nativeDb.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)').run('run-' + work.id, work.nativeObjective, 'this_database', instance.kind === 'terminal' ? instance.handle : null, instance.paneKey ?? null, instance.kind === 'structured' ? instance.sessionId : null, 1, 1, 0);
+        if (mode === 'objective-unknown') throw Error('Objective delivery outcome unknown');
+        if (method === 'agentSession.send') {
+          const messageId = params.envelope.clientOperationId;
+          history.set(params.envelope.sessionId, { submissions: [{ clientMessageId: messageId, dispatchState: 'accepted', providerItemId: 'provider-item' }], latestTurn: { turn: { userItemId: 'orca:' + messageId, turnId: 'turn-one', state: 'running' } } });
+          return { ok: true, fence: 7, value: { clientMessageId: messageId, submission: { clientMessageId: messageId, dispatchState: 'pending', providerItemId: null } } };
+        }
+        return { send: { handle: params.terminal, accepted: true, prompt: { requestId: envelope.orchestrationRequestId, processIncarnation: instance.incarnationId, stages: ['input_accepted', 'turn_started'], observation: 'supported' } } };
+      }
+      if (method === 'orchestration.runShow') return { run: nativeDb.prepare('SELECT id,objective,consumer_generation FROM runs WHERE id=?').get(params.id) };
+      if (method === 'orchestration.taskList') return { tasks: [] };
       throw Error('Unknown fixture read');
     };
-    return { profile, store, executor, async mediate(op, input) {
+    executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
+    return { profile, store, executor, nativeDb, async mediate(op, input) {
       const result = await mediateOperation({ op, input, invoke: args => executor.execute({ ...args, internalKey }), rpc: runtime, authority: async () => {} });
       return result.value;
     } };
@@ -96,6 +117,6 @@ http.createServer(async (req, res) => {
   else { res.writeHead(404); res.end(); }
 }).listen(port, '127.0.0.1', () => console.log(`Sandbox test host: http://127.0.0.1:${port}`));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
-  for (const promise of fixtures.values()) { const f = await promise; f.store.close(); await rm(f.profile, { recursive: true, force: true }); }
+  for (const promise of fixtures.values()) { const f = await promise; f.executor.stopWork(); f.nativeDb.close(); f.store.close(); await rm(f.profile, { recursive: true, force: true }); }
   process.exit(0);
 });
