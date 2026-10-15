@@ -75,6 +75,8 @@ try {
   assert.deepEqual(before.RestartResumeParams.parse({sessionIds:['saved-session']}),{sessionIds:['saved-session']});
   for(const agent of ['codex','claude'])assert.equal(before.EnsureAgentSessionParams.safeParse({kind:'explicit',worktree:'id:saved-workspace',agent,providerSession:{key:'session_id',id:'native-provider-id'}}).success,true);
   assert.equal(before.EnsureAgentSessionParams.safeParse({kind:'explicit',worktree:'id:saved-workspace',agent:'codex',providerSession:{key:'session_id',id:'-guessed'}}).success,false);
+  const idleWire=await source(join(root,'src/shared/agent-session-wire.ts')),turnTypes=await source(join(root,'src/shared/agent-session-journal-types.ts'));
+  assert.match(idleWire,/latestTurn\?: AgentSessionLatestTurn \| null/);assert.match(idleWire,/queuedMessages\?: AgentSessionQueuedMessage\[\] \| null/);assert.match(idleWire,/backgroundTasks\?: AgentSessionBackgroundTaskState \| null/);assert.match(turnTypes,/'running',[\s\S]*'completed',[\s\S]*'interrupted',[\s\S]*'unverifiable'/);
   const restartSource=await source(join(root,'src/main/runtime/rpc/methods/structured-agent-session-restart-resume.ts'));
   assert.match(restartSource,/name: 'agentSession.restartResume'[\s\S]*return \{ results: \[\] \}/);
   assert.match(restartSource,/name: 'agentSession.restartContinue'[\s\S]*continueAfterRestart\(\s*params.sessionIds/);

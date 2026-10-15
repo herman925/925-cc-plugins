@@ -1,3 +1,4 @@
+import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {resumedOwner} from './wake-evidence.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
 // This proves safe application retirement, never native process death.
@@ -10,6 +11,8 @@ export async function verifyIdleReplacement({store,rpc,userData,works,operation,
   const evidence=await readNativeDispatchEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),team,owner:verified.instance,admitted:attempts});
   if(evidence.state!=='verified'||evidence.unmanaged?.length||evidence.rejected.length||evidence.intents.some(i=>i.spec.memberId===op.memberId||context.supervisorMemberId===op.memberId))throw Error('Native unadmitted or unknown execution prevents idle replacement.');
   for(const a of attempts.filter(a=>a.memberId===op.memberId||a.supervisorMemberId===op.memberId))if(!evidence.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId))throw Error('Accepted execution evidence changed; idle replacement is blocked.');
+  const questions=await readNativeQuestionEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),owner:verified.instance,attempts});
+  if(questions.state!=='verified'||questions.rejected.length||questions.threads.some(q=>q.status!=='answered'||!q.answer)||questions.intents.some(i=>['user-question','relay-question'].includes(i.spec.kind)&&!store.listQuestions(context.id).some(q=>q.id===i.spec.appQuestionId)))throw Error('Native question or decision remains unresolved before idle replacement.');
   await works.verifyHost(context.id,verified.hostGeneration);
  }
  if(op.kind==='structured'){

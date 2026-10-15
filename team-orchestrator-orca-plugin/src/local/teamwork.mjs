@@ -25,6 +25,8 @@ export function createWorkService({store,rpc,userData,consent}){
   if(work.status==='completed')throw Error('Completed TeamWork is sealed.');
   await consent();
   const binding=work.parent&&!work.recoveryRequestId?work.binding:store.readOperation(work.binding.requestId);let parentAssignee;
+  const pendingIdle=store.listWakes().find(r=>r.mode==='idle-replacement'&&r.memberId===work.supervisorMemberId&&['approved','replacing'].includes(r.state));
+  if(pendingIdle&&(forSend||retirementRequestId!==pendingIdle.requestId))throw Error('Saved supervisor binding changed: idle replacement is reserved; normal input and admission are paused.');
   if(work.parent){
    const parentWork=(store.readCurrentWork??store.readWork)(work.parent.workId),attempt=store.listDispatches(work.parent.workId).find(a=>a.id===work.parent.attemptId);
    if(!parentWork||!attempt||attempt.dispatchId!==work.parent.dispatchId||store.listDispatches(parentWork.id).filter(a=>a.taskKey===attempt.taskKey).at(-1)?.id!==attempt.id)throw Error('Parent manager attempt changed.');

@@ -143,11 +143,14 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       if(!observationOnly)next.revision++; validatePersistentState(next); write(next);
     };
     const assertReplacementIdle=memberId=>{
-      if(stops.listStops().some(r=>r.target.memberId===memberId&&['intent','submitted','unknown'].includes(r.state)))fail('Unresolved Stop blocks idle replacement.');
-      for(const a of listDispatches().filter(a=>a.memberId===memberId||a.supervisorMemberId===memberId))if(!['accepted','rework'].includes(a.status)||!a.evidenceId)fail('Member has running, unknown or unreviewed execution.');
-      for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all()){const q=JSON.parse(saved.json);if(q.memberId===memberId||q.supervisorMemberId===memberId)fail('Queued execution blocks idle replacement.');}
-      const roots=listCurrentWorks().filter(w=>w.status!=='completed').flatMap(w=>listRunWorks(w.id));
-      for(const w of roots)for(const q of questions.listQuestions(w.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))fail('Unresolved question blocks idle replacement.');
+      const memberTeam=readSnapshot().teams.find(t=>t.members.some(m=>m.id===memberId)),affected=new Set([memberId]);
+      for(let changed=true;changed;){changed=false;for(const m of memberTeam?.members??[])if(affected.has(m.boss)&&!affected.has(m.id)){affected.add(m.id);changed=true;}}
+      if(stops.listStops().some(r=>affected.has(r.target.memberId)&&['intent','submitted','unknown'].includes(r.state)))fail('Unresolved Stop blocks idle replacement.');
+      if(db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some(r=>{const w=JSON.parse(r.json);return affected.has(w.memberId)&&w.memberId!==memberId&&!['bound','resumed'].includes(w.state);}))fail('Descendant recovery blocks idle replacement.');
+      for(const a of listDispatches().filter(a=>affected.has(a.memberId)))if(!['accepted','rework'].includes(a.status)||!a.evidenceId)fail('Member has running, unknown or unreviewed execution.');
+      for(const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all()){const q=JSON.parse(saved.json);if(affected.has(q.memberId)||affected.has(q.supervisorMemberId))fail('Queued execution blocks idle replacement.');}
+      const roots=listCurrentWorks().filter(w=>w.teamId===memberTeam?.id&&w.status!=='completed').flatMap(w=>listRunWorks(w.id));
+      for(const w of roots){if(affected.has(w.supervisorMemberId)&&['sending','unknown','queued'].includes(w.input.state))fail('Supervisor input remains pending or unknown.');for(const q of questions.listQuestions(w.id))if(!q.resolution&&(q.status==='pending'||q.status==='closed'&&!q.answers.some(a=>a.processed==='confirmed')||q.answers.some(a=>a.processed!=='confirmed')))fail('Unresolved question blocks idle replacement.');}
     };
     const replacementTeam=teamId=>{const work=listCurrentWorks().find(w=>w.teamId===teamId&&w.status!=='completed');return work?staffing.effectiveTeamForWork(work.id):readSnapshot().teams.find(t=>t.id===teamId);};
     const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listRunWorks,readSnapshot,write,archive,atomic:atomicDispatch});
