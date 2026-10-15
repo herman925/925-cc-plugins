@@ -12,9 +12,10 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
   const work=store.readCurrentWork(id);if(!work||work.status==='completed')return null;
   const verified=await works.verifyWork(id,true,{allowSettledParent:true}),protocol=store.readDispatchProtocol(id);
   if(!protocol||protocol.generation!==work.run.consumerGeneration)throw Error('Supervisor delivery protocol is unavailable.');
-  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id),allowSettledParent:true});
+  const nativeHistory=store.readNativeHistory(id);
+  const native=await readNativeDispatchEvidence(userData,{work,protocol,team:store.effectiveTeamForWork(work.id),owner:verified.instance,admitted:store.listDispatches(id),allowSettledParent:true,nativeHistory});
   if(native.state!=='verified')throw Error(native.detail);
-  const questionEvidence=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(id)});
+  const questionEvidence=await readNativeQuestionEvidence(userData,{work,protocol,owner:verified.instance,attempts:store.listDispatches(id),nativeHistory});
   return {work,verified,native,questionEvidence};
  }
  async function check(id){

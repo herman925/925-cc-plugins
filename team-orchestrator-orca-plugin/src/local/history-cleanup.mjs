@@ -4,7 +4,7 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const family=id=>id.split(':')[0];
 const known=new Set(['work','native-run-binding','work-request','active-work','session-work','operation','binding','binding-generation','launch','dispatch','dispatch-intent','dispatch-member','dispatch-binding','dispatch-review','dispatch-protocol','dispatch-protocol-history','dispatch-queue','question','question-answer','question-event','team-message','collaboration','delivery','work-decision','goal','goal-request','next-goal','stop','wake','wake-member','staffing-request','staffing-proposal','configuration-amendment','work-configuration','roster-delta','organization']);
 const contains=(value,ids)=>typeof value==='string'?(ids.has(value)||[...ids].some(id=>id.length>=32&&value.includes(id))):Array.isArray(value)?value.some(v=>contains(v,ids)):value&&typeof value==='object'?Object.values(value).some(v=>contains(v,ids)):false;
-const uncertain=value=>value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>(['state','status','processed'].includes(key)&&['unknown','sending','submitted','needs_decision','pending','unconfirmed'].includes(v))||(typeof v==='object'&&!['processing','run','snapshot','proof','nativeSend','nativeRequest','binding','oldBinding','observation'].includes(key)&&uncertain(v)));
+const uncertain=value=>value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>(['state','status','processed'].includes(key)&&['unknown','sending','submitted','needs_decision','pending','unconfirmed'].includes(v))||(typeof v==='object'&&!['processing','run','snapshot','proof','controlProof','nativeSend','nativeRequest','binding','oldBinding','observation'].includes(key)&&uncertain(v)));
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
  function plan(ids){
@@ -20,7 +20,7 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    if(work.historyPruned){retained.push({workId:id,reason:'This work was already cleaned; its closure and identity evidence remain.'});continue;}
    teamIds.add(work.teamId);
    const contexts=new Set([id,...rows.filter(r=>family(r.id)==='native-run-binding'&&r.value.teamWorkId===id).map(r=>r.value.id)]);
-   const own=r=>contexts.has(r.value.workId)||contexts.has(r.value.teamWorkId)||contexts.has(r.value.target?.workId)||contexts.has(r.value.id)&&['work','native-run-binding'].includes(family(r.id));
+   const own=r=>contexts.has(r.value.workId)||contexts.has(r.value.teamWorkId)||contexts.has(r.value.target?.workId)||family(r.id)==='wake'&&contexts.has(r.value.newInstance?.workId)||contexts.has(r.value.id)&&['work','native-run-binding'].includes(family(r.id));
    const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId,r.value.binding?.requestId,r.value.currentSupervisor?.binding?.requestId,...(r.value.recipientBindings??[]).map(b=>b.requestId),...(r.value.currentRecipientBindings??[]).map(b=>b.requestId)]).filter(v=>typeof v==='string')]);
    let reason=unknownSchema?'An unknown storage table or column may reference this history; use a compatible cleanup implementation.':undefined;
    for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);

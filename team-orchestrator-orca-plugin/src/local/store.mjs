@@ -1,3 +1,4 @@
+import {nativeHistoryReader} from './native-history-store.mjs';
 import {latestBusinessAttempts,questionNeedsProcessing} from './acceptance.mjs';
 import {historyCleanup} from './history-cleanup.mjs';
 import {STORAGE_SCHEMA,MAINTENANCE_DDL,prepareStorage,migrateStorage,recoveryInventory} from './storage-maintenance.mjs';
@@ -217,6 +218,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       });},
       readCurrentWork, listCurrentWorks,
       readWork, listWorks, readDispatchProtocol, listDispatches, listRunWorks, listTeamDispatches, dispatchProjection,
+      readNativeHistory:nativeHistoryReader({db,readPrivate,readWork:readCurrentWork,questions}),
       readOwningWork(workId,memberId){const root=readCurrentWork(workId),team=this.effectiveTeamForWork?.(root.id)??JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(root.teamId,root.configVersion).json),member=team.members.find(m=>m.id===memberId);return listRunWorks(workId).filter(w=>w.supervisorMemberId===member?.boss).at(-1)??null;},
       prepareManagerRun(parentWorkId,attemptId){return atomicDispatch(()=>{
         const parentWork=readCurrentWork(parentWorkId),attempt=listDispatches(parentWorkId).find(a=>a.id===attemptId);

@@ -1,8 +1,9 @@
 import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
-import {nativeMutationFingerprint} from './native-dispatch.mjs';
+import {nativeMutationFingerprint} from './native-mutation.mjs';
+import {isHistoricalControl} from './native-history.mjs';
 const parse=v=>{try{return JSON.parse(v);}catch{return null;}};
 const text=(v,n=8000)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
-export async function readNativeQuestionEvidence(userData,{work,protocol,owner,attempts=[]}) {
+export async function readNativeQuestionEvidence(userData,{work,protocol,owner,attempts=[],nativeHistory={authorities:[],controls:[]}}) {
  try {
   return await withOrchestrationSnapshot(userData,{pathError:'Invalid native evidence path.',schemaError:'Unsupported native question schema.'},db=>{
   const run=db.prepare('SELECT * FROM runs WHERE id=?').get(work.run.id);
@@ -13,6 +14,7 @@ export async function readNativeQuestionEvidence(userData,{work,protocol,owner,a
   const intents=[],rejected=[],threads=[];
   for(const task of db.prepare('SELECT * FROM tasks WHERE run_id=?').all(work.run.id)){
    const spec=parse(task.spec);if(spec?.protocol!=='team-questions/v1'||spec.workId!==work.id)continue;
+   if(isHistoricalControl(db,work,task,nativeHistory))continue;
    try {
     if(spec.token!==protocol.token||spec.generation!==protocol.generation||!text(spec.appQuestionId,120)||!/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId)||!['user-question','relay-question','answer-ack','collaboration-directive','message-evidence','recovery-handoff','staffing-proposal','roster-ack'].includes(spec.kind))throw Error('Question intent identity invalid.');
     const receipts=db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint,task.id);
@@ -53,7 +55,7 @@ export async function readNativeQuestionEvidence(userData,{work,protocol,owner,a
    if(!r||!m||parse(r.receipt)?.message?.id!==m.id||r.payload_hash!==nativeMutationFingerprint('orchestration.send',n.params,a.binding)||m.run_id!==a.runId||m.from_handle!==a.binding.handle||m.sender_pane_key!==a.binding.paneKey||m.body!==n.params.body||m.type!==n.params.type||m.to_handle!==n.params.to)continue;
    const target=attempts.find(b=>b.memberId===s.toMemberId&&b.id===s.toAttemptId);
    if(s.toMemberId===a.supervisorMemberId?n.params.to!==`run:${a.runId}`:!target||n.params.to!==target.binding?.handle)continue;
-   messages.push({id:m.id,workId:work.id,fromMemberId:a.memberId,toMemberId:s.toMemberId,attemptId:a.id,toAttemptId:target?.id,dispatchId:a.dispatchId,nativeTaskId:a.nativeTaskId,runId:a.runId,body:m.body,type:m.type,requestId:r.request_id,payloadHash:r.payload_hash,state:'native_committed',processing:'unconfirmed'});
+   messages.push({controlProof:intent,id:m.id,workId:work.id,fromMemberId:a.memberId,toMemberId:s.toMemberId,attemptId:a.id,toAttemptId:target?.id,dispatchId:a.dispatchId,nativeTaskId:a.nativeTaskId,runId:a.runId,body:m.body,type:m.type,requestId:r.request_id,payloadHash:r.payload_hash,state:'native_committed',processing:'unconfirmed'});
   }
   return {state:'verified',intents,rejected,threads,messages};
   });
