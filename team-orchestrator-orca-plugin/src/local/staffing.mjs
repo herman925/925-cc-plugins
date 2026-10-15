@@ -22,7 +22,7 @@ export function createStaffingService({store,rpc,userData,works,consent,notify})
    if(delta.state==='sending'){store.updateRosterDelta(delta.id,{state:'unknown',detail:'Delivery interrupted; preserve its native request identity. No automatic resend.'});continue;}
    if(delta.state!=='queued')continue;
    try{
-    const contexts=store.listRunWorks?.(id)??[current(id)],target=contexts.find(w=>w.supervisorMemberId===delta.supervisorMemberId);
+    const contexts=store.listRunWorks?.(id)??[current(id)],target=contexts.findLast(w=>w.supervisorMemberId===delta.supervisorMemberId&&(!w.parent||store.listDispatches(w.parent.workId).find(a=>a.id===w.parent.attemptId)?.status==='running'));
     if(!target)continue; // A new manager has no Run until its genuine native supervisor work establishes one.
     await consent();const verified=await works.verifyWork(target.id,true),work=current(target.id),protocol=store.readDispatchProtocol(work.id);
     if(!protocol||protocol.generation!==work.run.consumerGeneration)continue;

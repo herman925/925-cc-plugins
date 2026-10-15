@@ -45,7 +45,7 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
    const row=readWake(id),op=row?.newInstance&&readOperation(row.newInstance.requestId);
    if(row?.mode!=='idle-replacement'||row.state!=='replacing'||op?.status!=='created')return row;
    const pointer=readPrivate(`binding:${row.memberId}`);if(pointer?.requestId!==op.requestId)throw Error('Current replacement binding changed.');
-   row.state='bound';row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);return row;
+   assertReplacementIdle(row.memberId);row.state='bound';row.version++;putPrivate(`wake:${id}`,row);db.prepare('DELETE FROM receipts WHERE id=?').run(`wake-member:${row.memberId}`);return row;
   });},
   prepareWakeReplacement(id,version,intent){return atomic(()=>{
    const row=readWake(id);if(!row||row.version!==version||row.state!=='approved'||!row.handoff)throw Error('A checked handoff decision is required.');

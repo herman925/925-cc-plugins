@@ -8,7 +8,7 @@ export async function verifyIdleReplacement({store,rpc,userData,works,operation,
  for(const context of contexts){
   if(!works)throw Error('Current native execution evidence is required before idle replacement.');
   const verified=await works.verifyWork(context.id,false,{allowSettledParent:true,retirementRequestId}),team=store.effectiveTeamForWork?.(context.id)??store.readTeamVersion(context.teamId,context.configVersion),attempts=store.listDispatches(context.id);
-  const evidence=await readNativeDispatchEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),team,owner:verified.instance,admitted:attempts});
+  const evidence=await readNativeDispatchEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),team,owner:verified.instance,admitted:attempts,allowSettledParent:true});
   if(evidence.state!=='verified'||evidence.unmanaged?.length||evidence.rejected.length||evidence.intents.some(i=>i.spec.memberId===op.memberId||context.supervisorMemberId===op.memberId))throw Error('Native unadmitted or unknown execution prevents idle replacement.');
   for(const a of attempts.filter(a=>a.memberId===op.memberId||a.supervisorMemberId===op.memberId))if(!evidence.observations.some(o=>o.id===a.id&&o.state==='verified'&&o.completion?.evidenceId===a.evidenceId))throw Error('Accepted execution evidence changed; idle replacement is blocked.');
   const questions=await readNativeQuestionEvidence(userData,{work:context,protocol:store.readDispatchProtocol(context.id),owner:verified.instance,attempts});
