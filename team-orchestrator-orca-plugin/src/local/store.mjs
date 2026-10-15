@@ -1,7 +1,8 @@
 import { stopStore } from './stop-store.mjs';
+import { lifecycleStore } from './lifecycle-store.mjs';
+import { questionStore } from './questions-store.mjs';
 import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
 import { initialMembers } from '../launch.mjs';
-import { questionStore } from './questions-store.mjs';
 import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
@@ -74,15 +75,17 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const dispatchProjection = workId => ({queuedTasks:queuedTasks(workId),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listDispatches(workId).map(publicDispatch)});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
+    const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
     const questions = questionStore({db,readPrivate,putPrivate,readWork,listDispatches,atomic:atomicDispatch});
     // A read failure is fatal; never recover by initializing an empty roster.
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare('SELECT json FROM snapshot WHERE id=1').get()?.json ?? 'null');
       if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail('Team database snapshot is invalid; original data has been preserved.');
-      return { ...validatePersistentState(value), stops:stops.stopProjection(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id)})) };
+      return { ...validatePersistentState(value), stops:stops.stopProjection(), goals: listGoals(), works: listWorks().map(work=>({...publicWork(work),...dispatchProjection(work.id),...questions.questionProjection(work.id),...lifecycle.deliveryProjection(work.id)})) };
     };
+    const write = ({ works, goals, stops: ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
+    const lifecycle=lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,listDispatches,listGoals,questions,atomic:atomicDispatch,readSnapshot,write});
     readSnapshot();
-    const write = ({ works, stops: ignoredStops, ...value }) => db.prepare('UPDATE snapshot SET json=? WHERE id=1').run(JSON.stringify(value));
     const mutate = (op, input, action) => {
       if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail('Invalid mutation request identity or revision.');
       const digest = fingerprint({ op, input });
@@ -96,6 +99,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         }
         const next = readSnapshot();
         if (next.revision !== input.expectedRevision) fail('Another panel changed the team data. Reload saved teams before trying again; your changes were not saved.');
+        if(input.teamId&&readPrivate(`next-goal:${input.teamId}`))fail('A queued-goal transition is reserved; finish it before changing team configuration.');
         action(next);
         next.revision++;
         validatePersistentState(next);
@@ -123,6 +127,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     return {
       ...questions,
       ...stops,
+      ...lifecycle,
       readOperation,
       readMemberOperation(memberId) { const pointer=readPrivate(`binding:${memberId}`); return pointer?readOperation(pointer.requestId):null; },
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
@@ -144,13 +149,23 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(input.memberId)team.admission.members[input.memberId]=input.paused;else team.admission.paused=input.paused;
       }); },
       assertAdmission(teamId,memberId) { const team=readSnapshot().teams.find(row=>row.id===teamId);if(!team)fail('Saved team is unavailable.');if(team.admission?.paused||team.admission?.members?.[memberId])fail('New assignments are paused. Existing executions remain unchanged.'); },
+      listGoals,
+      enqueueGoal(input){workInput(input);return atomicDispatch(()=>{
+        const key=`goal-request:${input.requestId}`,digest=fingerprint(input),prior=readPrivate(key);
+        if(prior){if(prior.fingerprint!==digest)fail('Queued goal request identity conflicts.');return readPrivate(`goal:${prior.id}`);}
+        const state=readSnapshot(),team=state.teams.find(row=>row.id===input.teamId);
+        if(!team||state.revision!==input.expectedRevision)fail('Team changed; reload before queueing a goal.');
+        const goal={id:randomUUID(),teamId:team.id,objective:input.objective,status:'queued',createdAt:new Date().toISOString()};
+        putPrivate(`goal:${goal.id}`,goal);putPrivate(key,{id:goal.id,fingerprint:digest});state.revision++;write(state);return goal;
+      });},
       readWork, listWorks, readDispatchProtocol, listDispatches, dispatchProjection,
       ensureDispatchProtocol(workId) { return atomicDispatch(()=>{
-        const work=readWork(workId); if(work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
+        const work=readWork(workId); if(work?.status==='completed'||work?.run.state!=='verified'||!work.instance)fail('Verify the real supervisor Run before enabling dispatch.');
         const prior=readDispatchProtocol(workId); if(prior) { if(prior.generation!==work.run.consumerGeneration)fail('Dispatch protocol belongs to an older Run generation.'); return prior; }
         const protocol={format:'team-dispatch-protocol-v1',workId,generation:work.run.consumerGeneration,token:randomUUID(),state:'not_sent',version:1,createdAt:new Date().toISOString()}; putPrivate(`dispatch-protocol:${workId}`,protocol);return protocol;
       }); },
       updateDispatchProtocol(workId,version,patch) { return atomicDispatch(()=>{
+        if(readWork(workId)?.status==='completed')fail('Completed TeamWork is sealed.');
         const row=readDispatchProtocol(workId);if(!row||row.version!==version)fail('Dispatch protocol changed while observing evidence.');
         if(Object.keys(patch).some(key=>!['state','detail','nativeSend'].includes(key)))fail('Immutable dispatch protocol cannot change.');
         Object.assign(row,patch,{version:version+1});validateDispatchProtocol(row);putPrivate(`dispatch-protocol:${workId}`,row);return row;
@@ -161,7 +176,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       }); },
       prepareDispatch(workId,intent,startParams,reuse) { return atomicDispatch(()=>{
         const work=readWork(workId),protocol=readDispatchProtocol(workId);
-        if(work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
+        if(work?.status==='completed'||work?.run.state!=='verified'||protocol?.state!=='accepted'||protocol.generation!==work.run.consumerGeneration||intent.spec.token!==protocol.token)fail('Current supervisor admission authority is required.');
         const key=`dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId?`:${intent.spec.previousAttemptId}`:''}`,digest=fingerprint({spec:intent.spec,nativeTaskId:intent.nativeTaskId});
         const prior=readPrivate(key);if(prior){if(prior.fingerprint!==digest)fail('Task intent identity conflicts with another input.');return {attempt:validateDispatch(readPrivate(`dispatch:${prior.id}`)),fresh:false};}
         this.assertAdmission(work.teamId,intent.spec.memberId);
@@ -189,13 +204,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       recordDispatchReview(id,review) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`)),work=readWork(row.workId),current=listDispatches(row.workId).filter(other=>other.taskKey===row.taskKey).at(-1);
         if(row.review){if(row.review.requestId===review.requestId&&row.review.payloadHash===review.payloadHash)return row;fail('This attempt already has an immutable supervisor decision.');}
-        if(current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
+        if(work?.status==='completed'||current?.id!==row.id||row.status!=='pending_acceptance'||work?.run.state!=='verified'||work.run.consumerGeneration!==review.generation||row.generation!==review.generation||review.attemptId!==id||review.reviewerMemberId!==row.supervisorMemberId||!review.evidenceRefs?.includes(row.evidenceId)||!['accept','rework'].includes(review.decision))fail('Review is not for the current completed attempt and supervisor.');
         const event={...review,workId:row.workId,taskKey:row.taskKey,nativeTaskId:row.nativeTaskId,dispatchId:row.dispatchId,recordedAt:new Date().toISOString()};
         row.review=event;row.status=review.decision==='accept'?'accepted':'rework';row.version++;row.detail=review.decision==='accept'?'Direct supervisor accepted the execution and validation evidence.':'Direct supervisor requested rework; dependencies remain blocked.';
         validateDispatch(row);putPrivate(`dispatch-review:${row.id}`,event);putPrivate(`dispatch:${row.id}`,row);return row;
       }); },
       updateDispatch(id,version,patch,expectedWorkVersion) { return atomicDispatch(()=>{
-        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(readWork(row.workId)?.status==='completed')fail('Completed TeamWork is sealed.');if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
         if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
         if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
@@ -214,16 +229,21 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const request=db.prepare('SELECT json FROM receipts WHERE id=?').get(`work-request:${input.requestId}`);
           if(request) { const saved=JSON.parse(request.json); if(saved.fingerprint!==digest) fail('Objective request identity conflicts with another input.'); const work=readWork(saved.workId); if(!work) fail('Saved objective is missing.'); db.exec('COMMIT'); return {work,fresh:false}; }
           const state=readSnapshot(),team=state.teams.find(row=>row.id===input.teamId),supervisor=team?.members.find(row=>row.boss===null);
+          const nextGoal=lifecycle.nextGoal(input.teamId);
+          if(nextGoal&&(input.requestId!==nextGoal.workRequestId||input.objective!==nextGoal.objective||team?.configVersion!==nextGoal.configVersion))fail('A queued-goal transition reserves this team.');
+          if(nextGoal&&Object.entries(nextGoal.launchRequests).some(([memberId,id])=>readPrivate(`binding:${memberId}`)?.requestId!==id||readOperation(id)?.status!=='created'))fail('Queued goal awaits verified fresh preparation sessions.');
           if(!supervisor) fail('Saved team supervisor is missing.');
           if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`active-work:${team.id}`)) fail('This team already has a total objective in progress. Check its active work.');
           if(state.revision!==input.expectedRevision) fail('Another panel changed team data. Reload before submitting the objective.');
           const requestId=team.launch?.members?.[supervisor.id]?.requestId, binding=requestId&&readOperation(requestId);
           if(binding?.status!=='created'||binding.teamId!==team.id||binding.memberId!==supervisor.id||!binding.handle) fail('Launch and verify the registered highest supervisor before submitting a total objective.');
+          if(listWorks().some(w=>w.teamId===team.id&&(binding.kind==='structured'?w.binding.sessionId===binding.sessionId:w.binding.handle===binding.handle||w.binding.paneKey===binding.paneKey)))fail('New TeamWork requires a fresh native conversation; old session authority cannot be reused.');
           if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? 'default') || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? 'default')) fail('The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.');
           if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`session-work:${requestId}`)) fail('This preparation session has already accepted a total objective.');
           const scope=JSON.parse(db.prepare('SELECT json FROM scopes WHERE team_id=?').get(team.id).json);
           const id=randomUUID(),protocolToken=randomUUID();
-          const work={format:'team-work-v1',id,teamId:team.id,requestId:input.requestId,objective:input.objective,configVersion:team.configVersion,roleVersion:supervisor.roleVersion,supervisorMemberId:supervisor.id,scope,binding,protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${input.objective}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'}};
+          const work={format:'team-work-v1',id,teamId:team.id,requestId:input.requestId,objective:input.objective,configVersion:team.configVersion,roleVersion:supervisor.roleVersion,supervisorMemberId:supervisor.id,scope,binding,recipientBindings:Object.values(team.launch?.members??{}).map(r=>readOperation(r.requestId)).filter(Boolean),protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${input.objective}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'}};
+          if(nextGoal){work.handoff=nextGoal.handoff;work.previousWorkId=nextGoal.previousWorkId;nextGoal.status='started';nextGoal.workId=work.id;putPrivate(`goal:${nextGoal.id}`,nextGoal);db.prepare('DELETE FROM receipts WHERE id=?').run(`next-goal:${team.id}`);}
           persistWork(work);
           for(const [key,value] of [[`work-request:${input.requestId}`,{workId:id,fingerprint:digest}],[`active-work:${team.id}`,{workId:id}],[`session-work:${requestId}`,{workId:id}]]) db.prepare('INSERT INTO receipts VALUES (?,?)').run(key,JSON.stringify(value));
           state.revision++; write(state); db.exec('COMMIT'); return {work,fresh:true};
@@ -233,6 +253,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         db.exec('BEGIN IMMEDIATE');
         try {
           const work=readWork(id);if(!work||work.version!==version) fail('TeamWork changed while native evidence was being observed.');
+          if(work.status==='completed')fail('Completed TeamWork is sealed.');
           const permitted=['status','input','processing','run','snapshot','error','instance','nativeSend'];
           if(Object.keys(patch).some(key=>!permitted.includes(key))) fail('Immutable TeamWork identity cannot be changed.');
           Object.assign(work,patch,{version:version+1});validateWork(work);persistWork(work);
@@ -251,6 +272,8 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           const team = readSnapshot().teams.find(row => row.id === input.teamId);
           const member = team?.members.find(row => row.id === input.memberId);
           if (!member || !initialMembers(team).some(row => row.id === member.id) || team.configVersion !== input.configVersion) fail('Launch requires a member selected by the saved roster preparation mode.');
+          const nextGoal=lifecycle.nextGoal(input.teamId);
+          if(nextGoal&&(nextGoal.launchRequests[input.memberId]!==input.requestId||nextGoal.configVersion!==input.configVersion))fail('Queued transition requires its saved fresh launch identity.');
           const bindingKey = `binding:${input.memberId}`;
           if (db.prepare('SELECT id FROM receipts WHERE id=?').get(bindingKey) || readPrivate(`dispatch-member:${member.id}`) || team.launch?.members?.[member.id]) fail('This member already has a launch or unresolved binding. Inspect its saved operation.');
           const instanceGeneration=(readPrivate(`binding-generation:${input.memberId}`)?.generation??0)+1;

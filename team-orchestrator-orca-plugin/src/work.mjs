@@ -5,7 +5,7 @@ export function workInput(input) {
 export function validateWork(work) {
  const text=(value,max=4096)=>typeof value==='string'&&value.length>0&&value.length<=max;
  const fail=()=>{throw Error('Saved TeamWork evidence is damaged; existing data was preserved.');};
- if(!work||work.format!=='team-work-v1'||!text(work.id,120)||!text(work.teamId,120)||!text(work.requestId,120)||!text(work.supervisorMemberId,120)||!text(work.objective,8000)||!text(work.protocolToken,120)||!Number.isSafeInteger(work.version)||work.version<1||!Number.isSafeInteger(work.configVersion)||work.configVersion<1||!Number.isSafeInteger(work.roleVersion)||work.roleVersion<1||!['preparing','awaiting_input','awaiting_run','active','needs_attention'].includes(work.status))fail();
+ if(!work||work.format!=='team-work-v1'||!text(work.id,120)||!text(work.teamId,120)||!text(work.requestId,120)||!text(work.supervisorMemberId,120)||!text(work.objective,8000)||!text(work.protocolToken,120)||!Number.isSafeInteger(work.version)||work.version<1||!Number.isSafeInteger(work.configVersion)||work.configVersion<1||!Number.isSafeInteger(work.roleVersion)||work.roleVersion<1||!['preparing','awaiting_input','awaiting_run','active','needs_attention','awaiting_acceptance','completed'].includes(work.status))fail();
  const scope=work.scope,binding=work.binding;
  if(!scope||!text(scope.workspaceId)||!text(scope.displayName)||!['git','folder'].includes(scope.kind)||! /^(local|ssh:[^\s|]+)$/.test(scope.executionHostId)||! /^[a-f0-9]{64}$/.test(scope.workspaceKey)||!binding||binding.status!=='created'||binding.teamId!==work.teamId||binding.memberId!==work.supervisorMemberId||!text(binding.requestId,120)||!text(binding.runtimeId,256)||!['structured','terminal'].includes(binding.kind)||!text(binding.handle)||binding.scope?.workspaceId!==scope.workspaceId||binding.scope?.executionHostId!==scope.executionHostId||binding.scope?.workspaceKey!==scope.workspaceKey||(binding.kind==='structured'&&!text(binding.sessionId)))fail();
  if(work.nativeObjective!==`TeamWork ${work.id} ${work.protocolToken}\n${work.objective}`||!['not_sent','sending','accepted','queued','unknown','rejected'].includes(work.input?.state)||!['unknown','observed'].includes(work.processing?.state)||!['unverified','verified','fenced'].includes(work.run?.state))fail();
@@ -23,6 +23,6 @@ export function validateWork(work) {
 }
 export function publicWork(work) {
  validateWork(work);
- const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','status','processing','run','snapshot','error'];
+ const fields=['id','teamId','supervisorMemberId','objective','configVersion','roleVersion','createdAt','version','status','processing','run','snapshot','error','closedAt','handoff'];
  return { ...Object.fromEntries(fields.filter(key=>work[key]!==undefined).map(key=>[key,work[key]])), scope:{displayName:work.scope.displayName,kind:work.scope.kind,executionHostId:work.scope.executionHostId},input:{state:work.input.state,...(work.input.source?{source:work.input.source}:{}),...(work.input.dispatchState?{dispatchState:work.input.dispatchState}:{}),...(work.input.queued?{queued:work.input.queued}:{}),...(work.input.messageId?{messageId:work.input.messageId}:{}),...(work.input.detail?{detail:work.input.detail}:{})} };
 }

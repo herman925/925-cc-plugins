@@ -73,6 +73,9 @@ try {
   assert.equal(nativeMutationFingerprint('orchestration.taskCreate', task, owner), taskHash);
   for (const identity of [null, 'different-resolved-caller']) assert.notEqual(hostHash('orchestration.taskCreate', task, identity), taskHash);
   assert.notEqual(hostHash('orchestration.taskCreate', { ...task, spec: spec + ' ' }), taskHash, 'spec bytes remain exact');
+  const delivery={spec:JSON.stringify({protocol:'team-delivery/v1',workId:'work_test',token:'issued-token',generation:1,supervisorMemberId:'head_test',previousDeliveryId:null,summary:'Overall report',evidenceRefs:['artifact:report'],attemptIds:[]}),run:'run_test',callerTerminalHandle:`orca_session_id:${caller}`};
+  assert.equal(nativeMutationFingerprint('orchestration.taskCreate',delivery,owner),hostHash('orchestration.taskCreate',before.TaskCreateParams.parse(delivery)),'overall delivery uses actual parsed TaskCreate bytes and resolved native author');
+  assert.notEqual(nativeMutationFingerprint('orchestration.taskCreate',delivery,owner),hostHash('orchestration.taskCreate',before.TaskCreateParams.parse(delivery),'different-head'));
   const review=before.TaskUpdateParams.parse({id:'task_test',status:'completed',result:'{"decision":"accept"}',run:'run_test',callerTerminalHandle:`orca_session_id:${caller}`,__orcaCallerOrcaSessionId:'forged'});
   assert.equal(review.__orcaCallerOrcaSessionId,undefined);
   assert.equal(nativeMutationFingerprint('orchestration.taskUpdate',review,owner),hostHash('orchestration.taskUpdate',review));

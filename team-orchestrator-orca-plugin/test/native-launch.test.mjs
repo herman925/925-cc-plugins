@@ -224,6 +224,21 @@ test('all-at-start prepares precisely four saved members and preserves independe
  assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,4);
  assert.ok(f.calls.filter(row=>row.method==='agent.launchReplay').every(row=>row.params.target.worktree==='folder:/saved'));
 });
+test('queued goal launch uses actual panel broker and new native identity, never old preparation authority',async t=>{
+ const f=await fixture(t,{kind:'structured'});await f.send('launchSupervisor');const store=f.store();
+ let w=store.prepareWork({teamId:f.team.id,requestId:'work-one',expectedRevision:store.readSnapshot().revision,objective:'First goal'}).work;
+ w=store.updateWork(w.id,w.version,{status:'active',run:{state:'verified',id:'first-run',consumerGeneration:1},instance:{kind:'structured',sessionId:'first-root',liveSessionId:w.binding.sessionId,fence:1}});
+ store.enqueueGoal({teamId:f.team.id,requestId:'queue',expectedRevision:store.readSnapshot().revision,objective:'Second goal'});
+ store.recordDelivery(w.id,{id:'native-delivery',summary:'Handoff checked',evidenceRefs:['report.md'],attemptIds:[],generation:1,proof:{requestId:'native-proof',payloadHash:'a'.repeat(64)}});w=store.readWork(w.id);
+ store.decideWork({requestId:'accept-first',workId:w.id,deliveryId:'native-delivery',expectedWorkVersion:w.version,decision:'accept'});
+ f.effect(async()=>({worktreeId:'folder:/saved',outcome:{kind:'structured',handle:'new-chat',sessionId:'new-session',tabId:'new-tab'},receipt:{mode:'structured',preferred:'structured',reason:'user_default',detail:'Orca chose saved mode'},prompt:{delivery:'submit',outcome:'journaled',messageId:'new-role'}}));
+ const stale=await f.send('startNextGoal',{teamId:f.team.id,goalId:'different-transition'});assert.equal(stale.ok,true);assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,1,'old action cannot advance another transition');
+ const response=await f.send('startNextGoal',{teamId:f.team.id});assert.equal(response.ok,true,response.error);
+ assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);const ops=store.listOperations();assert.notEqual(ops[0].nativeRequest.operationId,ops[1].nativeRequest.operationId);assert.equal(ops[1].scope.workspaceId,'folder:/saved');assert.equal(Object.hasOwn(ops[1].nativeRequest,'reuseTerminal'),false);
+ assert.equal(store.listWorks().length,2);const next=store.listWorks().find(row=>row.id!==w.id);assert.equal(next.binding.sessionId,'new-session');assert.equal(next.handoff.summary,'Handoff checked');assert.equal(store.readWork(w.id).status,'completed');
+ await f.send('startNextGoal',{teamId:f.team.id});assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);
+ f.executor().stopWork();
+});
 
 test('four-member on-demand hierarchy prepares root and department manager, retaining workers for first assignment',async t=>{
  const f=await fixture(t,{kind:'structured',form:{structure:'organisation',groups:'Development',fan:2}});let count=0;
