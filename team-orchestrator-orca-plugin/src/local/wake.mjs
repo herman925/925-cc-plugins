@@ -23,7 +23,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  const memberFor=row=>store.readSnapshot().teams.find(t=>t.id===row.teamId)?.members.find(m=>m.id===row.memberId);
  async function stopped(row){
   const op=row.oldBinding;
-  if(op.kind==='structured')return readSessionDeath(userData,op.sessionId,row.proof.death?.ownerFence??op.observation?.ownerFence,op.scope);
+  if(op.kind==='structured'){const stop=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});return readSessionDeath(userData,op.sessionId,row.proof.death?.ownerFence??op.observation?.ownerFence??stop?.death?.ownerFence,op.scope);}
   const proof=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});
   if(!proof||!(['native-exact-stop','native-pty-exit','native-worker-exit'].includes(proof.kind)))return null;
   try{const shown=(await rpc('terminal.show',{terminal:op.handle}))?.terminal;if(shown?.connected===true)return null;}catch(error){if(!error.native&&!/not found|missing|not_found/i.test(error.message))return null;}
@@ -115,25 +115,25 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
    return publicWake(store.publishWake(id,row.version,owner));
   });
  },async wake(input){
-  if(!input||Object.keys(input).some(k=>!['teamId','memberId','requestId','bindingRequestId'].includes(k))||!['teamId','memberId','requestId','bindingRequestId'].every(k=>typeof input[k]==='string'&&/^[a-zA-Z0-9-]{1,120}$/.test(input[k])))throw Error('Choose an exact saved member binding.');
+  if(!input||input.requestId?.length>100||Object.keys(input).some(k=>!['teamId','memberId','requestId','bindingRequestId'].includes(k))||!['teamId','memberId','requestId','bindingRequestId'].every(k=>typeof input[k]==='string'&&/^[a-zA-Z0-9-]{1,120}$/.test(input[k])))throw Error('Choose an exact saved member binding.');
   const prior=store.readWake(input.requestId);if(prior){if(['teamId','memberId','bindingRequestId'].some(k=>prior[k]!==input[k]))throw Error('Recovery request conflicts with saved input.');return publicWake(prior);}
   const op=bindingFor(input);
   if(!op||!active(op)||op.teamId!==input.teamId||op.memberId!==input.memberId||op.status!=='created')throw Error('Current saved member identity is required.');
   await consent();
-  const status=await rpc('status.get');
+  const status=await rpc('status.get');if(typeof status?.runtimeId!=='string'||!status.runtimeId)throw Error('Native runtime identity is required for recovery.');
   return withNativeRuntime(rpc,status.runtimeId,async()=>{
    const generation=await hostGeneration(op.scope,op.hostGeneration);
    const work=store.listCurrentWorks().find(w=>w.binding.requestId===op.requestId),fence=work?.instance?.fence??op.observation?.ownerFence;
    const death=await stopped({oldBinding:op,proof:{death:{ownerFence:fence}}});
-   if(!death)return {state:'blocked',detail:'The exact previous execution has not been proven stopped. Reconcile native death evidence before waking this member.'};
+   if(!death||op.kind==='structured'&&death.provider!==op.nativeRequest.agent)return {state:'blocked',detail:'The exact previous execution has not been proven stopped. Reconcile native death evidence before waking this member.'};
    const selected=(await rpc('worktree.show',{worktree:op.scope.workspaceId.startsWith('folder:')?op.scope.workspaceId:`id:${op.scope.workspaceId}`}))?.worktree;
    if(selected?.id!==op.scope.workspaceId||(selected.hostId??selected.identity?.executionHostId)!==op.scope.executionHostId)throw Error('Saved recovery project or host changed.');
-   const offers=op.kind==='structured'?await rpc('agentSession.restartResumable',{sessionIds:[op.sessionId]}):null;
+   let offers;try{offers=op.kind==='structured'?await rpc('agentSession.restartResumable',{sessionIds:[op.sessionId]}):null;}catch{/* A failed read admits no native continuation; checked handoff remains required. */}
    const offer=offers?.sessions?.find(s=>s.sessionId===op.sessionId&&s.workspaceId===op.scope.workspaceId&&s.executionHostId===op.scope.executionHostId&&s.agent===op.nativeRequest.agent);
    let action=offer?{method:'agentSession.restartContinue',params:{sessionIds:[op.sessionId]}}:null;
    if(!offer&&op.kind==='structured'){
-    const history=await rpc('agentSession.history',{sessionId:op.sessionId,direction:'tail',limit:1});
-    if(history?.ok===true&&history.page?.sessionId===op.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>=fence){
+    let history;try{history=await rpc('agentSession.history',{sessionId:op.sessionId,direction:'tail',limit:1});}catch{/* No resume authority can be inferred from unreadable history. */}
+    if(history?.ok===true&&history.page?.sessionId===op.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>=death.ownerFence){
      action=userMessage({binding:op},{kind:'structured',fence:history.page.fence},`TEAM_MEMBER_WAKE\nMember ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id??'preparation'}. Continue this existing conversation after its previous execution was confirmed stopped. ${work?`Use your own native identity to run-use ${work.run.id??'the existing exact objective Run'} and verify its objective ${JSON.stringify(work.nativeObjective)}; never override caller identity.`:''} Preserve original Task and Dispatch report identity. Await verified supervisor admission before new tasks; do not create another worker.`,status);
     }
    }

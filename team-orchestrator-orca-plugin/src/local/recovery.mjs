@@ -19,7 +19,7 @@ export async function readSessionDeath(userData,sessionId,ownerFence,scope){
   if(typeof raw!=='string'||raw.length>262144)return null;
   const record=JSON.parse(raw),lease=record.lease,death=lease?.deathEvidence;
   if(record.schemaVersion!==2||record.location?.workspaceId!==scope?.workspaceId||record.location?.executionHostId!==scope?.executionHostId||record.sessionId!==sessionId||lease?.sessionId!==sessionId||(!Number.isSafeInteger(lease.runtimeFence)||lease.runtimeFence<ownerFence)||lease.claimStatus!=='released'||lease.handoffStage||lease.handoffOperationId||lease.ownerProcess||lease.reservedSpawnToken||lease.unreconciled===true||death?.ownerFence!==ownerFence||!['exit-observed','pid-absent','identity-mismatch'].includes(death.kind)||!Number.isSafeInteger(death.observedAt)||death.observedAt>Date.now()+300000)return null;
-  return {kind:death.kind,ownerFence,observedAt:death.observedAt};
+  return {kind:death.kind,ownerFence,observedAt:death.observedAt,...(record.provider?{provider:record.provider}:{})};
  }catch{return null;}finally{db?.close();}
 }
 export function createRecoveryService({store,rpc,userData,consent}){

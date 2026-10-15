@@ -7,7 +7,7 @@ export async function resumedOwner(userData,operation,oldFence){
   const {DatabaseSync}=await import('node:sqlite');db=new DatabaseSync(path,{readOnly:true});if(db.prepare('PRAGMA user_version').get().user_version!==4)return null;
   const raw=db.prepare('SELECT record_json FROM agent_session_records WHERE session_id=?').get(operation.sessionId)?.record_json;if(typeof raw!=='string'||raw.length>262144)return null;
   const record=JSON.parse(raw),lease=record.lease;
-  if(record.schemaVersion!==2||record.sessionId!==operation.sessionId||record.provider!==operation.nativeRequest.agent||record.location?.workspaceId!==operation.scope.workspaceId||record.location.executionHostId!==operation.scope.executionHostId||lease?.sessionId!==operation.sessionId||lease.claimStatus!=='live'||lease.unreconciled||lease.handoffStage||!lease.ownerProcess||!Number.isSafeInteger(lease.runtimeFence)||lease.runtimeFence<=oldFence)return null;
+  if(record.schemaVersion!==2||record.sessionId!==operation.sessionId||record.provider!==operation.nativeRequest.agent||record.location?.workspaceId!==operation.scope.workspaceId||record.location.executionHostId!==operation.scope.executionHostId||lease?.sessionId!==operation.sessionId||lease.claimStatus!=='live'||lease.unreconciled||lease.handoffStage||!lease.ownerProcess||!Number.isSafeInteger(lease.ownerProcess.pid)||lease.ownerProcess.pid<1||typeof lease.ownerProcess.hostId!=='string'||!lease.ownerProcess.hostId||typeof lease.ownerProcess.spawnToken!=='string'||!lease.ownerProcess.spawnToken||!Number.isSafeInteger(lease.runtimeFence)||lease.runtimeFence<=oldFence)return null;
   return {fence:lease.runtimeFence};
  }catch{return null;}finally{db?.close();}
 }
