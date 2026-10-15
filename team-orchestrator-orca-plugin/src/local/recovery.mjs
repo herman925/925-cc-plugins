@@ -51,11 +51,11 @@ export function createRecoveryService({store,rpc,userData,consent}){
      const selected=(await rpc('worktree.show',{worktree:saved.scope.workspaceId.startsWith('folder:')?saved.scope.workspaceId:`id:${saved.scope.workspaceId}`}))?.worktree;
      if(selected?.id!==saved.scope.workspaceId||(selected.hostId??selected.identity?.executionHostId)!==saved.scope.executionHostId)throw Error('Saved member project or execution host changed.');
      if(saved.kind==='structured'){
-      const instance=store.listWorks().find(work=>work.binding.requestId===requestId)?.instance;
+      const instance=store.listCurrentWorks().find(work=>work.binding.requestId===requestId)?.instance;
       const death=await readSessionDeath(userData,saved.sessionId,instance?.fence??saved.observation?.ownerFence,saved.scope);
       if(death)recovery={...recovery,state:'stopped',liveness:'stopped',source:'native-owner-death',death,detail:'Native death evidence names the exact saved owner fence. The member reservation remains until an authorized lifecycle action.'};
      }else{
-      const instance=store.listWorks().find(work=>work.binding.requestId===requestId)?.instance;
+      const instance=store.listCurrentWorks().find(work=>work.binding.requestId===requestId)?.instance;
       const expected=instance?.incarnationId??saved.observation?.incarnationId;
       const shown=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
       if(!expected||shown?.incarnationId!==expected||shown.handle!==saved.handle||shown.worktreeId!==saved.scope.workspaceId||shown.executionHostId!==saved.scope.executionHostId||`${shown.tabId}:${shown.leafId}`!==saved.paneKey)throw Error('Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.');
@@ -70,7 +70,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
   try{return store.settleOperation(requestId,operation.nativeRequest.operationId,patch,operation.version??1);}catch{return store.readOperation(requestId);}
  }
  async function checkWork(workId){
-  const work=store.readWork(workId),protocol=store.readDispatchProtocol(workId);
+  const work=store.readCurrentWork(workId),protocol=store.readDispatchProtocol(workId);
   if(!work||!protocol||!work.instance||!work.run.id)return store.dispatchProjection(workId);
   const attempts=store.listDispatches(workId),team=store.readTeamVersion(work.teamId,work.configVersion);
   const evidence=()=>readNativeDispatchEvidence(userData,{work,protocol,team,owner:work.instance,admitted:attempts});
@@ -122,6 +122,6 @@ export function createRecoveryService({store,rpc,userData,consent}){
  return {
   checkWork:id=>serial(`work:${id}`,()=>checkWork(id)),
   checkOperation:id=>serial(`operation:${id}`,()=>checkOperation(id)),
-  async reconcile(){for(const operation of store.listOperations())if(store.isActiveOperation(operation))await this.checkOperation(operation.requestId);for(const work of store.listWorks())await this.checkWork(work.id);},
+  async reconcile(){for(const operation of store.listOperations())if(store.isActiveOperation(operation))await this.checkOperation(operation.requestId);for(const work of store.listCurrentWorks())await this.checkWork(work.id);},
  };
 }

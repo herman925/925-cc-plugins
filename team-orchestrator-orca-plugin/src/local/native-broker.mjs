@@ -18,7 +18,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
     return { ok: true, value: { opened: true } };
   }
   let recovery;
-  if (op !== 'capabilities') {
+  if (op !== 'capabilities' && op !== 'replaceMember') {
     recovery = await invoke({ op: '_launchLookup', params: { input, recover: op === 'recoverLaunch' } });
     if (recovery?.receipt) return { ok: true, value: recovery.receipt };
     if (op === 'recoverLaunch') throw Error('Saved launch operation was not found; checking cannot start a new session.');
@@ -28,7 +28,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority }) {
   await authority();
   const observed = await invoke({ op: '_capabilityResult', params: { observationId: prepared.observationId, value } });
   if (op === 'capabilities') return { ok: true, value: observed };
-  const launch = recovery ?? await invoke({ op: '_launchPrepare', params: { input, observationId: prepared.observationId } });
+  const launch = recovery ?? await invoke({ op: op==='replaceMember'?'_wakeFreshPrepare':'_launchPrepare', params: { input, observationId: prepared.observationId } });
   if (launch.receipt) return { ok: true, value: launch.receipt };
   let result, error;
   try {

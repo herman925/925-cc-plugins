@@ -1,3 +1,4 @@
+import {createWakeService} from './wake.mjs';
 import { initialMembers } from '../launch.mjs';
 import { createQuestionService } from './questions.mjs';
 import { createRecoveryService } from './recovery.mjs';
@@ -17,6 +18,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
   const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args) });
   const recovery = createRecoveryService({ store, rpc, userData, consent });
+  const wake = createWakeService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   let workTimer, polling = false, stopped = false;
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
@@ -79,6 +81,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if(op==='_wakeFreshPrepare'){
+          const row=store.readWake(params.input.requestId);if(!row||row.teamId!==params.input.teamId)throw Error('Saved handoff recovery not found.');
+          const observed=capabilities.get(row.oldBinding.scope.workspaceKey),member=store.readSnapshot().teams.find(t=>t.id===row.teamId)?.members.find(m=>m.id===row.memberId);
+          if(latestObservation.get(row.oldBinding.scope.workspaceKey)!==params.observationId||!observed||Date.now()-observed.observedAt>30000||observed.runtimeId!==row.proof.runtimeId)throw Error('Fresh authenticated recovery capability admission is required.');
+          const issue=preferenceIssue(member,observed,{requireCore:true});if(issue)throw Error(issue);
+          const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
+        }
         if (op === '_launchLookup') {
           const saved = savedLaunch(params.input);
           if (!saved) return null;
@@ -163,6 +172,10 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         stopped = false; scheduleWork();
         return { value: store.readSnapshot(), work };
       }
+      if(op==='wakeMember')return {value:await wake.wake(params)};
+      if(op==='checkWake'){await wake.check(params.requestId);return {value:await wake.bind(params.requestId)};}
+      if(op==='decideWake')return {value:await wake.decide(params)};
+      if(op==='checkHandoff')return {value:await wake.handoff(params.requestId)};
       if (op === 'answerQuestion') return { value: await questions.answer(params) };
       if (op === 'updateAgentPreferences') {
         const replay = store.replay(op, params); if (replay) return { value: replay };

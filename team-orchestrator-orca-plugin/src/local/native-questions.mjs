@@ -19,7 +19,7 @@ export async function readNativeQuestionEvidence(userData,{work,protocol,owner,a
   for(const task of db.prepare('SELECT * FROM tasks WHERE run_id=?').all(work.run.id)){
    const spec=parse(task.spec);if(spec?.protocol!=='team-questions/v1'||spec.workId!==work.id)continue;
    try {
-    if(spec.token!==protocol.token||spec.generation!==protocol.generation||!text(spec.appQuestionId,120)||!/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId)||!['user-question','answer-ack','collaboration-directive','message-evidence'].includes(spec.kind))throw Error('Question intent identity invalid.');
+    if(spec.token!==protocol.token||spec.generation!==protocol.generation||!text(spec.appQuestionId,120)||!/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId)||!['user-question','answer-ack','collaboration-directive','message-evidence','recovery-handoff'].includes(spec.kind))throw Error('Question intent identity invalid.');
     const receipts=db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint,task.id);
     const receipt=receipts[0],value=parse(receipt?.receipt),caller=owner.kind==='structured'?`orca_session_id:${owner.sessionId}`:owner.handle;
     if(receipts.length!==1||receipt.payload_hash!==nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller},owner)||value?.task?.spec!==task.spec||value.task.run_id!==work.run.id)throw Error('Question author proof unavailable.');

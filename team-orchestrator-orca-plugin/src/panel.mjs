@@ -30,6 +30,7 @@ let preferenceTarget = 'member';
 let templateText = '';
 let templatePreview = null;
 let templateRequest = null;
+const wakeDrafts = new Map(), wakeRequests = new Map();
 const answerDrafts = new Map(), answerRequests = new Map();
 const objectives = new Map(), workRequests = new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
@@ -116,7 +117,7 @@ function launchReceipt(team) {
   if (!team.launch) return '';
   if (!team.launch.native) return '<p class="subtle">Legacy coordinator request · unverified.</p>';
   const rows = Object.entries(team.launch.members ?? {});
-  return `<p class="subtle">${rows.filter(([, row]) => row.terminalId).length} actual session receipt(s). Input acceptance does not prove agent readiness.</p><ul>${rows.map(([memberId, row]) => `<li>${escape(row.title || team.members.find(member => member.id === memberId)?.name || 'Supervisor')} · ${escape(row.status)}${row.kind ? ` · ${escape(row.kind)}` : ''}<br><small>Input: ${escape(row.prompt?.outcome || 'unconfirmed')} · Observation: ${escape(row.observation?.state || 'unknown')}</small>${recoveryEvidence(row.recovery)}${row.error || row.warning ? `<p>${escape(row.error || row.warning)}</p>` : ''}${row.terminalId ? button('Open verified session', 'open-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Check saved launch', 'recover-launch', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}</li>`).join('')}</ul>`;
+  return `<p class="subtle">${rows.filter(([, row]) => row.terminalId).length} actual session receipt(s). Input acceptance does not prove agent readiness.</p><ul>${rows.map(([memberId, row]) => `<li>${escape(row.title || team.members.find(member => member.id === memberId)?.name || 'Supervisor')} · ${escape(row.status)}${row.kind ? ` · ${escape(row.kind)}` : ''}<br><small>Input: ${escape(row.prompt?.outcome || 'unconfirmed')} · Observation: ${escape(row.observation?.state || 'unknown')}</small>${recoveryEvidence(row.recovery)}${row.error || row.warning ? `<p>${escape(row.error || row.warning)}</p>` : ''}${row.terminalId ? button('Open verified session', 'open-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Wake closed member', 'wake-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Check saved launch', 'recover-launch', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}</li>`).join('')}</ul>`;
 }
 function taskCards(team, tasks, showMember = true) {
   const statuses = { queued: 'Queued · awaiting admission', admitted: 'Admitted · awaiting member launch', awaiting_start: 'Awaiting native start', running: 'Native assignment observed', unknown: 'Outcome unknown', pending_acceptance: 'Pending supervisor acceptance', accepted: 'Accepted by direct supervisor', rework: 'Rework requested', rejected: 'Rejected' };
@@ -160,16 +161,22 @@ function templatesView() {
   return `<h1>Team templates</h1><p>Exchange configuration and roles as JSON. Imported teams have new identities and no sessions or work history. Legacy mod/prototype formats are not supported.</p><label class="field">Template JSON<textarea data-template rows="10" spellcheck="false" ${templatePreview ? 'readonly' : ''}>${escape(templateText)}</textarea></label><div class="actions">${button('Select JSON to copy', 'select-template', !templateText ? 'disabled' : '', 'secondary small')}${button(templatePreview ? 'Edit template JSON' : 'Preview template', templatePreview ? 'edit-template' : 'preview-template', !loaded || !storageAvailable ? 'disabled' : '', 'primary small')}</div><label class="field">Open template file<input type="file" data-template-file accept="application/json,.json"></label>
   ${preview ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview.name)}</h2><p>${preview.members.length} members · ${escape(preview.structure)}</p><p>${escape(preview.purpose)}</p><div class="tree-scroll">${tree(preview.members.map(member => ({ ...member, id: member.ref })))}</div>${preview.members.map(member => `<details><summary>${escape(member.name)} · ${escape(member.agent)} · ${escape(member.model)} · ${escape(member.effort)} · ${member.preferenceOverride ? 'Member override' : 'Level preference'}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || 'None specified')}</p><p>Collaboration rules: ${escape(member.collaboration || 'None specified')}</p></details>`).join('')}</section>${projectControls()}<div class="actions">${button('Import as new team', 'import-template', !confirmedWorkspace || !loaded || !storageAvailable ? 'disabled' : '', 'primary')}</div>` : ''}`;
 }
-function attentionCount() { return (state.works || []).reduce((count,w)=>count+(w.questions||[]).filter(q=>q.status==='pending').length,0); }
+function attentionCount() { return (state.recoveries||[]).filter(r=>!['bound','resumed'].includes(r.state)).length+(state.works || []).reduce((count,w)=>count+(w.questions||[]).filter(q=>q.status==='pending').length,0); }
+function recoveryCards(){
+ return (state.recoveries||[]).map(row=>{
+  const team=state.teams.find(t=>t.id===row.teamId),member=team?.members.find(m=>m.id===row.memberId),root=!member?.boss;
+  return `<article class="task-card" aria-label="Member recovery"><h3>${escape(member?.name||row.memberId)} · Recovery</h3><p>State: ${escape(row.state)}</p><p>${escape(row.detail||'The old execution was confirmed stopped; native continuation is checked first.')}</p><p>Closing a conversation keeps this member on the roster. Assignment pause and removal are separate actions.</p><small>Previous instance ${escape(row.oldInstanceGeneration)} · Original request ${escape(row.oldRequestId)}</small>${row.handoff?`<p>Checked handoff: ${escape(row.handoff.summary)}</p><p>Reviewer: ${escape(row.handoff.reviewer)}</p>`:''}${row.state==='needs_decision'&&root?`<label class="field">Checked handoff summary<textarea data-wake-summary="${escape(row.requestId)}" maxlength="4000">${escape(wakeDrafts.get(row.requestId)||'')}</textarea></label>${button('Approve fresh supervisor', 'decide-wake', `data-request="${escape(row.requestId)}"`, 'primary small')}`:''}${row.state==='needs_decision'&&!root?`<p>Awaiting the actual direct manager’s checked handoff.</p>${button('Check manager handoff','handoff-wake',`data-request="${escape(row.requestId)}"`,'small')}`:''}${row.state==='approved'?button('Create approved replacement','replace-wake',`data-request="${escape(row.requestId)}" data-team="${escape(row.teamId)}"`,'primary small'):''}${button('Check recovery evidence','check-wake',`data-request="${escape(row.requestId)}"`,'small')}</article>`;
+ }).join('');
+}
 function attentionView() {
- return `<section aria-label="Needs your attention"><h1>Needs your attention</h1><p>Answers go to the saved highest supervisor. Independent tasks continue while a decision is pending.</p>${(state.works||[]).map(work=>{
+ return `<section aria-label="Needs your attention"><h1>Needs your attention</h1>${recoveryCards()}<p>Answers go to the saved highest supervisor. Independent tasks continue while a decision is pending.</p>${(state.works||[]).map(work=>{
  const team=state.teams.find(t=>t.id===work.teamId),head=team?.members.find(m=>m.id===work.supervisorMemberId);
  const waiting=(work.failureStreaks||[]).filter(s=>s.escalationNeeded&&!(work.questions||[]).some(q=>s.evidence.slice(-2).every(e=>q.evidence.includes(e.evidenceId))));
  return `<h2>${escape(team?.name||'Team')} · ${escape(work.objective)}</h2>${button('Check work evidence','check-work',`data-work="${escape(work.id)}"`,'small')}${waiting.map(s=>`<article class="task-card"><h3>${escape(s.taskKey)}</h3><p>Two proven execution failures. Waiting for supervisor summary and options.</p><details><summary>Failure evidence</summary>${s.evidence.map(e=>`<p>${escape(e.evidenceId)} · ${escape(e.attemptId)}</p>`).join('')}</details></article>`).join('')}${(work.questions||[]).map(q=>{
  const key=work.id+':'+q.id,supplement=q.answers.length>0;
  return `<article class="task-card" aria-label="Question ${escape(q.id)}"><h3>${escape(q.summary)}</h3><p>From ${escape(head?.name||q.fromMemberId)} · ${escape(q.status)}</p>${q.options.length?`<p>Options: ${q.options.map(escape).join(' · ')}</p>`:''}<p>Blocks: ${q.blockingTaskKeys.map(escape).join(', ')||'No independent tasks'}</p>${q.answers.map(a=>`<div class="notice"><p>${escape(a.body)}</p><small>Native input: ${escape(a.state)} · Manager processing: ${escape(a.processed)}</small>${a.nativeAnswer?`<p>Native question answered: ${escape(a.nativeAnswer.messageId)}</p>`:''}${a.detail?`<p>${escape(a.detail)}</p>`:''}</div>`).join('')}${q.status!=='closed'?`<label class="field">${supplement?'Your supplement':'Your answer'}<textarea data-answer="${escape(key)}" rows="3" maxlength="8000">${escape(answerDrafts.get(key)||'')}</textarea></label>${button(supplement?'Send supplement':'Send answer','answer-question',`data-work="${escape(work.id)}" data-question="${escape(q.id)}"`,'primary small')}`:'<p>Original requester is no longer active. Ask the supervisor for a new decision.</p>'}<details><summary>Question evidence</summary><p>Question ${escape(q.id)} · Work ${escape(work.id)} · Run ${escape(q.runId)} · Generation ${escape(q.generation)}</p>${q.origin?`<p>Origin reference (${q.nativeQuestion?'verified native question':'awaiting native verification'}): attempt ${escape(q.origin.attemptId)} · Dispatch ${escape(q.origin.dispatchId)} · Native question ${escape(q.origin.messageId)}</p>`:''}${q.nativeQuestion?`<p>Native question: ${escape(q.nativeQuestion.status)} · Original requester resumed: ${escape(q.nativeQuestion.requesterResumed)}</p>`:''}<p>Notification: ${escape(q.notification.state)}</p></details></article>`;
  }).join('')}`;
- }).join('')}${!(state.works||[]).some(w=>w.questions?.length||w.failureStreaks?.some(s=>s.escalationNeeded))?'<p>No pending decisions.</p>':''}</section>`;
+ }).join('')}${!(state.recoveries||[]).length&&!(state.works||[]).some(w=>w.questions?.length||w.failureStreaks?.some(s=>s.escalationNeeded))?'<p>No pending decisions.</p>':''}</section>`;
 }
 function settingsView() {
   return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
@@ -313,6 +320,19 @@ app.addEventListener('click', async event => {
       message = 'Imported as an independent team. No members were launched and no work history was copied.'; render();
     }
   }
+  else if(['wake-member','check-wake','decide-wake','handoff-wake','replace-wake'].includes(action)){
+    busy=true;problem='';render();
+    try{
+      let op,params;const id=target.dataset.request,row=(state.recoveries||[]).find(r=>r.requestId===id);
+      if(action==='wake-member'){
+        if(!wakeRequests.has(id))wakeRequests.set(id,crypto.randomUUID());
+        op='wakeMember';params={teamId:target.dataset.team,memberId:target.dataset.member,bindingRequestId:id,requestId:wakeRequests.get(id)};
+      }else if(action==='decide-wake'){op='decideWake';params={requestId:id,version:row.version,decision:'replace',summary:wakeDrafts.get(id)||'',evidenceRefs:[`previous-instance:${row.oldRequestId}`,`native-death:${row.proof?.death?.ownerFence??row.proof?.stop?.stopRequestId??'exact-worker'}`]};}
+      else if(action==='replace-wake'){op='replaceMember';params={requestId:id,teamId:target.dataset.team};}
+      else {op=action==='check-wake'?'checkWake':'checkHandoff';params={requestId:id};}
+      const result=await call(op,params);message=`Recovery: ${result.value?.state??result.state??result.status??'saved'}. ${result.value?.detail??result.detail??''}`;state=validatePersistentState((await call('storage.get',{})).value);view='attention';
+    }catch(error){problem=error.message;}finally{busy=false;render();}
+  }
   else if (action === 'open-member' || action === 'recover-launch') {
     busy = true; render();
     try {
@@ -381,3 +401,5 @@ app.addEventListener('change', async event => {
 });
 render();
 void load();
+
+app.addEventListener('input',event=>{if(event.target.dataset.wakeSummary)wakeDrafts.set(event.target.dataset.wakeSummary,event.target.value);});

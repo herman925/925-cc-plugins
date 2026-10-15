@@ -15,7 +15,7 @@ async function fixture(t,agent='codex'){
  const write=()=>db.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(op.sessionId,JSON.stringify({schemaVersion:2,sessionId:op.sessionId,provider:agent,location:scope,lease:{sessionId:op.sessionId,runtimeFence:fence,claimStatus:dead?'released':'live',ownerProcess:dead?null:{pid:1},deathEvidence:dead?{kind:'exit-observed',ownerFence:7,observedAt:Date.now()}:null}}));write();
  const rpc=async(method,params)=>{calls.push({method,params});if(method==='status.get')return {runtimeId:'runtime'};if(method==='worktree.show')return {worktree:{id:scope.workspaceId,hostId:'local'}};if(method==='agentSession.restartResumable')return {sessions:offers?[{sessionId:op.sessionId,workspaceId:scope.workspaceId,executionHostId:'local',agent}]:[],failed:[]};if(method==='agentSession.restartContinue'){if(outcome==='throw')throw Error('lost receipt');return {resumed:[],continued:[{sessionId:op.sessionId,outcome}]};}if(method==='agentSession.history')return {ok:true,page:{sessionId:op.sessionId,fence}};throw Error('Unsupported fixture method '+method);};
  const service=createWakeService({store,rpc,userData:profile,consent:async()=>{}});
- return {store,scope,team,member,op,rpc,calls,service,input:{teamId:team.id,memberId:member.id,requestId:'wake-1',bindingRequestId:'launch'},set dead(value){dead=value;write();},set offers(value){offers=value;},set outcome(value){outcome=value;},set fence(value){fence=value;write();}};
+ return {profile,store,scope,team,member,op,rpc,calls,service,input:{teamId:team.id,memberId:member.id,requestId:'wake-1',bindingRequestId:'launch'},set dead(value){dead=value;write();},set offers(value){offers=value;},set outcome(value){outcome=value;},set fence(value){fence=value;write();}};
 }
 test('a live or unknown old owner blocks wake without launching or deleting the member',async t=>{
  const f=await fixture(t);const result=await f.service.wake(f.input);
@@ -28,4 +28,44 @@ for(const agent of ['codex','claude'])test(`${agent} restart continuation uses o
  assert.equal(f.calls.some(c=>c.method==='agentSession.restartResume'),false);
  await f.service.wake(f.input);assert.equal(f.calls.filter(c=>c.method==='agentSession.restartContinue').length,1);
  assert.equal(f.store.readWake('wake-1').oldBinding.requestId,'launch');
+});
+test('lost continuation receipt and duplicate panels retain one unknown reservation with no fallback',async t=>{
+ const f=await fixture(t);f.dead=true;f.outcome='throw';await Promise.all([f.service.wake(f.input),f.service.wake(f.input)]);
+ assert.equal(f.store.readWake('wake-1').state,'unknown');assert.equal(f.calls.filter(c=>c.method==='agentSession.restartContinue').length,1);
+ await assert.rejects(f.service.wake({...f.input,requestId:'second'}),/recovery/);
+ assert.equal(f.calls.some(c=>c.method==='agent.launchReplay'),false);
+});
+test('a manually closed Codex or Claude conversation receives durable native user input when no restart offer exists',async t=>{
+ const f=await fixture(t);f.dead=true;f.offers=false;
+ const service=createWakeService({store:f.store,userData:f.profile,consent:async()=>{},rpc:async(method,params)=>{
+  if(method==='agentSession.send'){assert.equal(f.store.readWake('wake-1').state,'submitted');assert.equal(params.envelope.sessionId,'session-118');assert.equal(params.envelope.expectedRuntimeFence,7);return {ok:true,fence:8,value:{clientMessageId:params.envelope.clientOperationId,submission:{dispatchState:'accepted'}}};}return f.rpc(method,params);
+ }});
+ assert.equal((await service.wake(f.input)).state,'accepted');assert.equal(f.store.readWake('wake-1').nativeAction.method,'agentSession.send');
+});
+test('verified resumed owner installs a new member instance while late old launch evidence cannot retarget it',async t=>{
+ const f=await fixture(t);f.dead=true;await f.service.wake(f.input);f.fence=8;f.dead=false;
+ const result=await f.service.check('wake-1');assert.equal(result.state,'resumed');
+ const current=f.store.readMemberOperation(f.member.id);assert.equal(current.memberId,f.member.id);assert.equal(current.instanceGeneration,2);assert.notEqual(current.requestId,f.op.requestId);
+ const old=f.store.readOperation('launch');f.store.settleOperation(old.requestId,old.nativeRequest.operationId,{warning:'late old report'},old.version);
+ assert.equal(f.store.readSnapshot().teams[0].launch.members[f.member.id].requestId,current.requestId);
+});
+test('highest supervisor native refusal requires an explicit saved human handoff before fresh replacement',async t=>{
+ const f=await fixture(t);f.dead=true;f.outcome='refused';await f.service.wake(f.input);
+ assert.equal(f.store.readWake('wake-1').state,'needs_decision');
+ await assert.rejects(f.service.prepareFresh('wake-1'),/decision|handoff/);
+ await f.service.decide({requestId:'wake-1',version:f.store.readWake('wake-1').version,decision:'replace',summary:'Continue the pending objective after checking its saved evidence.',evidenceRefs:['native-owner-death:7']});
+ const row=f.store.readWake('wake-1');assert.equal(row.handoff.reviewer,'user');assert.equal(row.handoff.summary,'Continue the pending objective after checking its saved evidence.');
+ const fresh=await f.service.prepareFresh('wake-1');assert.equal(fresh.operation.memberId,f.member.id);assert.equal(fresh.operation.instanceGeneration,2);assert.notEqual(fresh.operation.nativeRequest.operationId,f.op.nativeRequest.operationId);assert.match(fresh.operation.nativeRequest.prompt.text,/Continue the pending objective/);
+ assert.equal(f.store.readOperation('launch').sessionId,'session-118');
+});
+test('resumed highest supervisor only regains work authority after genuine native Run ownership; original epoch stays immutable',async t=>{
+ const f=await fixture(t),work=f.store.prepareWork({teamId:f.team.id,requestId:'goal',expectedRevision:f.store.readSnapshot().revision,objective:'Finish the saved goal'}).work;
+ f.store.updateWork(work.id,work.version,{instance:{kind:'structured',liveSessionId:'session-118',sessionId:'canonical-head',fence:7},run:{state:'verified',id:'run-one',consumerGeneration:1}});
+ f.dead=true;await f.service.wake(f.input);f.fence=8;f.dead=false;await f.service.check('wake-1');
+ const db=new DatabaseSync(join(f.profile,'orchestration.db'));t.after(()=>db.close());db.exec("PRAGMA user_version=43; CREATE TABLE runs(id TEXT,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER)");
+ db.prepare('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)').run('run-one',work.nativeObjective,'this_database',null,null,'wrong-head',1,1,0);
+ const service=createWakeService({store:f.store,userData:f.profile,consent:async()=>{},rpc:async(method,params)=>{if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:canonical-head'};if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'session-118',worktreeId:f.scope.workspaceId}};if(method==='orchestration.runShow')return {run:{id:'run-one',objective:work.nativeObjective,consumer_generation:1}};return f.rpc(method,params);}});
+ await service.bind('wake-1');assert.equal(f.store.readCurrentWork(work.id).binding.requestId,'launch');
+ db.exec("UPDATE runs SET coordinator_orca_session_id='canonical-head'");await service.bind('wake-1');
+ assert.equal(f.store.readCurrentWork(work.id).instance.fence,8);assert.equal(f.store.readCurrentWork(work.id).binding.instanceGeneration,2);assert.equal(f.store.readWork(work.id).binding.requestId,'launch');assert.equal(f.store.readWork(work.id).instance.fence,7);
 });
