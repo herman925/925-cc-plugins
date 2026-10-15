@@ -54,6 +54,7 @@ test('native child depth and creator must match its actual manager parent before
  assert.equal(f.store.listDispatches(child.id)[0].status,'unknown','fresh Run must not reset native creator depth');
  f.db.prepare('UPDATE dispatch_contexts SET creator_dispatch_id=?,depth=2 WHERE id=?').run(parent.dispatchId,'dispatch-child');
  await dispatch.check(child.id);let task=f.store.listDispatches(child.id)[0];assert.equal(task.status,'running');assert.equal(task.depth,2);assert.equal(task.creatorDispatchId,parent.dispatchId);
+ assert.ok(f.store.workClosureBlockers(f.work.id).some(s=>s.includes('nested-task')));
  assert.equal(f.store.listTeamDispatches(f.work.id).length,2);assert.equal(f.store.listWorks().length,1);
  const {createQuestionService}=await import('../src/local/questions.mjs');const questions=createQuestionService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
  const questionIntent=(context,actor,id,fields)=>{const body=JSON.stringify({protocol:'team-questions/v1',workId:context.id,token:f.store.readDispatchProtocol(context.id).token,generation:1,appQuestionId:id,summary:'Choose leaf scope',options:['Small'],blockingTaskKeys:[],...fields});const taskId='question-'+id;f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,context.run.id,body,'ready',null,null,null,null,null);const params={spec:body,run:context.run.id,callerTerminalHandle:'orca_session_id:'+actor};if(actor==='claude_child')receipt('create-'+taskId,'orchestration.taskCreate',params,{task:{id:taskId,run_id:context.run.id,spec:body}});else f.receipt('create-'+taskId,'orchestration.taskCreate',params,{task:{id:taskId,run_id:context.run.id,spec:body}});};
@@ -80,6 +81,15 @@ test('native child depth and creator must match its actual manager parent before
  const result=JSON.stringify({protocol:'team-review/v1',workId:child.id,token:protocol.token,generation:1,taskKey:task.taskKey,attemptId:task.id,nativeTaskId:task.nativeTaskId,dispatchId:task.dispatchId,reviewToken:task.reviewToken,reviewerMemberId:f.member.id,decision:'accept',evidenceRefs:[task.evidenceId],summary:'Validated leaf result'});
  receipt('review-child','orchestration.taskUpdate',{id:'task-child',status:'completed',result,run:'run-manager',callerTerminalHandle:'orca_session_id:claude_child'},{task:{id:'task-child',run_id:'run-manager',status:'completed',result}});
  await dispatch.check(child.id);assert.equal(f.store.listDispatches(child.id)[0].status,'accepted');assert.equal(f.store.listDispatches(f.work.id)[0].status,'running');
+ f.complete(parent);await dispatch.check(root.id);let completedParent=f.store.listDispatches(root.id)[0];assert.equal(completedParent.status,'pending_acceptance');
+ f.review(completedParent);await dispatch.check(root.id);assert.equal(f.store.listDispatches(root.id)[0].status,'accepted');
+ await f.works.verifyWork(child.id,false,{allowSettledParent:true});
+ const {createLifecycleService}=await import('../src/local/lifecycle.mjs');const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ const attempts=f.store.listTeamDispatches(root.id),delivery=JSON.stringify({protocol:'team-delivery/v1',workId:root.id,token:f.store.readDispatchProtocol(root.id).token,generation:1,supervisorMemberId:root.supervisorMemberId,previousDeliveryId:null,summary:'Manager aggregate delivered',evidenceRefs:attempts.map(a=>a.evidenceId),attemptIds:attempts.map(a=>a.id)});
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run('total-delivery','run-head',delivery,'ready',null,null,null,null,null);f.receipt('create-total','orchestration.taskCreate',{spec:delivery,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head'},{task:{id:'total-delivery',run_id:'run-head',spec:delivery}});
+ await lifecycle.check(root.id);
+ await assert.rejects(lifecycle.decide({workId:root.id,requestId:'close-all',deliveryId:'total-delivery',expectedWorkVersion:f.store.readWork(root.id).version,decision:'accept'}),/Descendant Run/,'unregistered native lower-manager user question cannot disappear from closure');
+
  assert.equal(f.calls.some(m=>['orchestration.workerStart','orchestration.runCreate','orchestration.send'].includes(m)),false);
 });
 

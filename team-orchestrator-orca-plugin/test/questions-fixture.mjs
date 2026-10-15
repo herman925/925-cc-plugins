@@ -90,7 +90,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   db.prepare('UPDATE dispatch_contexts SET status=? WHERE id=?').run(outcome==='succeeded'?'completed':'failed',attempt.dispatchId);
   db.prepare('UPDATE worker_dispatches SET state=? WHERE dispatch_id=?').run(outcome,attempt.dispatchId);
   db.prepare("UPDATE tasks SET status=?,result='Original execution result' WHERE id=?").run(outcome==='succeeded'?'completed':'failed',attempt.nativeTaskId);
-  db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome}));
+  db.prepare('INSERT INTO messages(id,run_id,from_handle,sender_pane_key,type,body,payload) VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome}));
   db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:'+reportId,attempt.dispatchId,attempt.nativeTaskId,'run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome,reportId:'worker_report:'+reportId}));
  };
  const review=(attempt,{decision='accept',forged=false,patch={},requestId='review-'+attempt.id}={})=>{

@@ -3,7 +3,7 @@ export function createHierarchyService({store,userData,works}){
  const queues=new Map();
  async function check(id){
   const root=(store.readCurrentWork??store.readWork)(id);if(!root||root.status==='completed')return;
-  const team=store.readTeamVersion(root.teamId,root.configVersion);
+  const team=store.effectiveTeamForWork?.(root.id)??store.readTeamVersion(root.teamId,root.configVersion);
   for(const parentWork of store.listRunWorks(root.teamWorkId??id)){
    if(parentWork.run.state!=='verified')continue;
    for(const attempt of store.listDispatches(parentWork.id)){
