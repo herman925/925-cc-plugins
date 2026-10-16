@@ -1,16 +1,17 @@
-import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, addTeam, validateState } from './team.mjs';
+import { preferenceIssue } from './capabilities.mjs';
+import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, emptyTeamState, validatePersistentState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
 import { createWorkerBridge } from './worker-bridge.mjs';
-import { initialMembers, launchMembers } from './launch.mjs';
+import { initialMembers } from './launch.mjs';
+import { parseTeamTemplate, MAX_TEMPLATE_BYTES } from './templates.mjs';
 
 const app = document.getElementById('app');
 const rawCall = createBridge(window.parent);
 const worker = createWorkerBridge(rawCall);
 const call = (action, params) => worker.call(action, params);
-let connection = 'Checking the bundled local executor…';
+let connection = 'Panel loaded · worker activation unknown · compatibility layer checking…';
 let connectionReady = false;
-const KEY = 'team-definitions-v1';
-let state = validateState(null);
+let state = emptyTeamState();
 let form = structuredClone(DEFAULT_FORM);
 let view = 'roster';
 let selection = null;
@@ -20,9 +21,24 @@ let storageAvailable = false;
 let message = '';
 let problem = '';
 let canRetry = false;
+let storageRecovery=null,cleanupPreview=null,cleanupRequest=null;
+const cleanupSelection=new Set();
 let workspace = null;
-let launchMode = 'on-demand';
 let targetError = '';
+let confirmedWorkspace = null;
+const capabilityViews = new Map();
+let memberPreferences = null;
+let preferenceTarget = 'member';
+let templateText = '';
+let templatePreview = null;
+let templateRequest = null;
+const replacementDrafts=new Map();
+const staffingDrafts=new Map(),staffingRequests=new Map();
+
+const wakeDrafts = new Map(), wakeRequests = new Map();
+const answerDrafts = new Map(), answerRequests = new Map();
+const objectives = new Map(), workRequests = new Map(), goalDrafts=new Map(), goalRequests=new Map(), decisionRequests=new Map(), reworkDrafts=new Map();
+const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const label = role => ({ ceo: 'CEO', head: 'Head', lead: 'Lead', worker: 'Worker' })[role];
@@ -45,11 +61,25 @@ function tree(members, parent = null, clickable = false, teamIndex = 0, compact 
     return `<li><${clickable ? 'button type="button"' : 'span'} class="org-node ${escape(member.role)}" ${clickable ? `data-action="member" data-team="${teamIndex}" data-member="${escape(member.id)}" aria-label="${escape(member.name)}" title="${escape(member.name)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></${clickable ? 'button' : 'span'}>${members.some(child => child.boss === member.id) ? tree(members, member.id, clickable, teamIndex, compact) : ''}</li>`;
   }).join('')}</ul>`;
 }
+function preferenceControls(name, preference, caps, suffix, member = false) {
+  const agent = caps?.agents?.[preference.agent];
+  const models = agent?.models ?? [];
+  const listed = models.find(row => row.id === preference.model);
+  const efforts = [...new Set(['default', ...(listed?.efforts ?? []).map(row => row.value), ...(preference.effort === 'default' ? [] : [preference.effort])])];
+  const attr = field => member ? `data-preference="${field}"` : `data-${field}="${suffix}"`;
+  const issue = preferenceIssue(preference, caps);
+  return `<td><select aria-label="${name} ${member ? 'agent' : 'CLI'}" ${attr('agent')}>${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? 'selected' : ''}>${text}${caps?.agents?.[value]?.tuiPickerDisabled ? ' · hidden in TUI picker' : ''}</option>`).join('')}</select></td><td><input aria-label="${name} model" ${attr('model')} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map(row => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join('')}</datalist></td><td><select aria-label="${name} effort" ${attr('effort')} ${preference.model === 'default' ? 'disabled' : ''}>${efforts.map(value => `<option value="${escape(value)}" ${preference.effort === value ? 'selected' : ''}>${escape(value === 'default' ? 'Default' : value)}</option>`).join('')}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ''}</td>`;
+}
+function capabilityNotice(scope) {
+  const caps = capabilityViews.get(scope?.workspaceKey);
+  return `<p class="subtle">${caps ? caps.connection === 'connected' ? 'Capabilities verified for this project' : 'Execution host unavailable; refresh after reconnecting in Orca.' : 'Refresh host capabilities to validate explicit model and effort choices. Default inherits Orca configuration.'}</p>${caps ? `<p class="subtle">${['codex', 'claude'].map(id => `${id}: ${caps.agents[id].availability}${caps.agents[id].configured.model ? ` · Orca saved preference ${caps.agents[id].configured.model}${caps.agents[id].configured.effort ? ` / ${caps.agents[id].configured.effort}` : ''}` : ''}${caps.agents[id].detail ? ` · ${caps.agents[id].detail}` : ''}`).map(escape).join('<br>')}</p>` : ''}`;
+}
 function configRows() {
   const count = form.structure === 'organisation' ? 3 : form.levels;
+  const caps = capabilityViews.get((confirmedWorkspace || workspace)?.workspaceKey);
   return Array.from({ length: count }, (_, i) => {
     const name = form.structure === 'organisation' ? ['CEO', 'Heads', 'Workers'][i] : i === 0 ? 'Head' : i === count - 1 ? 'Workers' : 'Leads';
-    return `<tr><th scope="row">${name}</th><td><select aria-label="${name} CLI" data-agent="${i}">${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${form.agents[i] === value ? 'selected' : ''}>${text}</option>`).join('')}</select></td><td><input aria-label="${name} model" data-model="${i}" list="model-options" value="${escape(form.models[i])}" maxlength="120" placeholder="default or model ID"></td><td><select aria-label="${name} effort" data-effort="${i}" ${form.models[i] === 'default' ? 'disabled' : ''}>${['default', 'low', 'medium', 'high', 'xhigh'].map(value => `<option value="${value}" ${form.efforts[i] === value ? 'selected' : ''}>${({ default: 'Default', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high' })[value]}</option>`).join('')}</select></td></tr>`;
+    return `<tr><th scope="row">${name}</th>${preferenceControls(name, { agent: form.agents[i], model: form.models[i], effort: form.efforts[i] }, caps, i)}</tr>`;
   }).join('');
 }
 function preview() {
@@ -64,12 +94,20 @@ function formView() {
     <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Quick start</span>${presets()}</div><div class="field"><span>Structure</span>${segment('structure', [['team', 'One team'], ['organisation', 'CEO over several teams']], form.structure)}</div>
     ${form.structure === 'organisation' ? `<label class="field">Teams<input id="team-groups" data-form="groups" value="${escape(form.groups)}" maxlength="520" placeholder="Team 1, Team 2"><small>Names separated by commas; each gets a head and workers.</small></label>` : `<div class="field"><span>Levels</span>${segment('levels', [[1, '1 · Head only'], [2, '2 · Head + workers'], [3, '3 · Head + leads + workers']], form.levels)}</div>`}
     <div class="field"><span>${form.structure === 'organisation' ? 'Workers each' : 'Reports each'}</span>${segment('fan', [1, 2, 3, 4, 5].map(n => [n, `${n}`]), form.fan)}</div></section>
-    <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div><datalist id="model-options"><option value="default"></option><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option><option value="gpt-6-sol"></option><option value="opus"></option><option value="sonnet"></option><option value="haiku"></option></datalist></section>
+    <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(confirmedWorkspace || workspace)}${button('Refresh host capabilities', 'refresh-capabilities', !(confirmedWorkspace || workspace)?.selectionToken ? 'disabled' : '', 'small')}</section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
-    ${launchControls()}<div class="actions">${button('Create and launch team', 'create', busy || !loaded || workspace?.nativeAgentLaunch !== true ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+    ${projectControls()}<label class="field">Preparation mode<select data-form="launchMode"><option value="on-demand" ${form.launchMode!=='all'?'selected':''}>On demand</option><option value="all" ${form.launchMode==='all'?'selected':''}>All at start</option></select></label>${launchControls()}<div class="actions">${button('Save team', 'create', busy || !loaded || !storageAvailable || !confirmedWorkspace ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+}
+function projectControls() {
+  const target = confirmedWorkspace || workspace;
+  return `<section class="section"><h2>Project and execution host</h2><p>${escape(target?.displayName || 'No selected workspace')} · ${escape(target?.kind || 'unknown kind')} · ${escape(target?.executionHostId || 'unknown host')}</p>${button('Refresh workspace', 'refresh-tabs', '', 'small')} ${button('Confirm project and host', 'confirm-project', !workspace?.selectionToken ? 'disabled' : '', 'small')}<p class="subtle">${confirmedWorkspace ? 'Project confirmed. Changing Orca focus will not change this binding.' : 'Open the intended project in Orca, refresh here, then confirm it before saving.'}</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
+}
+function recoveryEvidence(value) {
+  if (!value) return '';
+  return `<div class="recovery-evidence"><p>Recovery: ${escape(value.state)} · Execution: ${escape(value.liveness || 'unknown')}</p><p>${escape(value.detail || '')}</p><small>Last observed: ${escape(value.observedAt || 'Not observed')} · Source: ${escape(value.source || 'unknown')}</small>${value.incomplete ? '<p>Observation or output is incomplete. Check the native session and reconnect its saved host.</p>' : ''}${value.output?.archived ? '<p>Output source is archived; it does not prove current execution.</p>' : ''}${value.output?.warnings?.length ? `<p>${escape(value.output.warnings.join(' · '))}</p>` : ''}</div>`;
 }
 function launchControls() {
-  return `<section class="section launch-controls"><h2>Launch</h2><p><strong>${escape(workspace?.displayName ?? 'No active workspace')}</strong> · Orca opens new tabs on this workspace's execution host.</p>${button('Refresh workspace', 'refresh-tabs', '', 'small')}<label class="field">Launch mode<select data-launch-mode><option value="on-demand" ${launchMode === 'on-demand' ? 'selected' : ''}>On demand · start CEO and heads</option><option value="all" ${launchMode === 'all' ? 'selected' : ''}>All at create · start every member</option></select></label><p class="subtle">Orca launches each selected CLI, names its tab and passes its role briefing directly. No existing agent tab receives a launch request.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
+  return `<section class="section launch-controls"><h2>Launch</h2><p>On demand prepares the highest supervisor and department managers; other members start on their first task. All at start prepares exactly the saved roster. Orca chooses terminal or native chat and applies its saved launch configuration. The supervisor receives its role and waits for the total objective.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
 }
 function launchStatus(team, member) {
   if (!team.launch) return 'Not started';
@@ -82,9 +120,51 @@ function launchStatus(team, member) {
 }
 function launchReceipt(team) {
   if (!team.launch) return '';
-  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request. Inspect that agent for any existing resources before recreating this team.</p>';
-  const created = Object.values(team.launch.members ?? {}).filter(row => row.terminalId);
-  return `<p class="subtle">${created.length} actual tab receipt${created.length === 1 ? '' : 's'}. Input delivery does not prove agent readiness.</p>${created.length ? `<ul>${created.map(row => `<li>${escape(row.title)} · ${escape(row.executionHostId ?? 'execution host unreported')}<br><small>${escape(row.terminalId)}</small>${row.error ? `<p>${escape(row.error)}</p>` : ''}</li>`).join('')}</ul>` : ''}`;
+  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request · unverified.</p>';
+  const rows = Object.entries(team.launch.members ?? {});
+  return `<p class="subtle">${rows.filter(([, row]) => row.terminalId).length} actual session receipt(s). Input acceptance does not prove agent readiness.</p><ul>${rows.map(([memberId, row]) => `<li>${escape(row.title || team.members.find(member => member.id === memberId)?.name || 'Supervisor')} · ${escape(row.status)}${row.kind ? ` · ${escape(row.kind)}` : ''}<br><small>Input: ${escape(row.prompt?.outcome || 'unconfirmed')} · Observation: ${escape(row.observation?.state || 'unknown')}</small>${recoveryEvidence(row.recovery)}${row.error || row.warning ? `<p>${escape(row.error || row.warning)}</p>` : ''}${row.terminalId ? button('Open verified session', 'open-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Wake closed member', 'wake-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Check saved launch', 'recover-launch', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}</li>`).join('')}</ul>`;
+}
+function taskCards(team, tasks, showMember = true) {
+  const statuses = { queued: 'Queued · awaiting admission', admitted: 'Admitted · awaiting member launch', awaiting_start: 'Awaiting native start', running: 'Native assignment observed', unknown: 'Outcome unknown', pending_acceptance: 'Pending supervisor acceptance', accepted: 'Accepted by direct supervisor', rework: 'Rework requested', rejected: 'Rejected' };
+  return tasks.map(task => {
+    const member = team.members.find(row => row.id === task.memberId);
+    const supervisor = team.members.find(row => row.id === task.supervisorMemberId);
+    return `<article class="task-card" aria-label="Task ${escape(task.taskKey)}"><h4>${escape(task.taskKey)}</h4><p>Member: ${escape(task.memberName || member?.name || task.memberId)} · Supervisor: ${escape(supervisor?.name || task.supervisorMemberId)}</p><p class="task-state">${escape(statuses[task.status] || 'Outcome unknown')}</p><p class="task-text">${escape(task.instruction || '')}</p><p>Native execution: ${escape(task.outcome || 'unconfirmed')}</p>${task.result ? `<p class="task-text">${escape(task.result)}</p>` : ''}${recoveryEvidence(task.recovery)}${task.detail ? `<p>${escape(task.detail)}</p>` : ''}${task.status === 'pending_acceptance' ? '<p>Supervisor review evidence missing: awaiting a verified decision from the direct supervisor.</p>' : ''}${task.review ? `<p>Review: ${escape(task.review.decision)} · Reviewer: ${escape(supervisor?.name || task.review.reviewerMemberId)}</p><p class="task-text">${escape(task.review.summary)}</p><p>Recorded: ${escape(task.review.recordedAt)}</p><p>Validation evidence: ${escape(task.review.evidenceRefs.join(' · '))}</p>` : ''}${task.writeScope ? `<p>Declared writes: ${escape(task.writeScope.map(row=>row.path+' ('+row.kind+')').join(', ') || 'None')}</p>` : ''}${task.dependencies?.length ? `<p>Depends on accepted tasks: ${escape(task.dependencies.join(', '))}</p>` : ''}${task.previousAttemptId ? `<p>Rework of attempt: ${escape(task.previousAttemptId)}</p>` : ''}${task.dispatchId?button('Wake closed member','wake-member',`data-team="${team.id}" data-member="${task.memberId}" data-request="${task.id}"`,'small'):''}${task.status === 'unknown' ? '<p>Check work evidence to reconcile this attempt. Its execution outcome is unconfirmed.</p>' : ''}<small>Configuration ${escape(task.configVersion)} · Role ${escape(task.roleVersion)}</small><details><summary>Task evidence</summary><dl><dt>Owning Run</dt><dd>${escape(task.runId||'Unverified')}</dd><dt>Native creator Dispatch</dt><dd>${escape(task.creatorDispatchId||'Root')}</dd><dt>Native depth</dt><dd>${escape(task.depth??'Unverified')}</dd><dt>Task</dt><dd>${escape(task.nativeTaskId)}</dd><dt>Attempt</dt><dd>${escape(task.attemptId)}</dd><dt>Dispatch</dt><dd>${escape(task.dispatchId || 'Not bound')}</dd><dt>Evidence</dt><dd>${escape(task.evidenceId || 'Not observed')}</dd></dl></details>${showMember && member ? button('View member', 'member', `data-team="${state.teams.indexOf(team)}" data-member="${escape(member.id)}"`, 'small') : ''}</article>`;
+  }).join('');
+}
+function managerRuns(team,work,memberId) {
+ const runs=(work.nativeRuns||[]).filter(r=>!memberId||r.supervisorMemberId===memberId);
+ if(!runs.length)return '';
+ return `<section aria-label="Manager Runs"><h4>Manager Runs</h4>${runs.map(r=>`<div><p>Manager: ${escape(team.members.find(m=>m.id===r.supervisorMemberId)?.name||r.supervisorMemberId)} · Run: ${escape(r.run.id||'Awaiting genuine manager Run')} · ${escape(r.run.state)}</p>${r.parent?`<p>Reports through parent Task ${escape(r.parent.taskId)} · Dispatch ${escape(r.parent.dispatchId)} · Attempt ${escape(r.parent.attemptId)}</p>`:''}${r.error?`<p>${escape(r.error)}</p>`:''}${r.dispatchProtocol?.detail?`<p>${escape(r.dispatchProtocol.detail)}</p>`:''}${(r.questions||[]).filter(q=>q.to==='manager').map(q=>`<p>Question relayed to parent: ${escape(q.summary)} · ${escape(q.status)}</p>`).join('')}</div>`).join('')}${runs.some(r=>r.parent)?'<p>Nested dispatch keeps native depth. Orca defaults to depth 1; these managers need Settings → Orchestration → Nested worker depth of at least 2. The plugin does not change this setting.</p>':''}</section>`;
+}
+function memberTasks(team, member) {
+  const tasks = (state.works || []).filter(work => work.teamId === team.id).flatMap(work => [...(work.tasks || []),...(work.queuedTasks || [])]).filter(task => task.memberId === member.id || task.supervisorMemberId === member.id);
+  return tasks.length ? `<section aria-label="Member tasks"><h3>Member tasks</h3>${taskCards(team, tasks, false)}</section>` : '';
+}
+function workTasks(team, work) {
+  const protocol = work.dispatchProtocol;
+  return `<section aria-label="Team tasks"><h3>Team tasks</h3>${managerRuns(team,work)}${work.messages?.length?`<details><summary>Verified team messages (${work.messages.length})</summary>${work.messages.map(m=>`<p>${escape(team.members.find(a=>a.id===m.fromMemberId)?.name||m.fromMemberId)} → ${escape(team.members.find(a=>a.id===m.toMemberId)?.name||m.toMemberId)}: ${escape(m.body)} · Native message saved · Processing ${escape(m.processing)}</p>`).join('')}</details>`:''}${work.collaborations?.length?`<details><summary>Supervisor collaboration directives (${work.collaborations.length})</summary>${work.collaborations.map(d=>`<p>${escape(team.members.find(a=>a.id===d.fromMemberId)?.name||d.fromMemberId)} → ${escape(team.members.find(a=>a.id===d.toMemberId)?.name||d.toMemberId)} · Reports to ${escape(team.members.find(a=>a.id===d.reportToMemberId)?.name||d.reportToMemberId)} · Processing ${escape(d.processing)}</p>`).join('')}</details>`:''}${protocol ? `<p>Supervisor dispatch protocol: ${escape(protocol.state)} · Generation ${escape(protocol.generation)}</p>${protocol.detail ? `<p>${escape(protocol.detail)}</p>` : ''}` : ''}${work.tasks?.length ? taskCards(team, work.tasks) : '<p>No admitted member tasks observed yet.</p>'}${work.queuedTasks?.length?'<h4>Queued tasks</h4>'+taskCards(team,work.queuedTasks):''}<p>Declared scope coordination is not filesystem isolation. Unknown results and pending acceptance keep their scopes reserved.</p></section>`;
+
+}
+function admissionControls(team,member) {
+ const paused=member?team.admission?.members?.[member.id]===true:team.admission?.paused===true;
+ return `<p>${member?'Member':'Team'} new assignments: ${paused?'Paused':'Allowed'}${member&&team.admission?.paused?' · Team is paused':''}</p>${button(paused?'Resume new assignments':'Pause new assignments','admission',`data-team="${team.id}" ${member?`data-member="${member.id}"`:''} data-paused="${!paused}"`,'small')}`;
+}
+function stopControls(team,member){
+ const tasks=(state.works||[]).filter(w=>w.teamId===team.id).flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
+ const stops=(state.stops||[]).filter(s=>s.teamId===team.id&&s.memberId===member.id),stop=stops.at(-1);
+ const action=task?.dispatchId?`data-work="${task.workId}" data-attempt="${task.attemptId}"`:!tasks.length&&launch?.requestId?`data-operation="${launch.requestId}"`:null;
+ return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
+}
+function replacementControls(team,member){
+ const task=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>w.tasks||[]).filter(t=>t.memberId===member.id).at(-1),bindingRequestId=task?.id??team.launch?.members?.[member.id]?.requestId;
+ if(!bindingRequestId)return '';
+ return `<section aria-label="Replace agent"><h3>Replace idle agent or model</h3><p>Use the requested choices above in a new conversation with the same member identity. Admission pauses while the handoff is checked. Unknown or unfinished execution must be resolved first. The old conversation may remain open for inspection.</p><label class="field">Replacement handoff summary<textarea data-replacement-summary="${member.id}" maxlength="4000">${escape(replacementDrafts.get(member.id)||'')}</textarea></label>${button(member.boss?'Approve idle member replacement':'Approve idle supervisor replacement','request-replacement',`data-request="${escape(bindingRequestId)}"`,'small')}</section>`;
+}
+function organizationControls(team){
+ const work=(state.works||[]).find(w=>w.teamId===team.id&&w.status!=='completed');if(!work)return '';
+ const pending=(state.organizationChanges||[]).find(r=>r.teamId===team.id&&r.state==='pending');
+ return `<section class="section" aria-label="Organization changes"><h3>Organization changes</h3><p>Removal and reporting changes take effect only after you accept “${escape(work.objective)}”. Existing tasks retain their original supervisor and role.</p>${pending?`<p>Pending for accepted-end boundary ${escape(pending.workId)} · ${pending.changes.length} change(s).</p>${button('Cancel pending organization change','cancel-organization',`data-request="${escape(pending.requestId)}"`,'small')}`:`<details><summary>Edit next organization</summary>${team.members.map(m=>`<label class="field">${escape(m.name)} reports to<select data-org-member="${m.id}"><option value="root" ${m.boss===null?'selected':''}>You (highest Head / CEO)</option>${team.members.filter(b=>b.id!==m.id).map(b=>`<option value="${b.id}" ${m.boss===b.id?'selected':''}>${escape(b.name)}</option>`).join('')}<option value="remove">Remove after acceptance</option></select></label>`).join('')}<label class="check"><input type="checkbox" data-org-pause checked> Pause new assignments to changed members now</label>${button('Schedule organization changes','schedule-organization',`data-team="${team.id}" data-work="${work.id}"`,'small')}</details>`}</section>`;
 }
 function details() {
   if (!selection) return '';
@@ -93,41 +173,95 @@ function details() {
   if (!member) return '';
   const boss = team.members.find(row => row.id === member.boss);
   const reports = team.members.filter(row => row.boss === member.id);
-  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Model</dt><dd>${escape(member.model)}</dd><dt>Effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>${escape(member.brief)}</p></section>`;
+  return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${GLYPHS[member.role]} ${escape(member.name)}</h2>${button('Close details', 'close-details', '', 'small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name || 'You')}</dd><dt>Direct reports</dt><dd>${reports.length}</dd><dt>Agent</dt><dd>${member.agent === 'claude' ? 'Claude Code' : 'Codex'}</dd><dt>Requested model</dt><dd>${escape(member.model)}</dd><dt>Requested effort</dt><dd>${escape(member.effort)}</dd><dt>Launch</dt><dd>${launchStatus(team, member)}</dd></dl><p>Role version ${member.roleVersion} · Configuration version ${team.configVersion}</p>${stopControls(team,member)}${memberTasks(team, member)}${(state.works||[]).filter(w=>w.teamId===team.id).map(w=>managerRuns(team,w,member.id)).join('')}<h3>Agent preferences</h3><p class="subtle">${member.preferenceOverride ? 'Individual override' : 'Inherits level default'} · Effective model: unknown · Effective effort: unknown · Context usage: unknown</p><label class="field">Preference applies to<select data-preference-target><option value="member" ${preferenceTarget === 'member' ? 'selected' : ''}>This member</option><option value="level" ${preferenceTarget === 'level' ? 'selected' : ''}>Level ${member.level} defaults</option></select></label><div class="table-scroll"><table class="models"><thead><tr><th>Agent</th><th>Requested model</th><th>Requested effort</th></tr></thead><tbody><tr>${preferenceControls('Member', memberPreferences || member, capabilityViews.get(team.scope.workspaceKey), 'member', true)}</tr></tbody></table></div>${capabilityNotice(team.scope)}${button('Refresh host capabilities', 'refresh-capabilities', '', 'small')}${button('Save preferences', 'save-preferences', !storageAvailable ? 'disabled' : '', 'primary small')}${button('Use level default', 'inherit-preferences', '', 'small')}${replacementControls(team,member)}<p class="subtle">Saved preferences apply to future launches. Role collaboration rules guide agents; they do not intercept provider tools.</p><label class="field">Role description<textarea data-role="brief" maxlength="1500">${escape(member.brief)}</textarea></label><label class="field">Work habits<textarea data-role="habits" maxlength="1500">${escape(member.habits)}</textarea></label><label class="field">Collaboration rules<textarea data-role="collaboration" maxlength="1500">${escape(member.collaboration)}</textarea></label>${button('Save role', 'save-role', !storageAvailable ? 'disabled' : '', 'primary small')}<p class="subtle">Changes apply at the next launch or handoff. Existing work keeps its saved role version.</p></section>`;
+
+}
+function staffingProposals(work){
+ return (work.staffingProposals||[]).map(p=>`<article class="task-card" aria-label="Staffing proposal ${escape(p.id)}"><h3>${escape(p.member.name)}</h3><p>${escape(p.rationale)}</p><p>${escape(p.member.brief)}</p><p>${escape(p.member.agent)} · ${escape(p.member.model)} · ${escape(p.member.effort)} · Configuration ${p.configVersion}</p><p>Proposed by ${escape(state.teams.find(t=>t.id===work.teamId)?.members.find(m=>m.id===p.proposingManagerId)?.name||p.proposingManagerId)} · Reports to ${escape(state.teams.find(t=>t.id===work.teamId)?.members.find(m=>m.id===p.member.boss)?.name||p.member.boss)} · ${escape(p.status)}</p>${p.status==='pending'&&work.status!=='completed'?`${button('Approve member','approve-staffing',`data-work="${work.id}" data-proposal="${escape(p.id)}"`,'primary small')}${button('Reject proposal','reject-staffing',`data-work="${work.id}" data-proposal="${escape(p.id)}"`,'small')}`:''}${p.decision?`<p>Your decision: ${escape(p.decision.choice)} · ${escape(p.decision.recordedAt)}</p>`:''}</article>`).join('');
+}
+function staffingSection(team,work){
+ const draft=staffingDrafts.get(work.id),managers=team.members.filter(m=>['head','ceo','lead'].includes(m.role)&&m.level<3);
+ return `<section aria-label="Staffing"><h3>Staffing</h3><p>New members use ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}. ${team.configuration.launchMode==='all'?'Saved members are prepared after approval.':'Members start when their direct manager assigns a task.'}</p>${draft?`<label class="field">New member name<input data-staffing="name" data-work="${work.id}" value="${escape(draft.name)}" maxlength="120"></label><label class="field">New member direct manager<select data-staffing="boss" data-work="${work.id}">${managers.map(m=>`<option value="${m.id}" ${m.id===draft.boss?'selected':''}>${escape(m.name)}</option>`).join('')}</select></label><label class="field">New member role description<textarea data-staffing="brief" data-work="${work.id}" maxlength="1500">${escape(draft.brief)}</textarea></label><label class="field">New member agent<select data-staffing="agent" data-work="${work.id}"><option value="codex" ${draft.agent==='codex'?'selected':''}>Codex</option><option value="claude" ${draft.agent==='claude'?'selected':''}>Claude Code</option></select></label><label class="field">New member model<input data-staffing="model" data-work="${work.id}" value="${escape(draft.model)}" maxlength="120"></label><label class="field">New member effort<input data-staffing="effort" data-work="${work.id}" value="${escape(draft.effort)}" maxlength="120"></label><p>Default inherits Orca preferences. Explicit choices are verified against this Work host before saving.</p>${button('Save new member','save-staffing',`data-work="${work.id}"`,'primary small')}${button('Cancel add member','cancel-staffing',`data-work="${work.id}"`,'small')}`:button('Add member','add-member',`data-work="${work.id}"`,'small')}${(work.rosterDeltas||[]).map(d=>`<p>Configuration ${d.configVersion} · Native input: ${escape(d.state)} · Manager processing: ${escape(d.processed)}${d.detail?` · ${escape(d.detail)}`:''}</p>`).join('')}</section>`;
+}
+function workSection(team){
+ const history=(state.works||[]).filter(w=>w.teamId===team.id&&w.status==='completed'),goals=(state.goals||[]).filter(g=>g.teamId===team.id&&g.status!=='started');
+ const queue=`<section class="section" aria-label="Queued objectives"><h3>Next total objectives</h3><label class="field">Queue a later objective<textarea data-goal="${team.id}" maxlength="8000">${escape(goalDrafts.get(team.id)||'')}</textarea></label>${button('Queue objective','enqueue-goal',`data-team="${team.id}"`,'small')}<p>Queueing saves the goal. It starts after you accept the current delivery, using fresh conversations.</p>${goals.map(g=>`<p>${escape(g.objective)} · ${escape(g.status)}</p>`).join('')}${(goals.some(g=>g.status==='reserved')||history.length&&!state.works?.some(w=>w.teamId===team.id&&w.status!=='completed')&&goals.length)?button('Continue next objective','start-next',`data-team="${team.id}"`,'small'):''}</section>`;
+ const past=history.length?`<details><summary>Accepted work history (${history.length})</summary>${history.map(w=>`<p>${escape(w.objective)} · Accepted by you · ${escape(w.closedAt)}</p><p>${escape(w.handoff?.summary||'')}</p>`).join('')}</details>`:'';
+ return activeWorkSection(team)+organizationControls(team)+queue+past;
+}
+function deliverySection(work){
+ const d=work.delivery;if(!d)return '';
+ return `<section aria-label="Overall delivery"><h3>Overall delivery · ${escape(d.status)}</h3><p>${escape(d.summary)}</p><p>Evidence: ${escape(d.evidenceRefs.join(' · '))}</p><p>Delivery revision ${d.revision} · Highest supervisor verified</p>${work.closureBlockers?.length?`<p>Required work remains: ${escape(work.closureBlockers.join('; '))}</p>`:''}${d.status==='pending'?`${button('Accept delivery','accept-delivery',`data-work="${work.id}" ${work.closureBlockers?.length?'disabled':''}`,'primary small')}<label class="field">Requested corrections<textarea data-rework="${work.id}" maxlength="8000">${escape(reworkDrafts.get(work.id)||'')}</textarea></label>${button('Request rework','rework-delivery',`data-work="${work.id}"`,'small')}`:''}</section>`;
+}
+function activeWorkSection(team) {
+  const work = state.works?.find(row => row.teamId === team.id&&row.status!=='completed');
+  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${!work.recoveryRequestId && work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}${staffingSection(team,work)}</section>`;
+  const head = team.members.find(member => member.boss === null);
+  if (team.launch?.members?.[head.id]?.status !== 'created') return '';
+  return `<section class="section"><h3>Start team work</h3><label class="field">Total objective<textarea data-objective="${team.id}" rows="3" maxlength="8000">${escape(objectives.get(team.id) || '')}</textarea></label>${button('Submit total objective', 'submit-work', `data-team="${team.id}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small')}<p class="subtle">Uses the prepared highest supervisor and this team's saved project. One total objective may remain in progress at a time.</p></section>`;
 }
 function roster() {
   if (!state.teams.length) return empty();
   const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join('')}</section>` : '';
-  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${workspace?.nativeAgentLaunch !== true ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
+  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><p class="bound-project">${escape(team.scope.displayName)} · ${escape(team.scope.kind)} · ${escape(team.scope.executionHostId)}</p>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${admissionControls(team)}<div class="actions">${button('Export template', 'export-template', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'secondary small')}${button('Copy team', 'copy-team', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'secondary small')}</div>${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)+(initialMembers(team).some(member=>!team.launch.members?.[member.id])?button('Continue roster preparation','launch-existing',`data-team="${i}"`, 'small'):'')}${workSection(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
+}
+function templatesView() {
+  const preview = templatePreview?.template.team;
+  return `<h1>Team templates</h1><p>Exchange configuration and roles as JSON. Imported teams have new identities and no sessions or work history. Legacy mod/prototype formats are not supported.</p><label class="field">Template JSON<textarea data-template rows="10" spellcheck="false" ${templatePreview ? 'readonly' : ''}>${escape(templateText)}</textarea></label><div class="actions">${button('Select JSON to copy', 'select-template', !templateText ? 'disabled' : '', 'secondary small')}${button(templatePreview ? 'Edit template JSON' : 'Preview template', templatePreview ? 'edit-template' : 'preview-template', !loaded || !storageAvailable ? 'disabled' : '', 'primary small')}</div><label class="field">Open template file<input type="file" data-template-file accept="application/json,.json"></label>
+  ${preview ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview.name)}</h2><p>${preview.members.length} members · ${escape(preview.structure)}</p><p>${escape(preview.purpose)}</p><div class="tree-scroll">${tree(preview.members.map(member => ({ ...member, id: member.ref })))}</div>${preview.members.map(member => `<details><summary>${escape(member.name)} · ${escape(member.agent)} · ${escape(member.model)} · ${escape(member.effort)} · ${member.preferenceOverride ? 'Member override' : 'Level preference'}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || 'None specified')}</p><p>Collaboration rules: ${escape(member.collaboration || 'None specified')}</p></details>`).join('')}</section>${projectControls()}<div class="actions">${button('Import as new team', 'import-template', !confirmedWorkspace || !loaded || !storageAvailable ? 'disabled' : '', 'primary')}</div>` : ''}`;
+}
+function attentionCount() { return (state.recoveries||[]).filter(r=>!['bound','resumed'].includes(r.state)).length+(state.works || []).reduce((count,w)=>count+(w.questions||[]).filter(q=>q.status==='pending').length+(w.staffingProposals||[]).filter(p=>p.status==='pending'&&w.status!=='completed').length,0); }
+function recoveryCards(){
+ return (state.recoveries||[]).map(row=>{
+  const team=state.teams.find(t=>t.id===row.teamId),member=team?.members.find(m=>m.id===row.memberId),root=!member?.boss;
+  return `<article class="task-card" aria-label="Member recovery"><h3>${escape(member?.name||row.memberId)} · Recovery</h3><p>State: ${escape(row.state)}</p><p>${escape(row.detail||'The old execution was confirmed stopped; native continuation is checked first.')}</p><p>Closing a conversation keeps this member on the roster. Assignment pause and removal are separate actions.</p><small>Previous instance ${escape(row.oldInstanceGeneration)} · Original request ${escape(row.oldRequestId)}</small>${row.handoff?`<p>Checked handoff: ${escape(row.handoff.summary)}</p><p>Reviewer: ${escape(row.handoff.reviewer)}</p>`:''}${row.state==='needs_decision'&&root?`<label class="field">Checked handoff summary<textarea data-wake-summary="${escape(row.requestId)}" maxlength="4000">${escape(wakeDrafts.get(row.requestId)||'')}</textarea></label>${button('Approve fresh supervisor', 'decide-wake', `data-request="${escape(row.requestId)}"`, 'primary small')}`:''}${row.state==='needs_decision'&&!root?`<p>Awaiting the actual direct manager’s checked handoff.</p>${button('Check manager handoff','handoff-wake',`data-request="${escape(row.requestId)}"`,'small')}`:''}${row.state==='approved'?button('Create approved replacement','replace-wake',`data-request="${escape(row.requestId)}" data-team="${escape(row.teamId)}"`,'primary small'):''}${button('Check recovery evidence','check-wake',`data-request="${escape(row.requestId)}"`,'small')}</article>`;
+ }).join('');
+}
+function attentionView() {
+ return `<section aria-label="Needs your attention"><h1>Needs your attention</h1>${recoveryCards()}<p>Answers go to the saved highest supervisor. Independent tasks continue while a decision is pending.</p>${(state.works||[]).map(work=>{
+ const team=state.teams.find(t=>t.id===work.teamId),head=team?.members.find(m=>m.id===work.supervisorMemberId);
+ const waiting=(work.failureStreaks||[]).filter(s=>s.escalationNeeded&&!(work.questions||[]).some(q=>s.evidence.slice(-2).every(e=>q.evidence.includes(e.evidenceId))));
+ return `<h2>${escape(team?.name||'Team')} · ${escape(work.objective)}</h2>${button('Check work evidence','check-work',`data-work="${escape(work.id)}"`,'small')}${staffingProposals(work)}${waiting.map(s=>`<article class="task-card"><h3>${escape(s.taskKey)}</h3><p>Two proven execution failures. Waiting for supervisor summary and options.</p><details><summary>Failure evidence</summary>${s.evidence.map(e=>`<p>${escape(e.evidenceId)} · ${escape(e.attemptId)}</p>`).join('')}</details></article>`).join('')}${(work.questions||[]).map(q=>{
+ const key=work.id+':'+q.id,supplement=q.answers.length>0;
+ return `<article class="task-card" aria-label="Question ${escape(q.id)}"><h3>${escape(q.summary)}</h3><p>From ${escape(head?.name||q.fromMemberId)} · ${escape(q.status)}</p>${q.options.length?`<p>Options: ${q.options.map(escape).join(' · ')}</p>`:''}<p>Blocks: ${q.blockingTaskKeys.map(escape).join(', ')||'No independent tasks'}</p>${q.answers.map(a=>`<div class="notice"><p>${escape(a.body)}</p><small>Native input: ${escape(a.state)} · Manager processing: ${escape(a.processed)}</small>${a.nativeAnswer?`<p>Native question answered: ${escape(a.nativeAnswer.messageId)}</p>`:''}${a.detail?`<p>${escape(a.detail)}</p>`:''}</div>`).join('')}${(q.epoch??0)<(work.epoch??0)&&!q.resolution?button('Resolve superseded question','resolve-recovery-question',`data-work="${escape(work.id)}" data-question="${escape(q.id)}" data-request="${escape(work.recoveryRequestId)}"`,'small'):''}${q.resolution?`<p>User resolution: ${escape(q.resolution.note)}</p>`:''}${q.status!=='closed'?`<label class="field">${supplement?'Your supplement':'Your answer'}<textarea data-answer="${escape(key)}" rows="3" maxlength="8000">${escape(answerDrafts.get(key)||'')}</textarea></label>${button(supplement?'Send supplement':'Send answer','answer-question',`data-work="${escape(work.id)}" data-question="${escape(q.id)}"`,'primary small')}`:'<p>Original requester is no longer active. Ask the supervisor for a new decision.</p>'}<details><summary>Question evidence</summary><p>Question ${escape(q.id)} · Work ${escape(work.id)} · Run ${escape(q.runId)} · Generation ${escape(q.generation)}</p>${q.origin?`<p>Origin reference (${q.nativeQuestion?'verified native question':'awaiting native verification'}): attempt ${escape(q.origin.attemptId)} · Dispatch ${escape(q.origin.dispatchId)} · Native question ${escape(q.origin.messageId)}</p>`:''}${q.nativeQuestion?`<p>Native question: ${escape(q.nativeQuestion.status)} · Original requester resumed: ${escape(q.nativeQuestion.requesterResumed)}</p>`:''}<p>Notification: ${escape(q.notification.state)}</p></details></article>`;
+ }).join('')}`;
+ }).join('')}${!(state.recoveries||[]).length&&!(state.works||[]).some(w=>w.questions?.length||w.staffingProposals?.length||w.failureStreaks?.some(s=>s.escalationNeeded))?'<p>No pending decisions.</p>':''}</section>`;
+}
+function storageRecoveryView(){
+ return `<section aria-label="Storage recovery"><h1>Saved storage is unavailable</h1><p>Your saved teams could not be read. Existing data has not been reset.</p><p>Preserve the database together with its WAL, SHM and journal sidecars. Stop the plugin before copying recovery evidence. Use a compatible plugin for a newer schema. Restoring an older backup requires manual reconciliation of later native effects before starting work.</p>${button('Inspect recovery details','storage-recovery','','small')}${storageRecovery?`<dl><dt>Storage status</dt><dd>${escape(storageRecovery.status)}</dd><dt>Found / supported schema</dt><dd>${escape(storageRecovery.foundSchema??'Unreadable')} / ${escape(storageRecovery.supportedSchema)}</dd>${storageRecovery.location?`<dt>Verified local recovery directory</dt><dd>${escape(storageRecovery.location)}</dd>`:''}</dl><p>${escape(storageRecovery.guidance)}</p><h2>Migration backups</h2>${storageRecovery.backups.length?storageRecovery.backups.map(b=>`<p>${escape(b.id)} · ${escape(b.status)} · ${escape(b.createdAt||'Incomplete')}</p>`).join(''):'<p>No verified migration backup is available.</p>'}`:''}</section>`;
+}
+function cleanupView(){
+ const history=(state.works||[]).filter(w=>w.status==='completed');
+ return `<section class="section" aria-label="Manual history cleanup"><h2>Manual history cleanup</h2><p>Select accepted work to preview summary and task-result cleanup. Identity, acceptance and replay evidence stay saved.</p>${history.map(w=>`<label class="check"><input type="checkbox" data-cleanup-work="${escape(w.id)}" ${cleanupSelection.has(w.id)?'checked':''} ${w.historyPruned?'disabled':''}> ${escape(w.objective)} · ${w.historyPruned?'Previously cleaned':'Accepted by you'}</label>`).join('')}${!history.length?'<p>No accepted history yet.</p>':''}${button('Preview history cleanup','preview-cleanup',!storageAvailable||!cleanupSelection.size?'disabled':'','small')}${cleanupPreview?`<section aria-label="Cleanup preview"><h3>Cleanup preview</h3><p>${cleanupPreview.eligibleWorkIds.length} eligible Work(s) · ${cleanupPreview.changes.length} records · ${cleanupPreview.snapshotCount} cached snapshots · ${cleanupPreview.logicalBytes} logical bytes inspected</p><p>${escape(cleanupPreview.notice)}</p>${cleanupPreview.retained.map(r=>`<p>Kept ${escape(r.workId)}: ${escape(r.reason)}</p>`).join('')}<details><summary>Exact affected records</summary>${cleanupPreview.changes.map(r=>`<p>${escape(r.recordId)}: ${r.fields.map(escape).join(', ')}</p>`).join('')}</details>${button('Clear previewed summaries and results','apply-cleanup',!cleanupPreview.eligibleWorkIds.length?'disabled':'','primary small')}${button('Cancel preview','cancel-cleanup','','small')}</section>`:''}</section>`;
 }
 function settingsView() {
-  return `<h1>Settings</h1><section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on the active workspace's execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On-demand mode starts CEO and heads; all-at-create starts every member.</p></section>`;
+  return `<h1>Settings</h1>${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
-  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['templates', 'Templates'], ['attention', `Needs your attention (${attentionCount()})`], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+    ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map(team => `${escape(team.name)} · ${escape(team.scope.displayName)} · ${escape(team.scope.executionHostId)}`).join(' | ')}</div>` : ''}
     <div class="notice" role="status">${escape(connection)} ${button('Test connection', 'test-connection', busy ? 'disabled' : '', 'small')}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'settings' ? settingsView() : roster()}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : connectionReady&&!storageAvailable&&!busy?storageRecoveryView():roster()}
     </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
 function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
-async function load() {
+async function load(retry = false) {
   busy = true; problem = ''; canRetry = false; render();
   try {
-    const report = await worker.connect();
+    const report = await worker.connect({ retry });
     connectionReady = true;
-    connection = `Local executor connected · ${report.platform} · Orca ${report.appVersion} · worker ${report.workerPid}`;
-    const result = await call('storage.get', { key: KEY });
-    state = validateState(result?.value ?? null);
+    connection = `Panel loaded · worker activated · compatibility layer available · ${report.platform} · Orca ${report.appVersion} · worker ${report.workerPid} · agent readiness not verified`;
+    const result = await call('storage.get', {});
+    state = validatePersistentState(result?.value);
     loaded = true; storageAvailable = true;
   } catch (error) {
-    if (!connectionReady) { loaded = true; storageAvailable = false; connection = 'Bundled executor is not connected. Bootstrap starts on agent/workspace activity; the Orca command “Team Orchestrator: Initialise local adapter” also starts it.'; problem = error.message; }
-    else if (['panel_forbidden', 'unknown_method', 'invalid_request'].includes(error.code)) { loaded = true; storageAvailable = false; }
-    else { loaded = false; problem = error.message; canRetry = true; }
+    if (!connectionReady) { loaded = true; storageAvailable = false; connection = `Panel loaded · worker ${error.report ? 'activated' : 'activation unverified'} · compatibility layer unavailable. Run the Orca command “Team Orchestrator: Initialise local adapter” to initialise or retry; its diagnostics explain failures.`; problem = error.message; }
+    else { loaded = false; storageAvailable = false; problem = error.message; canRetry = true; }
   } finally { busy = false; await refreshTargets(); render(); }
 }
 async function refreshTargets() {
@@ -136,49 +270,61 @@ async function refreshTargets() {
     targetError = !workspace ? 'Open the intended workspace first.' : workspace.nativeAgentLaunch !== true ? 'The local executor is not ready. Use Test connection after the bundled bootstrap finishes.' : '';
   } catch (error) { workspace = null; targetError = error.message; }
 }
-async function launchTeam(index) {
-  const team = state.teams[index];
-  if (team.launch) throw new Error('This launch has already been attempted. Inspect its receipts before starting another team.');
+async function refreshCapabilities(params, scope, force = false) {
+  const previous = capabilityViews.get(scope?.workspaceKey);
+  if (!force && previous && Date.now() - previous.observedAt < 300000) return;
+  capabilityViews.delete(scope?.workspaceKey);
   busy = true; render();
-  await refreshTargets();
-  if (targetError) { busy = false; render(); throw new Error(targetError); }
-  const request = { native: true, status: 'sending', workspaceKey: workspace.workspaceKey, mode: launchMode, members: {} };
-  const withRequest = { ...state, teams: state.teams.map((item, i) => i === index ? { ...item, launch: request } : item) };
-  if (!await save(withRequest, true, true)) return;
-  busy = true; render();
-  const persist = async () => { if (storageAvailable) await call('storage.set', { key: KEY, value: state }); };
-  try {
-    await launchMembers(call, team, launchMode, workspace, async (id, receipt) => {
-      request.members[id] = receipt;
-      render();
-      await persist();
-    });
-    request.status = 'accepted';
-    message = `Orca created ${initialMembers(team, launchMode).length} tab(s) for @${team.name} and passed their role briefs. Check those tabs for agent readiness.`;
-  } catch (error) { request.status = 'unknown'; problem = `${error.message} Any partial tab receipts are retained below; no automatic retry occurs.`; }
-  finally {
-    try { await persist(); } catch (error) { problem = `Could not save the latest launch receipt: ${error.message}`; }
-    busy = false; render();
-  }
+  try { const value = await call('capabilities', params); capabilityViews.set(value.workspaceKey, value); }
+  catch (error) { problem = `Could not read host capabilities: ${error.message}`; }
+  finally { busy = false; render(); }
 }
-async function save(next, holdBusy = false, insideLaunch = false) {
-  if (!loaded || (busy && !insideLaunch)) return false;
-  let saved = false;
+async function submit(action, params, request) {
+  if (!loaded || !storageAvailable || busy) return false;
   busy = true; problem = ''; canRetry = false; render();
   try {
-    if (storageAvailable) await call('storage.set', { key: KEY, value: next });
-    state = next;
-    saved = true;
-    return true;
-  } catch (error) { problem = `Could not save: ${error.message}`; canRetry = true; return false; }
-  finally { busy = holdBusy && saved; render(); }
+    const result = await call(action, request ?? mutation(params));
+    state = validatePersistentState(result?.value); return true;
+  } catch (error) { problem = `Could not save: ${error.message}`; if (/Another panel changed/.test(error.message)) templateRequest = null; canRetry = true; return false; }
+  finally { busy = false; render(); }
+}
+async function launchTeam(index) {
+  const team = state.teams[index], members = initialMembers(team);
+  if (!members.length) throw Error('No highest supervisor exists in this saved roster.');
+  busy = true; problem=''; render();
+  try {
+    const failures=[];let created=0;
+    for (const [position,member] of members.entries()) {
+      // The pinned host permits 30 panel admissions / 10 seconds, including
+      // native authority rechecks. Pace preparation, never running workers.
+      if(position){message=`Preparing ${position+1}/${members.length}: ${member.name}. Waiting for the native host request window.`;render();await new Promise(resolve=>setTimeout(resolve,10100));}
+      try {
+        const receipt=await call('launchSupervisor',{teamId:team.id,memberId:member.id,requestId:`${team.id}-${member.id}`,configVersion:team.configVersion});
+        if(receipt.status==='created')created++;else failures.push(member.name);
+      }catch(error){failures.push(`${member.name}: ${error.message}`);}
+    }
+    message=`${created}/${members.length} requested member sessions created. Input acceptance and provider readiness remain separate.${failures.length?' Needs attention: '+failures.join('; ')+'. Independent members were still prepared.':''}`;
+  } catch (error) { problem = `${error.message} Saved launch intents remain reserved; no automatic retry occurs.`; }
+  finally {
+    try { state = validatePersistentState((await call('storage.get', {})).value); }
+    catch (error) { problem = `Could not read saved launch receipts: ${error.message}`; storageAvailable = false; canRetry = true; }
+    busy = false; render();
+  }
 }
 
 app.addEventListener('click', async event => {
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
-  if (['roster', 'new', 'settings'].includes(action)) { view = action; message = ''; render(); }
+  if (['roster', 'new', 'templates', 'settings', 'attention'].includes(action)) { view = action; message = ''; render(); }
+  else if(action==='storage-recovery') {busy=true;render();try{storageRecovery=await call('storageRecovery',{});}catch(error){problem=error.message;}finally{busy=false;render();}}
+  else if(action==='preview-cleanup'||action==='apply-cleanup') {
+    busy=true;problem='';render();try{
+      if(action==='preview-cleanup'){cleanupPreview=await call('previewHistoryCleanup',{selectedWorkIds:[...cleanupSelection]});cleanupRequest=null;}
+      else{cleanupRequest??={requestId:crypto.randomUUID(),previewToken:cleanupPreview.previewToken,expectedStorageRevision:cleanupPreview.storageRevision};const result=await call('applyHistoryCleanup',cleanupRequest);state=validatePersistentState(result.value);message=`Cleared summaries and results for ${result.cleanup.cleanedWorkIds.length} Work(s). Retained identity and acceptance evidence.`;cleanupPreview=null;cleanupRequest=null;cleanupSelection.clear();}
+    }catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if(action==='cancel-cleanup'){cleanupPreview=null;cleanupRequest=null;render();}
   else if (action === 'preset') { Object.assign(form, PRESETS[Number(target.dataset.index)].form); view = 'new'; message = ''; render(); }
   else if (action === 'pick') {
     const field = target.dataset.field;
@@ -187,15 +333,155 @@ app.addEventListener('click', async event => {
     render();
   } else if (action === 'create') {
     try {
-      const team = { ...planTeam(form), id: crypto.randomUUID(), createdAt: new Date().toISOString() };
-      const next = addTeam(state, team);
-      if (workspace?.nativeAgentLaunch !== true) throw new Error(targetError || 'Native launching is unavailable.');
-      if (await save(next, true)) { view = 'roster'; selection = null; await launchTeam(state.teams.length - 1); render(); }
+      if (!confirmedWorkspace) throw new Error('Confirm the project and execution host first.');
+      if (await submit('createTeam', { form, selectionToken: confirmedWorkspace.selectionToken })) { view = 'roster'; selection = null; message = 'Team saved. You can launch it later; no total objective has been submitted.'; render(); }
     } catch (error) { busy = false; message = ''; problem = error.message; canRetry = false; render(); }
-  } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; const team = state.teams[selection.team]; memberPreferences = { ...team.members.find(row => row.id === selection.member) }; preferenceTarget = 'member'; await refreshCapabilities({ teamId: team.id }, team.scope); render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
-  else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(); }
-  else if (action === 'refresh-tabs') { await refreshTargets(); render(); }
+  else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
+  else if (action === 'refresh-tabs') { confirmedWorkspace = null; templateRequest = null; await refreshTargets(); render(); }
+  else if (action === 'confirm-project') { confirmedWorkspace = workspace; templateRequest = null; await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace); render(); }
+  else if (action === 'refresh-capabilities') {
+    if (view === 'new') { const scope = confirmedWorkspace || workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
+    else if (selection) { const team = state.teams[selection.team]; await refreshCapabilities({ teamId: team.id }, team.scope, true); }
+  }
+  else if (action === 'save-preferences' || action === 'inherit-preferences') {
+    const team = state.teams[selection.team], member = team.members.find(row => row.id === selection.member);
+    const params = { teamId: team.id, ...(action === 'inherit-preferences' ? { memberId: member.id, inherit: true } : { ...(preferenceTarget === 'level' ? { level: member.level } : { memberId: member.id }), agent: memberPreferences.agent, model: memberPreferences.model, effort: memberPreferences.effort }) };
+    if (await submit('updateAgentPreferences', params)) { memberPreferences = { ...state.teams[selection.team].members.find(row => row.id === member.id) }; message = 'Requested preferences saved. Effective model remains unknown until Orca reports it.'; render(); }
+  }
+  else if (['request-replacement','schedule-organization','cancel-organization'].includes(action)) {
+    let op,params;
+    if(action==='request-replacement'){
+      const team=state.teams[selection.team],member=team.members.find(m=>m.id===selection.member);op='requestReplacement';params={requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:team.id,memberId:member.id,bindingRequestId:target.dataset.request,agent:memberPreferences.agent,model:memberPreferences.model,effort:memberPreferences.effort,summary:replacementDrafts.get(member.id)||'',evidenceRefs:[`previous-instance:${target.dataset.request}`,`role:${member.id}:${member.roleVersion}`]};
+    }else if(action==='cancel-organization'){op='cancelOrganization';params={requestId:target.dataset.request,expectedRevision:state.revision};}
+    else {const team=state.teams.find(t=>t.id===target.dataset.team),changes=[...app.querySelectorAll('[data-org-member]')].flatMap(n=>{const m=team.members.find(m=>m.id===n.dataset.orgMember),boss=n.value==='root'?null:n.value;return n.value==='remove'?[{memberId:m.id,remove:true}]:boss!==m.boss?[{memberId:m.id,boss}]:[];});op='scheduleOrganization';params={requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:team.id,workId:target.dataset.work,configVersion:team.configVersion,changes,pause:app.querySelector('[data-org-pause]').checked};}
+    busy=true;problem='';render();try{await call(op,params);state=validatePersistentState((await call('storage.get',{})).value);message=action==='request-replacement'?'Replacement decision saved. Create the approved conversation in Needs your attention.':action==='schedule-organization'?'Organization changes saved for acceptance of this total objective.':'Pending organization change cancelled; admission pause remains until explicitly resumed.';}catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if (action === 'save-role') {
+    const team = state.teams[selection.team];
+    const fields = Object.fromEntries([...app.querySelectorAll('[data-role]')].map(node => [node.dataset.role, node.value]));
+    if (await submit('updateRole', { teamId: team.id, memberId: selection.member, ...fields })) { message = 'Role saved as a new version.'; render(); }
+  }
+  else if (action === 'export-template' || action === 'copy-team') {
+    busy = true; problem = ''; message = ''; render();
+    try {
+      const result = await call('exportTemplate', { teamId: state.teams[Number(target.dataset.team)].id });
+      templateText = JSON.stringify(result.template, null, 2); templatePreview = null; templateRequest = null; confirmedWorkspace = null;
+      if (action === 'copy-team') templatePreview = await call('previewTemplate', { template: result.template });
+      view = 'templates'; await refreshTargets();
+      message = action === 'copy-team' ? 'Review this independent copy, then confirm its target project.' : 'Template ready. Select the JSON and copy it with your usual keyboard shortcut to save or share it.';
+    } catch (error) { problem = error.message; }
+    finally { busy = false; render(); }
+  }
+  else if (action === 'select-template') { const field = app.querySelector('[data-template]'); field?.focus(); field?.select(); }
+  else if (action === 'edit-template') { templatePreview = null; templateRequest = null; confirmedWorkspace = null; render(); }
+  else if (action === 'preview-template') {
+    busy = true; problem = ''; message = ''; render();
+    try {
+      templatePreview = await call('previewTemplate', { template: parseTeamTemplate(templateText) });
+      templateRequest = null; confirmedWorkspace = null; await refreshTargets();
+    } catch (error) { templatePreview = null; problem = error.message; }
+    finally { busy = false; render(); }
+  }
+  else if (action === 'import-template') {
+    if (!templatePreview || !confirmedWorkspace) return;
+    templateRequest ??= mutation({ template: templatePreview.template, previewToken: templatePreview.previewToken, selectionToken: confirmedWorkspace.selectionToken });
+    if (await submit('importTemplate', {}, templateRequest)) {
+      templatePreview = null; templateRequest = null; templateText = ''; view = 'roster'; selection = null;
+      message = 'Imported as an independent team. No members were launched and no work history was copied.'; render();
+    }
+  }
+  else if(['wake-member','check-wake','decide-wake','handoff-wake','replace-wake'].includes(action)){
+    busy=true;problem='';render();
+    try{
+      let op,params;const id=target.dataset.request,row=(state.recoveries||[]).find(r=>r.requestId===id);
+      if(action==='wake-member'){
+        if(!wakeRequests.has(id))wakeRequests.set(id,crypto.randomUUID());
+        op='wakeMember';params={teamId:target.dataset.team,memberId:target.dataset.member,bindingRequestId:id,requestId:wakeRequests.get(id)};
+      }else if(action==='decide-wake'){op='decideWake';params={requestId:id,version:row.version,decision:'replace',summary:wakeDrafts.get(id)||'',evidenceRefs:[`previous-instance:${row.oldRequestId}`,`native-death:${row.proof?.death?.ownerFence??row.proof?.stop?.stopRequestId??'exact-worker'}`]};}
+      else if(action==='replace-wake'){op='replaceMember';params={requestId:id,teamId:target.dataset.team};}
+      else {op=action==='check-wake'?'checkWake':'checkHandoff';params={requestId:id};}
+      const result=await call(op,params);message=`Recovery: ${result.value?.state??result.state??result.status??'saved'}. ${result.value?.detail??result.detail??''}`;state=validatePersistentState((await call('storage.get',{})).value);view='attention';
+    }catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop') {
+    busy=true;problem='';render();
+    try {
+      let result;
+      if(action==='admission')result=await call('setAdmission',{requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:target.dataset.team,...(target.dataset.member?{memberId:target.dataset.member}:{}),paused:target.dataset.paused==='true'});
+      else if(action==='check-stop')result=await call('checkStop',{requestId:target.dataset.request});
+      else result=await call('stopMember',{requestId:crypto.randomUUID(),teamId:target.dataset.team,memberId:target.dataset.member,...(target.dataset.attempt?{workId:target.dataset.work,attemptId:target.dataset.attempt}:{operationRequestId:target.dataset.operation})});
+      state=validatePersistentState(result.value);message=action==='admission'?'Assignment admission saved. Existing sessions retain their execution state.':'Native stop evidence updated.';
+    }catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if (action === 'open-member' || action === 'recover-launch') {
+    busy = true; render();
+    try {
+      const team = state.teams.find(row => row.id === target.dataset.team);
+      const params = { teamId: team.id, memberId: target.dataset.member, requestId: target.dataset.request };
+      if (action === 'recover-launch') params.configVersion = team.launch.configVersion;
+      const result = await call(action === 'open-member' ? 'openMember' : 'recoverLaunch', params);
+      message = action === 'open-member' ? 'Opened the verified native session.' : `Saved launch: ${result.status}.`;
+    } catch (error) { problem = error.message; }
+    finally { try { state = validatePersistentState((await call('storage.get', {})).value); } catch (error) { problem = error.message; } busy = false; render(); }
+  }
+  else if (action === 'submit-work' || action === 'check-work' || action === 'retry-objective') {
+    busy = true; problem = ''; message = ''; render();
+    try {
+      let result;
+      if (action === 'submit-work') {
+        const teamId = target.dataset.team;
+        if (!workRequests.has(teamId)) workRequests.set(teamId, mutation({ teamId, objective: objectives.get(teamId) || '' }));
+        result = await call('submitWork', workRequests.get(teamId));
+      } else result = await call(action === 'check-work' ? 'checkWork' : 'retryObjective', { workId: target.dataset.work });
+      state = validatePersistentState(result.value);
+      message = 'Saved work evidence updated. Native input acceptance, processing and Run binding are separate facts.';
+    } catch (error) { problem = error.message; if (/Another panel changed/.test(error.message)) workRequests.delete(target.dataset.team); canRetry = true; }
+    finally { busy = false; render(); }
+  }
+  else if(['enqueue-goal','accept-delivery','rework-delivery','start-next'].includes(action)){
+    busy=true;problem='';render();
+    try{
+      let result,teamId=target.dataset.team;
+      if(action==='enqueue-goal'){
+        if(!goalRequests.has(teamId))goalRequests.set(teamId,mutation({teamId,objective:goalDrafts.get(teamId)||''}));
+        result=await call('enqueueGoal',goalRequests.get(teamId));goalRequests.delete(teamId);goalDrafts.delete(teamId);message='Later objective queued.';
+      }else if(action==='start-next')result=await call('startNextGoal',{teamId});
+      else{
+        const work=state.works.find(w=>w.id===target.dataset.work);teamId=work.teamId;
+        const key=work.delivery.id+action;
+        if(!decisionRequests.has(key))decisionRequests.set(key,{requestId:crypto.randomUUID(),workId:work.id,deliveryId:work.delivery.id,expectedWorkVersion:work.version,decision:action==='accept-delivery'?'accept':'rework',...(action==='rework-delivery'?{feedback:reworkDrafts.get(work.id)||''}:{})});
+        result=await call('decideWork',decisionRequests.get(key));message=action==='accept-delivery'?'Delivery accepted.':'Corrections saved for the highest supervisor.';
+      }
+      while(result.continue){message='Preparing fresh sessions for the next objective…';render();await new Promise(resolve=>setTimeout(resolve,10100));result=await call('startNextGoal',{teamId,goalId:result.goalId});}
+      state=validatePersistentState(result.value||(await call('storage.get',{})).value);
+      if(result.pending)message=result.detail||'Next objective remains reserved. Continue after checking its saved launch evidence.';
+    }catch(error){problem=error.message;if(/changed|superseded/i.test(error.message))decisionRequests.clear();try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    finally{busy=false;render();}
+  }
+  else if(action==='add-member'||action==='cancel-staffing'){
+    const work=state.works.find(w=>w.id===target.dataset.work),team=state.teams.find(t=>t.id===work.teamId);
+    if(action==='cancel-staffing')staffingDrafts.delete(work.id);else staffingDrafts.set(work.id,{name:'',boss:team.members.find(m=>m.boss===null).id,brief:'',habits:'',collaboration:'Report to your direct supervisor. Do not start unapproved provider-native subagents.',agent:'codex',model:'default',effort:'default'});render();
+  }
+  else if(['save-staffing','approve-staffing','reject-staffing'].includes(action)){
+    const work=state.works.find(w=>w.id===target.dataset.work),team=state.teams.find(t=>t.id===work.teamId),proposal=work.staffingProposals?.find(p=>p.id===target.dataset.proposal),key=work.id+':'+(proposal?.id||'direct');
+    if(!staffingRequests.has(key))staffingRequests.set(key,mutation({workId:work.id,configVersion:proposal?.configVersion??team.configVersion,...(proposal?{proposalId:proposal.id,decision:action==='approve-staffing'?'approve':'reject'}:{member:structuredClone(staffingDrafts.get(work.id))})}));
+    busy=true;problem='';render();
+    try{const result=await call('saveStaffing',staffingRequests.get(key));state=validatePersistentState(result.value);staffingRequests.delete(key);staffingDrafts.delete(work.id);message=result.staffing.decision==='rejected'?'Staffing proposal rejected.':`Member saved.${result.preparation?` Preparation: ${result.preparation.status}.`:''} Manager delivery and processing are shown separately.`;}
+    catch(error){problem=error.message;if(/changed|stale|already decided/i.test(error.message))staffingRequests.delete(key);try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    finally{busy=false;render();}
+  }
+  else if(action==='resolve-recovery-question'){
+    busy=true;problem='';render();try{const key=target.dataset.work+':'+target.dataset.question;await call('resolveRecoveryQuestion',{requestId:target.dataset.request,workId:target.dataset.work,questionId:target.dataset.question,note:answerDrafts.get(key)||''});state=validatePersistentState((await call('storage.get',{})).value);}catch(error){problem=error.message;}finally{busy=false;render();}
+  }
+  else if (action === 'answer-question') {
+    const work=state.works.find(w=>w.id===target.dataset.work),q=work.questions.find(q=>q.id===target.dataset.question),key=work.id+':'+q.id;
+    if(!answerRequests.has(key))answerRequests.set(key,{workId:work.id,questionId:q.id,questionRevision:q.revision,answerId:crypto.randomUUID(),body:answerDrafts.get(key)||'',supplement:q.answers.length>0});
+    busy=true;problem='';render();
+    try{const result=await call('answerQuestion',answerRequests.get(key));state=validatePersistentState(result.value);answerRequests.delete(key);answerDrafts.delete(key);message='Answer saved. Native input and manager processing are shown separately.';}catch(error){problem=error.message;}
+    finally{busy=false;render();}
+  }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }
     catch (error) { problem = error.message; canRetry = false; render(); }
@@ -203,19 +489,39 @@ app.addEventListener('click', async event => {
 });
 app.addEventListener('input', event => {
   const target = event.target;
-  if (target.dataset.form) { form[target.dataset.form] = target.value; updatePreview(); }
+  if(target.dataset.staffing){staffingDrafts.get(target.dataset.work)[target.dataset.staffing]=target.value;staffingRequests.delete(target.dataset.work+':direct');return;}
+  if(target.dataset.goal){goalDrafts.set(target.dataset.goal,target.value);goalRequests.delete(target.dataset.goal);return;}
+  if(target.dataset.rework){reworkDrafts.set(target.dataset.rework,target.value);return;}
+  if (target.dataset.answer) { answerDrafts.set(target.dataset.answer,target.value); answerRequests.delete(target.dataset.answer); }
+  else if (target.dataset.objective) { objectives.set(target.dataset.objective, target.value); workRequests.delete(target.dataset.objective); }
+  else if (target.hasAttribute('data-template')) { templateText = target.value; }
+  else if (target.dataset.form) { form[target.dataset.form] = target.value; updatePreview(); }
 });
 app.addEventListener('change', async event => {
   const target = event.target;
-  if (target.hasAttribute('data-launch-mode')) { launchMode = target.value; }
-  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
+  if(target.dataset.staffing){staffingDrafts.get(target.dataset.work)[target.dataset.staffing]=target.value;staffingRequests.delete(target.dataset.work+':direct');return;}
+  if (target.hasAttribute('data-template-file')) {
+    const file = target.files?.[0]; if (!file) return;
+    templatePreview = null; templateRequest = null; confirmedWorkspace = null; problem = ''; message = '';
+    try {
+      if (file.size > MAX_TEMPLATE_BYTES) throw new Error('Template file exceeds the 1 MiB exchange limit.');
+      templateText = await file.text();
+    } catch (error) { problem = error.message; }
+    render();
+  }
+  else if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
+  else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
+  else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
+  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);
     form.models[i] = target.value.trim() || 'default';
     if (form.models[i] === 'default') form.efforts[i] = 'default';
     render();
   } else if (target.dataset.effort !== undefined) { form.efforts[Number(target.dataset.effort)] = target.value; updatePreview(); }
-  else if (target.dataset.setting) { await save({ ...state, settings: { ...state.settings, [target.dataset.setting]: target.type === 'checkbox' ? target.checked : target.value } }); }
+  else if (target.dataset.setting) { await submit('updateSettings', { settings: { ...state.settings, [target.dataset.setting]: target.type === 'checkbox' ? target.checked : target.value } }); }
 });
 render();
 void load();
+
+app.addEventListener('input',event=>{if(event.target.dataset.replacementSummary)replacementDrafts.set(event.target.dataset.replacementSummary,event.target.value);if(event.target.dataset.wakeSummary)wakeDrafts.set(event.target.dataset.wakeSummary,event.target.value);});

@@ -3,13 +3,14 @@ export const PRESETS = [
   { label: 'All-Purpose Team', sketch: '■┬●●', hint: 'CEO + 2 heads, 4 workers each', form: { name: 'All-Purpose-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Team 1, Team 2' } },
   { label: 'Tech Team', sketch: '■┬●●●●', hint: 'CEO + 4 heads, 4 workers each', form: { name: 'Tech-Team', structure: 'organisation', levels: 3, fan: 4, groups: 'Dev Team, UI Team, Test Team, Security Team' } }
 ];
-export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', agents: ['codex', 'codex', 'codex'], models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
+export const DEFAULT_FORM = { ...PRESETS[0].form, purpose: '', launchMode: 'on-demand', agents: ['codex', 'codex', 'codex'], models: ['default', 'default', 'default'], efforts: ['default', 'default', 'default'] };
 export const SETTINGS = { chart: true, layout: 'stacked' };
 export const GLYPHS = { ceo: '■', head: '●', lead: '◇', worker: '○' };
 
 export function cleanName(value) { return value.trim().replace(/\s+/g, '-'); }
 function nameValid(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value); }
 export function planTeam(form) {
+  if (form.launchMode !== undefined && !['on-demand','all'].includes(form.launchMode)) throw Error('Choose a supported launch mode.');
   const name = cleanName(form.name);
   if (!nameValid(name)) throw new Error('Use a team name of 1–64 letters, numbers, underscores or dashes, starting with a letter or number.');
   if (!['team', 'organisation'].includes(form.structure)) throw new Error('Choose a team structure.');
@@ -18,7 +19,6 @@ export function planTeam(form) {
   for (const values of [form.models, form.efforts]) {
     if (!Array.isArray(values) || values.length !== 3 || values.some(value => typeof value !== 'string' || !value || value.length > 120)) throw new Error('Invalid model or effort selection.');
   }
-  if (form.efforts.some(value => !['default', 'low', 'medium', 'high', 'xhigh'].includes(value))) throw new Error('Invalid effort selection.');
   if (form.models.some((model, i) => model === 'default' && form.efforts[i] !== 'default')) throw new Error('Choose a model before overriding its effort.');
   const agents = form.agents ?? ['codex', 'codex', 'codex'];
   if (!Array.isArray(agents) || agents.length !== 3 || agents.some(agent => !['codex', 'claude'].includes(agent))) throw new Error('Choose Codex or Claude Code for each level.');
@@ -74,7 +74,7 @@ export function validateState(value) {
     const ids = new Set();
     const names = new Set();
     for (const member of team.members) {
-      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !['default', 'low', 'medium', 'high', 'xhigh'].includes(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
+      if (!member || !string(member.id) || !string(member.name) || !nameValid(member.team) || !Object.hasOwn(GLYPHS, member.role) || ![1, 2, 3].includes(member.level) || !['codex', 'claude'].includes(member.agent) || member.state !== 'unassigned' || !string(member.model) || !string(member.effort) || !string(member.brief, 1500) || ids.has(member.id) || names.has(member.name.toLowerCase())) throw new Error('Saved member data is invalid. It has been left untouched.');
       if (member.boss !== null && !ids.has(member.boss)) throw new Error('Saved reporting relationships are invalid. It has been left untouched.');
       if (member.boss === null && ids.size !== 0) throw new Error('Saved team has multiple roots. It has been left untouched.');
       if ((member.boss === null && member.level !== 1) || (member.boss !== null && team.members.find(boss => boss.id === member.boss)?.level !== member.level - 1)) throw new Error('Saved hierarchy levels are invalid. It has been left untouched.');
@@ -98,4 +98,25 @@ export function validateState(value) {
   }
   if (value.settings && typeof value.settings.chart === 'boolean' && ['stacked', 'columns'].includes(value.settings.layout)) validated.settings = { chart: value.settings.chart, layout: value.settings.layout };
   return validated;
+}
+
+// v2 is deliberately isolated from the prototype KV format. Member IDs and
+// saved roles are authoritative; presets describe the initial shape only.
+export const emptyTeamState = () => ({ format: 'orca-team-store', version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
+export function validatePersistentState(value) {
+  if (!value || value.format !== 'orca-team-store' || value.version !== 2 || !Number.isInteger(value.revision) || value.revision < 0 || !Array.isArray(value.teams) || value.teams.length > 100) throw new Error('Saved team data has an unsupported format. It has been left untouched.');
+  const teamIds = new Set(), memberIds = new Set();
+  for (const team of value.teams) {
+    const uuid = id => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id);
+    if (!uuid(team.id) || teamIds.has(team.id) || !Number.isInteger(team.configVersion) || team.configVersion < 1 || !team.scope || !['git', 'folder'].includes(team.scope.kind) || ! /^(local|ssh:[^\s|]+)$/.test(team.scope.executionHostId) || !/^[a-f0-9]{64}$/.test(team.scope.workspaceKey) || typeof team.scope.displayName !== 'string') throw new Error('Saved team identity or project binding is invalid. It has been left untouched.');
+    const { configuration, scope, ...roster } = team;
+    validateState({ version: 1, teams: [roster] });
+    for (const member of team.members) {
+      if ((member.preferenceOverride !== undefined && typeof member.preferenceOverride !== 'boolean') || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some(text => typeof text !== 'string' || text.length > 1500)) throw new Error('Saved role identity/version is invalid. It has been left untouched.');
+      memberIds.add(member.id);
+    }
+    teamIds.add(team.id);
+  }
+  if (typeof value.settings?.chart !== 'boolean' || !['stacked', 'columns'].includes(value.settings.layout)) throw new Error('Saved display settings are invalid. It has been left untouched.');
+  return value;
 }

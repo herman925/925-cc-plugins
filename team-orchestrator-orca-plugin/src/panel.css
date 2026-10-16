@@ -95,7 +95,8 @@ main {
 }
 nav {
   display:flex;
-  gap:16px;
+  flex-wrap:wrap;
+  gap:4px 16px;
   margin-top:14px;
 }
 nav button {
@@ -586,4 +587,27 @@ footer {
   top:48px;
   height:9px;
   border-left:1px solid var(--line);
+}
+
+.task-card {
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:12px;
+  margin:12px 0;
+  overflow-wrap:anywhere;
+}
+.task-card h4 {
+  margin:0;
+}
+.task-state {
+  color:var(--fg);
+}
+.task-text {
+  white-space:pre-wrap;
+}
+.task-card details {
+  margin:10px 0;
+}
+.task-card summary {
+  cursor:pointer;
 }
