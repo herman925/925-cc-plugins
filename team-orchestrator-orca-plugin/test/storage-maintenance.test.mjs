@@ -51,11 +51,27 @@ test('an arbitrary expired staffing label cannot bypass missing original proposa
 import {fixture as dispatchFixture} from './dispatch-fixture.mjs';
 import {createWakeService} from '../src/local/wake.mjs';
 import {createStaffingService} from '../src/local/staffing.mjs';
-async function closedAfterReplacement(t,{replacements=1}={}){
- const f=await dispatchFixture(t,{prestarted:true,preparedKind:'terminal',childKind:'terminal',allPrepared:true}),s=f.store;
+async function closedAfterReplacement(t,{replacements=1,resumeBeforeReplacement=false}={}){
+ const f=await dispatchFixture(t,{prestarted:true,preparedKind:resumeBeforeReplacement?'structured':'terminal',childKind:'terminal',allPrepared:true}),s=f.store;
  const dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});await dispatch.check(f.work.id);
- const terminals=new Map(),rpc=async(method,params,envelope)=>method==='terminal.show'&&terminals.has(params.terminal)?{terminal:terminals.get(params.terminal)}:f.rpc(method,params,envelope);
+ const terminals=new Map(),rpc=async(method,params,envelope)=>{
+  if(method==='terminal.show'&&terminals.has(params.terminal))return {terminal:terminals.get(params.terminal)};
+  if(resumeBeforeReplacement&&method==='agentSession.restartResumable')return {sessions:[{sessionId:'claude_child',workspaceId:s.readScope(f.team.id).workspaceId,executionHostId:'local',agent:'claude'}]};
+  if(resumeBeforeReplacement&&method==='agentSession.restartContinue')return {continued:[{sessionId:'claude_child',outcome:'continued'}]};
+  if(resumeBeforeReplacement&&method==='agentSession.history'&&params.sessionId==='claude_child')return {ok:true,page:{sessionId:'claude_child',fence:8,latestTurn:{itemId:'resumed-idle-turn',turn:{state:'completed'}},backgroundTasks:null,queuedMessages:[],submissions:[]}};
+  return f.rpc(method,params,envelope);
+ };
  const wake=createWakeService({store:s,rpc,userData:f.profile,works:f.works,consent:async()=>{}});let fresh;
+ if(resumeBeforeReplacement){
+  const old=s.readMemberOperation(f.member.id);s.settleOperation(old.requestId,old.nativeRequest.operationId,{observation:{ownerFence:7}});
+  const journal=new DatabaseSync(join(f.profile,'agent-session-journal.db'));t.after(()=>journal.close());journal.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');
+  const record=(dead)=>({schemaVersion:2,sessionId:'claude_child',provider:'claude',location:s.readScope(f.team.id),lease:{sessionId:'claude_child',runtimeFence:dead?7:8,claimStatus:dead?'released':'live',ownerProcess:dead?null:{pid:1,hostId:'local',spawnToken:'resumed-child-owner'},...(dead?{deathEvidence:{kind:'exit-observed',ownerFence:7,observedAt:Date.now()}}:{})}});
+  journal.prepare('INSERT INTO agent_session_records VALUES(?,?)').run('claude_child',JSON.stringify(record(true)));
+  assert.equal((await wake.wake({requestId:'native-child-resume',teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId})).state,'accepted');
+  journal.prepare('UPDATE agent_session_records SET record_json=? WHERE session_id=?').run(JSON.stringify(record(false)),'claude_child');
+  assert.equal((await wake.check('native-child-resume')).state,'resumed');
+ }
+
  for(let index=1;index<=replacements;index++){
   const old=s.readMemberOperation(f.member.id),request={requestId:'idle-child-replacement-'+index,teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId,expectedRevision:s.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Checked idle member and existing results',evidenceRefs:['idle-child']};
   await wake.requestReplacement(request);fresh=await wake.prepareFresh(request.requestId);const patch={status:'created',kind:'terminal',handle:'replacement-child-'+index,paneKey:'replacement-tab:replacement-leaf-'+index,briefAccepted:true,observation:{ptyId:'replacement-pty-'+index,incarnationId:'replacement-instance-'+index,processIncarnation:'replacement-pty-'+index+':replacement-instance-'+index}};
@@ -103,4 +119,31 @@ test('cleanup preview fences every corroborated replacement ancestor receipt',as
  const f=await closedAfterReplacement(t,{replacements:3}),s=f.store,p=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
  const middle=s.readOperation(s.readOperation(f.replacementId).replaces);s.writeReceipt('operation:'+middle.requestId,{...middle,version:middle.version+1});
  assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Accepted replacement work');
+});
+
+test('genuine resumed owner followed by idle replacement and accepted closure remains eligible for cleanup',async t=>{
+ const f=await closedAfterReplacement(t,{resumeBeforeReplacement:true}),before=f.store.readWork(f.work.id).currentRecipientBindings,preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
+ assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.readWake('native-child-resume').state,'resumed');
+ f.store.applyHistoryCleanup({requestId:'clean-resumed-replacement',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(f.store.readWork(f.work.id).currentRecipientBindings,before);
+});
+test('future formats on corroborating replacement records and ancestors keep accepted history protected',async t=>{
+ for(const kind of ['wake','operation','ancestor-wake','ancestor-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{replacements:kind.startsWith('ancestor-')?2:1}),s=f.store,op=s.readOperation(f.replacementId),selected=kind.startsWith('ancestor-')?s.readOperation(op.replaces):op;
+  const row=kind.endsWith('wake')?s.readWake(selected.wakeRequestId):selected,key=(kind.endsWith('wake')?'wake:':'operation:')+row.requestId;
+  s.writeReceipt(key,{...row,format:kind.endsWith('wake')?'wake-v2':'operation-v2'});
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('unknown, failed, mismatched and future-format resume evidence never settles replacement ancestry',async t=>{
+ for(const kind of ['unknown','failed','fence','owner-fence','session','provider','future-wake','future-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{resumeBeforeReplacement:true}),s=f.store,wake=s.readWake('native-child-resume'),key='wake:'+wake.requestId;
+  if(kind==='unknown'||kind==='failed')s.writeReceipt(key,{...wake,state:kind});
+  else if(kind==='fence')s.writeReceipt(key,{...wake,newInstance:{...wake.newInstance,fence:7}});
+  else if(kind==='owner-fence'){const op=s.readOperation(wake.newInstance.requestId);s.writeReceipt('operation:'+op.requestId,{...op,observation:{...op.observation,ownerFence:9}});}
+  else if(kind==='session')s.writeReceipt(key,{...wake,oldBinding:{...wake.oldBinding,sessionId:'different-native-session'}});
+  else if(kind==='provider')s.writeReceipt(key,{...wake,proof:{...wake.proof,death:{...wake.proof.death,provider:'different-provider'}}});
+  else if(kind==='future-wake')s.writeReceipt(key,{...wake,format:'wake-v2'});
+  else {const op=s.readOperation(wake.newInstance.requestId);s.writeReceipt('operation:'+op.requestId,{...op,format:'operation-v2'});}
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
 });
