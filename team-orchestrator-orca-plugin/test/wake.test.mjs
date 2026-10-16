@@ -112,7 +112,7 @@ for(const agent of ['codex','claude'])test(`${agent} idle replacement retires on
  const input={...f.input,expectedRevision:f.store.readSnapshot().revision,agent:other,model:'default',effort:'default',summary:'Checked all accepted results. Continue with the current saved role.',evidenceRefs:['saved-results']};
  idle=false;await assert.rejects(service.requestReplacement(input),/idle|execution/);assert.equal(f.store.readMemberOperation(f.member.id).requestId,'launch');
  idle=true;const row=await service.requestReplacement(input);assert.equal(row.state,'approved');assert.equal(f.store.readSnapshot().teams[0].admission.members[f.member.id],true);
- const fresh=await service.prepareFresh(row.requestId);assert.equal(fresh.operation.nativeRequest.agent,other);assert.equal(fresh.operation.configVersion,2);assert.equal(fresh.operation.memberId,f.member.id);assert.equal(fresh.operation.instanceGeneration,2);
+ const fresh=await service.prepareFresh(row.requestId);assert.equal(fresh.operation.title,'Squad/Head');assert.equal(fresh.operation.nativeRequest.agent,other);assert.equal(fresh.operation.configVersion,2);assert.equal(fresh.operation.memberId,f.member.id);assert.equal(fresh.operation.instanceGeneration,2);
  assert.equal(f.store.readOperation('launch').status,'created');assert.equal(f.store.readOperation('launch').nativeRequest.agent,agent);assert.equal(f.calls.some(c=>/restartContinue|close|stop|cancel/.test(c.method)),false);
  f.store.settleOperation('launch',f.op.nativeRequest.operationId,{warning:'late old evidence'});assert.equal(f.store.readMemberOperation(f.member.id).requestId,fresh.operation.requestId);
  idle=false;await assert.rejects(service.validateFresh(row.requestId),/idle|execution/);
