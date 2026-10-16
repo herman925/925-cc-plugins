@@ -74,3 +74,34 @@ test('a concurrent member observation fences stale naming until a fresh check',a
  await service.check(f.work.id);assert.equal(renames.length,0);
  await service.check(f.work.id);assert.equal(renames.length,1);
 });
+
+for(const timing of ['before-check','during-terminal-observation'])test(`accepted on-demand terminal keeps its manual title after replacement ${timing}`,async t=>{
+ const {createWakeService}=await import('../src/local/wake.mjs');
+ const f=await fixture(t,{childKind:'terminal',workerAgent:'codex'});let verified=false,replaceDuringObservation;const renames=[];
+ const rpc=async(method,params,...rest)=>{
+  if(method==='terminal.rename'){renames.push(params);return {rename:{handle:params.terminal,tabId:'child-tab',title:params.title}};}
+  if(method==='terminal.agentStatus'&&params.terminal==='structworker_child')return {agentStatus:{handle:params.terminal,isRunningAgent:true,status:'idle'}};
+  const value=await f.rpc(method,params,...rest);
+  if(method==='terminal.show'&&params.terminal==='structworker_child'){
+   if(!verified)value.terminal.incarnationId='not-yet-verified';
+   if(replaceDuringObservation){const replace=replaceDuringObservation;replaceDuringObservation=undefined;await replace();}
+  }
+  return value;
+ };
+ const dispatch=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
+ await dispatch.check(f.work.id);f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ const old=f.store.readMemberDispatch(f.member.id);assert.equal(old.status,'accepted');assert.equal(old.sidebarNaming,undefined);
+ verified=true;
+ const wake=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ const replace=async()=>{await wake.requestReplacement({requestId:'name-replacement',teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.id,expectedRevision:f.store.readSnapshot().revision,agent:'codex',model:'default',effort:'default',summary:'Retain accepted work and replace the idle member.',evidenceRefs:[old.evidenceId]});
+ const fresh=await wake.prepareFresh('name-replacement');
+ assert.notEqual(f.store.readMemberOperation(f.member.id).requestId,old.id);
+ assert.equal(fresh.operation.title,'Squad/Worker-1');assert.equal(f.store.readMemberDispatch(f.member.id).id,old.id);};
+ if(timing==='before-check')await replace();else replaceDuringObservation=replace;
+ await dispatch.check(f.work.id);
+ assert.deepEqual(renames,[]);assert.equal(f.store.readMemberDispatch(f.member.id).sidebarNaming,undefined);
+ assert.throws(()=>f.store.recordDispatchName(old.id,f.store.readMemberDispatch(f.member.id).version,{title:'Squad/Worker-1',outcome:'attempted',at:new Date().toISOString()}),/changed|current|supersed/i);
+});

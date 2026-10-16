@@ -8,10 +8,10 @@ export async function nameDispatchedMember({store,rpc,consent,work,attempt,team}
  // Prepared and retained sessions already keep their original custom title.
  if(binding?.kind!=='terminal'||attempt.reuse||attempt.sidebarNaming||attempt.admission!=='committed')return;
  const member=team.members.find(row=>row.id===attempt.memberId);
- if(!member||store.readMemberDispatch(member.id)?.id!==attempt.id)return;
+ if(!member||store.readMemberDispatch(member.id)?.id!==attempt.id||store.readMemberOperation(member.id))return;
  const current=()=>{
   const saved=store.readMemberDispatch(member.id),active=store.readCurrentWork(work.id);
-  return saved?.id===attempt.id&&saved.version===attempt.version&&active?.status!=='completed'&&active?.version===work.version&&controlRuntime(active)===controlRuntime(work);
+  return saved?.id===attempt.id&&saved.version===attempt.version&&!store.readMemberOperation(member.id)&&active?.status!=='completed'&&active?.version===work.version&&controlRuntime(active)===controlRuntime(work);
  };
  try {
   await consent();
