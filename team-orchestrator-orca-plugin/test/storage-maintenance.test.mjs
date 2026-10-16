@@ -147,3 +147,44 @@ test('unknown, failed, mismatched and future-format resume evidence never settle
   assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
  });
 });
+import {createLifecycleService} from '../src/local/lifecycle.mjs';
+async function correctedDeliveryHistory(t,{revisions=2}={}){
+ const f=await questionFixture(t),s=f.store,dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});
+ await dispatch.check(f.work.id);f.createIntent(s.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await dispatch.check(f.work.id);
+ f.complete(s.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(s.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=s.listDispatches(f.work.id)[0];assert.equal(attempt.status,'accepted');
+ const lifecycle=createLifecycleService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}),propose=(revision)=>{
+  const protocol=s.readDispatchProtocol(f.work.id),id='corrected-delivery-'+revision,spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:protocol.token,generation:protocol.generation,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:revision===1?null:'corrected-delivery-'+(revision-1),summary:'Delivery revision '+revision,evidenceRefs:revision===1?['incomplete-summary']:[attempt.evidenceId],attemptIds:revision===1?[]:[attempt.id]}),task={id,run_id:'run-head',spec,status:'ready'};
+  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);f.receipt('create-'+id,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});return id;
+ };
+ const first=propose(1);await lifecycle.check(f.work.id);await assert.rejects(lifecycle.decide({requestId:'refused-incomplete-delivery',workId:f.work.id,deliveryId:first,expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'}),/omits required accepted task evidence/);assert.equal(s.readWorkDecision('refused-incomplete-delivery'),null);
+ let current;for(let revision=2;revision<=revisions;revision++){current=propose(revision);await lifecycle.check(f.work.id);}
+ await lifecycle.decide({requestId:'accept-corrected-delivery',workId:f.work.id,deliveryId:current,expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'});
+ return {...f,currentDeliveryId:current,firstDeliveryId:first};
+}
+test('a refused incomplete delivery followed by an accepted native correction can clean obsolete pending delivery history',async t=>{
+ const f=await correctedDeliveryHistory(t),s=f.store,first=s.readReceipt(`delivery:${f.work.id}:${f.firstDeliveryId}`),proofs=f.db.prepare('SELECT request_id,payload_hash,receipt FROM mutation_receipts ORDER BY request_id').all();assert.equal(first.status,'pending');
+ const preview=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
+ s.applyHistoryCleanup({requestId:'clean-corrected-delivery',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});const old=s.readReceipt(`delivery:${f.work.id}:${f.firstDeliveryId}`);assert.equal(old.status,'pending');assert.deepEqual(old.proof,first.proof);assert.deepEqual(f.db.prepare('SELECT request_id,payload_hash,receipt FROM mutation_receipts ORDER BY request_id').all(),proofs);assert.equal(s.readWorkDecision('refused-incomplete-delivery'),null);
+});
+test('obsolete delivery classification refuses incomplete, unknown or unsupported revision provenance',async t=>{
+ for(const kind of ['missing-ancestor','cycle','revision-gap','foreign-work','unknown-ancestor','unknown-current','missing-ancestor-proof','missing-current-proof','future-ancestor','future-current','missing-decision','unaccepted-current','malformed-link'])await t.test(kind,async t=>{
+  const f=await correctedDeliveryHistory(t),s=f.store,oldKey=`delivery:${f.work.id}:${f.firstDeliveryId}`,currentKey=`delivery:${f.work.id}:${f.currentDeliveryId}`,old=s.readReceipt(oldKey),current=s.readReceipt(currentKey);
+  if(kind==='missing-ancestor'||kind==='missing-decision'){const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));db.prepare('DELETE FROM receipts WHERE id=?').run(kind==='missing-ancestor'?oldKey:'work-decision:accept-corrected-delivery');db.close();}
+  else if(kind==='cycle')s.writeReceipt(oldKey,{...old,previousDeliveryId:current.id});
+  else if(kind==='revision-gap')s.writeReceipt(currentKey,{...current,revision:4});
+  else if(kind==='foreign-work')s.writeReceipt(oldKey,{...old,workId:'different-work'});
+  else if(kind==='unknown-ancestor')s.writeReceipt(oldKey,{...old,status:'unknown'});
+  else if(kind==='unknown-current'||kind==='unaccepted-current')s.writeReceipt(currentKey,{...current,status:kind==='unknown-current'?'unknown':'pending'});
+  else if(kind==='missing-ancestor-proof')s.writeReceipt(oldKey,{...old,proof:undefined});
+  else if(kind==='missing-current-proof')s.writeReceipt(currentKey,{...current,proof:undefined});
+  else if(kind==='future-ancestor')s.writeReceipt(oldKey,{...old,format:'delivery-v2'});
+  else if(kind==='future-current')s.writeReceipt(currentKey,{...current,format:'delivery-v2'});
+  else s.writeReceipt(currentKey,{...current,previousDeliveryId:{id:old.id}});
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('every ancestor in a three-revision accepted delivery remains fenced before cleanup',async t=>{
+ const f=await correctedDeliveryHistory(t,{revisions:3}),s=f.store,p=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ const key=`delivery:${f.work.id}:corrected-delivery-2`,middle=s.readReceipt(key);s.writeReceipt(key,{...middle,summary:'Changed retained delivery evidence'});
+ assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-delivery-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Delivery revision 3');
+});
