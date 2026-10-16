@@ -36,7 +36,7 @@ test('lost answer receipt remains unknown after restart and stale supervisor pre
  await q.answer({workId:f.work.id,questionId:'choice',questionRevision:1,answerId:'answer-two',body:'New evidence',supplement:true});
  assert.equal(f.store.listQuestions(f.work.id)[0].answers[1].state,'blocked');assert.equal(f.messages.filter(s=>s.startsWith('TEAM_USER_ANSWER\n')).length,1);
 });
-for(const resolution of ['reply','closed','wrong-generation','wrong-host'])test(`native ask relay preserves requester and verifies ${resolution} evidence`,async t=>{
+for(const resolution of ['reply','closed','answered-before-send','unknown-thread','missing-thread','wrong-generation','wrong-host'])test(`native ask relay preserves requester and verifies ${resolution} evidence`,async t=>{
  const f=await setup(t);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await f.dispatch.check(f.work.id);
  const attempt=f.store.listDispatches(f.work.id)[0];
  f.db.exec(`ALTER TABLE messages ADD COLUMN to_handle TEXT; ALTER TABLE messages ADD COLUMN thread_id TEXT;
@@ -50,10 +50,13 @@ for(const resolution of ['reply','closed','wrong-generation','wrong-host'])test(
  f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','ask-one','orchestration.ask',digest,'completed',JSON.stringify({accepted:true,messageId:'native-question',threadId:'native-question'}));
  headIntent(f,{kind:'user-question',appQuestionId:'scope',summary:'Which scope?',options:['Small'],blockingTaskKeys:['task-key-one'],origin:{attemptId:attempt.id,dispatchId:attempt.dispatchId,nativeTaskId:attempt.nativeTaskId,messageId:'native-question',askRequestId:'ask-one',askParams}});
  const {createQuestionService}=await import('../src/local/questions.mjs');const q=createQuestionService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await q.check(f.work.id);
+ if(resolution==='answered-before-send')f.db.prepare("UPDATE question_threads SET status='answered'").run();
+ if(resolution==='unknown-thread')f.db.prepare("UPDATE question_threads SET status='unknown'").run();
+ if(resolution==='missing-thread')f.db.prepare('DELETE FROM question_threads').run();
  if(resolution==='closed')f.db.prepare("UPDATE question_threads SET status='closed'").run();
  if(resolution==='wrong-host')f.db.prepare("UPDATE dispatch_contexts SET host_scope=? WHERE id=?").run(JSON.stringify({kind:'ssh',targetId:'elsewhere'}),attempt.dispatchId);
  await q.answer({workId:f.work.id,questionId:'scope',questionRevision:1,answerId:'answer-one',body:'Small',supplement:false});
- if(['closed','wrong-host'].includes(resolution)){assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'blocked');assert.equal(f.messages.some(m=>m.startsWith('TEAM_USER_ANSWER\n')),false);return;}
+ if(['closed','answered-before-send','unknown-thread','missing-thread','wrong-host'].includes(resolution)){assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'blocked');assert.equal(f.messages.some(m=>m.startsWith('TEAM_USER_ANSWER\n')),false);assert.equal(f.store.listQuestions(f.work.id)[0].sourceReport,undefined);return;}
  assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'accepted');assert.equal(f.store.listQuestions(f.work.id)[0].nativeQuestion.fromMemberId,f.member.id);
  f.db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)').run('native-answer','run-head','run:run-head',null,'message','Small',null,`dispatch:${attempt.dispatchId}`,'native-question');
  f.db.prepare("UPDATE question_threads SET status='answered',answer_message_id='native-answer',answer_body='Small',answered_by_generation=1").run();
