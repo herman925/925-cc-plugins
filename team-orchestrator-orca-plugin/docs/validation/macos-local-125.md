@@ -1,6 +1,6 @@
 # macOS / local live validation for #125
 
-Live checkpoint: 2026-10-16 06:44 UTC. All five recorded TeamWorks are completed. Issue #125 stays OPEN / ready-for-human because the unverified cases below remain. PR #132 has merged; the current closeout combines #133 with one consistent 0.1.08 release. This report distinguishes the tested candidate from that release.
+Live checkpoint: 2026-10-16 06:44 UTC. The first five recorded TeamWorks are completed; a sixth recovery-validation Work is preserved but waiting for runtime reauthentication. Issue #125 stays OPEN / ready-for-human because the unverified cases below remain. PR #132 has merged; the current closeout combines #133 with one consistent 0.1.08 release. This report distinguishes the tested candidate from that release.
 
 ## Environment and evidence boundaries
 
@@ -27,7 +27,8 @@ Tests used isolated Git and ordinary non-Git projects. All native launch and dis
 | Stop current execution after next goal | PASS for prepared idle process | Correct current folder Worker-3 binding stopped with native-exact-stop and post-stop verification. Repeated Stop and two checks kept one byte-identical Stop row/version 4. Active Task interruption remains unverified |
 | Plugin disable and reload | PASS | Original Runs/Tasks and pending failure question restored without recreation; disabled command absent; normal re-enable/initialize restored panel |
 | Distinct permission revocation | UNVERIFIED | This stock dev-plugin UI exposes enable/disable and logs, no separate revoke control. Removal is not substituted |
-| Whole Orca restart / machine sleep | NOT RUN | Requires a checkpoint coordinated with user because unrelated Orca sessions exist |
+| Whole Orca restart | PASS for persistence/no duplicates; continuation UNVERIFIED | Actual desktop PID and runtime changed. The original four member handles, PTYs and process incarnations survived; opening the saved workspace restored original tab/leaf identities. Original Team/Work/Run and four operation IDs remain. Runtime authorization correctly stays unverified; 0.1.08 lacks an explicit same-instance reauthentication path |
+| Physical machine sleep/wake | PASS for session continuity; continuation UNVERIFIED | macOS power log records actual sleep 2026-10-16 15:33:56 +0800 and wake15:34:41 +0800,45seconds. Desktop runtime, all original session identities, Run generation1 and zeroTask count remained unchanged. Prior restart-induced authorization gap persists |
 | Partial preparation interruption | PASS | Disabled through native UI after preparation began; 2 of 4 sessions settled before disable. Continue retained first two request IDs/handles and produced exactly four operations/handles. Exactly one genuine Worker-2 Dispatch reused its prepared session; four tests and median/pretty-report assertions passed; Head reviewed the actual report and proposed delivery; the existing delivery was accepted once on the repaired candidate |
 | Provider-specific launch failure | UNVERIFIED | The partial sequence was interrupted by native disable; no provider launch failure or lost receipt is claimed |
 
@@ -99,3 +100,13 @@ Integration bf23191 contains the completion-origin Head-decision repair and time
 - Folder control Work dfb5018c-db5c-4005-8990-b2e5fad6e88a: completed 2026-10-16T06:44:06.289Z, delivery task_3c3448c4933d, original Run run_a2796e27d913 retained. Exactly two qa-missing-input failed attempts remain; qa-input.txt remains absent.
 
 These live paths support closing the corresponding development issues #107–#116 and #118 after their required fixes and consistent artifacts reach main. The remaining issues stay open under the user's live-evidence closure policy; lack of a live result does not mean their existing source implementation or fixture coverage is absent.
+
+## Actual restart and sleep follow-up on installed 0.1.08
+
+The user authorized closing other local sessions without archiving their work. Thirty-two local terminal sessions were closed; project source files were preserved. The current coordinator remained open. Four fresh test sessions were then prepared through the existing saved roster and a new Work was started only to create its genuine Head-owned Run, with zero native Tasks and no file-writing instructions.
+
+Recovery Work: `8fed3b77-24fd-4b7f-9c62-72bf0385546d`; Run: `run_bcdbde078954`. The actual user quit and reopened Orca. Desktop PID changed 92042→81356 and runtime changed, while all four original native execution instances remained connected. Normal native initialization restored the plugin panel; Open verified session restored original pane UUIDs. No launch, objective, protocol or Task was automatically replayed.
+
+Work is `needs_attention`, Run `unverified`, with “Native runtime epoch changed during observation; intent remains reserved.” This is the safe refusal required by the current guard, but the missing explicit reauthentication path prevents continued business work. Existing Stop→Wake is not a valid workaround for this live, zero-Task Head. No database edit, forced kill or weakened epoch check was performed. This remains tracked in #117.
+
+The user then performed physical sleep/wake. The system event pair proves45seconds asleep; runtime, five total terminals including the coordinator, four member operation IDs, Run generation1 and zero native Tasks remained unchanged. This passes native session continuity and absence of duplicate effects. It does not establish resumed task execution, because the earlier authorization limitation remains. A strict explicit recovery fix is in progress; the existing test instances are retained for its live rerun.
