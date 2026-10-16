@@ -106,4 +106,3 @@ export async function fixture(t,{headAgent='codex',workerAgent='claude',kind='st
  };
  return {receipt,from,complete,review,profile,get store(){return store;},team,member,work,get works(){return works;},rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;},async restart(){store.close();store=await openTeamStore({userData:profile});works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});}};
 }
-
