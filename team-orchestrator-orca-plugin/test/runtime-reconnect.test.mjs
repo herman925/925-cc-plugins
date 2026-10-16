@@ -579,3 +579,45 @@ test('a rewritten launch identity cannot substitute for the original prepared re
   await assert.rejects(f.works.reconnect(f.input), /original prepared recipient/);
   assert.equal(f.store.readCurrentWork(f.work.id).runtimeControl, undefined);
 });
+
+test('background reconciliation yields while the explicit reconnect owns its evidence check', async (t) => {
+  const { createExecutor } = await import('../src/local/executor.mjs');
+  const f = await setup(t);
+  let entered,
+    release,
+    held = false;
+  const started = new Promise((resolve) => {
+      entered = resolve;
+    }),
+    gate = new Promise((resolve) => {
+      release = resolve;
+    });
+  f.edit(async (method, result) => {
+    if (method === 'status.get' && !held) {
+      held = true;
+      entered();
+      await gate;
+    }
+    return result;
+  });
+  const executor = createExecutor(
+    { call: async () => ({ value: null }) },
+    async () => {
+      throw Error('Unexpected CLI effect');
+    },
+    { store: f.store, userData: f.profile, nativeRpc: f.rpc },
+  );
+  t.after(() => executor.stopWork());
+  const reconnect = executor.execute({ op: 'reconnectWork', params: f.input });
+  await started;
+  const background = executor.resumeWork(),
+    yielded = await Promise.race([
+      background.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 40)),
+    ]);
+  release();
+  const settled = await Promise.allSettled([reconnect, background]);
+  assert.equal(yielded, true);
+  assert.equal(settled[0].status, 'fulfilled');
+  assert.equal(f.store.readCurrentWork(f.work.id).runtimeControl.runtimeId, 'runtime-two');
+});
