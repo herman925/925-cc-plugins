@@ -69,3 +69,11 @@ test('user reworks then accepts overall delivery and advances two durable queued
  await page.reload();await expect(panel(page).getByRole('region',{name:'TeamWork'})).toContainText('Third objective');await expect(panel(page).getByText('Accepted work history (2)')).toBeVisible();
  expect(await page.evaluate(()=>window.bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='_decideWork'))).toBe(false);
 });
+
+test('one explicit acceptance survives background timestamp-only evidence refreshes without retrying the decision',async({page})=>{
+ const ui=await prepared(page,'goal-lifecycle-observe');await ui.getByLabel('Total objective',{exact:true}).fill('Read-only verification');await ui.getByRole('button',{name:'Submit total objective'}).click();
+ await expect(ui.getByRole('region',{name:'Overall delivery'})).toContainText('Audit delivered');await ui.getByRole('button',{name:'Check work evidence'}).click();await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');
+ await ui.getByRole('button',{name:'Accept delivery'}).click();await expect(ui.getByText('Accepted work history (1)')).toBeVisible();
+ expect(await page.evaluate(()=>window.bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='decideWork').length)).toBe(1);
+ await expect(ui.locator('#app')).not.toContainText('Delivery changed or was superseded');
+});

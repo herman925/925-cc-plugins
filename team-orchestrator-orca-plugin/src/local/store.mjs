@@ -339,7 +339,12 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if(work.status==='completed')fail('Completed TeamWork is sealed.');
           const permitted=['status','input','processing','run','snapshot','error','instance','nativeSend'];
           if(Object.keys(patch).some(key=>!permitted.includes(key))) fail('Immutable TeamWork identity cannot be changed.');
-          if(work.currentSupervisor){Object.assign(work.currentSupervisor,patch);work.version=version+1;}else Object.assign(work,patch,{version:version+1});validateWork(work);persistWork(work);
+          // Observation freshness is not a business/authority revision. Keep the
+          // CAS above, and advance it for every actual change except observation timestamps.
+          const current=readCurrentWork(id),before=Object.fromEntries(Object.keys(patch).map(key=>[key,current[key]])),after={...patch};
+          for(const value of [before,after])for(const key of ['run','snapshot'])if(value[key])value[key]={...value[key],observedAt:undefined};
+          const nextVersion=version+(fingerprint(before)===fingerprint(after)?0:1);
+          if(work.currentSupervisor){Object.assign(work.currentSupervisor,patch);work.version=nextVersion;}else Object.assign(work,patch,{version:nextVersion});validateWork(work);persistWork(work);
           db.exec('COMMIT');return readCurrentWork(id);
         }catch(error){db.exec('ROLLBACK');throw error;}
       },

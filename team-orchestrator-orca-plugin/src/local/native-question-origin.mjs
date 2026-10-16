@@ -1,3 +1,4 @@
+import {verifiedWorkerReport} from './native-worker-report.mjs';
 import {nativeMutationFingerprint} from './native-mutation.mjs';
 const parse=value=>{try{return JSON.parse(value);}catch{return null;}};
 const text=value=>typeof value==='string'&&value.length>0&&value.length<=256;
@@ -21,9 +22,7 @@ export function verifiedReportOrigin(db,{work,attempts,spec}){
  const d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(o.dispatchId),w=db.prepare('SELECT * FROM worker_dispatches WHERE dispatch_id=?').get(o.dispatchId),h=parse(d?.host_scope);
  const host=work.scope.executionHostId==='local'?h?.kind==='local'&&h.hostId==='local':h?.kind==='ssh'&&`ssh:${encodeURIComponent(h.targetId)}`===work.scope.executionHostId;
  if(!d||(owner.kind==='structured'?d.creator_orca_session_id!==owner.sessionId:d.creator_handle!==owner.handle||d.creator_pane_key!==owner.paneKey)||d.run_id!==a.runId||d.task_id!==a.nativeTaskId||d.assignee_handle!==b.handle||d.assignee_pane_key!==b.paneKey||d.process_incarnation!==b.incarnationId||(b.kind==='structured'?d.assignee_orca_session_id!==b.sessionId:Boolean(d.assignee_orca_session_id))||!host||!w||w.agent_terminal_handle!==b.handle||w.worktree_id!==b.workspaceId||w.runtime_epoch!==b.runtimeId||w.state!==a.outcome||d.status!==(a.outcome==='failed'?'failed':'completed'))return null;
- const fact=db.prepare("SELECT * FROM attempt_observation_facts WHERE id=? AND dispatch_id=? AND facet='worker_report'").get(evidenceId,d.id),report=parse(fact?.payload);
- if(!fact||fact.task_id!==a.nativeTaskId||fact.authority_id!==`run_home:${a.runId}`||report?.status!=='accepted'||report.reportId!==evidenceId||report.outcome!==a.outcome)return null;
- const message=db.prepare('SELECT * FROM messages WHERE id=?').get(o.messageId),payload=parse(message?.payload);
- if(!message||message.run_id!==a.runId||message.type!=='worker_done'||message.from_handle!==b.handle||message.sender_pane_key!==b.paneKey||payload?.dispatchId!==d.id||payload.taskId!==a.nativeTaskId||payload.outcome!==a.outcome)return null;
+ const fact=db.prepare("SELECT * FROM attempt_observation_facts WHERE id=? AND dispatch_id=? AND facet='worker_report'").get(evidenceId,d.id),message=db.prepare('SELECT * FROM messages WHERE id=?').get(o.messageId),completion=verifiedWorkerReport(fact,message,d,w);
+ if(!completion||completion.evidenceId!==a.evidenceId||completion.outcome!==a.outcome)return null;
  return {kind:'worker-report',attemptId:a.id,dispatchId:d.id,nativeTaskId:a.nativeTaskId,messageId:message.id,evidenceId,runId:a.runId,memberId:a.memberId,supervisorMemberId:a.supervisorMemberId,outcome:a.outcome};
 }

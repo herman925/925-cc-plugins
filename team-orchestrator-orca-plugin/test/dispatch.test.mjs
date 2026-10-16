@@ -548,3 +548,13 @@ test('manual-close wake refuses unknown, missing, changed or cross-scope worker 
  assert.equal(f.store.listWakes().length,0);assert.equal(f.store.listStops().length,0);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');
  assert.equal(f.calls.slice(before).some(method=>/send|Stop|stopExact|launchReplay|restartContinue/.test(method)),false);
 });
+for(const fault of ['fact-authority','message-sender','message-pane','message-outcome'])test(`native completion admission refuses ${fault} independently of report-question classification`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await service.check(f.work.id);
+ const attempt=f.store.listDispatches(f.work.id)[0];f.complete(attempt);
+ if(fault==='fact-authority')f.db.prepare("UPDATE attempt_observation_facts SET authority_id='run_home:other'").run();
+ if(fault==='message-sender')f.db.prepare("UPDATE messages SET from_handle='other'").run();
+ if(fault==='message-pane')f.db.prepare("UPDATE messages SET sender_pane_key='other:leaf'").run();
+ if(fault==='message-outcome')f.db.prepare('UPDATE messages SET payload=?').run(JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome:'failed'}));
+ await service.check(f.work.id);const saved=f.store.listDispatches(f.work.id)[0];assert.equal(saved.outcome,undefined);assert.equal(saved.evidenceId,undefined);assert.notEqual(saved.status,'pending_acceptance');
+});
