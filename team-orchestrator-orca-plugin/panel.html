@@ -1161,7 +1161,7 @@ footer {
   }
   function render() {
     app.setAttribute("aria-busy", String(busy));
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.09")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["templates", "Templates"], ["attention", `Needs your attention (${attentionCount()})`], ["settings", "Settings"]].map(([id, text2]) => button(text2, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.10")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["templates", "Templates"], ["attention", `Needs your attention (${attentionCount()})`], ["settings", "Settings"]].map(([id, text2]) => button(text2, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
     ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map((team) => `${escape(team.name)} \xB7 ${escape(team.scope.displayName)} \xB7 ${escape(team.scope.executionHostId)}`).join(" | ")}</div>` : ""}
     <div class="notice" role="status">${escape(connection)} ${button("Test connection", "test-connection", busy ? "disabled" : "", "small")}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}

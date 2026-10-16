@@ -401,7 +401,7 @@ function validateDispatchProtocol(row) {
 }
 function publicDispatch(row) {
   validateDispatch(row);
-  const keys = ["workId", "teamWorkId", "runId", "creatorDispatchId", "depth", "id", "nativeTaskId", "taskKey", "memberId", "memberName", "supervisorMemberId", "configVersion", "roleVersion", "attemptId", "instanceGeneration", "status", "admission", "instruction", "dispatchId", "outcome", "result", "evidenceId", "detail", "createdAt", "review", "dependencies", "writeScope", "previousAttemptId", "recovery"];
+  const keys = ["workId", "teamWorkId", "runId", "creatorDispatchId", "depth", "id", "nativeTaskId", "taskKey", "memberId", "memberName", "supervisorMemberId", "configVersion", "roleVersion", "attemptId", "instanceGeneration", "status", "admission", "instruction", "dispatchId", "outcome", "result", "evidenceId", "detail", "createdAt", "review", "dependencies", "writeScope", "previousAttemptId", "recovery", "sidebarNaming"];
   return Object.fromEntries(keys.filter((key) => row[key] !== void 0).map((key) => [key, row[key]]));
 }
 function publicDispatchProtocol(row, completed = false) {
@@ -502,7 +502,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.09" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.10" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -746,7 +746,7 @@ async function targets(port) {
   }
 }
 var failure = (code, message) => Object.assign(new Error(message), { code });
-async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.09", internalKey } = {}) {
+async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.10", internalKey } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
@@ -963,7 +963,7 @@ import { createConnection as createConnection2 } from "node:net";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { realpath as realpath3, readFile as readFile3 } from "node:fs/promises";
 import { join as join4, relative as relative2, isAbsolute as isAbsolute2, sep as sep2 } from "node:path";
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
 function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
   const context = new AsyncLocalStorage();
   const rpc = async (method, params, envelope = {}) => {
@@ -1263,6 +1263,36 @@ function matchesTerminalObservation(terminal, saved) {
   if (!saved || !saved.incarnationId && !saved.processIncarnation) return false;
   const actual = terminalIdentity(terminal);
   return (!saved.incarnationId || saved.incarnationId === actual.incarnationId) && (!saved.ptyId || saved.ptyId === actual.ptyId) && (!saved.processIncarnation || saved.processIncarnation === actual.processIncarnation);
+}
+
+// src/local/member-names.mjs
+async function nameDispatchedMember({ store, rpc, consent, work, attempt, team }) {
+  const binding = attempt?.binding;
+  if (binding?.kind !== "terminal" || attempt.reuse || attempt.sidebarNaming || attempt.admission !== "committed") return;
+  const member = team.members.find((row) => row.id === attempt.memberId);
+  if (!member || store.readMemberDispatch(member.id)?.id !== attempt.id || store.readMemberOperation(member.id)) return;
+  const current = () => {
+    const saved = store.readMemberDispatch(member.id), active = store.readCurrentWork(work.id);
+    return saved?.id === attempt.id && saved.version === attempt.version && !store.readMemberOperation(member.id) && active?.status !== "completed" && active?.version === work.version && controlRuntime(active) === controlRuntime(work);
+  };
+  try {
+    await consent();
+    if ((await rpc("status.get"))?.runtimeId !== controlRuntime(work)) return;
+    const shown = (await rpc("terminal.show", { terminal: binding.handle }))?.terminal;
+    if (shown?.handle !== binding.handle || shown.worktreeId !== binding.workspaceId || shown.executionHostId !== binding.executionHostId || `${shown.tabId}:${shown.leafId}` !== binding.paneKey || terminalIdentity(shown).processIncarnation !== binding.incarnationId || shown.agentIdentity !== member.agent || shown.connected !== true || shown.writable !== true || !current()) return;
+    const title = `${team.name}/${member.name}`, at = (/* @__PURE__ */ new Date()).toISOString();
+    attempt = store.recordDispatchName(attempt.id, attempt.version, { title, outcome: "attempted", at });
+    let naming;
+    try {
+      const receipt = (await rpc("terminal.rename", { terminal: binding.handle, title }))?.rename;
+      if (receipt?.handle !== binding.handle || receipt.tabId !== shown.tabId || receipt.title !== title) throw Error("Native sidebar rename was not confirmed.");
+      naming = { title, outcome: "confirmed", at };
+    } catch (error) {
+      naming = { title, outcome: "unconfirmed", at, detail: String(error.message).slice(0, 1200) };
+    }
+    store.recordDispatchName(attempt.id, attempt.version, naming);
+  } catch {
+  }
 }
 
 // src/local/dispatch.mjs
@@ -2135,7 +2165,10 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
       for (const observed of native.observations) {
         let attempt = store.listDispatches(workId).find((row) => row.id === observed.id);
         try {
-          if (attempt.evidenceId) continue;
+          if (attempt.evidenceId) {
+            await nameDispatchedMember({ store, rpc, consent, work, attempt, team });
+            continue;
+          }
           if (observed.state !== "verified") {
             if (attempt.permit.state === "sending") attempt = store.updateDispatch(attempt.id, attempt.version, { status: "unknown", permit: { ...attempt.permit, state: "unknown" }, detail: "Permit delivery interrupted; reconciliation never resends." });
             else if (observed.state === "unverified") store.updateDispatch(attempt.id, attempt.version, { status: "unknown", detail: observed.detail });
@@ -2151,6 +2184,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
             continue;
           }
           store.updateDispatch(attempt.id, attempt.version, { dispatchId: settled.dispatchId, creatorDispatchId: settled.creatorDispatchId, ...settled.depth ? { depth: settled.depth } : {}, binding: settled.binding, permit: { ...attempt.permit, state: "accepted", source: "native-worker-start" }, nativeState: settled.nativeState, startRequestId: settled.startRequestId, startPayloadHash: settled.startPayloadHash, ...settled.completion ? { status: "pending_acceptance", ...settled.completion, detail: "Native execution report recorded. Direct supervisor acceptance is still required." } : { status: settled.nativeState === "ready" && shown.observation?.exactWorker === true && shown.observation.status === "live" && !shown.observation.agentWait ? "running" : "unknown", detail: shown.observation?.agentWait ? "Native session is waiting for input or authorization. Resolve its native tab; no replacement was started." : shown.observation?.exactWorker === true && shown.observation.status === "live" ? "Native assignment observed; execution result is not yet proven." : "Native worker observation is unverified; its saved identity remains reserved." } });
+          await nameDispatchedMember({ store, rpc, consent, work, attempt: store.readMemberDispatch(attempt.memberId), team });
         } catch (error) {
           checkIssue = true;
           const failed = store.listDispatches(workId).find((row) => row.id === observed.id);
@@ -3244,7 +3278,7 @@ Original member ${row.memberId}; original instance ${row.oldBinding.requestId}.
 ${row.handoff.summary}
 Evidence: ${row.handoff.evidenceRefs.join(", ")}
 Preserve all original Task/Dispatch identities. ${work ? `As your own native identity, run-use ${work.run.id} with the installed Orca CLI; the exact objective remains ${JSON.stringify(work.nativeObjective)}. Never impersonate the old supervisor.` : ""} Await verified Run ownership and admission before work.`;
-        return store.prepareWakeReplacement(id2, row.version, { scope: row.oldBinding.scope, nativeRequest, configVersion: team.configVersion, roleVersion: member.roleVersion, title: row.oldBinding.title, executionHostId: row.oldBinding.executionHostId, runtimeId: row.proof.runtimeId, hostGeneration: row.proof.hostGeneration ?? null });
+        return store.prepareWakeReplacement(id2, row.version, { scope: row.oldBinding.scope, nativeRequest, configVersion: team.configVersion, roleVersion: member.roleVersion, title: `${team.name}/${member.name}`, executionHostId: row.oldBinding.executionHostId, runtimeId: row.proof.runtimeId, hostGeneration: row.proof.hostGeneration ?? null });
       });
     },
     async check(id2) {
@@ -5093,6 +5127,20 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
         const pointer = readPrivate(`dispatch-member:${memberId}`);
         return pointer ? listDispatches(pointer.workId).find((a) => a.id === pointer.id) : null;
       },
+      recordDispatchName(id2, version, naming) {
+        return atomicDispatch(() => {
+          const row = validateDispatch(readPrivate(`dispatch:${id2}`));
+          if (row.version !== version || readCurrentWork(row.workId)?.status === "completed" || readPrivate(`dispatch-member:${row.memberId}`)?.id !== id2 || readPrivate(`binding:${row.memberId}`)) fail3("Member changed before sidebar naming.");
+          if (row.binding?.kind !== "terminal" || row.admission !== "committed" || row.reuse || typeof naming.title !== "string" || !naming.title || !["attempted", "confirmed", "unconfirmed"].includes(naming.outcome) || typeof naming.at !== "string") fail3("Verified terminal naming is required.");
+          if (!row.sidebarNaming && naming.outcome !== "attempted") fail3("Sidebar naming intent must precede its receipt.");
+          if (row.sidebarNaming && row.sidebarNaming.outcome !== "attempted") return row;
+          if (row.sidebarNaming && naming.title !== row.sidebarNaming.title) fail3("Saved sidebar name cannot change.");
+          row.sidebarNaming = naming;
+          row.version++;
+          putPrivate(`dispatch:${id2}`, row);
+          return row;
+        });
+      },
       readMemberOperation(memberId) {
         const pointer = readPrivate(`binding:${memberId}`);
         return pointer ? readOperation(pointer.requestId) : null;
@@ -5645,7 +5693,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.09", internalKey });
+      const report = await bootstrap({ version: "0.1.10", internalKey });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;
