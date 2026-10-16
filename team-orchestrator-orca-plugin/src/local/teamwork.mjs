@@ -1,3 +1,4 @@
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
@@ -59,13 +60,14 @@ export function createWorkService({store,rpc,userData,consent}){
   }
   const shown=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;
   if(shown?.handle!==binding.handle||shown.worktreeId!==work.scope.workspaceId||shown.executionHostId!==work.scope.executionHostId||!shown.connected||!shown.writable||!shown.incarnationId||shown.agentIdentity!==binding.nativeRequest.agent||`${shown.tabId}:${shown.leafId}`!==binding.paneKey)throw Error('The prepared terminal agent, host or execution instance is unverified. Open its native session and resolve login or permission issues.');
+  if(binding.observation&&(binding.observation.incarnationId||binding.observation.processIncarnation)&&!matchesTerminalObservation(shown,binding.observation))throw Error('Prepared terminal PTY or incarnation changed.');
   if (forSend) {
    const activity=(await rpc('terminal.agentStatus',{terminal:binding.handle}))?.agentStatus;
    if(activity?.handle!==binding.handle||activity.isRunningAgent!==true||activity.status==='permission')throw Error('The supervisor is not ready for user input or is waiting for permission. Resolve its native session first.');
   }
-  const instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,incarnationId:shown.incarnationId};
-  if(parentAssignee&&(parentAssignee.handle!==instance.handle||parentAssignee.paneKey!==instance.paneKey||parentAssignee.incarnationId!==instance.incarnationId))throw Error('Recovered manager does not match the actual parent Dispatch execution instance.');
-  if(work.instance&&work.instance.incarnationId!==instance.incarnationId)throw Error('Supervisor terminal incarnation changed; the existing work remains reserved.');
+  const instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,...terminalIdentity(shown)};
+  if(parentAssignee&&(parentAssignee.handle!==instance.handle||parentAssignee.paneKey!==instance.paneKey||parentAssignee.incarnationId!==instance.processIncarnation))throw Error('Recovered manager does not match the actual parent Dispatch execution instance.');
+  if(work.instance&&(['handle','paneKey','incarnationId'].some(key=>work.instance[key]!==instance[key])||work.instance.ptyId&&work.instance.ptyId!==instance.ptyId||work.instance.processIncarnation&&work.instance.processIncarnation!==instance.processIncarnation))throw Error('Supervisor terminal incarnation changed; the existing work remains reserved.');
   if(!status.capabilities.includes('terminal.prompt-delivery.v1'))throw Error('This host does not support durable terminal prompt delivery. Update the owning Orca host before submitting.');
   await verifyHost(work,hostGeneration);
   return {instance,status,hostGeneration};

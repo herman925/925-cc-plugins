@@ -1,3 +1,4 @@
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {realpath} from 'node:fs/promises';
 import {join,relative,isAbsolute,sep} from 'node:path';
@@ -45,7 +46,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
    const saved={...operation,...patch};
    if(saved.status==='created'){
     recovery.detail='Native session creation is confirmed; current execution remains unverified.';
-    const status=await rpc('status.get');
+    const status=await rpc('status.get');let terminalObservation;
     await withNativeRuntime(rpc,status?.runtimeId,async()=>{
      const generation=await host(saved.scope);
      if(generation!==null&&saved.hostGeneration!=null&&generation!==saved.hostGeneration)throw Error('Saved SSH connection generation changed; observations remain incomplete.');
@@ -57,14 +58,16 @@ export function createRecoveryService({store,rpc,userData,consent}){
       if(death)recovery={...recovery,state:'stopped',liveness:'stopped',source:'native-owner-death',death,detail:'Native death evidence names the exact saved owner fence. The member reservation remains until an authorized lifecycle action.'};
      }else{
       const instance=store.listCurrentWorks().find(work=>work.binding.requestId===requestId)?.instance;
-      const expected=instance?.incarnationId??saved.observation?.incarnationId;
+      const expected=instance??saved.observation;
       const shown=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
-      if(!expected||shown?.incarnationId!==expected||shown.handle!==saved.handle||shown.worktreeId!==saved.scope.workspaceId||shown.executionHostId!==saved.scope.executionHostId||`${shown.tabId}:${shown.leafId}`!==saved.paneKey)throw Error('Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.');
+      if(!matchesTerminalObservation(shown,expected)||(saved.observation?.incarnationId||saved.observation?.processIncarnation)&&!matchesTerminalObservation(shown,saved.observation)||shown.handle!==saved.handle||shown.worktreeId!==saved.scope.workspaceId||shown.executionHostId!==saved.scope.executionHostId||`${shown.tabId}:${shown.leafId}`!==saved.paneKey)throw Error('Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.');
+      terminalObservation={...saved.observation,...terminalIdentity(shown)};
       if(shown.connected===true){recovery={...recovery,liveness:'live',source:'native-terminal',detail:'Exact terminal instance is connected. Provider readiness and task acceptance are separate.'};}
      }
      if(await host(saved.scope)!==generation)throw Error('SSH generation changed during observation; output is incomplete.');
      const final=await rpc('status.get');if(final?.runtimeId!==status.runtimeId)throw Error('Native runtime changed during reconciliation.');
     });
+    if(terminalObservation)patch.observation=terminalObservation;
    }
   }catch(error){recovery={...recovery,state:(patch.status??operation.status)==='created'?'confirmed_effect':'unknown',liveness:'unknown',incomplete:true,detail:detail(error)};}
   patch.recovery=recovery;patch.public=publicOperation({...operation,...patch});

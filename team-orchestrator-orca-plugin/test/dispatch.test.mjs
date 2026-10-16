@@ -46,8 +46,8 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
   if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
-  if(method==='terminal.show'&&params.terminal==='structworker_child')return {terminal:{handle:'structworker_child',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'child-instance',agentIdentity:workerAgent,tabId:'child-tab',leafId:'child-leaf'}};
-  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
+  if(method==='terminal.show'&&params.terminal==='structworker_child')return {terminal:{handle:'structworker_child',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'child-instance',ptyId:'child-pty',agentIdentity:workerAgent,tabId:'child-tab',leafId:'child-leaf'}};
+  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',ptyId:'head-pty',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
   if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
   if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks').all()};
@@ -78,13 +78,13 @@ async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structure
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
   const spec=JSON.stringify({protocol:'team-dispatch/v1',workerRules:WORKER_RULES,workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,writeScope,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
-  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
+  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-pty:head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
  };
  const start=permit=>{
   const id='dispatch-'+permit.nativeTaskId,chat=Boolean(permit.startParams.terminal?.startsWith('orca_session_id:')),handle=chat?permit.startParams.terminal:'structworker_child',pane=chat?null:'child-tab:child-leaf';
   const hostScope={kind:'local',hostId:'local'};
-  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,childKind==='structured'?'claude_child':null,chat?null:'child-instance',JSON.stringify(hostScope),'dispatched',1);
+  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,childKind==='structured'?'claude_child':null,chat?null:childKind==='terminal'?'child-pty:child-instance':'child-instance',JSON.stringify(hostScope),'dispatched',1);
   db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run(id,scope.workspaceId,handle,'ready','runtime-one',JSON.stringify({resolvedWorktreeId:scope.workspaceId,agent:workerAgent,worktree:scope.workspaceId}));
   db.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
   receipt('start-'+permit.nativeTaskId,'orchestration.workerStart',{...permit.startParams,from,devMode:false},{runId:'run-head',taskId:permit.nativeTaskId,dispatchId:id,state:'ready'});
@@ -330,7 +330,7 @@ test('rework retains exact terminal process and normalizes the native target ind
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
  f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await service.check(f.work.id);
  f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
- const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-instance');
+ const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-pty:child-instance');
 });
 test('overall delivery requires native Head author proof and user decision; rework keeps queued goals and stale acceptance conflicts',async t=>{
  const {createLifecycleService}=await import('../src/local/lifecycle.mjs');
@@ -416,7 +416,7 @@ test('prepared PTY preserves native process identity and reuses without model ov
  const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true,preparedKind:'terminal',childKind:'terminal'}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
- await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
+ await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-pty:child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
 });
 
 test('one confirmed failed member task holds its dependents but permits independent nonconflicting work',async t=>{
@@ -467,4 +467,57 @@ test('stop refuses an unverified native worker observation and exact exit later 
  assert.equal((await stops.check(row.requestId)).state,'unknown');
  observation={exactWorker:true,status:'live'};
  const other=await fixture(t),otherDispatch=createDispatchService({store:other.store,rpc:other.rpc,userData:other.profile,consent:async()=>{},works:other.works});await otherDispatch.check(other.work.id);other.createIntent(other.store.readDispatchProtocol(other.work.id));other.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))other.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await otherDispatch.check(other.work.id);const active=other.store.listDispatches(other.work.id)[0],read=async(method,params)=>{const value=await other.rpc(method,params);return method==='orchestration.workerShow'?{...value,observation}:value;},service=createStopService({store:other.store,rpc:read,userData:other.profile,consent:async()=>{}}),intent=await service.prepare({requestId:'lost-stop',teamId:other.team.id,memberId:other.member.id,workId:other.work.id,attemptId:active.id});await service.validate(intent.requestId);await service.settle(intent.requestId,null,'response lost');observation={exactWorker:true,status:'exited'};assert.equal((await service.check(intent.requestId)).state,'stopped');assert.equal(other.store.readStopProof({memberId:other.member.id,attemptId:active.id,binding:active.binding}).kind,'native-worker-exit');assert.equal(await service.validate(intent.requestId),null);
+});
+
+test('native PTY-qualified terminal Task creator reconciles saved work after reload without recreating objective or Tasks',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');
+ const f=await fixture(t,{kind:'terminal',childKind:'terminal'});
+ const service=()=>createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service().check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=?').run('head-pty:head-instance');
+ const old=f.store.readCurrentWork(f.work.id);
+ f.store.updateWork(old.id,old.version,{instance:{kind:'terminal',handle:'term-head',paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',incarnationId:'head-instance'}});
+ await f.restart();
+ await f.works.check(f.work.id);
+ await service().check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);
+ assert.equal(f.store.readCurrentWork(f.work.id).instance.processIncarnation,'head-pty:head-instance');
+ assert.equal(f.messages.filter(text=>text.startsWith('Team Orchestrator work protocol')).length,1);
+ assert.equal(f.calls.some(method=>/workerStart|runCreate|taskCreate/.test(method)),false);
+});
+
+for(const processIdentity of ['other-pty:head-instance','head-pty:other-instance','head-instance'])test(`terminal Task creator ${processIdentity} cannot substitute for the exact native process`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{kind:'terminal'});
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=?').run(processIdentity);
+ await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,0);
+ assert.match(f.store.readDispatchProtocol(f.work.id).detail,/creator instance/);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,0);
+});
+
+for(const patch of [{ptyId:'swapped-pty'},{incarnationId:'swapped-instance'},{ptyId:null}])test(`saved terminal observation refuses changed or missing exact identity ${JSON.stringify(patch)}`,async t=>{
+ const f=await fixture(t,{kind:'terminal'});
+ const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);return method==='terminal.show'?{terminal:{...result.terminal,...patch}}:result;};
+ const works=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ await assert.rejects(works.verifyWork(f.work.id),/incarnation|PTY/);
+ const sends=f.messages.length;await works.check(f.work.id);assert.equal(f.messages.length,sends);
+ assert.equal(f.store.readCurrentWork(f.work.id).run.state,'unverified');
+});
+
+test('terminal total delivery uses exact PTY-qualified creator evidence before user acceptance',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');
+ const f=await fixture(t,{kind:'terminal'});
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Exact terminal result',evidenceRefs:['artifact:report'],attemptIds:[]});
+ const task={id:'terminal-delivery',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,'term-head','tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','wrong-pty:head-instance',1);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','terminal-delivery-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await lifecycle.check(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery,undefined);
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=? WHERE id=?').run('head-pty:head-instance',task.id);
+ await lifecycle.check(f.work.id);const work=f.store.readSnapshot().works[0];assert.equal(work.delivery.id,task.id);
+ await lifecycle.decide({requestId:'accept-terminal',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readCurrentWork(work.id).status,'completed');
 });

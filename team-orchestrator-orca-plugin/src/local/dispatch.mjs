@@ -1,3 +1,4 @@
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
 import { withNativeRuntime } from './native-runtime.mjs';
@@ -50,8 +51,8 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
    binding={kind:'structured',handle:terminal,sessionId:terminal.slice('orca_session_id:'.length),liveSessionId:saved.sessionId,paneKey:null,incarnationId:null,sessionFence,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
   }else{
    const live=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
-   if(live?.handle!==saved.handle||!live.incarnationId||live.incarnationId!==saved.observation?.incarnationId||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable||saved.handle===work.binding.handle)throw Error('Prepared member terminal is unverified; no replacement was launched.');
-   terminal=saved.handle;binding={kind:'terminal',handle:terminal,paneKey:saved.paneKey,incarnationId:live.incarnationId,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
+   if(live?.handle!==saved.handle||!matchesTerminalObservation(live,saved.observation)||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable||saved.handle===work.binding.handle)throw Error('Prepared member terminal is unverified; no replacement was launched.');
+   terminal=saved.handle;binding={kind:'terminal',handle:terminal,paneKey:saved.paneKey,incarnationId:terminalIdentity(live).processIncarnation,workspaceId:work.scope.workspaceId,executionHostId:work.scope.executionHostId,runtimeId:saved.runtimeId};
   }
   if(!store.isActiveOperation(saved))throw Error('Prepared member generation changed during verification.');
   return {kind:'prepared',requestId:saved.requestId,...(saved.wakeRequestId?{recoveryRequestId:saved.wakeRequestId}:{}),...(saved.instanceGeneration?{instanceGeneration:saved.instanceGeneration}:{}),binding,terminal,...(sessionFence?{sessionFence}:{}),preferences};
@@ -72,7 +73,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
    if(history?.ok!==true||history.page?.sessionId!==location.sessionId||!Number.isSafeInteger(sessionFence)||sessionFence<1||(saved.sessionFence!==undefined&&saved.sessionFence!==sessionFence))throw Error('Retained member session fence is unavailable.');
   }else{
    const live=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
-   if(live?.handle!==saved.handle||live.incarnationId!==saved.incarnationId||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable)throw Error('Retained member terminal instance is unverified.');
+   if(live?.handle!==saved.handle||terminalIdentity(live).processIncarnation!==saved.incarnationId||`${live.tabId}:${live.leafId}`!==saved.paneKey||live.worktreeId!==work.scope.workspaceId||live.executionHostId!==work.scope.executionHostId||live.agentIdentity!==member.agent||!live.connected||!live.writable)throw Error('Retained member terminal instance is unverified.');
    terminal=saved.handle;
   }
   const original=prior.reuse?.preferences??{agent:prior.startParams.agent,model:prior.startParams.model??'default',effort:prior.startParams.effort??'default'};

@@ -1,3 +1,4 @@
+import {matchesTerminalObservation} from './terminal-identity.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {resumedOwner} from './wake-evidence.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
@@ -22,6 +23,6 @@ export async function verifyIdleReplacement({store,rpc,userData,works,operation,
   return {kind:'confirmed-idle-app-retirement',ownerFence:fence,turnId:p.latestTurn.itemId};
  }
  const shown=(await rpc('terminal.show',{terminal:op.handle}))?.terminal,status=(await rpc('terminal.agentStatus',{terminal:op.handle}))?.agentStatus;
- if(!op.observation?.incarnationId||shown?.handle!==op.handle||shown.incarnationId!==op.observation.incarnationId||`${shown.tabId}:${shown.leafId}`!==op.paneKey||shown.worktreeId!==op.scope.workspaceId||shown.executionHostId!==op.scope.executionHostId||shown.connected!==true||shown.writable!==true||status?.handle!==op.handle||status.isRunningAgent!==true||status.status!=='idle')throw Error('Current native idle terminal identity is required; unknown execution needs exact stop.');
+ if(!matchesTerminalObservation(shown,op.observation)||shown?.handle!==op.handle||`${shown.tabId}:${shown.leafId}`!==op.paneKey||shown.worktreeId!==op.scope.workspaceId||shown.executionHostId!==op.scope.executionHostId||shown.connected!==true||shown.writable!==true||status?.handle!==op.handle||status.isRunningAgent!==true||status.status!=='idle')throw Error('Current native idle terminal identity is required; unknown execution needs exact stop.');
  return {kind:'confirmed-idle-app-retirement',incarnationId:shown.incarnationId};
 }

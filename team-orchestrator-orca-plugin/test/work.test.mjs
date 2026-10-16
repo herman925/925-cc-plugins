@@ -82,7 +82,7 @@ function userRpc(f,{send,kind='structured',incarnation=()=> 'instance-one',after
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'session-head',worktreeId:'folder:/work'}};
   if(method==='agentSession.history'){afterHistory();return {ok:true,page:{sessionId:'session-head',fence:7,submissions:[],items:[]}};}
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:permission?'permission':'idle'}};
-  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:'folder:/work',executionHostId:'local',connected:true,writable:true,incarnationId:incarnation(),agentIdentity:'codex',tabId:'tab',leafId:'leaf'}};
+  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:'folder:/work',executionHostId:'local',connected:true,writable:true,incarnationId:incarnation(),ptyId:'work-pty',agentIdentity:'codex',tabId:'tab',leafId:'leaf'}};
   if(method==='agentSession.send'||method==='terminal.send')return send(method,params,envelope);
   throw Error('Unexpected native method '+method);
  };

@@ -54,7 +54,7 @@ async function fixture(id, mode) {
         const p=store.readDispatchProtocol(work.id),previous=store.deliveryProjection(work.id).delivery;
         const id='delivery-'+work.id+'-'+(previous?previous.revision+1:1),spec=JSON.stringify({protocol:'team-delivery/v1',workId:work.id,token:p.token,generation:p.generation,supervisorMemberId:work.supervisorMemberId,previousDeliveryId:previous?.id??null,summary:previous?'Corrected audit <script>':'Audit delivered <script>',evidenceRefs:['report.md','tests:passed'],attemptIds:[]}),task={id,run_id:work.run.id,spec,status:'ready'};
         const owner=work.instance,from=owner.kind==='structured'?'orca_session_id:'+owner.sessionId:owner.handle;
-        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.processIncarnation:null,owner.kind==='terminal'?p.generation:null);
         receipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});return;
       }
       if (!mode?.startsWith('dispatch-')) return;
@@ -65,19 +65,19 @@ async function fixture(id, mode) {
         for(const [index,member] of children.entries()){
         const spec = JSON.stringify({ protocol: protocol.protocol, workerRules: protocol.workerRules, workId: work.id, token: protocol.token, generation: protocol.generation, taskKey: mode==='dispatch-scheduling'?['edit-source','overlap-source','independent-docs'][index]:'inspect-checkout', memberId: member.memberId, configVersion: protocol.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: mode==='dispatch-scheduling'?[{path:index===0?'src':index===1?'src/app.js':'docs/readme.md',kind:index===0?'directory':'file'}]:[], instruction: 'Inspect checkout <script> safely' });
         const task = { id: 'native-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, run_id: work.run.id, spec, status: 'ready', result: null };
-        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.incarnationId : null, owner.kind === 'terminal' ? protocol.generation : null);
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.processIncarnation : null, owner.kind === 'terminal' ? protocol.generation : null);
         receipt(work, 'create-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
         }
       }
       if(mode==='dispatch-staffing'&&text.startsWith('TEAM_DISPATCH_PROTOCOL\n')){
         const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'staffing-proposal',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'reviewer-proposal',configVersion:p.configVersion,roleVersion:1,proposingManagerId:work.supervisorMemberId,member:{name:'Independent reviewer <script>',boss:work.supervisorMemberId,brief:'Review sources.',habits:'',collaboration:'Report directly.',agent:'claude',model:'default',effort:'default'},rationale:'Need independent review.',affectedTaskKeys:[]}),task={id:'staffing-fixture',run_id:work.run.id,spec,status:'ready'};
-        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.processIncarnation:null,owner.kind==='terminal'?p.generation:null);
         receipt(work,'staffing-fixture-create','orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});
       }
       if (mode.startsWith('dispatch-question') && text.startsWith('TEAM_DISPATCH_PROTOCOL\n')) {
         const p=JSON.parse(text.slice(text.indexOf('\n')+1)),spec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:p.token,generation:p.generation,appQuestionId:'scope-choice',summary:'Choose scope <script>',options:['Focused','Full'],blockingTaskKeys:[]});
         const task={id:'question-fixture',run_id:work.run.id,spec,status:'ready'};
-        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.incarnationId:null,owner.kind==='terminal'?p.generation:null);
+        nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.processIncarnation:null,owner.kind==='terminal'?p.generation:null);
         receipt(work,'question-fixture-create','orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});
       }
       if (mode==='dispatch-question-unknown' && text.startsWith('TEAM_USER_ANSWER\n')) throw Error('Lost answer receipt');
@@ -130,7 +130,7 @@ async function fixture(id, mode) {
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
       }
       const launch = [...launches.values()].find(row => row.outcome.handle === params?.terminal || row.outcome.sessionId === params?.sessionId);
-      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
+      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, ptyId: 'pty-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
       if (method === 'terminal.rename') { title = params.title; return { rename: { handle: params.terminal, title, tabId: 'tab-1' } }; }
       if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'permission' ? 'permission' : 'idle' } };
       if (method === 'terminal.focus') return { focus: { handle: params.terminal } };

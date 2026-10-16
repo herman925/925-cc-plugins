@@ -1,3 +1,4 @@
+import {terminalIdentity} from './terminal-identity.mjs';
 import { discoverCapabilities } from './capabilities.mjs';
 // Trusted adapter orchestration only; invoke/rpc retain its actual event and authority.
 export async function mediateOperation({ op, input, invoke, rpc, authority, admission }) {
@@ -81,7 +82,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority, admi
       if (shown?.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || (saved.paneKey && `${shown.tabId}:${shown.leafId}` !== saved.paneKey)) throw Error('Created terminal could not be corroborated in its saved project.');
       await rpc('terminal.rename', { terminal: saved.handle, title: saved.title });
       const status = (await rpc('terminal.agentStatus', { terminal: saved.handle }))?.agentStatus;
-      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.', ...(shown.incarnationId ? { incarnationId: shown.incarnationId } : {}) };
+      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ['working', 'permission', 'idle'].includes(status.status) ? status.status : 'unknown', detail: 'Native terminal agent observation; task readiness is separate.', ...(shown.incarnationId ? { incarnationId: shown.incarnationId, ...(shown.ptyId ? terminalIdentity(shown) : {}) } : {}) };
     } else {
       const history=await rpc('agentSession.history',{sessionId:saved.sessionId,direction:'tail',limit:1});
       if(history?.ok===true&&history.page?.sessionId===saved.sessionId&&Number.isSafeInteger(history.page.fence)&&history.page.fence>0)observation={...observation,ownerFence:history.page.fence};

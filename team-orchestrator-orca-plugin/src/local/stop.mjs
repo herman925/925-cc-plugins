@@ -1,3 +1,4 @@
+import {matchesTerminalObservation} from './terminal-identity.mjs';
 import {withNativeRuntime} from './native-runtime.mjs';
 import {sameStopIdentity} from './stop-store.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
@@ -12,7 +13,7 @@ export function createStopService({store,rpc,userData,consent}){
   const reserved=store.readReceipt(`dispatch-member:${input.memberId}`);
   if(input.attemptId){const attempt=store.listDispatches(input.workId).find(a=>a.id===input.attemptId),work=workFor(input.workId);if(!attempt||reserved?.id!==attempt.id||attempt.teamId!==team.id||attempt.memberId!==input.memberId||!attempt.dispatchId||!attempt.binding||work?.run.id!==attempt.runId||work.run.consumerGeneration!==attempt.generation)throw Error('Current member, TeamWork, Task and Dispatch binding is required.');return {teamId:team.id,memberId:input.memberId,workId:work.id,attemptId:attempt.id,dispatchId:attempt.dispatchId,nativeTaskId:attempt.nativeTaskId,runId:work.run.id,generation:attempt.generation,binding:attempt.binding,scope:work.scope};}
   const operation=store.readOperation(input.operationRequestId);if(reserved||!operation||!store.isActiveOperation(operation)||operation.teamId!==team.id||operation.memberId!==input.memberId||operation.status!=='created')throw Error('Choose the current exact member execution; assigned members require their Task and Dispatch.');
-  const work=(store.listCurrentWorks?.()??store.listWorks()).find(w=>w.binding.requestId===operation.requestId),binding={kind:operation.kind,handle:operation.handle,paneKey:operation.paneKey,sessionId:operation.sessionId,runtimeId:operation.runtimeId,incarnationId:work?.instance?.incarnationId??operation.observation?.incarnationId,ownerFence:work?.instance?.fence??operation.observation?.ownerFence};
+  const work=(store.listCurrentWorks?.()??store.listWorks()).find(w=>w.binding.requestId===operation.requestId),binding={kind:operation.kind,handle:operation.handle,paneKey:operation.paneKey,sessionId:operation.sessionId,runtimeId:operation.runtimeId,incarnationId:work?.instance?.incarnationId??operation.observation?.incarnationId,ptyId:work?.instance?.ptyId??operation.observation?.ptyId,processIncarnation:work?.instance?.processIncarnation??operation.observation?.processIncarnation,ownerFence:work?.instance?.fence??operation.observation?.ownerFence};
   return {teamId:team.id,memberId:input.memberId,operationRequestId:operation.requestId,instanceGeneration:operation.instanceGeneration??1,...(work?{workId:work.id}:{}),binding,scope:operation.scope};
  }
  function current(row){const input={teamId:row.target.teamId,memberId:row.target.memberId,...(row.target.attemptId?{workId:row.target.workId,attemptId:row.target.attemptId}:{operationRequestId:row.target.operationRequestId})};if(!sameStopIdentity(target(input),row.target))throw Error('Member execution changed; the original stop remains reserved.');}
@@ -29,7 +30,7 @@ export function createStopService({store,rpc,userData,consent}){
    }else if(b.kind==='terminal'){
     if(t.scope.executionHostId!=='local')throw Object.assign(Error('Exact standalone terminal stop is unsupported for this remote host.'),{unsupported:true});
     const shown=(await rpc('terminal.show',{terminal:b.handle}))?.terminal;
-    if(!b.incarnationId||shown?.incarnationId!==b.incarnationId||shown.handle!==b.handle||`${shown.tabId}:${shown.leafId}`!==b.paneKey||shown.worktreeId!==t.scope.workspaceId||shown.executionHostId!==t.scope.executionHostId||typeof shown.ptyId!=='string'||!shown.ptyId)throw Error('Exact native terminal PTY and incarnation are unverified.');
+    if(!matchesTerminalObservation(shown,b)||shown.handle!==b.handle||`${shown.tabId}:${shown.leafId}`!==b.paneKey||shown.worktreeId!==t.scope.workspaceId||shown.executionHostId!==t.scope.executionHostId||typeof shown.ptyId!=='string'||!shown.ptyId)throw Error('Exact native terminal PTY and incarnation are unverified.');
     plan={method:'terminal.stopExact',params:{worktree:t.scope.workspaceId.startsWith('folder:')?t.scope.workspaceId:`id:${t.scope.workspaceId}`,expectedPtyIds:[shown.ptyId],keepHistory:true,targetOnly:true},envelope:{}};
    }else{
     if(t.scope.executionHostId!=='local'||!Number.isSafeInteger(b.ownerFence)||b.ownerFence<1)throw Object.assign(Error('Exact structured owner fence is unavailable; native stop is unsupported for this binding.'),{unsupported:true});

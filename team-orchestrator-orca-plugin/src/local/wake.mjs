@@ -1,3 +1,4 @@
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {verifyIdleReplacement} from './idle-replacement.mjs';
 import {readNativeParentEvidence} from './native-hierarchy.mjs';
 import {notifyQuestionEvent} from './questions.mjs';
@@ -15,8 +16,8 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
   const op=store.readOperation(input.bindingRequestId);if(op)return op;
   const attempt=store.listDispatches().find(a=>a.id===input.bindingRequestId&&a.teamId===input.teamId&&a.memberId===input.memberId),b=attempt?.binding,team=attempt&&store.readTeamVersion(attempt.teamId,attempt.configVersion),member=team?.members.find(m=>m.id===input.memberId);
   if(!b||!member)return null;
-  const prepared=store.readMemberOperation(input.memberId);if(prepared&&(b.kind==='structured'?(b.liveSessionId??b.sessionId)!==prepared.sessionId:b.handle!==prepared.handle||b.incarnationId!==prepared.observation?.incarnationId))return null;
-  return {...(prepared?{sourceOperationRequestId:prepared.requestId}:{}),requestId:input.bindingRequestId,sourceAttemptId:attempt.id,sourceDispatchId:attempt.dispatchId,sourceWorkId:attempt.workId,teamId:attempt.teamId,memberId:attempt.memberId,configVersion:attempt.configVersion,roleVersion:attempt.roleVersion,version:attempt.version,instanceGeneration:attempt.instanceGeneration??1,status:'created',kind:b.kind,handle:b.handle,sessionId:b.liveSessionId??b.sessionId,paneKey:b.paneKey,scope:attempt.scope,runtimeId:b.runtimeId,executionHostId:b.executionHostId,title:member.name,nativeRequest:{agent:member.agent,sessionOptions:{model:member.model,effort:member.effort}},observation:{ownerFence:b.sessionFence,incarnationId:b.incarnationId},recovery:attempt.recovery};
+  const prepared=store.readMemberOperation(input.memberId);if(prepared&&(b.kind==='structured'?(b.liveSessionId??b.sessionId)!==prepared.sessionId:b.handle!==prepared.handle||b.incarnationId!==prepared.observation?.processIncarnation))return null;
+  return {...(prepared?{sourceOperationRequestId:prepared.requestId}:{}),requestId:input.bindingRequestId,sourceAttemptId:attempt.id,sourceDispatchId:attempt.dispatchId,sourceWorkId:attempt.workId,teamId:attempt.teamId,memberId:attempt.memberId,configVersion:attempt.configVersion,roleVersion:attempt.roleVersion,version:attempt.version,instanceGeneration:attempt.instanceGeneration??1,status:'created',kind:b.kind,handle:b.handle,sessionId:b.liveSessionId??b.sessionId,paneKey:b.paneKey,scope:attempt.scope,runtimeId:b.runtimeId,executionHostId:b.executionHostId,title:member.name,nativeRequest:{agent:member.agent,sessionOptions:{model:member.model,effort:member.effort}},observation:{ownerFence:b.sessionFence,...(b.kind==='terminal'?{processIncarnation:b.incarnationId}:{})},recovery:attempt.recovery};
  };
  const active=op=>op.sourceAttemptId?store.readMemberDispatch?.(op.memberId)?.id===op.sourceAttemptId:store.isActiveOperation(op);
  async function hostGeneration(scope,expected){
@@ -81,15 +82,15 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
     instance={kind:'structured',sessionId:address.slice('orca_session_id:'.length),liveSessionId:binding.sessionId,fence:owner.fence};
    }else{
     const shown=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;
-    if(shown?.handle!==binding.handle||shown.worktreeId!==work.scope.workspaceId||shown.executionHostId!==work.scope.executionHostId||shown.incarnationId!==binding.observation?.incarnationId||!shown.connected||!shown.writable)return publicWake(row);
-    instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,incarnationId:shown.incarnationId};
+    if(shown?.handle!==binding.handle||shown.worktreeId!==work.scope.workspaceId||shown.executionHostId!==work.scope.executionHostId||!matchesTerminalObservation(shown,binding.observation)||!shown.connected||!shown.writable)return publicWake(row);
+    instance={kind:'terminal',handle:binding.handle,paneKey:binding.paneKey,...terminalIdentity(shown)};
    }
    const run=await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:instance,runId:work.run.id});
    if(run.state!=='verified'||(row.state==='replacing'&&run.consumerGeneration<=(work.run.consumerGeneration??0)))return publicWake(row);
    const shown=(await rpc('orchestration.runShow',{id:run.id}))?.run;
    if(shown?.id!==run.id||shown.consumer_generation!==run.consumerGeneration||shown.objective!==work.nativeObjective)return publicWake(row);
    const final=await readNativeRunEvidence(userData,{objective:work.nativeObjective,owner:instance,runId:run.id});if(final.state!=='verified'||final.consumerGeneration!==run.consumerGeneration)return publicWake(row);
-   if(work.parent){const parentWork=store.readCurrentWork(work.parent.workId),attempt=store.listDispatches(parentWork.id).find(a=>a.id===work.parent.attemptId);if(!attempt)return publicWake(row);const parent=await readNativeParentEvidence(userData,{parentWork,attempt});if(parent.state!=='verified'||(instance.kind==='structured'?parent.assignee.sessionId!==instance.sessionId:parent.assignee.handle!==instance.handle||parent.assignee.paneKey!==instance.paneKey||parent.assignee.incarnationId!==instance.incarnationId))return publicWake(row);}
+   if(work.parent){const parentWork=store.readCurrentWork(work.parent.workId),attempt=store.listDispatches(parentWork.id).find(a=>a.id===work.parent.attemptId);if(!attempt)return publicWake(row);const parent=await readNativeParentEvidence(userData,{parentWork,attempt});if(parent.state!=='verified'||(instance.kind==='structured'?parent.assignee.sessionId!==instance.sessionId:parent.assignee.handle!==instance.handle||parent.assignee.paneKey!==instance.paneKey||parent.assignee.incarnationId!==instance.processIncarnation))return publicWake(row);}
    return publicWake(store.rebindWake(id,row.version,work.id,instance,run));
   });
  },

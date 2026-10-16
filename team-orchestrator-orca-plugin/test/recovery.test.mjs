@@ -36,7 +36,7 @@ test('released structured lease needs exact saved owner-fence death evidence; hi
 test('SSH disconnect and sleep during observation retain the exact member and mark output incomplete until reread',async t=>{
  const f=await fixture(t,{host:'ssh:remote%20one'}),patch={status:'created',kind:'terminal',handle:'terminal',paneKey:'tab:leaf',observation:{state:'unknown',incarnationId:'native-instance'}};
  f.store.settleOperation('launch',f.op.nativeRequest.operationId,{...patch,public:publicOperation({...f.op,...patch})});let disconnected=true,reads=0;
- const rpc=async(method,params)=>{if(method==='ssh.getState'){assert.equal(params.targetId,'remote one');reads++;return {state:{status:disconnected&&reads%2===0?'disconnected':'connected',connectionGeneration:1}};}if(method==='terminal.show')return {terminal:{handle:'terminal',incarnationId:'native-instance',worktreeId:f.scope.workspaceId,executionHostId:f.scope.executionHostId,tabId:'tab',leafId:'leaf',connected:true}};return f.rpc(method,params);};
+ const rpc=async(method,params)=>{if(method==='ssh.getState'){assert.equal(params.targetId,'remote one');reads++;return {state:{status:disconnected&&reads%2===0?'disconnected':'connected',connectionGeneration:1}};}if(method==='terminal.show')return {terminal:{handle:'terminal',incarnationId:'native-instance',ptyId:'recovery-pty',worktreeId:f.scope.workspaceId,executionHostId:f.scope.executionHostId,tabId:'tab',leafId:'leaf',connected:true}};return f.rpc(method,params);};
  let recovery=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});await recovery.reconcile();let op=f.store.readOperation('launch');assert.equal(op.recovery.incomplete,true);assert.equal(op.recovery.liveness,'unknown');assert.equal(op.status,'created');
  await f.restart();disconnected=false;recovery=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});await recovery.reconcile();op=f.store.readOperation('launch');assert.equal(op.recovery.liveness,'live');assert.equal(op.instanceGeneration,1);assert.equal(f.store.isActiveOperation(op),true);
 });
@@ -44,4 +44,18 @@ test('a durable launch intent that never passed native admission remains distinc
  const f=await fixture(t);await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'intent');
  const op=f.store.readOperation('launch');f.store.settleOperation('launch',op.nativeRequest.operationId,{effectState:'submitted'},op.version);
  await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'unknown');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
+});
+
+test('legacy terminal recovery enriches exact PTY once and refuses a swapped PTY with the same raw incarnation',async t=>{
+ const f=await fixture(t),patch={status:'created',kind:'terminal',handle:'terminal',paneKey:'tab:leaf',observation:{state:'unknown',incarnationId:'native-instance'}};
+ f.store.settleOperation('launch',f.op.nativeRequest.operationId,{...patch,public:publicOperation({...f.op,...patch})});
+ let ptyId='repo::/work@@original';
+ const rpc=async(method,...args)=>method==='terminal.show'?{terminal:{handle:'terminal',incarnationId:'native-instance',ptyId,worktreeId:f.scope.workspaceId,executionHostId:f.scope.executionHostId,tabId:'tab',leafId:'leaf',connected:true}}:f.rpc(method,...args);
+ const service=createRecoveryService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ await service.checkOperation('launch');
+ assert.equal(f.store.readOperation('launch').observation.processIncarnation,'repo::/work@@original:native-instance');
+ assert.equal(f.store.readOperation('launch').public.observation.ptyId,undefined);
+ ptyId='repo::/work@@swapped';await service.checkOperation('launch');
+ assert.equal(f.store.readOperation('launch').recovery.liveness,'unknown');
+ assert.equal(f.store.readOperation('launch').observation.processIncarnation,'repo::/work@@original:native-instance');
 });
