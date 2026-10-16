@@ -1,3 +1,4 @@
+import {verifiedWorkerReport} from './native-worker-report.mjs';
 import {readIntentWithdrawals} from './native-intent-withdrawal.mjs';
 import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
@@ -77,15 +78,11 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    // Persisted Dispatch binding.incarnationId is the native opaque process_incarnation,
    // unlike terminal.show's raw UUID. Keep this historical field stable across reloads.
    const binding={kind:d.assignee_orca_session_id?'structured':'terminal',handle:d.assignee_handle,paneKey:d.assignee_pane_key,incarnationId:d.process_incarnation,...(reusedChat?{sessionFence:attempt.reuse.sessionFence,...(attempt.reuse.binding.liveSessionId?{liveSessionId:attempt.reuse.binding.liveSessionId}:{})}:{}),...(d.assignee_orca_session_id?{sessionId:d.assignee_orca_session_id}:{}),workspaceId:worker.worktree_id,executionHostId:work.scope.executionHostId,runtimeId:worker.runtime_epoch};
-   const facts=db.prepare("SELECT id,task_id,authority_id,payload FROM attempt_observation_facts WHERE dispatch_id=? AND facet='worker_report'").all(d.id);
+   const facts=db.prepare("SELECT id,dispatch_id,task_id,authority_id,facet,payload FROM attempt_observation_facts WHERE dispatch_id=? AND facet='worker_report'").all(d.id);
    let completion;
    for(const fact of facts){
-    const report=parse(fact.payload);if(fact.task_id!==attempt.nativeTaskId||fact.authority_id!==`run_home:${work.run.id}`||!fact.id.startsWith('worker_report:')||report?.status!=='accepted'||report.reportId!==fact.id||!['succeeded','failed'].includes(report.outcome))continue;
-    const message=db.prepare('SELECT id,run_id,from_handle,sender_pane_key,type,body,payload FROM messages WHERE id=?').get(fact.id.slice('worker_report:'.length)),payload=parse(message?.payload);
-    if(message?.run_id!==work.run.id||message.type!=='worker_done'||payload?.dispatchId!==d.id||payload.taskId!==attempt.nativeTaskId||payload.outcome!==report.outcome||message.from_handle!==d.assignee_handle||message.sender_pane_key!==d.assignee_pane_key)continue;
-    const expectedStatus=report.outcome==='succeeded'?'completed':'failed';
-    if(d.status!==expectedStatus||worker.state!==report.outcome)continue;
-    completion={outcome:report.outcome,result:String(message.body??'').slice(0,16000),evidenceId:fact.id};break;
+    const message=db.prepare('SELECT id,run_id,from_handle,sender_pane_key,type,body,payload FROM messages WHERE id=?').get(fact.id.slice('worker_report:'.length));
+    completion=verifiedWorkerReport(fact,message,d,worker);if(completion)break;
    }
    observations.push({id:attempt.id,state:'verified',dispatchId:d.id,creatorDispatchId:d.creator_dispatch_id,...(Number.isSafeInteger(d.depth)?{depth:d.depth}:{}),binding,nativeState:worker.state,startRequestId:start.request_id,startPayloadHash:start.payload_hash,...(completion?{completion}:{})});
   }
