@@ -44,3 +44,147 @@ test('history preview survives unrelated background Work observations while sele
 test('unpublished backup artifacts remain explicitly non-recoverable and filesystem diagnostics omit private paths',async t=>{const f=await legacy(t);f.db.close();await assert.rejects(openTeamStore({userData:f.profile,sqlite:async()=>({DatabaseSync,backup:async()=>{throw Object.assign(Error('EACCES '+f.profile+'/private-backup'),{code:'EACCES'});}})}),e=>e.message.includes('EACCES')&&!e.message.includes(f.profile));const info=await inspectTeamStorage({userData:f.profile});assert.equal(info.status,'available');assert.equal(info.backups.length,1);assert.equal(info.backups[0].status,'incomplete-not-recoverable');const store=await openTeamStore({userData:f.profile});store.close();const complete=await inspectTeamStorage({userData:f.profile});assert.equal(complete.backups.filter(b=>b.status==='verified-backup').length,1);assert.equal(complete.backups.filter(b=>b.status==='incomplete-not-recoverable').length,1);});
 test('unknown schema extensions and unknown versioned records preserve all selected payloads',async t=>{const f=await closed(t);f.store.writeReceipt('future:extension',{teamId:f.team.id,format:'future-v2',payload:'keep unknown keys'});assert.equal(f.store.previewHistoryCleanup({selectedWorkIds:[f.workId]}).eligibleWorkIds.length,0);const other=await closed(t),db=new DatabaseSync(join(other.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));db.exec('ALTER TABLE receipts ADD COLUMN future_reference TEXT');const preview=other.store.previewHistoryCleanup({selectedWorkIds:[other.workId]});assert.equal(preview.eligibleWorkIds.length,0);assert.match(preview.retained[0].reason,/unknown storage table or column/);db.close();});
 test('upgrade preserves original Work/native request identity, replay indexes and amended immutable role/configuration history',async t=>{const f=await questionFixture(t),raw=f.store.readWork(f.work.id),oldRole=f.store.readRoleVersion(f.team.members[0].id,1),op=f.store.readOperation('launch');f.store.updateRole({requestId:'role-amendment',expectedRevision:f.store.readSnapshot().revision,teamId:f.team.id,memberId:f.team.members[0].id,brief:'Review amended requirements',habits:'Audit',collaboration:'Report evidence'});f.store.writeReceipt('future:receipt',{nativeOperationId:'unknown-original',state:'unknown',future:{keep:true}});f.store.close();const path=join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'),db=new DatabaseSync(path);db.exec('PRAGMA user_version=1; DROP TABLE maintenance');db.close();const upgraded=await openTeamStore({userData:f.profile});t.after(()=>upgraded.close());assert.deepEqual(upgraded.readWork(f.work.id),raw);assert.deepEqual(upgraded.readOperation('launch').nativeRequest,op.nativeRequest);assert.deepEqual(upgraded.readRoleVersion(f.team.members[0].id,1),oldRole);assert.equal(upgraded.effectiveTeamForWork(f.work.id).configVersion,2);assert.equal(upgraded.readReceipt('work-request:goal').workId,f.work.id);assert.equal(upgraded.readReceipt('session-work:launch').workId,f.work.id);assert.equal(upgraded.readReceipt('future:receipt').future.keep,true);assert.equal(upgraded.listRosterDeltas(f.work.id)[0].processed,'unconfirmed');});
+test('an arbitrary expired staffing label cannot bypass missing original proposal and closure provenance',async t=>{
+ const f=await closed(t);f.store.writeReceipt('staffing-proposal:unproven',{workId:f.workId,teamId:f.team.id,status:'expired',expiry:{kind:'accepted-work-closure',workId:f.workId,deliveryId:'delivery',decisionRequestId:'accept',recordedAt:f.store.readWork(f.workId).closedAt}});
+ assert.equal(f.store.previewHistoryCleanup({selectedWorkIds:[f.workId]}).eligibleWorkIds.length,0);
+});
+import {fixture as dispatchFixture} from './dispatch-fixture.mjs';
+import {createWakeService} from '../src/local/wake.mjs';
+import {createStaffingService} from '../src/local/staffing.mjs';
+async function closedAfterReplacement(t,{replacements=1,resumeBeforeReplacement=false}={}){
+ const f=await dispatchFixture(t,{prestarted:true,preparedKind:resumeBeforeReplacement?'structured':'terminal',childKind:'terminal',allPrepared:true}),s=f.store;
+ const dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});await dispatch.check(f.work.id);
+ const terminals=new Map(),rpc=async(method,params,envelope)=>{
+  if(method==='terminal.show'&&terminals.has(params.terminal))return {terminal:terminals.get(params.terminal)};
+  if(resumeBeforeReplacement&&method==='agentSession.restartResumable')return {sessions:[{sessionId:'claude_child',workspaceId:s.readScope(f.team.id).workspaceId,executionHostId:'local',agent:'claude'}]};
+  if(resumeBeforeReplacement&&method==='agentSession.restartContinue')return {continued:[{sessionId:'claude_child',outcome:'continued'}]};
+  if(resumeBeforeReplacement&&method==='agentSession.history'&&params.sessionId==='claude_child')return {ok:true,page:{sessionId:'claude_child',fence:8,latestTurn:{itemId:'resumed-idle-turn',turn:{state:'completed'}},backgroundTasks:null,queuedMessages:[],submissions:[]}};
+  return f.rpc(method,params,envelope);
+ };
+ const wake=createWakeService({store:s,rpc,userData:f.profile,works:f.works,consent:async()=>{}});let fresh;
+ if(resumeBeforeReplacement){
+  const old=s.readMemberOperation(f.member.id);s.settleOperation(old.requestId,old.nativeRequest.operationId,{observation:{ownerFence:7}});
+  const journal=new DatabaseSync(join(f.profile,'agent-session-journal.db'));t.after(()=>journal.close());journal.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');
+  const record=(dead)=>({schemaVersion:2,sessionId:'claude_child',provider:'claude',location:s.readScope(f.team.id),lease:{sessionId:'claude_child',runtimeFence:dead?7:8,claimStatus:dead?'released':'live',ownerProcess:dead?null:{pid:1,hostId:'local',spawnToken:'resumed-child-owner'},...(dead?{deathEvidence:{kind:'exit-observed',ownerFence:7,observedAt:Date.now()}}:{})}});
+  journal.prepare('INSERT INTO agent_session_records VALUES(?,?)').run('claude_child',JSON.stringify(record(true)));
+  assert.equal((await wake.wake({requestId:'native-child-resume',teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId})).state,'accepted');
+  journal.prepare('UPDATE agent_session_records SET record_json=? WHERE session_id=?').run(JSON.stringify(record(false)),'claude_child');
+  assert.equal((await wake.check('native-child-resume')).state,'resumed');
+ }
+
+ for(let index=1;index<=replacements;index++){
+  const old=s.readMemberOperation(f.member.id),request={requestId:'idle-child-replacement-'+index,teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId,expectedRevision:s.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Checked idle member and existing results',evidenceRefs:['idle-child']};
+  await wake.requestReplacement(request);fresh=await wake.prepareFresh(request.requestId);const patch={status:'created',kind:'terminal',handle:'replacement-child-'+index,paneKey:'replacement-tab:replacement-leaf-'+index,briefAccepted:true,observation:{ptyId:'replacement-pty-'+index,incarnationId:'replacement-instance-'+index,processIncarnation:'replacement-pty-'+index+':replacement-instance-'+index}};
+  terminals.set(patch.handle,{handle:patch.handle,tabId:'replacement-tab',leafId:'replacement-leaf-'+index,worktreeId:s.readScope(f.team.id).workspaceId,executionHostId:'local',connected:true,writable:true,ptyId:patch.observation.ptyId,incarnationId:patch.observation.incarnationId,agentIdentity:'claude'});
+  s.settleOperation(fresh.operation.requestId,fresh.operation.nativeRequest.operationId,{...patch,public:publicOperation({...fresh.operation,...patch})});assert.equal((await wake.bind(request.requestId)).state,'bound');
+ }
+
+ f.onInput(text=>{if(!text.startsWith('TEAM_ROSTER_DELTA\n'))return;const delta=JSON.parse(text.slice(text.indexOf('\n')+1)),id='replacement-roster-ack-'+delta.configVersion,spec=JSON.stringify({protocol:'team-questions/v1',kind:'roster-ack',workId:f.work.id,token:delta.token,generation:delta.generation,appQuestionId:id,deltaId:delta.deltaId,configVersion:delta.configVersion}),task={id,run_id:'run-head',spec,status:'ready'};
+  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);f.receipt('create-'+id,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});
+ });
+ const staffing=createStaffingService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});await staffing.check(f.work.id);await staffing.check(f.work.id);assert.deepEqual(s.staffingClosureBlockers(f.work.id),[]);
+ s.recordDelivery(f.work.id,{id:'replacement-delivery',summary:'Accepted replacement work',evidenceRefs:['idle-handoff'],attemptIds:[],generation:1,proof:{requestId:'replacement-delivery-proof',payloadHash:'a'.repeat(64)}});
+ s.decideWork({requestId:'accept-replacement-work',workId:f.work.id,deliveryId:'replacement-delivery',expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'});
+ return {...f,replacementId:fresh.operation.requestId};
+}
+test('accepted closure can clean a settled replacement while preserving its frozen original intent snapshot',async t=>{
+ const f=await closedAfterReplacement(t),s=f.store,before=s.readWork(f.work.id).currentRecipientBindings,recipient=before.find(r=>r.requestId===f.replacementId);
+ assert.equal(recipient.status,'unknown');assert.equal(recipient.public.status,'unknown');assert.equal(s.readOperation(f.replacementId).status,'created');assert.equal(s.readMemberOperation(f.member.id),null);
+ const operation=s.readOperation(f.replacementId),wakes=s.listWakes(),calls=f.calls.length,preview=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
+ s.applyHistoryCleanup({requestId:'clean-replacement-history',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(s.readWork(f.work.id).currentRecipientBindings,before);assert.deepEqual(s.readOperation(f.replacementId),operation);assert.deepEqual(s.listWakes(),wakes);assert.equal(f.calls.length,calls);
+});
+
+test('accepted closure also retains and settles the exact chain of two idle replacements',async t=>{
+ const f=await closedAfterReplacement(t,{replacements:2}),preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
+ assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.listWakes().length,2);
+});
+
+test('unresolved or mismatched replacement evidence cannot release frozen recipient uncertainty',async t=>{
+ for(const kind of ['missing-operation','unknown-operation','generation','native-request','version','unbound-wake','closure-time','unrelated-unknown','ancestor-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{replacements:kind==='ancestor-operation'?2:1}),s=f.store,work=s.readWork(f.work.id),op=s.readOperation(f.replacementId),key='operation:'+op.requestId;
+  if(kind==='missing-operation'){
+   const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));db.prepare('DELETE FROM receipts WHERE id=?').run(key);db.close();
+  }else if(kind==='unknown-operation')s.writeReceipt(key,{...op,status:'unknown'});
+  else if(kind==='generation')s.writeReceipt(key,{...op,instanceGeneration:op.instanceGeneration+1});
+  else if(kind==='native-request')s.writeReceipt(key,{...op,nativeRequest:{...op.nativeRequest,operationId:'different-native-operation'}});
+  else if(kind==='version')s.writeReceipt(key,{...op,version:1});
+  else if(kind==='unbound-wake'){const wake=s.readWake(op.wakeRequestId);s.writeReceipt('wake:'+wake.requestId,{...wake,state:'replacing'});}
+  else if(kind==='closure-time')s.writeReceipt('work:'+work.id,{...work,closedAt:'2000-01-01T00:00:00.000Z'});
+  else if(kind==='unrelated-unknown')s.writeReceipt('work:'+work.id,{...work,future:{status:'unknown'}});
+  else {const ancestor=s.readOperation(op.replaces);s.writeReceipt('operation:'+ancestor.requestId,{...ancestor,nativeRequest:{...ancestor.nativeRequest,operationId:'changed-ancestor'}});}
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('cleanup preview fences every corroborated replacement ancestor receipt',async t=>{
+ const f=await closedAfterReplacement(t,{replacements:3}),s=f.store,p=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ const middle=s.readOperation(s.readOperation(f.replacementId).replaces);s.writeReceipt('operation:'+middle.requestId,{...middle,version:middle.version+1});
+ assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Accepted replacement work');
+});
+
+test('genuine resumed owner followed by idle replacement and accepted closure remains eligible for cleanup',async t=>{
+ const f=await closedAfterReplacement(t,{resumeBeforeReplacement:true}),before=f.store.readWork(f.work.id).currentRecipientBindings,preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
+ assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.readWake('native-child-resume').state,'resumed');
+ f.store.applyHistoryCleanup({requestId:'clean-resumed-replacement',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(f.store.readWork(f.work.id).currentRecipientBindings,before);
+});
+test('future formats on corroborating replacement records and ancestors keep accepted history protected',async t=>{
+ for(const kind of ['wake','operation','ancestor-wake','ancestor-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{replacements:kind.startsWith('ancestor-')?2:1}),s=f.store,op=s.readOperation(f.replacementId),selected=kind.startsWith('ancestor-')?s.readOperation(op.replaces):op;
+  const row=kind.endsWith('wake')?s.readWake(selected.wakeRequestId):selected,key=(kind.endsWith('wake')?'wake:':'operation:')+row.requestId;
+  s.writeReceipt(key,{...row,format:kind.endsWith('wake')?'wake-v2':'operation-v2'});
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('unknown, failed, mismatched and future-format resume evidence never settles replacement ancestry',async t=>{
+ for(const kind of ['unknown','failed','fence','owner-fence','session','provider','future-wake','future-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{resumeBeforeReplacement:true}),s=f.store,wake=s.readWake('native-child-resume'),key='wake:'+wake.requestId;
+  if(kind==='unknown'||kind==='failed')s.writeReceipt(key,{...wake,state:kind});
+  else if(kind==='fence')s.writeReceipt(key,{...wake,newInstance:{...wake.newInstance,fence:7}});
+  else if(kind==='owner-fence'){const op=s.readOperation(wake.newInstance.requestId);s.writeReceipt('operation:'+op.requestId,{...op,observation:{...op.observation,ownerFence:9}});}
+  else if(kind==='session')s.writeReceipt(key,{...wake,oldBinding:{...wake.oldBinding,sessionId:'different-native-session'}});
+  else if(kind==='provider')s.writeReceipt(key,{...wake,proof:{...wake.proof,death:{...wake.proof.death,provider:'different-provider'}}});
+  else if(kind==='future-wake')s.writeReceipt(key,{...wake,format:'wake-v2'});
+  else {const op=s.readOperation(wake.newInstance.requestId);s.writeReceipt('operation:'+op.requestId,{...op,format:'operation-v2'});}
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+import {createLifecycleService} from '../src/local/lifecycle.mjs';
+async function correctedDeliveryHistory(t,{revisions=2}={}){
+ const f=await questionFixture(t),s=f.store,dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});
+ await dispatch.check(f.work.id);f.createIntent(s.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await dispatch.check(f.work.id);
+ f.complete(s.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(s.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=s.listDispatches(f.work.id)[0];assert.equal(attempt.status,'accepted');
+ const lifecycle=createLifecycleService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}),propose=(revision)=>{
+  const protocol=s.readDispatchProtocol(f.work.id),id='corrected-delivery-'+revision,spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:protocol.token,generation:protocol.generation,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:revision===1?null:'corrected-delivery-'+(revision-1),summary:'Delivery revision '+revision,evidenceRefs:revision===1?['incomplete-summary']:[attempt.evidenceId],attemptIds:revision===1?[]:[attempt.id]}),task={id,run_id:'run-head',spec,status:'ready'};
+  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);f.receipt('create-'+id,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});return id;
+ };
+ const first=propose(1);await lifecycle.check(f.work.id);await assert.rejects(lifecycle.decide({requestId:'refused-incomplete-delivery',workId:f.work.id,deliveryId:first,expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'}),/omits required accepted task evidence/);assert.equal(s.readWorkDecision('refused-incomplete-delivery'),null);
+ let current;for(let revision=2;revision<=revisions;revision++){current=propose(revision);await lifecycle.check(f.work.id);}
+ await lifecycle.decide({requestId:'accept-corrected-delivery',workId:f.work.id,deliveryId:current,expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'});
+ return {...f,currentDeliveryId:current,firstDeliveryId:first};
+}
+test('a refused incomplete delivery followed by an accepted native correction can clean obsolete pending delivery history',async t=>{
+ const f=await correctedDeliveryHistory(t),s=f.store,first=s.readReceipt(`delivery:${f.work.id}:${f.firstDeliveryId}`),proofs=f.db.prepare('SELECT request_id,payload_hash,receipt FROM mutation_receipts ORDER BY request_id').all();assert.equal(first.status,'pending');
+ const preview=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
+ s.applyHistoryCleanup({requestId:'clean-corrected-delivery',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});const old=s.readReceipt(`delivery:${f.work.id}:${f.firstDeliveryId}`);assert.equal(old.status,'pending');assert.deepEqual(old.proof,first.proof);assert.deepEqual(f.db.prepare('SELECT request_id,payload_hash,receipt FROM mutation_receipts ORDER BY request_id').all(),proofs);assert.equal(s.readWorkDecision('refused-incomplete-delivery'),null);
+});
+test('obsolete delivery classification refuses incomplete, unknown or unsupported revision provenance',async t=>{
+ for(const kind of ['missing-ancestor','cycle','revision-gap','foreign-work','unknown-ancestor','unknown-current','missing-ancestor-proof','missing-current-proof','future-ancestor','future-current','missing-decision','unaccepted-current','malformed-link'])await t.test(kind,async t=>{
+  const f=await correctedDeliveryHistory(t),s=f.store,oldKey=`delivery:${f.work.id}:${f.firstDeliveryId}`,currentKey=`delivery:${f.work.id}:${f.currentDeliveryId}`,old=s.readReceipt(oldKey),current=s.readReceipt(currentKey);
+  if(kind==='missing-ancestor'||kind==='missing-decision'){const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));db.prepare('DELETE FROM receipts WHERE id=?').run(kind==='missing-ancestor'?oldKey:'work-decision:accept-corrected-delivery');db.close();}
+  else if(kind==='cycle')s.writeReceipt(oldKey,{...old,previousDeliveryId:current.id});
+  else if(kind==='revision-gap')s.writeReceipt(currentKey,{...current,revision:4});
+  else if(kind==='foreign-work')s.writeReceipt(oldKey,{...old,workId:'different-work'});
+  else if(kind==='unknown-ancestor')s.writeReceipt(oldKey,{...old,status:'unknown'});
+  else if(kind==='unknown-current'||kind==='unaccepted-current')s.writeReceipt(currentKey,{...current,status:kind==='unknown-current'?'unknown':'pending'});
+  else if(kind==='missing-ancestor-proof')s.writeReceipt(oldKey,{...old,proof:undefined});
+  else if(kind==='missing-current-proof')s.writeReceipt(currentKey,{...current,proof:undefined});
+  else if(kind==='future-ancestor')s.writeReceipt(oldKey,{...old,format:'delivery-v2'});
+  else if(kind==='future-current')s.writeReceipt(currentKey,{...current,format:'delivery-v2'});
+  else s.writeReceipt(currentKey,{...current,previousDeliveryId:{id:old.id}});
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('every ancestor in a three-revision accepted delivery remains fenced before cleanup',async t=>{
+ const f=await correctedDeliveryHistory(t,{revisions:3}),s=f.store,p=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ const key=`delivery:${f.work.id}:corrected-delivery-2`,middle=s.readReceipt(key);s.writeReceipt(key,{...middle,summary:'Changed retained delivery evidence'});
+ assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-delivery-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Delivery revision 3');
+});

@@ -116,3 +116,59 @@ test('an unused department without a native Run does not permanently block closu
  const headDelta=f.store.listRosterDeltas(f.work.id).find(d=>d.supervisorMemberId===f.team.members[0].id);publish(f,'roster-ack',{deltaId:headDelta.id,configVersion:2},{taskId:'unused-branch-ack'});await service(f).check(f.work.id);
  assert.deepEqual(f.store.staffingClosureBlockers(f.work.id),[]);assert.ok(f.store.listRosterDeltas(f.work.id).some(d=>d.state==='queued'&&d.processed==='unconfirmed'));
 });
+
+async function pendingProposal(t){
+ const f=await questionFixture(t);await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ publish(f,'staffing-proposal',{configVersion:1,roleVersion:1,proposingManagerId:f.team.members[0].id,member:memberInput(f),rationale:'Optional independent review.',affectedTaskKeys:[]});await service(f).check(f.work.id);return f;
+}
+function acceptWork(f){
+ f.store.recordDelivery(f.work.id,{id:'optional-staffing-delivery',summary:'Completed without optional staffing',evidenceRefs:['validated-results'],attemptIds:[],generation:1,proof:{requestId:'delivery-proof',payloadHash:'a'.repeat(64)}});
+ return f.store.decideWork({requestId:'accept-optional-staffing',workId:f.work.id,deliveryId:'optional-staffing-delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
+}
+test('accepted closure expires optional pending staffing without inventing a user staffing decision',async t=>{
+ const f=await pendingProposal(t),before=f.store.listStaffingProposals(f.work.id)[0],stale={requestId:'late-approve',workId:f.work.id,proposalId:before.id,decision:'approve',configVersion:1,expectedRevision:f.store.readSnapshot().revision};
+ const second=await openTeamStore({userData:f.profile});t.after(()=>second.close());const decision=acceptWork(f),proposal=second.listStaffingProposals(f.work.id)[0];
+ assert.equal(proposal.status,'expired');assert.deepEqual(proposal.expiry,{kind:'accepted-work-closure',workId:f.work.id,deliveryId:decision.deliveryId,decisionRequestId:decision.requestId,recordedAt:decision.recordedAt});
+ assert.deepEqual({...proposal,status:'pending',expiry:undefined},{...before,expiry:undefined});assert.equal(proposal.decision,undefined);
+ assert.throws(()=>second.saveStaffing(stale),/closed/);assert.throws(()=>second.saveStaffing({...stale,requestId:'late-reject',decision:'reject'}),/closed/);assert.equal(second.readSnapshot().teams[0].members.length,4);
+ const preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
+ f.store.applyHistoryCleanup({requestId:'clean-expired-staffing',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(f.store.listStaffingProposals(f.work.id)[0],proposal);
+});
+test('reopening legacy accepted history reconciles only a proven original pending proposal',async t=>{
+ const f=await pendingProposal(t),original=f.store.listStaffingProposals(f.work.id)[0];acceptWork(f);
+ // A pre-fix store retained the original pending record across accepted closure.
+ f.store.writeReceipt(`staffing-proposal:${f.work.id}:${original.id}`,original);
+ await f.restart();const proposal=f.store.listStaffingProposals(f.work.id)[0];assert.equal(proposal.status,'expired');assert.deepEqual(proposal.proof,original.proof);assert.equal(proposal.fingerprint,original.fingerprint);
+ assert.deepEqual(f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds,[f.work.id]);const revision=f.store.readSnapshot().revision;
+ await f.restart();assert.deepEqual(f.store.listStaffingProposals(f.work.id)[0],proposal);assert.equal(f.store.readSnapshot().revision,revision);
+});
+test('live pending proposals and unknown or unproven closed graphs retain their original decision protection',async t=>{
+ for(const kind of ['live','unknown','missing-acceptance','changed-native-proof'])await t.test(kind,async t=>{
+  const f=await pendingProposal(t),original=f.store.listStaffingProposals(f.work.id)[0],key=`staffing-proposal:${f.work.id}:${original.id}`;
+  if(kind==='unknown')f.store.writeReceipt(key,{...original,status:'unknown'});
+  if(kind==='changed-native-proof')f.store.writeReceipt(key,{...original,proof:{...original.proof,payloadHash:'different-native-proof'}});
+  if(kind==='missing-acceptance'){
+   const work=f.store.readWork(f.work.id);f.store.writeReceipt(`work:${work.id}`,{...work,status:'completed',closedAt:new Date().toISOString(),handoff:{summary:'Unproven closure',deliveryId:'unproven',evidenceRefs:[]}});
+  }else if(kind!=='live')acceptWork(f);
+  const before=f.store.listStaffingProposals(f.work.id)[0];await f.restart();assert.deepEqual(f.store.listStaffingProposals(f.work.id)[0],before);
+  assert.equal(f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+ });
+});
+import {DatabaseSync} from 'node:sqlite';
+import {join} from 'node:path';
+test('a storage failure expiring the proposal rolls back the entire delivery acceptance',async t=>{
+ const f=await pendingProposal(t);f.store.recordDelivery(f.work.id,{id:'optional-staffing-delivery',summary:'Ready',evidenceRefs:['validated-results'],attemptIds:[],generation:1,proof:{requestId:'delivery-proof',payloadHash:'a'.repeat(64)}});
+ const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));t.after(()=>db.close());
+ db.exec("CREATE TRIGGER fail_expiry BEFORE UPDATE ON receipts WHEN NEW.id LIKE 'staffing-proposal:%' AND json_extract(NEW.json,'$.status')='expired' BEGIN SELECT RAISE(ABORT,'expiry disk full'); END");
+ const before=f.store.readSnapshot(),input={requestId:'atomic-accept',workId:f.work.id,deliveryId:'optional-staffing-delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'};
+ assert.throws(()=>f.store.decideWork(input),/expiry disk full/);assert.deepEqual(f.store.readSnapshot(),before);assert.equal(f.store.readWorkDecision(input.requestId),null);assert.equal(f.store.readMemberOperation(f.team.members[0].id).requestId,'launch');
+ db.exec('DROP TRIGGER fail_expiry');f.store.decideWork(input);assert.equal(f.store.listStaffingProposals(f.work.id)[0].status,'expired');
+});
+test('expired proposal retains an unconfirmed display notification without reserving completed history',async t=>{
+ const f=await questionFixture(t);await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}}).check(f.work.id);
+ publish(f,'staffing-proposal',{configVersion:1,roleVersion:1,proposingManagerId:f.team.members[0].id,member:memberInput(f),rationale:'Optional review.',affectedTaskKeys:[]});
+ await createStaffingService({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{},notify:async()=>({delivered:false})}).check(f.work.id);
+ const eventKey=`question-event:${f.work.id}:staffing-staffing-one`,event=f.store.readReceipt(eventKey);assert.equal(event.state,'unconfirmed');acceptWork(f);
+ const preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.deepEqual(f.store.readReceipt(eventKey),event);
+ f.store.updateQuestionEvent(f.work.id,event.id,{nativeSend:{method:'agentSession.send'}});assert.equal(f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]}).eligibleWorkIds.length,0);
+});

@@ -1,7 +1,7 @@
-import {createHash,randomUUID} from 'node:crypto';
+import {staffingExpiryProof} from './staffing-expiry.mjs';
+import {randomUUID} from 'node:crypto';
+import {staffingFingerprint} from './staffing-fingerprint.mjs';
 import {validatePersistentState} from '../team.mjs';
-const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
-const hash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
 const text=(v,n)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
 const id=v=>text(v,120)&&/^[a-zA-Z0-9-]+$/.test(v);
 export function staffingStore({db,readPrivate,putPrivate,readWork,listRunWorks,readSnapshot,write,archive,atomic}) {
@@ -25,10 +25,24 @@ export function staffingStore({db,readPrivate,putPrivate,readWork,listRunWorks,r
  };
  const publicDelta=({nativeSend,...row})=>row;
  const api={effectiveTeamForWork,listRosterDeltas,listStaffingProposals,recordConfigurationAmendment,
+  expireStaffingProposals(decision){
+   if(!db.isTransaction)throw Error('Staffing expiry must share the accepted Work transaction.');
+   let expired=0;
+   for(const proposal of listStaffingProposals(decision.workId).filter(p=>p.status==='pending')){
+    const expiry={kind:'accepted-work-closure',workId:decision.workId,deliveryId:decision.deliveryId,decisionRequestId:decision.requestId,recordedAt:decision.recordedAt};
+    if(!staffingExpiryProof({...proposal,expiry},readPrivate))continue;
+    putPrivate(`staffing-proposal:${proposal.workId}:${proposal.id}`,{...proposal,status:'expired',expiry});expired++;
+   }
+   return expired;
+  },
+  reconcileExpiredStaffingProposals(){return atomic(()=>{
+   let expired=0;for(const decision of rows('work-decision:').filter(d=>d.decision==='accept'))expired+=api.expireStaffingProposals(decision);
+   if(expired){const state=readSnapshot();state.revision++;write(state);}return expired;
+  });},
   staffingRecipientBindings(workId){const root=rootWork(workId),ids=new Set(rows('configuration-amendment:').filter(a=>a.workId===root?.id&&a.kind==='add-member').flatMap(a=>a.memberIds));return rows('operation:').filter(o=>ids.has(o.memberId)&&readPrivate(`binding:${o.memberId}`)?.requestId===o.requestId).map(o=>({memberId:o.memberId,requestId:o.requestId,instanceGeneration:o.instanceGeneration??1}));},
   staffingClosureBlockers(workId){const root=rootWork(workId),reasons=[];for(const d of listRosterDeltas(workId))if(d.processed!=='confirmed'&&(d.state!=='queued'||(listRunWorks?.(workId)??[root]).some(w=>w.supervisorMemberId===d.supervisorMemberId&&(!w.parent||readPrivate(`dispatch:${w.parent.attemptId}`)?.status==='running'))))reasons.push(`Roster configuration ${d.configVersion} awaits manager processing`);for(const r of rows('staffing-request:'))if(r.result?.workId===root?.id&&r.result.launch&&readPrivate(`operation:${r.result.launch.requestId}`)?.status!=='created')reasons.push('Approved staffing preparation remains pending or unknown');return [...new Set(reasons)];},
   assertStaffingPreparation(memberId,requestId){const request=rows('staffing-request:').find(r=>r.result?.memberId===memberId&&r.result.launch?.requestId===requestId);if(request)active(request.result.workId);},
-  readStaffingRequest(input){const prior=readPrivate(`staffing-request:${input.requestId}`);if(prior&&prior.fingerprint!==hash(input))throw Error('Staffing request identity conflicts.');return prior?.result??null;},
+  readStaffingRequest(input){const prior=readPrivate(`staffing-request:${input.requestId}`);if(prior&&prior.fingerprint!==staffingFingerprint(input))throw Error('Staffing request identity conflicts.');return prior?.result??null;},
   staffingProjection:workId=>({staffingProposals:listStaffingProposals(workId).map(({proof,fingerprint,...p})=>p),rosterDeltas:listRosterDeltas(workId).map(publicDelta),effectiveConfigVersion:effectiveTeamForWork(workId)?.configVersion}),
   claimRosterDelta(id,{nativeSend,contextId,runId,generation,supervisorMemberId}){return atomic(()=>{
    const key=`roster-delta:${id}`,row=readPrivate(key);if(!row||row.state!=='queued')return false;
@@ -43,14 +57,14 @@ export function staffingStore({db,readPrivate,putPrivate,readWork,listRunWorks,r
    row.processed='confirmed';row.acknowledgement={nativeTaskId:intent.nativeTaskId,payloadHash:intent.payloadHash};putPrivate(key,row);return row;
   });},
   ingestStaffingProposal(workId,intent){return atomic(()=>{
-   const work=active(workId),context=readWork(workId),s=intent.spec,team=effectiveTeamForWork(workId),fingerprint=hash(intent),key=`staffing-proposal:${work.id}:${s.appQuestionId}`,prior=readPrivate(key);
+   const work=active(workId),context=readWork(workId),s=intent.spec,team=effectiveTeamForWork(workId),fingerprint=staffingFingerprint(intent),key=`staffing-proposal:${work.id}:${s.appQuestionId}`,prior=readPrivate(key);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('Proposal identity conflicts.');return prior;}
    if(s.kind!=='staffing-proposal'||!id(s.appQuestionId)||s.proposingManagerId!==context.supervisorMemberId||s.configVersion!==team.configVersion||s.roleVersion!==1||!text(s.rationale,8000)||!Array.isArray(s.affectedTaskKeys)||s.affectedTaskKeys.some(v=>!id(v))||!s.member||!team.members.some(m=>m.id===s.member.boss&&['ceo','head','lead'].includes(m.role)))throw Error('Staffing proposal configuration or manager is stale.');
    const proposal={id:s.appQuestionId,workId:work.id,contextId:workId,teamId:team.id,proposingManagerId:context.supervisorMemberId,runId:context.run.id,generation:context.run.consumerGeneration,configVersion:s.configVersion,roleVersion:s.roleVersion,member:s.member,rationale:s.rationale,affectedTaskKeys:s.affectedTaskKeys,status:'pending',proof:intent,fingerprint,createdAt:new Date().toISOString()};putPrivate(key,proposal);return proposal;
   });},
   saveStaffing(input){return atomic(()=>{
    if(!input||!id(input.requestId)||!Number.isSafeInteger(input.expectedRevision)||!Number.isSafeInteger(input.configVersion)||Object.keys(input).some(k=>!['requestId','workId','expectedRevision','configVersion','member','proposalId','decision'].includes(k))||!input.proposalId&&input.decision!==undefined)throw Error('Invalid staffing request identity or revision.');
-   const fingerprint=hash(input),key=`staffing-request:${input.requestId}`,prior=readPrivate(key);
+   const fingerprint=staffingFingerprint(input),key=`staffing-request:${input.requestId}`,prior=readPrivate(key);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('Staffing request identity conflicts.');return prior.result;}
    const work=active(input.workId),state=readSnapshot(),team=state.teams.find(t=>t.id===work.teamId);
    const proposal=input.proposalId?readPrivate(`staffing-proposal:${work.id}:${input.proposalId}`):null;

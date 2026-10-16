@@ -1,3 +1,4 @@
+import {staffingExpiryProof} from './staffing-expiry.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {sameStopIdentity} from './stop-store.mjs';
 const CLEARED='[History manually cleared]';
@@ -14,6 +15,68 @@ function settledStopRecovery(row,byId){
  if(typeof previous.nativeRequestId!=='string'||!previous.nativeRequestId||typeof previous.target?.dispatchId!=='string'||!previous.target.dispatchId||previous.plan.params?.dispatch!==previous.target.dispatchId||previous.plan.envelope?.orchestrationRequestId!==previous.nativeRequestId||typeof current.confirmedAt!=='string'||!current.confirmedAt||!Number.isSafeInteger(previous.version)||!Number.isSafeInteger(current.version)||current.version<=previous.version)return false;
  if(current.nativeRequestId!==previous.nativeRequestId||!sameStopIdentity(current.target,previous.target)||!sameStopIdentity(current.plan,previous.plan))return false;
  return current.proof?.kind==='native-pty-exit'&&current.proof.ptyKilled===true||current.proof?.kind==='native-worker-exit'&&current.proof.dispatchId===current.target.dispatchId;
+}
+function settledStaffingNotification(row,byId){
+ const event=row.value;if(event.kind!=='decision'||event.state!=='unconfirmed'||event.nativeSend||typeof event.id!=='string'||!event.id.startsWith('staffing-'))return false;
+ const proposal=byId.get(`staffing-proposal:${event.workId}:${event.id.slice('staffing-'.length)}`)?.value;
+ return proposal?.status==='expired'&&event.data?.body===proposal.rationale&&!!staffingExpiryProof(proposal,key=>byId.get(key)?.value);
+}
+// A frozen replacement intent stays immutable. Only its two launch-status fields
+// become nonblocking after that exact operation and accepted Work are corroborated.
+function settledRecipientIntents(work,byId,settledHistory){
+ if(work.status!=='completed'||!work.closedAt||!Array.isArray(work.currentRecipientBindings))return work;
+ const delivery=byId.get(`delivery:${work.id}:${work.handoff?.deliveryId}`)?.value;
+ const accepted=delivery?.status==='accepted'&&delivery.workId===work.id&&[...byId.values()].some(r=>family(r.id)==='work-decision'&&r.value.workId===work.id&&r.value.deliveryId===delivery.id&&r.value.decision==='accept'&&r.value.recordedAt===work.closedAt&&r.value.input?.state==='none'&&r.value.fingerprint);
+ if(!accepted)return work;
+ const keys=['requestId','memberId','teamId','instanceGeneration','configVersion','roleVersion','nativeRequest','scope','replaces','resumedFrom','wakeRequestId','createdAt','runtimeId','executionHostId','hostGeneration'];
+ function prove(recipient,seen=new Set()){
+  if(seen.has(recipient.requestId))return null;seen.add(recipient.requestId);
+  const op=byId.get(`operation:${recipient.requestId}`)?.value,wake=byId.get(`wake:${recipient.wakeRequestId}`)?.value;
+  // Operation and wake records in this schema have no format discriminator.
+  if(recipient.format!==undefined||op?.format!==undefined||wake?.format!==undefined||wake?.oldBinding?.format!==undefined)return null;
+  if(!Number.isSafeInteger(recipient.version)||!Number.isSafeInteger(recipient.instanceGeneration)||recipient.instanceGeneration<2||(!recipient.nativeRequest||!recipient.resumedFrom&&!recipient.nativeRequest.operationId)||recipient.teamId!==work.teamId||!op||op.status!=='created'||op.public?.status!=='created'||!Number.isSafeInteger(op.version)||op.version<recipient.version||hash(keys.map(k=>recipient[k]))!==hash(keys.map(k=>op[k])))return null;
+  if(recipient.status==='unknown'&&(recipient.version!==1||recipient.effectState!=='intent'||recipient.public?.status!=='unknown'||op.version<=recipient.version)||!['unknown','created'].includes(recipient.status))return null;
+  if(!wake||wake.requestId!==recipient.wakeRequestId||!['bound','resumed'].includes(wake.state)||uncertain(wake)||wake.teamId!==work.teamId||wake.memberId!==recipient.memberId||wake.newInstance?.requestId!==recipient.requestId||wake.newInstance.instanceGeneration!==recipient.instanceGeneration||(wake.oldBinding?.instanceGeneration??1)+1!==recipient.instanceGeneration)return null;
+  if(recipient.resumedFrom){
+   const death=wake.proof?.death,fence=wake.newInstance.fence;
+   if(recipient.status!=='created'||recipient.public?.status!=='created'||recipient.requestId!==`wake-${wake.requestId}`||wake.oldBinding?.requestId!==recipient.resumedFrom||op.kind!=='structured'||wake.oldBinding.kind!=='structured'||wake.oldBinding.status!=='created'||op.runtimeId!==wake.proof?.runtimeId||!['exit-observed','pid-absent','identity-mismatch'].includes(death?.kind)||!Number.isSafeInteger(death.ownerFence)||death.ownerFence<1||!Number.isSafeInteger(death.observedAt)||death.provider!==op.nativeRequest.agent||!Number.isSafeInteger(fence)||fence<=death.ownerFence||op.observation?.ownerFence!==fence)return null;
+   const resumedKeys=['nativeRequest','scope','teamId','memberId','kind','handle','sessionId'];if(hash(resumedKeys.map(k=>op[k]))!==hash(resumedKeys.map(k=>wake.oldBinding[k])))return null;
+  }else if(wake.state!=='bound'||wake.handoff?.decision!=='replace'||wake.oldBinding?.requestId!==recipient.replaces)return null;
+  if(['requestId','memberId','teamId','instanceGeneration','configVersion','roleVersion'].some(k=>recipient.public?.[k]!==recipient[k]))return null;
+  if(!op.handle||!(op.kind==='terminal'&&op.paneKey||op.kind==='structured'&&op.sessionId))return null;
+  for(const id of [wake.oldBinding.sourceWorkId,wake.newInstance.workId].filter(Boolean)){const context=byId.get(`work:${id}`)?.value??byId.get(`native-run-binding:${id}`)?.value;if(!context||(context.teamWorkId??context.id)!==work.id)return null;}
+  const prior=wake.oldBinding.wakeRequestId?prove(wake.oldBinding,seen):[];if(!prior)return null;
+  return [...prior,`wake:${recipient.wakeRequestId}`,`operation:${recipient.requestId}`];
+ }
+ const currentRecipientBindings=work.currentRecipientBindings.map(recipient=>{
+  if(recipient.status!=='unknown'||recipient.public?.status!=='unknown')return recipient;
+  const history=prove(recipient);if(!history)return recipient;for(const id of history)settledHistory.add(id);
+  return {...recipient,status:undefined,public:{...recipient.public,status:undefined}};
+ });
+ return {...work,currentRecipientBindings};
+}
+// Older pending proposals are display history only after the complete native
+// revision chain leads to the exact delivery accepted at this Work's closure.
+function supersededDeliveryHistory(work,byId){
+ const prefix=`delivery:${work.id}:`,rows=[...byId.values()].filter(r=>family(r.id)==='delivery'&&(r.value.workId===work.id||r.id.startsWith(prefix))),current=byId.get(prefix+work.handoff?.deliveryId)?.value;
+ const result={obsolete:new Set(),ancestors:new Set(),invalid:false};
+ if(rows.length<2&&!current?.previousDeliveryId&&!(current?.revision>1))return result;
+ const invalid=()=>({...result,invalid:true});
+ if(work.status!=='completed'||!work.closedAt||!current||current.status!=='accepted'||current.format!==undefined||current.workId!==work.id||current.epoch!==(work.currentSupervisor?.epoch??work.epoch??0)||current.generation!==(work.currentSupervisor?.run??work.run).consumerGeneration)return invalid();
+ const accepted=[...byId.values()].some(r=>r.id===`work-decision:${r.value.requestId}`&&r.value.format===undefined&&r.value.workId===work.id&&r.value.deliveryId===current.id&&r.value.decision==='accept'&&r.value.recordedAt===work.closedAt&&r.value.input?.state==='none'&&/^[a-f0-9]{64}$/.test(r.value.fingerprint??''));
+ if(!accepted)return invalid();
+ let row=current,child=null;
+ while(row){
+  const key=prefix+row.id;
+  if(result.ancestors.has(key)||byId.get(key)?.value!==row||row.format!==undefined||row.workId!==work.id||!Number.isSafeInteger(row.revision)||row.revision<1||!Number.isSafeInteger(row.epoch)||row.epoch<0||!Number.isSafeInteger(row.generation)||row.generation<1||!row.supervisorMemberId||!row.protocolToken||!row.proof?.requestId||!/^[a-f0-9]{64}$/.test(row.proof.payloadHash??'')||!Number.isFinite(Date.parse(row.createdAt))||row.createdAt>work.closedAt)return invalid();
+  if(child&&(row.revision!==child.revision-1||row.epoch>child.epoch||row.generation>child.generation||row.createdAt>child.createdAt||row.supervisorMemberId!==child.supervisorMemberId||row.epoch===child.epoch&&(row.protocolToken!==child.protocolToken||row.generation!==child.generation)||!['pending','changes_requested','superseded'].includes(row.status)))return invalid();
+  result.ancestors.add(key);if(child&&row.status==='pending')result.obsolete.add(key);
+  if(row.previousDeliveryId==null){if(row.revision!==1)return invalid();break;}
+  if(typeof row.previousDeliveryId!=='string'||!row.previousDeliveryId)return invalid();
+  child=row;row=byId.get(prefix+row.previousDeliveryId)?.value;if(!row)return invalid();
+ }
+ if(rows.length!==result.ancestors.size)return invalid();
+ return result;
 }
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
@@ -34,17 +97,22 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId,r.value.binding?.requestId,r.value.currentSupervisor?.binding?.requestId,...(r.value.recipientBindings??[]).map(b=>b.requestId),...(r.value.currentRecipientBindings??[]).map(b=>b.requestId)]).filter(v=>typeof v==='string')]);
    let reason=unknownSchema?'An unknown storage table or column may reference this history; use a compatible cleanup implementation.':undefined;
    for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);
+   const settledHistory=new Set(),workUncertainty=settledRecipientIntents(work,byId,settledHistory);
+   for(const id of settledHistory)graph.set(id,byId.get(id).json);
+   const deliveryHistory=supersededDeliveryHistory(work,byId);
+   for(const id of deliveryHistory.ancestors)graph.set(id,byId.get(id).json);
+   if(deliveryHistory.invalid)reason='Delivery revision history is incomplete or unverified.';
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
     const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId||k==='stop-recovery'&&v.previous?.target?.teamId===work.teamId;
-    const uncertainty=k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:v;
+    const uncertainty=k==='work'&&v.id===work.id?workUncertainty:k==='delivery'&&!deliveryHistory.invalid&&deliveryHistory.obsolete.has(r.id)?{...v,status:undefined}:k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
     if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
     if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(uncertainty))))reason='Unknown, pending or unprocessed evidence remains in this work.';
     if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
     if(related&&k==='dispatch'&&!['accepted','rework','rejected'].includes(v.status))reason='A task is running or still requires supervisor acceptance.';
     if(sameTeam&&k==='goal'&&['queued','reserved'].includes(v.status))reason='A later goal awaits its Work transition.';
     if(related&&k==='dispatch-queue')reason='Queued task admission remains.';
-    if(related&&k==='staffing-proposal'&&!['approved','rejected'].includes(v.status))reason='A staffing proposal needs a decision.';
+    if(related&&k==='staffing-proposal'&&!(['approved','rejected'].includes(v.status)||v.status==='expired'&&staffingExpiryProof(v,key=>byId.get(key)?.value)))reason='A staffing proposal needs a decision.';
     if(related&&k==='roster-delta'&&!(v.state==='queued'&&!v.nativeSend||v.processed==='confirmed'))reason='A roster update awaits confirmed processing.';
     if(sameTeam&&k==='organization'&&v.state==='pending')reason='An organization change awaits its Work boundary.';
     if(sameTeam&&k==='wake'&&!['bound','resumed'].includes(v.state))reason='Member recovery or replacement remains unresolved.';
@@ -52,7 +120,7 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
     if(sameTeam&&k==='operation'&&v.status!=='created')reason='An original native operation remains unknown.';
     if(k==='active-work'&&contexts.has(v.workId))reason='This work is still actively reserved.';
     // Replay indexes intentionally retain references; other surviving graphs must keep their evidence intact.
-    if(!related&&contains(v,identities)&&!(k==='operation'&&identities.has(v.requestId)&&v.status==='created')&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
+    if(!related&&!settledHistory.has(r.id)&&contains(v,identities)&&!(k==='operation'&&identities.has(v.requestId)&&v.status==='created')&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
    }
    if(reason){retained.push({workId:id,reason});continue;}
    eligibleWorkIds.push(id);

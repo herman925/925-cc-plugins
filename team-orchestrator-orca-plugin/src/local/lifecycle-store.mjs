@@ -75,7 +75,7 @@ export function lifecycleStore({db,readPrivate,putPrivate,readWork,persistWork,l
     if(goal){goal.status='reserved';goal.previousWorkId=w.id;goal.launchRequests=Object.fromEntries(initialMembers(team).map(m=>[m.id,randomUUID()]));goal.workRequestId=randomUUID();goal.configVersion=team.configVersion;goal.supervisorMemberId=team.members.find(m=>m.boss===null).id;goal.handoff=boundedHandoff(w.handoff);putPrivate(`goal:${goal.id}`,goal);putPrivate(`next-goal:${w.teamId}`,{goalId:goal.id});event.nextGoalId=goal.id;}
     state.revision++;write(state);
    }
-   persistWork(w);putPrivate(key,event);return event;
+   persistWork(w);putPrivate(key,event);if(input.decision==='accept')staffing?.().expireStaffingProposals(event);return event;
   });},
   updateWorkDecision(requestId,patch){return atomic(()=>{const event=readPrivate(`work-decision:${requestId}`);if(!event)fail('Saved decision not found.');Object.assign(event,patch);putPrivate(`work-decision:${requestId}`,event);return event;});},
   reserveNextGoal(teamId){return atomic(()=>{
