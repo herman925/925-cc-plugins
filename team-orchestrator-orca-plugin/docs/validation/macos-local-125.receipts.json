@@ -1,5 +1,5 @@
 {
-  "observedAt": "2026-10-16T06:17:38.842153+00:00",
+  "observedAt": "2026-10-16T06:44:34.928644+00:00",
   "environment": {
     "orcaVersion": "1.4.223",
     "orcaCommit": "ff4a51c872e723d87ab141044814301ea5a78634",
@@ -7,7 +7,7 @@
     "electron": "43.7.5",
     "node": "24.21.0",
     "pluginDisplayVersion": "0.1.07",
-    "candidateSource": "1409b2a",
+    "candidateSource": "e039e2480ec0fa2e72960a66f9e63540be06ea51",
     "releasedBuild": false
   },
   "providerObservations": {
@@ -325,8 +325,8 @@
     {
       "id": "dfb5018c-db5c-4005-8990-b2e5fad6e88a",
       "teamId": "6ef6df91-8e85-4de1-a97a-faecb4a07ca0",
-      "status": "active",
-      "closedAt": null,
+      "status": "completed",
+      "closedAt": "2026-10-16T06:44:06.289Z",
       "run": {
         "state": "verified",
         "id": "run_a2796e27d913",
@@ -393,8 +393,8 @@
     {
       "id": "b87e55f7-5274-42f6-b3f5-f728d7591e8b",
       "teamId": "231d20ca-d1ce-43e3-a461-85660aa09946",
-      "status": "awaiting_acceptance",
-      "closedAt": null,
+      "status": "completed",
+      "closedAt": "2026-10-16T06:42:11.753Z",
       "run": {
         "state": "verified",
         "id": "run_734694af0a52",
@@ -420,7 +420,7 @@
       ]
     }
   ],
-  "remaining": "Existing failure question requires explicit supplement after repair. Partial read-only delivery remains awaiting acceptance after two no-effect stale-version refusals. Whole Orca restart, physical sleep/wake, distinct permission revocation, provider-specific launch failure and active-task interruption remain unverified.",
+  "remaining": "All five TeamWorks completed. Whole Orca restart, physical sleep/wake, distinct permission revocation, provider-specific launch failure and active-task interruption remain unverified; #125 remains OPEN/ready-for-human. Formal0.1.08 metadata/artifacts are a separate single release step after source and live reruns.",
   "controls": {
     "preparedIdleStop": {
       "requestId": "063e1984-8d43-4e7e-b42e-e6ae72ff9a9d",
@@ -515,7 +515,13 @@
       "nativeTaskId": "task_a67eea3846e6",
       "blockedUnsentAnswerId": "7384ee70-7272-405e-9b63-ab3d1ca5173f",
       "oldAnswerSha256": "618041b6bc20b348fbf3544f81dd027f27cb03c35283900fddc12b833753f40a",
-      "supplementRecheck": "pending"
+      "supplementRecheck": "passed",
+      "status": "answered",
+      "newAnswerId": "f571f588-30fe-46dc-8003-2de47e2f2f05",
+      "newAnswerState": "accepted",
+      "processing": "confirmed",
+      "acknowledgementNativeTaskId": "task_89ef0d876a63",
+      "oldBlockedAnswerUnchanged": true
     }
   }
 }
