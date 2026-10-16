@@ -592,3 +592,61 @@ test('native review and delivery proposal may arrive before plugin review observ
  await lifecycle.decide({requestId:'after-review',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
  assert.equal(f.store.readCurrentWork(work.id).status,'completed');
 });
+
+test('manually closed exact native worker can enter checked wake handoff without a plugin Stop row',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createWakeService}=await import('../src/local/wake.mjs');const f=await fixture(t,{childKind:'terminal'});
+ const dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];
+ let exited=true;const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);if(method==='orchestration.workerShow')return {...result,observation:{status:exited?'exited':'live',exactWorker:true},projection:{liveness:{verdict:'unverifiable'}}};if(method==='terminal.show'&&args[0].terminal===attempt.binding.handle)return {terminal:{...result.terminal,connected:false}};return result;};
+ const wake=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works}),input={teamId:f.team.id,memberId:attempt.memberId,requestId:'manual-close',bindingRequestId:attempt.id};
+ const before=f.calls.length;assert.deepEqual(f.store.listStops(),[]);
+ const result=await wake.wake(input);assert.equal(result.state,'needs_decision');assert.equal(f.store.readWake(input.requestId).proof.death.kind,'native-worker-exit');
+ assert.equal(f.store.readWake(input.requestId).proof.death.dispatchId,attempt.dispatchId);assert.equal(f.store.readWake(input.requestId).proof.death.binding.incarnationId,'child-pty:child-instance');
+ assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');assert.deepEqual(f.store.listStops(),[]);
+ assert.equal(f.calls.slice(before).some(method=>/workerStop|stopExact|launchReplay|restartContinue|taskCreate|workerStart/.test(method)),false);
+ await wake.wake(input);assert.equal(f.store.listWakes().length,1);
+ const protocol=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-questions/v1',kind:'recovery-handoff',workId:f.work.id,token:protocol.token,generation:1,appQuestionId:input.requestId,memberId:attempt.memberId,oldRequestId:attempt.id,decision:'replace',summary:'Manager checked the exact exited worker and prior accepted result.',evidence:['worker_report:report-task-one']});
+ const task={id:'manual-close-handoff',run_id:'run-head',spec};f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,null,null,null,null);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','manual-close-handoff-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:'codex_head'}),'completed',JSON.stringify({task}));
+ assert.equal((await wake.handoff(input.requestId)).state,'approved');
+ exited=false;await assert.rejects(wake.prepareFresh(input.requestId),/not proven stopped/);assert.equal(f.store.readWake(input.requestId).newInstance,undefined);
+ exited=true;await wake.prepareFresh(input.requestId);exited=false;await assert.rejects(wake.validateFresh(input.requestId),/execution proof changed/);
+
+});
+
+test('manual-close wake refuses unknown, missing, changed or cross-scope worker observations even after Task acceptance',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createWakeService}=await import('../src/local/wake.mjs');const f=await fixture(t,{childKind:'terminal'});
+ const dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];
+ let scenario,changed=false;
+ const rpc=async(method,...args)=>{
+  if(method==='status.get'&&(scenario==='runtime'||changed))return {runtimeId:'other-runtime'};
+  if(method==='orchestration.workerShow'&&scenario==='missing')throw Error('Native observation unavailable');
+  const result=await f.rpc(method,...args);
+  if(method==='terminal.show'&&args[0].terminal===attempt.binding.handle)return {terminal:{...result.terminal,connected:scenario==='connected'}};
+  if(method!=='orchestration.workerShow')return result;
+  const value=structuredClone({...result,observation:{status:'exited',exactWorker:true}});
+  if(['live','unverifiable','identity_changed'].includes(scenario))value.observation.status=scenario;
+  if(scenario==='inexact')value.observation.exactWorker=false;
+  if(scenario==='dispatch')value.dispatch.id='other-dispatch';
+  if(scenario==='task')value.dispatch.taskId='other-task';
+  if(scenario==='run')value.dispatch.runId='other-run';
+  if(scenario==='handle')value.dispatch.assigneeHandle='other-handle';
+  if(scenario==='pane')value.dispatch.assigneePaneKey='other:pane';
+  if(scenario==='pty')value.dispatch.processIncarnation='other-pty:child-instance';
+  if(scenario==='incarnation')value.dispatch.processIncarnation='child-pty:other-instance';
+  if(scenario==='host')value.dispatch.hostScope={kind:'ssh',targetId:'other-host'};
+  if(scenario==='workspace')value.worker.worktreeId='other-workspace';
+  if(scenario==='worker-handle')value.worker.agentTerminalHandle='other-handle';
+  if(scenario==='epoch')value.worker.runtimeEpoch='other-runtime';
+  if(scenario==='parent')value.dispatch.creatorDispatchId='other-parent';
+  if(scenario==='runtime-race')changed=true;
+  return value;
+ };
+ const wake=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});const before=f.calls.length;
+ for(scenario of ['live','unverifiable','identity_changed','inexact','missing','connected','dispatch','task','run','handle','pane','pty','incarnation','host','workspace','worker-handle','epoch','parent','runtime','runtime-race']){
+  changed=false;const row=await wake.wake({teamId:f.team.id,memberId:attempt.memberId,requestId:'negative-'+scenario.replaceAll('_','-'),bindingRequestId:attempt.id});assert.equal(row.state,'blocked',scenario);
+ }
+ assert.equal(f.store.listWakes().length,0);assert.equal(f.store.listStops().length,0);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');
+ assert.equal(f.calls.slice(before).some(method=>/send|Stop|stopExact|launchReplay|restartContinue/.test(method)),false);
+});
