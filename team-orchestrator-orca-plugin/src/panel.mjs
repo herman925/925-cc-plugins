@@ -155,7 +155,7 @@ function stopControls(team,member){
  const tasks=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
  const stops=(state.stops||[]).filter(s=>s.teamId===team.id&&s.memberId===member.id),stop=stops.at(-1);
  const action=task?.dispatchId?`data-work="${task.workId}" data-attempt="${task.attemptId}"`:!tasks.length&&launch?.requestId?`data-operation="${launch.requestId}"`:null;
- return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
+ return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}${s.recoverable?`<p>Recover the same native request. The original outcome stays in history; no new stop identity is created.</p>${button('Recover same stop request','recover-stop',`data-request="${s.requestId}" data-version="${s.version}"`,'small')}`:''}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
 }
 function replacementControls(team,member){
  const task=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>w.tasks||[]).filter(t=>t.memberId===member.id).at(-1),bindingRequestId=task?.id??team.launch?.members?.[member.id]?.requestId;
@@ -406,11 +406,12 @@ app.addEventListener('click', async event => {
       const result=await call(op,params);message=`Recovery: ${result.value?.state??result.state??result.status??'saved'}. ${result.value?.detail??result.detail??''}`;state=validatePersistentState((await call('storage.get',{})).value);view='attention';
     }catch(error){problem=error.message;}finally{busy=false;render();}
   }
-  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop') {
+  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop' || action === 'recover-stop') {
     busy=true;problem='';render();
     try {
       let result;
       if(action==='admission')result=await call('setAdmission',{requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:target.dataset.team,...(target.dataset.member?{memberId:target.dataset.member}:{}),paused:target.dataset.paused==='true'});
+      else if(action==='recover-stop')result=await call('recoverStop',{requestId:crypto.randomUUID(),stopRequestId:target.dataset.request,version:Number(target.dataset.version)});
       else if(action==='check-stop')result=await call('checkStop',{requestId:target.dataset.request});
       else result=await call('stopMember',{requestId:crypto.randomUUID(),teamId:target.dataset.team,memberId:target.dataset.member,...(target.dataset.attempt?{workId:target.dataset.work,attemptId:target.dataset.attempt}:{operationRequestId:target.dataset.operation})});
       state=validatePersistentState(result.value);message=action==='admission'?'Assignment admission saved. Existing sessions retain their execution state.':'Native stop evidence updated.';

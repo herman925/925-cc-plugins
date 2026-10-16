@@ -66,10 +66,10 @@ export async function installAdapter(electron, { version, identity, internalKey 
           if (!response?.ok) throw Object.assign(Error(response?.error?.message || 'Native operation unavailable.'), { code: response?.error?.code ?? 'host_unavailable' });
           return response.result;
         };
-        if(message.args.op==='stopMember'){
+        if(message.args.op==='stopMember'||message.args.op==='recoverStop'){
           const command=async(op,params)=>{const response=await invoke({op,params});if(response?.ok===false)throw Error(response.error?.message??response.error??'Stop command refused.');return response;};
-          await authority();const saved=await command('_stopPrepare',message.args.params);
-          await authority();const plan=await command('_stopValidate',{requestId:saved.requestId});
+          await authority();const saved=await command(message.args.op==='recoverStop'?'_stopRecover':'_stopPrepare',message.args.params);
+          await authority();const plan=message.args.op==='recoverStop'?saved.plan:await command('_stopValidate',{requestId:saved.requestId});
           if(plan){
             const socketRpc=createNativeRpc({userData:electron.app.getPath('userData'),parentPid:process.pid,consent:authority});
             let receipt,error;try{receipt=await withNativeRuntime(socketRpc,plan.runtimeId,async()=>{

@@ -1,10 +1,20 @@
 import {randomUUID,createHash} from 'node:crypto';
+import {sameStopIdentity} from './stop-store.mjs';
 const CLEARED='[History manually cleared]';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const family=id=>id.split(':')[0];
-const known=new Set(['runtime-control','runtime-reconnect','work','native-run-binding','work-request','active-work','session-work','operation','binding','binding-generation','launch','dispatch','dispatch-intent','intent-withdrawal','dispatch-member','dispatch-binding','dispatch-review','dispatch-protocol','dispatch-protocol-history','dispatch-queue','question','question-answer','question-event','team-message','collaboration','delivery','work-decision','goal','goal-request','next-goal','stop','wake','wake-member','staffing-request','staffing-proposal','configuration-amendment','work-configuration','roster-delta','organization']);
+const known=new Set(['runtime-control','runtime-reconnect','work','native-run-binding','work-request','active-work','session-work','operation','binding','binding-generation','launch','dispatch','dispatch-intent','intent-withdrawal','dispatch-member','dispatch-binding','dispatch-review','dispatch-protocol','dispatch-protocol-history','dispatch-queue','question','question-answer','question-event','team-message','collaboration','delivery','work-decision','goal','goal-request','next-goal','stop','stop-recovery','wake','wake-member','staffing-request','staffing-proposal','configuration-amendment','work-configuration','roster-delta','organization']);
 const contains=(value,ids)=>typeof value==='string'?(ids.has(value)||[...ids].some(id=>id.length>=32&&value.includes(id))):Array.isArray(value)?value.some(v=>contains(v,ids)):value&&typeof value==='object'?Object.values(value).some(v=>contains(v,ids)):false;
 const uncertain=value=>value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>(['state','status','processed'].includes(key)&&['unknown','sending','submitted','needs_decision','pending','unconfirmed'].includes(v))||(typeof v==='object'&&!['processing','run','snapshot','proof','controlProof','nativeSend','nativeRequest','binding','oldBinding','observation'].includes(key)&&uncertain(v)));
+// The archived unknown observation is history only after the very same native stop
+// has positive exit proof. Other fields and unresolved/mismatched links stay uncertain.
+function settledStopRecovery(row,byId){
+ const audit=row.value,previous=audit.previous,current=byId.get(`stop:${audit.stopRequestId}`)?.value;
+ if(audit.requestId!==row.id.slice('stop-recovery:'.length)||!previous||previous.state!=='unknown'||previous.requestId!==audit.stopRequestId||previous.plan?.method!=='orchestration.workerStop'||!current||current.requestId!==audit.stopRequestId||current.state!=='stopped')return false;
+ if(typeof previous.nativeRequestId!=='string'||!previous.nativeRequestId||typeof previous.target?.dispatchId!=='string'||!previous.target.dispatchId||previous.plan.params?.dispatch!==previous.target.dispatchId||previous.plan.envelope?.orchestrationRequestId!==previous.nativeRequestId||typeof current.confirmedAt!=='string'||!current.confirmedAt||!Number.isSafeInteger(previous.version)||!Number.isSafeInteger(current.version)||current.version<=previous.version)return false;
+ if(current.nativeRequestId!==previous.nativeRequestId||!sameStopIdentity(current.target,previous.target)||!sameStopIdentity(current.plan,previous.plan))return false;
+ return current.proof?.kind==='native-pty-exit'&&current.proof.ptyKilled===true||current.proof?.kind==='native-worker-exit'&&current.proof.dispatchId===current.target.dispatchId;
+}
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
  function plan(ids){
@@ -20,15 +30,16 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    if(work.historyPruned){retained.push({workId:id,reason:'This work was already cleaned; its closure and identity evidence remain.'});continue;}
    teamIds.add(work.teamId);
    const contexts=new Set([id,...rows.filter(r=>family(r.id)==='native-run-binding'&&r.value.teamWorkId===id).map(r=>r.value.id)]);
-   const own=r=>contexts.has(r.value.workId)||contexts.has(r.value.teamWorkId)||contexts.has(r.value.target?.workId)||family(r.id)==='wake'&&contexts.has(r.value.newInstance?.workId)||contexts.has(r.value.id)&&['work','native-run-binding'].includes(family(r.id));
+   const own=r=>contexts.has(r.value.workId)||contexts.has(r.value.teamWorkId)||contexts.has(r.value.target?.workId)||family(r.id)==='stop-recovery'&&contexts.has(r.value.previous?.target?.workId)||family(r.id)==='wake'&&contexts.has(r.value.newInstance?.workId)||contexts.has(r.value.id)&&['work','native-run-binding'].includes(family(r.id));
    const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId,r.value.binding?.requestId,r.value.currentSupervisor?.binding?.requestId,...(r.value.recipientBindings??[]).map(b=>b.requestId),...(r.value.currentRecipientBindings??[]).map(b=>b.requestId)]).filter(v=>typeof v==='string')]);
    let reason=unknownSchema?'An unknown storage table or column may reference this history; use a compatible cleanup implementation.':undefined;
    for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
-    const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId;
+    const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId||k==='stop-recovery'&&v.previous?.target?.teamId===work.teamId;
+    const uncertainty=k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:v;
     if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
-    if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(v))))reason='Unknown, pending or unprocessed evidence remains in this work.';
+    if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(uncertainty))))reason='Unknown, pending or unprocessed evidence remains in this work.';
     if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
     if(related&&k==='dispatch'&&!['accepted','rework','rejected'].includes(v.status))reason='A task is running or still requires supervisor acceptance.';
     if(sameTeam&&k==='goal'&&['queued','reserved'].includes(v.status))reason='A later goal awaits its Work transition.';
