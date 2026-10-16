@@ -88,3 +88,12 @@ test('public recovery broker reuses the native UUID and refuses panel overrides 
  assert.equal((await call(input)).ok,true);assert.equal(requests.length,1);assert.equal(requests[0].orchestrationContractVersion,1);assert.equal(requests[0].orchestrationRequestId,saved.nativeRequestId);assert.deepEqual(requests[0].params,plan.params);assert.equal(requests[0].method,plan.method);assert.equal(requests[0].from,undefined);
  assert.equal(f.store.readStop(saved.requestId).state,'unknown');assert.equal((await call(input)).ok,true);assert.equal(requests.length,1);assert.equal(f.store.readReceipt('stop-recovery:broker-recovery').previous.state,'unknown');
 });
+test('two different recovery actions cannot claim the same stop version and an exact exited worker settles without another send',async t=>{
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'lost receipt'});
+ const version=f.store.readStop(row.requestId).version,results=await Promise.allSettled(['recover-a','recover-b'].map(requestId=>service.recover({requestId,stopRequestId:row.requestId,version})));
+ assert.equal(results.filter(r=>r.status==='fulfilled'&&r.value.plan).length,1);assert.equal(results.filter(r=>r.status==='rejected').length,1);
+ await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stopped'});assert.equal(f.store.readStop(row.requestId).state,'unknown');
+ const rpc=async(method,params)=>{const value=await f.rpc(method,params);if(method==='orchestration.workerShow')value.observation.status='exited';return value;};
+ const observed=createStopService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}),input={requestId:'recover-exited',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version};
+ assert.equal((await observed.recover(input)).plan,null);assert.equal(f.store.readStop(row.requestId).state,'stopped');assert.equal(f.store.readStop(row.requestId).proof.kind,'native-worker-exit');assert.equal(f.store.readReceipt('stop-recovery:recover-exited').previous.state,'unknown');
+});
