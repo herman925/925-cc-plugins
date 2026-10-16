@@ -8,7 +8,9 @@ export function nativeHistoryReader({db,readPrivate,readWork,questions}){
    const owner=previous.instance,send=protocol.nativeSend;
    if(protocol.workId!==workId||previous.run.id!==work.run.id||previous.run.consumerGeneration!==protocol.generation||!owner)continue;
    if(owner.kind==='structured'?(send?.method!=='agentSession.send'||send.params.envelope.sessionId!==previous.binding.sessionId||send.params.envelope.expectedRuntimeFence!==owner.fence):(send?.method!=='terminal.send'||send.params.terminal!==previous.binding.handle))continue;
-   authorities.push({epoch,protocol,owner});
+   const recovery=readPrivate(`wake:${previous.recoveryRequestId}`);
+   const recoveryVerified=recovery?.state==='bound'&&recovery.memberId===work.supervisorMemberId&&recovery.oldBinding.requestId===previous.binding.requestId&&recovery.newInstance?.workId===workId&&recovery.newInstance.runId===work.run.id;
+   authorities.push({epoch,protocol,owner,recoveryVerified});
   }
   for(const q of questions.listQuestions(workId)){
    const epoch=q.epoch??0,r=q.resolution,wake=r&&readPrivate(`wake:${r.recoveryRequestId}`),recovered=history.findIndex(h=>h.recoveryRequestId===r?.recoveryRequestId);
@@ -22,6 +24,14 @@ export function nativeHistoryReader({db,readPrivate,readWork,questions}){
   for(const c of rows('collaboration:').filter(c=>c.workId===workId))controls.push({kind:'collaboration-directive',record:c});
   for(const m of rows('team-message:').filter(m=>m.workId===workId&&m.controlProof))controls.push({kind:'message-evidence',record:m});
   for(const w of rows('wake:').filter(w=>w.state==='bound'&&w.handoff?.workId===workId&&w.handoff.nativeTaskId))controls.push({kind:'recovery-handoff',record:w.handoff});
-  return {authorities,controls,withdrawals:rows('intent-withdrawal:').filter(row=>row.workId===workId)};
+  const withdrawals=rows('intent-withdrawal:').filter(row=>row.workId===workId);
+  // Only an already-recorded withdrawal gets a frozen configuration/archived authority.
+  // Native readers still recheck all original bytes and receipts before discharging history.
+  const withdrawalContexts=withdrawals.map(row=>{
+   let original,result;try{original=JSON.parse(row.originalSpec);result=JSON.parse(row.result);}catch{return {nativeTaskId:row.nativeTaskId};}
+   const team=Number.isSafeInteger(original.configVersion)?JSON.parse(db.prepare('SELECT json FROM team_versions WHERE team_id=? AND version=?').get(work.teamId,original.configVersion)?.json??'null'):null;
+   return {nativeTaskId:row.nativeTaskId,epoch:row.epoch,team,authorities:authorities.filter(a=>a.recoveryVerified&&a.epoch===row.epoch&&a.protocol.token===result.token&&a.protocol.generation===row.generation)};
+  });
+  return {authorities,controls,withdrawals,withdrawalContexts};
  };
 }
