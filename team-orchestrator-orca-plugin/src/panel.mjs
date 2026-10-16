@@ -37,6 +37,7 @@ const staffingDrafts=new Map(),staffingRequests=new Map();
 
 const wakeDrafts = new Map(), wakeRequests = new Map();
 const answerDrafts = new Map(), answerRequests = new Map();
+const reconnectRequests=new Map();
 const objectives = new Map(), workRequests = new Map(), goalDrafts=new Map(), goalRequests=new Map(), decisionRequests=new Map(), reworkDrafts=new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
@@ -154,7 +155,7 @@ function stopControls(team,member){
  const tasks=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
  const stops=(state.stops||[]).filter(s=>s.teamId===team.id&&s.memberId===member.id),stop=stops.at(-1);
  const action=task?.dispatchId?`data-work="${task.workId}" data-attempt="${task.attemptId}"`:!tasks.length&&launch?.requestId?`data-operation="${launch.requestId}"`:null;
- return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
+ return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}${s.recoverable?`<p>Recover the same native request. The original outcome stays in history; no new stop identity is created.</p>${button('Recover same stop request','recover-stop',`data-request="${s.requestId}" data-version="${s.version}"`,'small')}`:''}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
 }
 function replacementControls(team,member){
  const task=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>w.tasks||[]).filter(t=>t.memberId===member.id).at(-1),bindingRequestId=task?.id??team.launch?.members?.[member.id]?.requestId;
@@ -195,7 +196,7 @@ function deliverySection(work){
 }
 function activeWorkSection(team) {
   const work = state.works?.find(row => row.teamId === team.id&&row.status!=='completed');
-  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${!work.recoveryRequestId && work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}${staffingSection(team,work)}</section>`;
+  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${work.canReconnectRuntime?`<p>After restarting Orca, recheck this team before continuing. Each agent must be idle and this work must have no tasks.</p>${button('Reconnect existing team','reconnect-work',`data-work="${work.id}"`,'small')}`:''}${work.runtimeRecovery?'<p class="subtle">Existing sessions reconnected. The original objective and work history are retained.</p>':''}${!work.recoveryRequestId && work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}${staffingSection(team,work)}</section>`;
   const head = team.members.find(member => member.boss === null);
   if (team.launch?.members?.[head.id]?.status !== 'created') return '';
   return `<section class="section"><h3>Start team work</h3><label class="field">Total objective<textarea data-objective="${team.id}" rows="3" maxlength="8000">${escape(objectives.get(team.id) || '')}</textarea></label>${button('Submit total objective', 'submit-work', `data-team="${team.id}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small')}<p class="subtle">Uses the prepared highest supervisor and this team's saved project. One total objective may remain in progress at a time.</p></section>`;
@@ -405,11 +406,12 @@ app.addEventListener('click', async event => {
       const result=await call(op,params);message=`Recovery: ${result.value?.state??result.state??result.status??'saved'}. ${result.value?.detail??result.detail??''}`;state=validatePersistentState((await call('storage.get',{})).value);view='attention';
     }catch(error){problem=error.message;}finally{busy=false;render();}
   }
-  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop') {
+  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop' || action === 'recover-stop') {
     busy=true;problem='';render();
     try {
       let result;
       if(action==='admission')result=await call('setAdmission',{requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:target.dataset.team,...(target.dataset.member?{memberId:target.dataset.member}:{}),paused:target.dataset.paused==='true'});
+      else if(action==='recover-stop')result=await call('recoverStop',{requestId:crypto.randomUUID(),stopRequestId:target.dataset.request,version:Number(target.dataset.version)});
       else if(action==='check-stop')result=await call('checkStop',{requestId:target.dataset.request});
       else result=await call('stopMember',{requestId:crypto.randomUUID(),teamId:target.dataset.team,memberId:target.dataset.member,...(target.dataset.attempt?{workId:target.dataset.work,attemptId:target.dataset.attempt}:{operationRequestId:target.dataset.operation})});
       state=validatePersistentState(result.value);message=action==='admission'?'Assignment admission saved. Existing sessions retain their execution state.':'Native stop evidence updated.';
@@ -425,6 +427,15 @@ app.addEventListener('click', async event => {
       message = action === 'open-member' ? 'Opened the verified native session.' : `Saved launch: ${result.status}.`;
     } catch (error) { problem = error.message; }
     finally { try { state = validatePersistentState((await call('storage.get', {})).value); } catch (error) { problem = error.message; } busy = false; render(); }
+  }
+  else if(action==='reconnect-work'){
+    busy=true;problem='';message='';render();
+    try{
+      const work=state.works.find(w=>w.id===target.dataset.work);
+      if(!reconnectRequests.has(work.id))reconnectRequests.set(work.id,mutation({workId:work.id,expectedWorkVersion:work.version}));
+      const result=await call('reconnectWork',reconnectRequests.get(work.id));state=validatePersistentState(result.value);reconnectRequests.delete(work.id);message='Existing sessions reconnected. Continue the original objective when ready.';
+    }catch(error){problem=error.message;if(/changed|reload/i.test(error.message))reconnectRequests.delete(target.dataset.work);try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    finally{busy=false;render();}
   }
   else if (action === 'submit-work' || action === 'check-work' || action === 'retry-objective') {
     busy = true; problem = ''; message = ''; render();

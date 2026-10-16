@@ -1,3 +1,4 @@
+import {controlRuntime} from './runtime-control.mjs';
 import {isUnsentBlockedAnswer} from './acceptance.mjs';
 import {questionOriginKind} from './native-question-origin.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
@@ -16,7 +17,7 @@ export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,bod
 }
 export function createQuestionService({store,rpc,userData,consent,works,notify}) {
  const serialize=createKeyedSerializer();
- const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,controlRuntime(store.readCurrentWork(id)),fn));
  const matchingIntent=(question,native)=>native.intents.find(intent=>intent.nativeTaskId===question.proof?.nativeTaskId&&JSON.stringify(intent)===JSON.stringify(question.proof)&&JSON.stringify(intent.spec.origin??null)===JSON.stringify(question.origin??null));
  const reportFor=(question,native)=>{
   const intent=matchingIntent(question,native),source=intent&&(native.sourceReports??[]).find(row=>row.nativeTaskId===intent.nativeTaskId&&row.appQuestionId===question.id)?.sourceReport;

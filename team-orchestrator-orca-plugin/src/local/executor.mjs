@@ -27,11 +27,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   const recovery = createRecoveryService({ store, rpc, userData, consent });
   const wake = createWakeService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
-  let workTimer, polling = false, stopped = false;
+  let workTimer, polling = false, stopped = false, reconnecting = false;
   const reconcileExisting=async()=>{await recovery.reconcile();await stops.reconcile();};
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
-    if (polling || stopped) return;
+    if (polling || stopped || reconnecting) return;
     polling = true;
     try {
       await consent(); await recovery.reconcile(); await stops.reconcile();for(const row of store.listWakes()){await wake.check(row.requestId);await wake.bind(row.requestId);}
@@ -118,6 +118,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
         }
         if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
+        if (op === '_stopRecover') return stops.recover(params);
         if (op === '_stopValidate') return stops.validate(params.requestId);
         if (op === '_stopSettle') return stops.settle(params.requestId,params.receipt,params.error);
         if(op==='_decideWork'){
@@ -223,6 +224,12 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           return params.value;
         }
         throw Error('Unknown internal observation phase.');
+      }
+      if(op==='reconnectWork'){
+        if(polling||reconnecting)throw Error('A saved evidence check is still running. Wait briefly, then try reconnecting again.');
+        reconnecting=true;
+        try{const work=await works.reconnect(params);stopped=false;return {value:store.readSnapshot(),work};}
+        finally{reconnecting=false;scheduleWork();}
       }
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if(op!=='checkWork')await reconcileExisting();

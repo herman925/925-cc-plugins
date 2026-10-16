@@ -31,3 +31,90 @@ test('panel owner revocation in flight preserves intent, sends no follow-up, and
  assert.equal((await call()).ok,false);assert.equal(writes,1);assert.equal(f.store.readStop('stop-one').state,'submitted');enabled=true;const restored=await call();assert.equal(restored.ok,true);assert.equal(restored.value.value.stops[0].state,'unknown');assert.equal(writes,1);assert.equal(f.store.readStop('stop-one').state,'unknown');assert.equal(f.store.readMemberOperation(f.member.id).requestId,'launch');
 });
 test('native unsupported method refusal is shown distinctly from uncertain stop delivery',async t=>{const f=await stopFixture(t),service=createStopService({...f,consent:async()=>{}}),row=await service.prepare(f.input);await service.validate(row.requestId);assert.equal((await service.settle(row.requestId,null,{native:true,code:'method_not_supported',message:'Exact stop unavailable'})).state,'unsupported');assert.equal(f.store.readStopProof({memberId:f.member.id,requestId:'launch',instanceGeneration:1}),null);});
+import {fixture as dispatchFixture} from './dispatch-fixture.mjs';
+import {createDispatchService} from '../src/local/dispatch.mjs';
+async function activeStopFixture(t){
+ const f=await dispatchFixture(t,{childKind:'terminal'}),dispatches=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatches.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatches.check(f.work.id);
+ const attempt=f.store.listDispatches(f.work.id)[0],input={requestId:'active-stop',teamId:f.team.id,memberId:f.member.id,workId:f.work.id,attemptId:attempt.id};
+ return {...f,get store(){return f.store;},attempt,input,make:()=>createStopService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}})};
+}
+test('explicit recovery preserves the unknown stop and replays its exact native operation once per saved user action',async t=>{
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input),plan=await service.validate(row.requestId);
+ await service.settle(row.requestId,null,{native:true,message:'obsolete contract: No effects applied'});const unknown=f.store.readStop(row.requestId);
+ assert.equal(await service.validate(row.requestId),null);await service.check(row.requestId);assert.equal(f.store.readStop(row.requestId).state,'unknown');
+ const input={requestId:'recover-one',stopRequestId:row.requestId,version:unknown.version};
+ const recovered=await service.recover(input);assert.deepEqual(recovered.plan,plan);assert.equal(recovered.requestId,row.requestId);
+ const saved=f.store.readStop(row.requestId);assert.equal(saved.nativeRequestId,row.nativeRequestId);assert.deepEqual(saved.target,row.target);assert.equal(saved.state,'submitted');
+ const history=f.store.readReceipt('stop-recovery:recover-one');assert.deepEqual(history.previous,unknown);assert.equal(history.previous.state,'unknown');
+ assert.equal((await service.recover(input)).plan,null);
+ await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stopped',close:{ptyKilled:true}});assert.equal(f.store.readStop(row.requestId).state,'stopped');assert.equal((await service.recover(input)).plan,null);
+});
+test('concurrent explicit recovery claims only once, survives worker restart, and never treats text or an absent ledger as exit',async t=>{
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'No effects applied'});
+ const input={requestId:'concurrent-recovery',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version};
+ const outcomes=await Promise.all([service.recover(input),service.recover(input)]);assert.equal(outcomes.filter(v=>v.plan).length,1);
+ await service.settle(row.requestId,null,{native:true,code:'operation_unknown',message:'Pending native mutation'});
+ assert.equal(f.store.readStop(row.requestId).state,'unknown');assert.equal(f.store.readStopProof({memberId:f.member.id,attemptId:f.attempt.id,binding:f.attempt.binding}),null);
+ await f.restart();const restarted=createStopService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}});assert.equal((await restarted.recover(input)).plan,null);assert.equal((await restarted.check(row.requestId)).state,'unknown');
+ await assert.rejects(restarted.recover({...input,version:input.version+1}),/conflicts/);
+});
+for(const fault of ['changed-dispatch','changed-native-epoch','changed-host','changed-run','revoked','missing-capability','forged-plan','native-ownership-refusal'])test(`stop recovery preserves uncertainty for ${fault}`,async t=>{
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'No effects applied'});
+ const prior=f.store.readStop(row.requestId),input={requestId:'recover-fault',stopRequestId:row.requestId,version:prior.version};
+ if(fault==='changed-dispatch')f.db.exec("UPDATE dispatch_contexts SET process_incarnation='different-process'");
+ if(fault==='changed-run')f.db.exec('UPDATE runs SET consumer_generation=2');
+ if(fault==='forged-plan')await assert.rejects(service.recover({...input,params:{dispatch:'other'}}),/saved unknown/);
+ else if(fault==='native-ownership-refusal'){
+  const result=await service.recover(input);assert.equal(result.plan.method,'orchestration.workerStop');await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stop_unknown',processAction:'refused_external_resource'});assert.equal((await service.check(row.requestId)).state,'unknown');assert.equal(f.calls.includes('terminal.stopExact'),false);return;
+ }else{
+  const rpc=async(method,params)=>{const value=await f.rpc(method,params);if(method==='status.get'&&fault==='changed-native-epoch')value.runtimeId='new-runtime';if(method==='status.get'&&fault==='missing-capability')value.capabilities=[];if(method==='worktree.show'&&fault==='changed-host')value.worktree.hostId='ssh:other';return value;};
+  const changed=createStopService({store:f.store,rpc,userData:f.profile,consent:async()=>{if(fault==='revoked')throw Error('revoked');}});await assert.rejects(changed.recover(input));
+ }
+ assert.deepEqual(f.store.readStop(row.requestId),prior);assert.equal(f.store.readReceipt('stop-recovery:recover-fault'),null);
+});
+test('public recovery broker reuses the native UUID and refuses panel overrides and revoked ownership before socket effects',async t=>{
+ const f=await activeStopFixture(t),service=f.make(),saved=await service.prepare(f.input),plan=await service.validate(saved.requestId);await service.settle(saved.requestId,null,{message:'Historical unknown'});
+ const input={requestId:'broker-recovery',stopRequestId:saved.requestId,version:f.store.readStop(saved.requestId).version},requests=[];let enabled=true;
+ const endpoint=join(f.profile,'runtime.sock'),server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());requests.push(request);socket.end(JSON.stringify({id:request.id,ok:false,error:{code:'operation_unknown',message:'Pending durable native request'},_meta:{runtimeId:'runtime-one'}})+'\n');}));await new Promise(r=>server.listen(endpoint,r));t.after(()=>new Promise(r=>server.close(r)));
+ await writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({pid:process.pid,runtimeId:'runtime-one',authToken:'secret',transport:{kind:'unix',endpoint}}));
+ const executor=createExecutor({call:async()=>({value:null})},async()=>({worktree:{id:f.scope.workspaceId,hostId:'local'}}),{store:f.store,nativeRpc:f.rpc,internalKey:'key',userData:f.profile});
+ const handlers=new Map(),ipcMain={_invokeHandlers:handlers,handle:(n,fn)=>handlers.set(n,fn),removeHandler:n=>handlers.delete(n)},frame={},event={senderFrame:frame,sender:{id:1,mainFrame:frame}};
+ handlers.set('plugins:readPanelEntry',async()=>({sessionToken:'panel'}));handlers.set('plugins:panelAction',async()=>({ok:enabled,error:'owner revoked'}));handlers.set('plugins:invokeCommand',async(_,message)=>executor.execute(message.args));handlers.set('runtime:call',async()=>{throw Error('Stop must use native UUID-capable socket');});
+ await installAdapter({ipcMain,app:{getPath:()=>f.profile}},{version:'test',identity:'recover-stop-test',internalKey:'key'});t.after(()=>globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore());
+ const call=params=>handlers.get('plugins:panelAction')(event,{sessionToken:'panel',action:'workspace.readContext',params:{teamWorker:{protocol:1,nonce:'nonce',commandId:'team.control',args:{op:'recoverStop',params}}}});
+ for(const override of [{orchestrationContractVersion:1},{caller:'forged'},{method:'terminal.stopExact'}])assert.equal((await call({...input,...override})).ok,false);
+ enabled=false;assert.equal((await call(input)).ok,false);assert.equal(requests.length,0);enabled=true;
+ assert.equal((await call(input)).ok,true);assert.equal(requests.length,1);assert.equal(requests[0].orchestrationContractVersion,1);assert.equal(requests[0].orchestrationRequestId,saved.nativeRequestId);assert.deepEqual(requests[0].params,plan.params);assert.equal(requests[0].method,plan.method);assert.equal(requests[0].from,undefined);
+ assert.equal(f.store.readStop(saved.requestId).state,'unknown');assert.equal((await call(input)).ok,true);assert.equal(requests.length,1);assert.equal(f.store.readReceipt('stop-recovery:broker-recovery').previous.state,'unknown');
+});
+test('two different recovery actions cannot claim the same stop version and an exact exited worker settles without another send',async t=>{
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'lost receipt'});
+ const version=f.store.readStop(row.requestId).version,results=await Promise.allSettled(['recover-a','recover-b'].map(requestId=>service.recover({requestId,stopRequestId:row.requestId,version})));
+ assert.equal(results.filter(r=>r.status==='fulfilled'&&r.value.plan).length,1);assert.equal(results.filter(r=>r.status==='rejected').length,1);
+ await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stopped'});assert.equal(f.store.readStop(row.requestId).state,'unknown');
+ const rpc=async(method,params)=>{const value=await f.rpc(method,params);if(method==='orchestration.workerShow')value.observation.status='exited';return value;};
+ const observed=createStopService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}),input={requestId:'recover-exited',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version};
+ assert.equal((await observed.recover(input)).plan,null);assert.equal(f.store.readStop(row.requestId).state,'stopped');assert.equal(f.store.readStop(row.requestId).proof.kind,'native-worker-exit');assert.equal(f.store.readReceipt('stop-recovery:recover-exited').previous.state,'unknown');
+});
+async function closedRecoveredStop(t){
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'lost native receipt'});await service.recover({requestId:'history-recovery',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version});await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stopped',close:{ptyKilled:true}});
+ const dispatches=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});f.complete(f.attempt);await dispatches.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatches.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'accepted');
+ f.store.recordDelivery(f.work.id,{id:'delivery',summary:'Accepted test result',evidenceRefs:[attempt.evidenceId],attemptIds:[attempt.id],generation:1,proof:{requestId:'native-delivery',payloadHash:'b'.repeat(64)}});f.store.decideWork({requestId:'accept-work',workId:f.work.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
+ return f;
+}
+test('accepted Work cleanup retains recovered stop audit and its historical uncertainty after positive current stop proof',async t=>{
+ const f=await closedRecoveredStop(t),before=f.store.readReceipt('stop-recovery:history-recovery'),stop=f.store.readStop(f.input.requestId),p=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.equal(before.previous.state,'unknown');assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ f.store.applyHistoryCleanup({requestId:'clean-recovered-work',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision});assert.deepEqual(f.store.readReceipt('stop-recovery:history-recovery'),before);assert.deepEqual(f.store.readStop(f.input.requestId),stop);assert.equal(f.store.readWork(f.work.id).handoff.summary,'[History manually cleared]');
+});
+for(const fault of ['current-unknown','no-exit-proof','different-native-request','different-target','different-plan','missing-linked-stop','new-pending-audit-field'])test(`cleanup keeps stop recovery evidence when ${fault}`,async t=>{
+ const f=await closedRecoveredStop(t),key='stop:'+f.input.requestId,stop=f.store.readStop(f.input.requestId),auditKey='stop-recovery:history-recovery',audit=f.store.readReceipt(auditKey);
+ if(fault==='current-unknown')f.store.writeReceipt(key,{...stop,state:'unknown'});
+ if(fault==='no-exit-proof')f.store.writeReceipt(key,{...stop,proof:undefined});
+ if(fault==='different-native-request')f.store.writeReceipt(key,{...stop,nativeRequestId:'different-native-request'});
+ if(fault==='different-target')f.store.writeReceipt(key,{...stop,target:{...stop.target,dispatchId:'different-dispatch'}});
+ if(fault==='different-plan')f.store.writeReceipt(key,{...stop,plan:{...stop.plan,params:{dispatch:'different-dispatch'}}});
+ if(fault==='missing-linked-stop')f.store.writeReceipt(auditKey,{...audit,stopRequestId:'missing-stop'});
+ if(fault==='new-pending-audit-field')f.store.writeReceipt(auditKey,{...audit,future:{state:'pending'}});
+ const before=f.store.readReceipt(auditKey),p=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[]);assert.throws(()=>f.store.applyHistoryCleanup({requestId:'refuse-uncertain-cleanup',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/No selected history/);assert.deepEqual(f.store.readReceipt(auditKey),before);assert.equal(f.store.readWork(f.work.id).handoff.summary,'Accepted test result');
+});

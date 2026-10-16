@@ -23,3 +23,12 @@ test('next-goal prepared member Stop ignores completed Task history while histor
  await ui.getByRole('region',{name:'Execution control'}).getByRole('button',{name:'Stop current execution'}).click();await expect.poll(()=>stopInput).toBeTruthy();
  expect(stopInput.memberId).toBe(memberId);expect(stopInput.operationRequestId).toBe(preparedRequest);expect(stopInput.attemptId).toBeUndefined();expect(stopInput.workId).toBeUndefined();
 });
+test('an unknown worker stop offers explicit recovery of the same operation and keeps uncertainty after a refused recovery',async({page})=>{
+ const ui=await ready(page,'dispatch-stop-unknown');await ui.getByRole('button',{name:'View member'}).click();const control=ui.getByRole('region',{name:'Execution control'});
+ await control.getByRole('button',{name:'Stop current execution'}).click();await expect(control).toContainText('Stop: unknown');
+ const recover=control.getByRole('button',{name:'Recover same stop request',exact:true});await expect(recover).toBeVisible();
+ await control.getByRole('button',{name:'Check stop evidence'}).click();expect(await page.evaluate(()=>window.bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='recoverStop').length)).toBe(0);
+ await recover.click();await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');await expect(control).toContainText('Stop: unknown');
+ expect(await page.evaluate(()=>window.bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='recoverStop').length)).toBe(1);
+ await expect(control).toContainText('same native request');await expect(control.getByText('Stop: unknown',{exact:true})).toHaveCount(1);
+});

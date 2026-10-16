@@ -420,7 +420,7 @@
       ]
     }
   ],
-  "remaining": "All five TeamWorks completed. Whole Orca restart, physical sleep/wake, distinct permission revocation, provider-specific launch failure and active-task interruption remain unverified; #125 remains OPEN/ready-for-human. Formal0.1.08 metadata/artifacts are a separate single release step after source and live reruns.",
+  "remaining": "First six totalWorks completed. Two Stop measurement Works remain diagnostic, not claimed as accepted total deliveries. Native-owned activeStop and explicit same-request unknown recovery verified. Independent permission revocation and provider backend/process-spawn failure variants remain unverified; #125 stays OPEN/ready-for-human. 0.1.09 formal release is one separate metadata/artifact step after source/review/live reruns.",
   "controls": {
     "preparedIdleStop": {
       "requestId": "063e1984-8d43-4e7e-b42e-e6ae72ff9a9d",
@@ -522,6 +522,83 @@
       "processing": "confirmed",
       "acknowledgementNativeTaskId": "task_89ef0d876a63",
       "oldBlockedAnswerUnchanged": true
+    },
+    "desktopRestart": {
+      "version": "0.1.08",
+      "workId": "8fed3b77-24fd-4b7f-9c62-72bf0385546d",
+      "runId": "run_bcdbde078954",
+      "beforePid": 92042,
+      "afterPid": 81356,
+      "runtimeChanged": true,
+      "memberCount": 4,
+      "originalHandlePtyIncarnationPreserved": true,
+      "originalPanesRestoredAfterOpenSavedSession": true,
+      "operationCount": 4,
+      "newOperationCount": 0,
+      "nativeTaskCount": 0,
+      "runConsumerGeneration": 1,
+      "workStatus": "completed",
+      "runState": "verified",
+      "continuation": "passed after explicit same-instance reauthentication and genuine read-only task/review/user delivery",
+      "reconnectRequestId": "b506c251-2cff-4d12-a2c8-1799c1abff10",
+      "candidateSource": "6259b83e98a30e5709916be1a8837f7cc7c26bec",
+      "originalBindingInputSendAndMemberCreationHashesUnchanged": true,
+      "completedAt": "2026-10-16T08:21:42.868Z",
+      "readOnlyTaskId": "task_80667a4e072d",
+      "dispatchId": "ctx_e23b01a78fb9",
+      "evidenceId": "worker_report:msg_62ecc6fd6823"
+    },
+    "physicalSleep": {
+      "version": "0.1.08",
+      "sleptAt": "2026-10-16T15:33:56+08:00",
+      "wokeAt": "2026-10-16T15:34:41+08:00",
+      "seconds": 45,
+      "source": "actual macOS pmset power log Sleep / Wake from Deep Idle events",
+      "runtimeUnchanged": true,
+      "exactTerminalIdentitiesPreserved": true,
+      "totalTerminals": 5,
+      "memberLaunchOperationCount": 4,
+      "nativeTaskCount": 0,
+      "continuation": "Subsequent same-instance reauthentication, real read-only task/review and user delivery passed."
+    },
+    "activeOwnedStop": {
+      "source": "8569cf097da34c11b8e25d1c783f933994e90cb3",
+      "workId": "0615d3dd-4d31-4d66-a091-2795e851c693",
+      "attemptId": "a28ae648-9530-4879-b3f1-66cc54ecee04",
+      "taskId": "task_6551fe44ce35",
+      "dispatchId": "ctx_b582160ea45c",
+      "stopId": "c2b8c2c3-ff8e-4f57-96d4-3ddda0489e63",
+      "nativeRequestId": "c71e4981-a511-4bd3-a091-3613af181d0c",
+      "state": "stopped",
+      "nativeReceiptState": "completed",
+      "processAction": "closed_agent_terminal",
+      "ptyKilled": true,
+      "exactWorkerExited": true,
+      "boundedPythonCommandGone": true,
+      "repeatStopAndCheckVersion": 3,
+      "matchingStopCount": 1,
+      "totalGoalAccepted": false
+    },
+    "sameStopRecovery": {
+      "stopId": "1b02c3d7-0ed8-42fb-a62d-9556b4a0208c",
+      "nativeRequestId": "fdac9827-6488-4140-9ca1-6fa786cb80fa",
+      "originalUnknownPreservedExactly": true,
+      "samePlanAndTarget": true,
+      "nativeResult": "alreadySettled",
+      "processAction": "none",
+      "uiState": "unknown",
+      "falseExitClaim": false
+    },
+    "startupReadinessFailure": {
+      "taskId": "task_eb9840d45a82",
+      "dispatchId": "ctx_fa3c0411ddd1",
+      "stage": "agent_readiness",
+      "reason": "agent-update-prompt",
+      "taskCommandRan": false,
+      "cliUpgraded": false,
+      "automaticRetry": false,
+      "headFollowedNativeReleaseNextAction": true,
+      "separateNextMemberExplicitlyAuthorized": true
     }
   }
 }

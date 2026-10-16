@@ -24,9 +24,9 @@ __export(adapter_exports, {
 module.exports = __toCommonJS(adapter_exports);
 
 // src/public-operations.mjs
-var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences", "exportTemplate", "previewTemplate", "importTemplate"]);
+var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences", "exportTemplate", "previewTemplate", "importTemplate"]);
 var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
-var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
+var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
 // src/local/native-runtime.mjs
 var import_node_async_hooks = require("node:async_hooks");
@@ -34,7 +34,7 @@ var import_node_net = require("node:net");
 var import_node_crypto = require("node:crypto");
 var import_promises = require("node:fs/promises");
 var import_node_path = require("node:path");
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.agentStatus", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
 function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
   const context = new import_node_async_hooks.AsyncLocalStorage();
   const rpc = async (method, params, envelope = {}) => {
@@ -78,7 +78,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
         try {
           await consent();
           await verifyMetadata();
-          if (!finished) socket.write(JSON.stringify({ id, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope }) + "\n");
+          if (!finished) socket.write(JSON.stringify({ id, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope, ...method.startsWith("orchestration.") ? { orchestrationContractVersion: 1 } : {} }) + "\n");
         } catch (error) {
           finish(error);
         }
@@ -392,16 +392,16 @@ async function installAdapter(electron, { version, identity, internalKey }) {
           if (!response?.ok) throw Object.assign(Error(response?.error?.message || "Native operation unavailable."), { code: response?.error?.code ?? "host_unavailable" });
           return response.result;
         };
-        if (message.args.op === "stopMember") {
+        if (message.args.op === "stopMember" || message.args.op === "recoverStop") {
           const command = async (op, params) => {
             const response = await invoke({ op, params });
             if (response?.ok === false) throw Error(response.error?.message ?? response.error ?? "Stop command refused.");
             return response;
           };
           await authority();
-          const saved = await command("_stopPrepare", message.args.params);
+          const saved = await command(message.args.op === "recoverStop" ? "_stopRecover" : "_stopPrepare", message.args.params);
           await authority();
-          const plan = await command("_stopValidate", { requestId: saved.requestId });
+          const plan = message.args.op === "recoverStop" ? saved.plan : await command("_stopValidate", { requestId: saved.requestId });
           if (plan) {
             const socketRpc = createNativeRpc({ userData: electron.app.getPath("userData"), parentPid: process.pid, consent: authority });
             let receipt, error;

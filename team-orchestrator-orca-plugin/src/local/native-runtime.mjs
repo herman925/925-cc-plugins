@@ -3,7 +3,7 @@ import { createConnection } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { realpath,readFile } from 'node:fs/promises';
 import { join,relative,isAbsolute,sep } from 'node:path';
-const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.send','agentSession.history','agentSession.restartResumable','agentSession.restartContinue','terminal.ensureAgentSession','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow','orchestration.workerRead','orchestration.workerStop','terminal.stopExact','agentSession.close']);
+const METHODS=new Set(['status.get','settings.get','preflight.detectAgents','preflight.detectRemoteAgents','agentSession.agents','agentSession.createSupport','agentSession.modelCatalog','worktree.show','ssh.getState','terminal.show','terminal.agentStatus','terminal.wait','terminal.send','agentSession.history','agentSession.restartResumable','agentSession.restartContinue','terminal.ensureAgentSession','agentSession.send','orchestration.sessionAddress','orchestration.partyLocation','orchestration.runShow','orchestration.taskList','orchestration.workerList','orchestration.dispatchShow','orchestration.workerShow','orchestration.workerRead','orchestration.workerStop','terminal.stopExact','agentSession.close']);
 export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxBytes=2*1024*1024}) {
  const context=new AsyncLocalStorage();
  const rpc=async (method,params,envelope={})=>{
@@ -28,7 +28,7 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(result);};
    const timer=setTimeout(()=>finish(Error('Native runtime timed out; any submitted objective remains unconfirmed.')),timeoutMs);
    socket.setEncoding('utf8');
-   socket.on('connect',async()=>{try{await consent();await verifyMetadata();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope})+'\n');}catch(error){finish(error);}});
+   socket.on('connect',async()=>{try{await consent();await verifyMetadata();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope,...(method.startsWith('orchestration.')?{orchestrationContractVersion:1}:{})})+'\n');}catch(error){finish(error);}});
    socket.on('error',()=>finish(Error('Native runtime connection failed; delivery is unconfirmed.')));
    socket.on('close',()=>{if(!validating)finish(Error('Native runtime closed before a receipt; delivery is unconfirmed.'));});
    const publicError = value => [metadata.authToken,transport.endpoint,profile,userData].reduce((message,secret)=>secret?message.split(secret).join('[private runtime data]'):message,String(value||'Native operation refused')).slice(0,1500);
