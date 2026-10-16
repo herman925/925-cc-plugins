@@ -196,7 +196,10 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       readMemberDispatch(memberId) {const pointer=readPrivate(`dispatch-member:${memberId}`);return pointer?listDispatches(pointer.workId).find(a=>a.id===pointer.id):null;},
       recordDispatchName(id,version,naming) { return atomicDispatch(()=>{
         const row=validateDispatch(readPrivate(`dispatch:${id}`));
-        if(row.version!==version||readCurrentWork(row.workId)?.status==='completed'||readPrivate(`dispatch-member:${row.memberId}`)?.id!==id)fail('Member changed before sidebar naming.');
+        // An approved replacement installs binding:<member> while retaining the
+        // old Dispatch pointer as history. Non-reuse on-demand naming owns no
+        // prepared pointer; any current one supersedes its old terminal.
+        if(row.version!==version||readCurrentWork(row.workId)?.status==='completed'||readPrivate(`dispatch-member:${row.memberId}`)?.id!==id||readPrivate(`binding:${row.memberId}`))fail('Member changed before sidebar naming.');
         if(row.binding?.kind!=='terminal'||row.admission!=='committed'||row.reuse||typeof naming.title!=='string'||!naming.title||!['attempted','confirmed','unconfirmed'].includes(naming.outcome)||typeof naming.at!=='string')fail('Verified terminal naming is required.');
         if(!row.sidebarNaming&&naming.outcome!=='attempted')fail('Sidebar naming intent must precede its receipt.');
         if(row.sidebarNaming&&row.sidebarNaming.outcome!=='attempted')return row;
