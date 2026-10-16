@@ -32,5 +32,10 @@ export function launchReceipt(result, operation) {
 export function publicOperation(operation) {
   if (!operation) return null;
   const keys = ['requestId', 'memberId', 'teamId', 'status', 'title', 'handle', 'kind', 'sessionId', 'paneKey', 'tabId', 'mode', 'prompt', 'briefAccepted', 'observation', 'warning', 'error', 'executionHostId', 'configVersion', 'roleVersion', 'instanceGeneration', 'recovery'];
-  return Object.fromEntries(keys.filter(key => operation[key] !== undefined).map(key => [key, operation[key]]));
+  const value = Object.fromEntries(keys.filter(key => operation[key] !== undefined).map(key => [key, operation[key]]));
+  if (value.observation) {
+    const { ptyId, processIncarnation, ...observation } = value.observation;
+    value.observation = observation;
+  }
+  return value;
 }

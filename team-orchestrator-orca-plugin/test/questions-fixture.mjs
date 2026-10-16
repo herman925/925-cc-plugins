@@ -41,7 +41,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
   if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
-  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
+  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',ptyId:'head-pty',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
   if(method==='orchestration.runShow')return {run:db.prepare('SELECT * FROM runs WHERE id=?').get(params.id)};
   if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks WHERE run_id=?').all(params.run)};
@@ -71,7 +71,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
   const spec=JSON.stringify({protocol:'team-dispatch/v1',workerRules:WORKER_RULES,workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',writeScope:[],dependencies,...(previousAttemptId?{previousAttemptId}:{})});
   const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
-  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
+  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-pty:head-instance':null,kind==='terminal'?1:null);
   receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
  };
  const start=permit=>{

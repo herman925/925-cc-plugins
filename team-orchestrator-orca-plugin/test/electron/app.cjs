@@ -79,11 +79,11 @@ function dispatchInput(text, params, envelope) {
     const member = wire.children[0], taskId = 'native-task-' + work.id;
     const spec = JSON.stringify({ protocol: wire.protocol, workerRules: wire.workerRules, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: [], instruction: 'Inspect the checkout and return evidence.' });
     const terminal = work.instance.kind === 'terminal';
-    nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId, work.run.id, spec, 'ready', null, terminal ? work.instance.handle : null, terminal ? work.instance.paneKey : null, terminal ? work.instance.incarnationId : null, terminal ? wire.generation : null);
+    nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId, work.run.id, spec, 'ready', null, terminal ? work.instance.handle : null, terminal ? work.instance.paneKey : null, terminal ? work.instance.processIncarnation : null, terminal ? wire.generation : null);
     nativeReceipt(work, 'create-' + work.id, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task: { id: taskId, run_id: work.run.id, spec, status: 'ready' } });
     const questionSpec=JSON.stringify({protocol:'team-questions/v1',kind:'user-question',workId:work.id,token:wire.token,generation:wire.generation,appQuestionId:'fixture-question',summary:'Choose fixture scope',options:['Focused','Full'],blockingTaskKeys:[]});
     const questionId='question-'+work.id;
-    nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(questionId,work.run.id,questionSpec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.incarnationId:null,terminal?wire.generation:null);
+    nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(questionId,work.run.id,questionSpec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.processIncarnation:null,terminal?wire.generation:null);
     nativeReceipt(work,'question-create-'+work.id,'orchestration.taskCreate',{spec:questionSpec,run:work.run.id,callerTerminalHandle:from},{task:{id:questionId,run_id:work.run.id,spec:questionSpec}});
     assert.equal(nativeDb.prepare('SELECT COUNT(*) AS n FROM dispatch_contexts WHERE task_id=?').get(taskId).n, 0, 'supervisor waits for committed admission');
   } else {
@@ -122,7 +122,7 @@ function reviewNativeDispatch(attempt,decision) {
 }
 function headControlTask(work,id,body){
  const protocol=savedPrivate('dispatch-protocol').find(p=>p.workId===work.id),terminal=work.instance.kind==='terminal',spec=JSON.stringify({workId:work.id,token:protocol.token,generation:protocol.generation,...body}),task={id,run_id:work.run.id,spec,status:'ready'};
- nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.incarnationId:null,terminal?protocol.generation:null);
+ nativeDb.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,terminal?work.instance.handle:null,terminal?work.instance.paneKey:null,terminal?work.instance.processIncarnation:null,terminal?protocol.generation:null);
  nativeReceipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:terminal?work.instance.handle:'orca_session_id:'+work.instance.sessionId},{task});
 }
 function overallDelivery(work,id,previousDeliveryId=null){
@@ -201,7 +201,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
     const db = new DatabaseSync(join(app.getPath('userData'), 'agent-session-journal.db'));
     db.exec('PRAGMA user_version=4; CREATE TABLE IF NOT EXISTS agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
     db.prepare('INSERT OR REPLACE INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${params.operationId}`, JSON.stringify({ callerKey: 'trusted-local:desktop', operationId: params.operationId, fingerprint: nativeLaunchFingerprint(params), operationTimestamp: Number(params.operationId.split('-')[0]), recordedAt: Date.now(), expiresAt: Date.now() + 86400000, outcome: { status: 'succeeded', sessionId: result.outcome.sessionId ?? '', launch: result } })); db.close();
-  } else if (method === 'terminal.show') result = { terminal: { handle: 'fixture-terminal', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', tabId: 'fixture-tab', leafId: 'fixture-leaf', incarnationId: 'fixture-incarnation', agentIdentity: 'codex', connected: true, writable: true } };
+  } else if (method === 'terminal.show') result = { terminal: { handle: 'fixture-terminal', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', tabId: 'fixture-tab', leafId: 'fixture-leaf', incarnationId: 'fixture-incarnation', ptyId: 'fixture-pty', agentIdentity: 'codex', connected: true, writable: true } };
   else if (method === 'terminal.rename') { const nativeId = [...launched.keys()][0]; assert.equal(savedOperation(nativeId).status, 'created', 'identity commit must precede rename'); result = { rename: { handle: params.terminal, tabId: 'fixture-tab', title: params.title } }; }
   else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: terminalStatus } };
   else if (method === 'terminal.focus') result = { focus: { handle: params.terminal } };

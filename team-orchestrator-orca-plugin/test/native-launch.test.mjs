@@ -265,3 +265,9 @@ test('staffing validates explicit model against the fixed Work host before savin
  const result=await f.send('saveStaffing',{requestId:'invalid-model-add',workId:work.id,expectedRevision:store.readSnapshot().revision,configVersion:1,member:{name:'Reviewer',boss:f.team.members[0].id,brief:'Review',habits:'',collaboration:'Report',agent:'claude',model:'unverified-model',effort:'default'}});
  assert.equal(result.ok,false);assert.match(result.error,/model|overrides/i);assert.equal(store.readSnapshot().teams[0].members.length,4);assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,1);
 });
+
+test('public launch observation keeps private PTY process identity out of the panel projection',async()=>{
+ const {publicOperation}=await import('../src/local/native-launch.mjs');
+ const observed=publicOperation({requestId:'launch',observation:{state:'idle',incarnationId:'raw-incarnation',ptyId:'repo::/private/work@@pty',processIncarnation:'repo::/private/work@@pty:raw-incarnation'}});
+ assert.deepEqual(observed.observation,{state:'idle',incarnationId:'raw-incarnation'});
+});
