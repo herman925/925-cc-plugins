@@ -325,27 +325,27 @@ function workInput(input) {
 }
 function validateWork(work) {
   const text9 = (value, max = 4096) => typeof value === "string" && value.length > 0 && value.length <= max;
-  const fail3 = () => {
+  const fail4 = () => {
     throw Error("Saved TeamWork evidence is damaged; existing data was preserved.");
   };
-  if (!work || work.format !== "team-work-v1" || !text9(work.id, 120) || !text9(work.teamId, 120) || !text9(work.requestId, 120) || !text9(work.supervisorMemberId, 120) || !text9(work.objective, 8e3) || !text9(work.protocolToken, 120) || !Number.isSafeInteger(work.version) || work.version < 1 || !Number.isSafeInteger(work.configVersion) || work.configVersion < 1 || !Number.isSafeInteger(work.roleVersion) || work.roleVersion < 1 || !["preparing", "awaiting_input", "awaiting_run", "active", "needs_attention", "awaiting_acceptance", "completed"].includes(work.status)) fail3();
-  if (work.parent && (!text9(work.teamWorkId, 120) || work.teamWorkId === work.id || !["workId", "runId", "taskId", "dispatchId", "attemptId"].every((k) => text9(work.parent[k], 256)) || !Number.isSafeInteger(work.parent.generation) || work.parent.generation < 1 || (work.binding?.sourceAttemptId ?? work.binding?.originAttemptId) !== work.parent.attemptId)) fail3();
+  if (!work || work.format !== "team-work-v1" || !text9(work.id, 120) || !text9(work.teamId, 120) || !text9(work.requestId, 120) || !text9(work.supervisorMemberId, 120) || !text9(work.objective, 8e3) || !text9(work.protocolToken, 120) || !Number.isSafeInteger(work.version) || work.version < 1 || !Number.isSafeInteger(work.configVersion) || work.configVersion < 1 || !Number.isSafeInteger(work.roleVersion) || work.roleVersion < 1 || !["preparing", "awaiting_input", "awaiting_run", "active", "needs_attention", "awaiting_acceptance", "completed"].includes(work.status)) fail4();
+  if (work.parent && (!text9(work.teamWorkId, 120) || work.teamWorkId === work.id || !["workId", "runId", "taskId", "dispatchId", "attemptId"].every((k) => text9(work.parent[k], 256)) || !Number.isSafeInteger(work.parent.generation) || work.parent.generation < 1 || (work.binding?.sourceAttemptId ?? work.binding?.originAttemptId) !== work.parent.attemptId)) fail4();
   const scope = work.scope, binding = work.binding;
-  if (!scope || !text9(scope.workspaceId) || !text9(scope.displayName) || !["git", "folder"].includes(scope.kind) || !/^(local|ssh:[^\s|]+)$/.test(scope.executionHostId) || !/^[a-f0-9]{64}$/.test(scope.workspaceKey) || !binding || binding.status !== "created" || binding.teamId !== work.teamId || binding.memberId !== work.supervisorMemberId || !text9(binding.requestId, 120) || !text9(binding.runtimeId, 256) || !["structured", "terminal"].includes(binding.kind) || !text9(binding.handle) || binding.scope?.workspaceId !== scope.workspaceId || binding.scope?.executionHostId !== scope.executionHostId || binding.scope?.workspaceKey !== scope.workspaceKey || binding.kind === "structured" && !text9(binding.sessionId)) fail3();
+  if (!scope || !text9(scope.workspaceId) || !text9(scope.displayName) || !["git", "folder"].includes(scope.kind) || !/^(local|ssh:[^\s|]+)$/.test(scope.executionHostId) || !/^[a-f0-9]{64}$/.test(scope.workspaceKey) || !binding || binding.status !== "created" || binding.teamId !== work.teamId || binding.memberId !== work.supervisorMemberId || !text9(binding.requestId, 120) || !text9(binding.runtimeId, 256) || !["structured", "terminal"].includes(binding.kind) || !text9(binding.handle) || binding.scope?.workspaceId !== scope.workspaceId || binding.scope?.executionHostId !== scope.executionHostId || binding.scope?.workspaceKey !== scope.workspaceKey || binding.kind === "structured" && !text9(binding.sessionId)) fail4();
   if (work.nativeObjective !== `TeamWork ${work.id} ${work.protocolToken}
-${work.objective}` || !["not_sent", "sending", "accepted", "queued", "unknown", "rejected"].includes(work.input?.state) || !["unknown", "observed"].includes(work.processing?.state) || !["unverified", "verified", "fenced"].includes(work.run?.state)) fail3();
-  if (work.run.state === "verified" && (!text9(work.run.id, 256) || !Number.isSafeInteger(work.run.consumerGeneration) || work.run.consumerGeneration < 1)) fail3();
-  if (work.input.state !== "not_sent" && (!work.nativeSend || !["agentSession.send", "terminal.send"].includes(work.nativeSend.method) || !work.nativeSend.params)) fail3();
+${work.objective}` || !["not_sent", "sending", "accepted", "queued", "unknown", "rejected"].includes(work.input?.state) || !["unknown", "observed"].includes(work.processing?.state) || !["unverified", "verified", "fenced"].includes(work.run?.state)) fail4();
+  if (work.run.state === "verified" && (!text9(work.run.id, 256) || !Number.isSafeInteger(work.run.consumerGeneration) || work.run.consumerGeneration < 1)) fail4();
+  if (work.input.state !== "not_sent" && (!work.nativeSend || !["agentSession.send", "terminal.send"].includes(work.nativeSend.method) || !work.nativeSend.params)) fail4();
   if (work.nativeSend) {
     const request = work.nativeSend.params, instance = work.instance;
-    if (!instance || instance.kind !== binding.kind) fail3();
+    if (!instance || instance.kind !== binding.kind) fail4();
     if (binding.kind === "structured") {
-      if (work.nativeSend.method !== "agentSession.send" || request.envelope?.sessionId !== binding.sessionId || instance.liveSessionId !== binding.sessionId || !text9(instance.sessionId) || request.envelope?.expectedRuntimeFence !== instance.fence || !Number.isSafeInteger(instance.fence) || instance.fence < 1 || !/^[0-9]{13}-[0-9a-f]{32}$/.test(request.envelope?.clientOperationId) || !/^[a-f0-9]{64}$/.test(request.envelope?.payloadFingerprint) || request.body?.kind !== "message" || request.body?.role !== "user" || !Array.isArray(request.body.blocks) || request.body.blocks.length !== 1 || request.body.blocks[0].type !== "text" || !text9(request.body.blocks[0].text, 3e4)) fail3();
-    } else if (work.nativeSend.method !== "terminal.send" || request.terminal !== binding.handle || instance.handle !== binding.handle || instance.paneKey !== binding.paneKey || !text9(instance.incarnationId) || request.agentPrompt !== true || request.enter !== true || !text9(request.text, 3e4) || !/^[0-9a-f-]{36}$/.test(work.nativeSend.envelope?.orchestrationRequestId)) fail3();
+      if (work.nativeSend.method !== "agentSession.send" || request.envelope?.sessionId !== binding.sessionId || instance.liveSessionId !== binding.sessionId || !text9(instance.sessionId) || request.envelope?.expectedRuntimeFence !== instance.fence || !Number.isSafeInteger(instance.fence) || instance.fence < 1 || !/^[0-9]{13}-[0-9a-f]{32}$/.test(request.envelope?.clientOperationId) || !/^[a-f0-9]{64}$/.test(request.envelope?.payloadFingerprint) || request.body?.kind !== "message" || request.body?.role !== "user" || !Array.isArray(request.body.blocks) || request.body.blocks.length !== 1 || request.body.blocks[0].type !== "text" || !text9(request.body.blocks[0].text, 3e4)) fail4();
+    } else if (work.nativeSend.method !== "terminal.send" || request.terminal !== binding.handle || instance.handle !== binding.handle || instance.paneKey !== binding.paneKey || !text9(instance.incarnationId) || request.agentPrompt !== true || request.enter !== true || !text9(request.text, 3e4) || !/^[0-9a-f-]{36}$/.test(work.nativeSend.envelope?.orchestrationRequestId)) fail4();
   }
   if (work.currentSupervisor) {
     const current = work.currentSupervisor;
-    if (!Number.isSafeInteger(current.epoch) || current.epoch < 1 || !text9(current.recoveryRequestId, 120)) fail3();
+    if (!Number.isSafeInteger(current.epoch) || current.epoch < 1 || !text9(current.recoveryRequestId, 120)) fail4();
     validateWork({ ...work, ...current, currentSupervisor: void 0, nativeSend: current.nativeSend });
   }
   return work;
@@ -353,7 +353,7 @@ ${work.objective}` || !["not_sent", "sending", "accepted", "queued", "unknown", 
 function publicWork(work) {
   validateWork(work);
   const fields2 = ["id", "teamId", "supervisorMemberId", "objective", "configVersion", "roleVersion", "createdAt", "version", "epoch", "recoveryRequestId", "status", "processing", "run", "snapshot", "error", "closedAt", "handoff", "historyPruned"];
-  return { ...Object.fromEntries(fields2.filter((key) => work[key] !== void 0).map((key) => [key, work[key]])), scope: { displayName: work.scope.displayName, kind: work.scope.kind, executionHostId: work.scope.executionHostId }, input: { state: work.input.state, ...work.input.source ? { source: work.input.source } : {}, ...work.input.dispatchState ? { dispatchState: work.input.dispatchState } : {}, ...work.input.queued ? { queued: work.input.queued } : {}, ...work.input.messageId ? { messageId: work.input.messageId } : {}, ...work.input.detail ? { detail: work.input.detail } : {} } };
+  return { ...work.run.id && work.run.state === "unverified" && work.input.state === "accepted" && work.scope.executionHostId === "local" && work.binding.kind === "terminal" && !work.parent && !work.recoveryRequestId && work.status !== "completed" ? { canReconnectRuntime: true } : {}, ...work.runtimeControl ? { runtimeRecovery: { state: "reconnected", requestId: work.runtimeControl.requestId, reconnectedAt: work.runtimeControl.createdAt } } : {}, ...Object.fromEntries(fields2.filter((key) => work[key] !== void 0).map((key) => [key, work[key]])), scope: { displayName: work.scope.displayName, kind: work.scope.kind, executionHostId: work.scope.executionHostId }, input: { state: work.input.state, ...work.input.source ? { source: work.input.source } : {}, ...work.input.dispatchState ? { dispatchState: work.input.dispatchState } : {}, ...work.input.queued ? { queued: work.input.queued } : {}, ...work.input.messageId ? { messageId: work.input.messageId } : {}, ...work.input.detail ? { detail: work.input.detail } : {} } };
 }
 
 // src/scheduling.mjs
@@ -502,7 +502,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.08" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.09" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -658,15 +658,15 @@ async function connectInspector(url, timeoutMs = 4e3) {
   });
   let sequence = 0;
   const pending = /* @__PURE__ */ new Map();
-  const fail3 = (error) => {
+  const fail4 = (error) => {
     for (const item of pending.values()) {
       clearTimeout(item.timer);
       item.reject(error);
     }
     pending.clear();
   };
-  socket.addEventListener("close", () => fail3(new Error("Inspector disconnected.")));
-  socket.addEventListener("error", () => fail3(new Error("Inspector transport failed.")));
+  socket.addEventListener("close", () => fail4(new Error("Inspector disconnected.")));
+  socket.addEventListener("error", () => fail4(new Error("Inspector transport failed.")));
   socket.addEventListener("message", (event) => {
     let message;
     try {
@@ -696,7 +696,7 @@ async function connectInspector(url, timeoutMs = 4e3) {
       return result.result?.value;
     },
     close() {
-      fail3(new Error("Inspector session closed."));
+      fail4(new Error("Inspector session closed."));
       socket.close();
     }
   };
@@ -746,7 +746,7 @@ async function targets(port) {
   }
 }
 var failure = (code, message) => Object.assign(new Error(message), { code });
-async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.08", internalKey } = {}) {
+async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.09", internalKey } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
@@ -783,8 +783,8 @@ async function bootstrap({ platform = process.platform, parentPid = process.ppid
     Object.assign(report, validateRuntime(runtime), { appVersion: runtime.appVersion });
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure("profile_missing", "Orca did not resolve its actual runtime profile.");
     const source = await readFile2(adapterPath, "utf8");
-    const digest4 = createHash3("sha256").update(source).digest("hex");
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest4)},internalKey:${JSON.stringify(internalKey)}});})()`;
+    const digest5 = createHash3("sha256").update(source).digest("hex");
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest5)},internalKey:${JSON.stringify(internalKey)}});})()`;
     Object.assign(report, await client.evaluate(expression), { cliPaths: runtime.cliPaths });
     report.detail = "Local runtime adapter installed; panel-to-worker test is available.";
   } catch (error) {
@@ -852,6 +852,27 @@ function createCliRunner(command) {
     if (response.ok !== true) throw new Error(response.error?.message ?? "Orca CLI rejected the operation.");
     return response.result;
   };
+}
+
+// src/local/runtime-control.mjs
+var controlRuntime = (work) => work?.runtimeControl?.runtimeId ?? work?.binding?.runtimeId;
+function memberControlRuntime(work, operation) {
+  const control = work?.runtimeControl;
+  const recorded = control?.members?.find(
+    (row) => row.requestId === operation.requestId && row.memberId === operation.memberId && row.instanceGeneration === (operation.instanceGeneration ?? 1)
+  );
+  if (!recorded) return operation.runtimeId;
+  const proof = control.proof.members.find(
+    (row) => row.requestId === operation.requestId && row.memberId === operation.memberId
+  );
+  if (!proof || operation.runtimeId !== work.binding.runtimeId || operation.kind !== "terminal" || operation.handle !== proof.handle || operation.paneKey !== proof.paneKey || operation.nativeRequest.agent !== proof.agent || ["ptyId", "incarnationId", "processIncarnation"].some(
+    (key) => operation.observation?.[key] !== proof[key]
+  )) {
+    throw Error(
+      "The prepared member changed after reconnect. Its earlier control proof cannot redirect a new assignment."
+    );
+  }
+  return control.runtimeId;
 }
 
 // src/local/keyed-serializer.mjs
@@ -942,7 +963,7 @@ import { createConnection as createConnection2 } from "node:net";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { realpath as realpath3, readFile as readFile3 } from "node:fs/promises";
 import { join as join4, relative as relative2, isAbsolute as isAbsolute2, sep as sep2 } from "node:path";
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.agentStatus", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
 function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
   const context = new AsyncLocalStorage();
   const rpc = async (method, params, envelope = {}) => {
@@ -986,7 +1007,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
         try {
           await consent();
           await verifyMetadata();
-          if (!finished) socket.write(JSON.stringify({ id: id2, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope }) + "\n");
+          if (!finished) socket.write(JSON.stringify({ id: id2, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope, ...method.startsWith("orchestration.") ? { orchestrationContractVersion: 1 } : {} }) + "\n");
         } catch (error) {
           finish(error);
         }
@@ -1247,6 +1268,141 @@ function matchesTerminalObservation(terminal, saved) {
 // src/local/dispatch.mjs
 import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 
+// src/local/runtime-reconnect.mjs
+var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var terminalControlIdentity = (terminal) => [
+  "handle",
+  "worktreeId",
+  "executionHostId",
+  "connected",
+  "writable",
+  "agentIdentity",
+  "tabId",
+  "leafId",
+  "ptyId",
+  "incarnationId"
+].map((key) => terminal[key]);
+async function nativeRun(userData, work, operations, settle = (value) => value) {
+  return withOrchestrationSnapshot(
+    userData,
+    {
+      pathError: "The native evidence is outside this Orca profile.",
+      schemaError: "The native evidence format is unsupported."
+    },
+    (db) => {
+      const run = db.prepare(
+        "SELECT id,objective,home_database,legacy,consumer_generation,coordinator_handle,coordinator_pane_key,coordinator_orca_session_id,coordinator_orca_session_id_generation FROM runs WHERE id=?"
+      ).get(work.run.id);
+      if (!run || run.objective !== work.nativeObjective || run.home_database !== "this_database" || run.legacy !== 0 || run.consumer_generation !== work.run.consumerGeneration || run.coordinator_handle !== work.instance.handle || run.coordinator_pane_key !== work.instance.paneKey || run.coordinator_orca_session_id)
+        throw Error("The original native Run owner or generation changed.");
+      if (db.prepare("SELECT id FROM tasks WHERE run_id=? LIMIT 1").get(run.id) || db.prepare("SELECT id FROM dispatch_contexts WHERE run_id=? LIMIT 1").get(run.id))
+        throw Error(
+          "This Run has native Task or Dispatch work. Reconnect requires a quiet original Run."
+        );
+      for (const op of operations)
+        if (db.prepare(
+          "SELECT id FROM dispatch_contexts WHERE assignee_handle=? AND status IN ('pending','dispatched') LIMIT 1"
+        ).get(op.handle))
+          throw Error("A prepared member has an active native assignment.");
+      return settle({ ...run });
+    }
+  );
+}
+async function reconnectRuntime({ store, rpc, userData, consent }, input) {
+  if (!input || Object.keys(input).some(
+    (k) => !["requestId", "workId", "expectedRevision", "expectedWorkVersion"].includes(k)
+  ) || !/^[A-Za-z0-9-]{1,120}$/.test(input.requestId ?? "") || typeof input.workId !== "string" || !Number.isSafeInteger(input.expectedRevision) || !Number.isSafeInteger(input.expectedWorkVersion))
+    throw Error("Choose the saved work and reload its current team before reconnecting.");
+  await consent();
+  const prior = store.replayRuntimeReconnect(input);
+  if (prior) return store.readCurrentWork(input.workId);
+  const before = store.runtimeReconnectSnapshot(input), work = before.work, initial = await rpc("status.get");
+  if (typeof initial?.runtimeId !== "string" || !initial.runtimeId || initial.runtimeId === controlRuntime({ ...work, runtimeControl: before.control }))
+    throw Error("These sessions already belong to the current Orca runtime.");
+  return withNativeRuntime(rpc, initial.runtimeId, async () => {
+    const read = async () => {
+      await consent();
+      const status = await rpc("status.get");
+      if (status?.runtimeId !== initial.runtimeId || !["orchestration.contract.v1", "terminal.prompt-delivery.v1"].every(
+        (c) => status.capabilities?.includes(c)
+      ))
+        throw Error("Orca changed or the required native contract is unavailable.");
+      const project = (await rpc("worktree.show", {
+        worktree: work.scope.workspaceId.startsWith("folder:") ? work.scope.workspaceId : `id:${work.scope.workspaceId}`
+      }))?.worktree;
+      if (project?.id !== work.scope.workspaceId || (project.hostId ?? project.identity?.executionHostId) !== "local")
+        throw Error("The saved project or local host changed.");
+      const members = [];
+      for (const op of before.operations) {
+        const shown2 = (await rpc("terminal.show", { terminal: op.handle }))?.terminal;
+        if (shown2?.handle !== op.handle || shown2.worktreeId !== work.scope.workspaceId || shown2.executionHostId !== "local" || shown2.connected !== true || shown2.writable !== true || shown2.agentIdentity !== op.nativeRequest.agent || `${shown2.tabId}:${shown2.leafId}` !== op.paneKey || /placeholder/.test(`${shown2.tabId}:${shown2.leafId}`) || !same2(terminalIdentity(shown2), {
+          ptyId: op.observation.ptyId,
+          incarnationId: op.observation.incarnationId,
+          processIncarnation: op.observation.processIncarnation
+        }))
+          throw Error(
+            "An original prepared session changed or is not connected. No session was replaced."
+          );
+        if (op.requestId === work.binding.requestId && !same2(
+          {
+            kind: "terminal",
+            handle: shown2.handle,
+            paneKey: op.paneKey,
+            ...terminalIdentity(shown2)
+          },
+          work.instance
+        ))
+          throw Error("The original supervisor execution identity changed.");
+        const activity = (await rpc("terminal.agentStatus", { terminal: op.handle }))?.agentStatus;
+        if (activity?.handle !== op.handle || activity.isRunningAgent !== true || !["idle", null].includes(activity.status))
+          throw Error(
+            "A prepared agent is busy, waiting for permission, or has no verified idle status. Finish its current turn before reconnecting."
+          );
+        const wait = (await rpc("terminal.wait", { terminal: op.handle, for: "tui-idle", timeoutMs: 1e3 }))?.wait;
+        if (wait?.handle !== op.handle || wait.condition !== "tui-idle" || wait.satisfied !== true || wait.status !== "running" || wait.blockedReason || wait.exitCode !== null)
+          throw Error(
+            "The native idle check did not confirm this exact agent is ready. Keep its session and finish the pending turn or permission prompt."
+          );
+        const after = (await rpc("terminal.show", { terminal: op.handle }))?.terminal, afterActivity = (await rpc("terminal.agentStatus", { terminal: op.handle }))?.agentStatus;
+        if (!after || !same2(terminalControlIdentity(shown2), terminalControlIdentity(after)) || afterActivity?.handle !== op.handle || afterActivity.isRunningAgent !== true || !["idle", null].includes(afterActivity.status))
+          throw Error("The original agent changed or became busy during its idle check.");
+        members.push({
+          requestId: op.requestId,
+          memberId: op.memberId,
+          handle: shown2.handle,
+          paneKey: op.paneKey,
+          ...terminalIdentity(shown2),
+          agent: shown2.agentIdentity,
+          activity: "native-tui-idle",
+          idleEvidence: {
+            condition: wait.condition,
+            satisfied: wait.satisfied,
+            status: wait.status
+          }
+        });
+      }
+      const run = await nativeRun(userData, work, before.operations), shown = (await rpc("orchestration.runShow", { id: work.run.id }))?.run;
+      if (shown?.id !== run.id || shown.objective !== run.objective || shown.consumer_generation !== run.consumer_generation)
+        throw Error("Native Run changed during reconnect.");
+      const tasks = await rpc("orchestration.taskList", { run: work.run.id, brief: true });
+      if (!Array.isArray(tasks?.tasks) || tasks.tasks.length)
+        throw Error("Native Task work appeared during reconnect.");
+      return { runtimeId: status.runtimeId, run, members };
+    };
+    const first = await read(), second = await read();
+    if (!same2(first, second))
+      throw Error("Native identities changed during reconnect. No control binding was changed.");
+    await consent();
+    if ((await rpc("status.get"))?.runtimeId !== initial.runtimeId)
+      throw Error("Orca restarted again during reconnect.");
+    await nativeRun(userData, work, before.operations, (run) => {
+      if (!same2(second.run, run)) throw Error("Native Run changed before reconnect settlement.");
+      store.commitRuntimeReconnect(input, before, { ...second, reads: 2 });
+    });
+    return store.readCurrentWork(work.id);
+  });
+}
+
 // src/local/native-hierarchy.mjs
 async function readNativeParentEvidence(userData, { parentWork, attempt, active = true }) {
   try {
@@ -1299,7 +1455,7 @@ var canonical2 = (value) => value === null || typeof value !== "object" ? JSON.s
 var sendFingerprint = (sessionId, body, delivery) => createHash6("sha256").update(canonical2({ method: "agentSession.send", sessionId, fields: { body, ...delivery ? { delivery } : {} } })).digest("hex");
 function objectiveInstructions(work, team) {
   if (work.parent) return `TEAM_MANAGER_RUN
-${JSON.stringify({ teamWorkId: work.teamWorkId, runBindingId: work.id, parent: work.parent, objective: work.nativeObjective, instruction: "You are the actual assigned manager of the original parent Dispatch. Keep that umbrella Dispatch active while delegating and reviewing. Using your own inherited native identity create exactly one Run with this exact objective; do not fabricate --from. Never pass a parent Run Task as native --parent in this Run. Wait for the versioned child admission protocol. Native depth is inherited from your active parent Dispatch across Runs; if nested_worker_depth_exceeded, report that refusal and ask the highest supervisor to request Settings \u2192 Orchestration \u2192 Nested worker depth at least 2 (or the required deeper level). Never change the setting or launch a standalone replacement to bypass it. Accept only direct reports. When every descendant is accepted and questions resolved, send your own native worker_done for the ORIGINAL parent Dispatch/Task and original parent Run using the installed guide; do not stamp the child Run onto the upward report. Only the highest supervisor asks/delivers to the user. Relay questions through your real parent manager, preserving their original native question IDs. Do not self-create provider-native subagents; only approved roster members via admitted native Orca dispatch. This is a cooperative instruction and admission policy, not global provider tool interception." })}`;
+${JSON.stringify({ teamWorkId: work.teamWorkId, runBindingId: work.id, parent: work.parent, objective: work.nativeObjective, instruction: "You are the actual assigned manager of the original parent Dispatch. Keep that umbrella Dispatch active while delegating and reviewing. Using your own inherited native identity create exactly one Run with this exact objective. This message is JSON: decode its objective string, including escaped newlines, before passing it as one CLI argument; verify the actual stored objective string; do not fabricate --from. Never pass a parent Run Task as native --parent in this Run. Wait for the versioned child admission protocol. Native depth is inherited from your active parent Dispatch across Runs; if nested_worker_depth_exceeded, report that refusal and ask the highest supervisor to request Settings \u2192 Orchestration \u2192 Nested worker depth at least 2 (or the required deeper level). Never change the setting or launch a standalone replacement to bypass it. Accept only direct reports. When every descendant is accepted and questions resolved, send your own native worker_done for the ORIGINAL parent Dispatch/Task and original parent Run using the installed guide; do not stamp the child Run onto the upward report. Only the highest supervisor asks/delivers to the user. Relay questions through your real parent manager, preserving their original native question IDs. Do not self-create provider-native subagents; only approved roster members via admitted native Orca dispatch. This is a cooperative instruction and admission policy, not global provider tool interception." })}`;
   const head = team.members.find((row) => row.id === work.supervisorMemberId);
   return `Team Orchestrator work protocol v1. TeamWork ${work.id}; team ${work.teamId}; supervisor member ${work.supervisorMemberId}; configuration ${work.configVersion}; role ${work.roleVersion}.
 Your saved role: ${head.brief}
@@ -1308,11 +1464,11 @@ Collaboration: ${head.collaboration}
 Project: ${work.scope.workspaceId}; execution host: ${work.scope.executionHostId}.
 Approved prior-work handoff: ${work.handoff ? JSON.stringify(work.handoff) : "None"}.
 Total objective: ${work.objective}
-Use your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
+Use your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. This shown string is JSON-encoded: decode it, including escaped newlines, before passing it as one CLI argument. Verify the actual stored objective string. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
 }
 function createWorkService({ store, rpc, userData, consent }) {
   const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, store.readCurrentWork(id2)?.binding.runtimeId, fn));
+  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const save = (work, patch) => store.updateWork(work.id, work.version, patch);
   async function verifyHost(work, expected = work.binding.hostGeneration) {
     if (!work.scope.executionHostId.startsWith("ssh:")) return null;
@@ -1342,7 +1498,7 @@ function createWorkService({ store, rpc, userData, consent }) {
     }
     if (!binding || (!work.parent || work.recoveryRequestId) && !store.isActiveOperation(binding) && !reserved || binding.status !== "created" || ["memberId", "teamId", "kind", "handle", "sessionId", "runtimeId"].some((key) => binding[key] !== work.binding[key]) || binding.scope?.workspaceKey !== work.scope.workspaceKey) throw Error("Saved supervisor binding changed; no objective can be redirected.");
     const status = await rpc("status.get");
-    if (status?.runtimeId !== binding.runtimeId || !status.capabilities?.includes("orchestration.contract.v1")) throw Error("The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.");
+    if (status?.runtimeId !== controlRuntime(work) || !status.capabilities?.includes("orchestration.contract.v1")) throw Error("The bound Orca runtime or orchestration contract is unavailable. Open its Orchestration setup and read the matching installed CLI guide.");
     const selected = (await rpc("worktree.show", { worktree: work.scope.workspaceId.startsWith("folder:") ? work.scope.workspaceId : `id:${work.scope.workspaceId}` }))?.worktree;
     if (selected?.id !== work.scope.workspaceId || (selected.hostId ?? selected.identity?.executionHostId) !== work.scope.executionHostId) throw Error("The saved project or execution host is no longer verified.");
     const hostGeneration = await verifyHost(work);
@@ -1444,6 +1600,9 @@ function createWorkService({ store, rpc, userData, consent }) {
     }
   }
   return {
+    async reconnect(input) {
+      return serialize(input?.workId, async () => publicWork(await reconnectRuntime({ store, rpc, userData, consent }, input)));
+    },
     async startManager(id2) {
       return serial(id2, async () => {
         const work = store.readCurrentWork(id2);
@@ -1459,7 +1618,7 @@ function createWorkService({ store, rpc, userData, consent }) {
     async verifyWork(id2, forSend = false, options) {
       const work = store.readCurrentWork(id2);
       if (!work) throw Error("Saved work not found.");
-      return withNativeRuntime(rpc, work.binding.runtimeId, () => verify(work, forSend, options));
+      return withNativeRuntime(rpc, controlRuntime(work), () => verify(work, forSend, options));
     },
     async submit(input) {
       const prepared = store.prepareWork(input);
@@ -1497,7 +1656,7 @@ var parse5 = (value) => {
     return null;
   }
 };
-var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var same3 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 var fields = ["protocol", "workId", "token", "generation", "supervisorMemberId", "nativeTaskId", "taskKey", "memberId", "replacementNativeTaskId", "reason"];
 var caller2 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
 function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitted, identity, receipts, verifyIntent: verifyIntent2, history = [], historyContexts = [] }) {
@@ -1533,7 +1692,7 @@ function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitte
       if (created.length !== 1) throw Error("Original Task creation proof is missing or ambiguous.");
       verifyIntent2(task, { ...original, workerRules: WORKER_RULES }, work, proofProtocol, proofTeam, proofOwner, created[0]);
       const replacement = byId.get(result.replacementNativeTaskId), replacementSpec = parse5(replacement?.spec);
-      if (!replacement || replacement.run_id !== task.run_id || !same2({ ...original, workerRules: WORKER_RULES }, replacementSpec)) throw Error("Replacement must preserve the exact business intent and add the approved workerRules.");
+      if (!replacement || replacement.run_id !== task.run_id || !same3({ ...original, workerRules: WORKER_RULES }, replacementSpec)) throw Error("Replacement must preserve the exact business intent and add the approved workerRules.");
       const replacementCreated = receipts("orchestration.taskCreate", replacement.id);
       if (replacementCreated.length !== 1) throw Error("Replacement Task creation proof is missing or ambiguous.");
       verifyIntent2(replacement, replacementSpec, work, proofProtocol, proofTeam, proofOwner, replacementCreated[0]);
@@ -1541,7 +1700,7 @@ function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitte
       const expected = nativeMutationFingerprint("orchestration.taskUpdate", { id: task.id, status: "failed", result: task.result, run: work.run.id, callerTerminalHandle: caller2(proofOwner) }, proofOwner);
       if (updates.length !== 1 || update.payload_hash !== expected || update.value?.task?.id !== task.id || update.value.task.run_id !== work.run.id || update.value.task.status !== "failed" || update.value.task.spec !== task.spec || update.value.task.result !== task.result) throw Error("Withdrawal needs the exact authenticated owning supervisor Task update.");
       const record = { workId: work.id, nativeTaskId: task.id, replacementNativeTaskId: replacement.id, taskKey: original.taskKey, memberId: original.memberId, reason: result.reason, generation: proofProtocol.generation, epoch: proofEpoch, originalSpec: task.spec, replacementSpec: replacement.spec, result: task.result, createProof: { requestId: created[0].request_id, payloadHash: created[0].payload_hash }, replacementProof: { requestId: replacementCreated[0].request_id, payloadHash: replacementCreated[0].payload_hash }, updateProof: { requestId: update.request_id, payloadHash: update.payload_hash } };
-      if (saved && !same2(saved, record)) throw Error("Recorded withdrawal evidence changed.");
+      if (saved && !same3(saved, record)) throw Error("Recorded withdrawal evidence changed.");
       withdrawn.push(record);
     } catch (error) {
       rejected.push({ nativeTaskId: task.id, detail: error.message });
@@ -1555,7 +1714,7 @@ function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitte
 
 // src/local/native-dispatch.mjs
 var caller3 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
-var same3 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var same4 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 var parse6 = (value) => {
   try {
     return JSON.parse(value);
@@ -1570,7 +1729,7 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
   if (spec.dependencies !== void 0 && (!Array.isArray(spec.dependencies) || spec.dependencies.length > 100 || spec.dependencies.some((key) => typeof key !== "string" || !/^[A-Za-z0-9-]{1,120}$/.test(key) || key === spec.taskKey) || new Set(spec.dependencies).size !== spec.dependencies.length)) throw Error("Invalid application dependencies.");
   if (spec.writeScope !== void 0) declaredWriteScope(spec.writeScope);
   const member = team.members.find((row) => row.id === spec.memberId);
-  if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== spec.roleVersion || !same3(spec.role, { brief: member.brief, habits: member.habits, collaboration: member.collaboration })) throw Error("Task member, direct supervisor or frozen role version does not match.");
+  if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== spec.roleVersion || !same4(spec.role, { brief: member.brief, habits: member.habits, collaboration: member.collaboration })) throw Error("Task member, direct supervisor or frozen role version does not match.");
   const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
   if (receipt.payload_hash !== expected || receipt.value?.task?.id !== task.id || receipt.value.task.spec !== task.spec || receipt.value.task.run_id !== work.run.id) throw Error("Native Task author proof is unavailable. Use the exact task-create protocol without extra flags.");
   if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) throw Error("Native terminal Task creator instance is unverified.");
@@ -1814,7 +1973,7 @@ function accepted(receipt, send, instance) {
 }
 function createDispatchService({ store, rpc, userData, consent, works, beforeAdmission, onNativeWait, onClosedMember }) {
   const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, store.readCurrentWork(id2)?.binding.runtimeId, fn));
+  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const project = (id2) => store.dispatchProjection(id2);
   const teamFor = (work) => store.effectiveTeamForWork?.(work.id) ?? store.readTeamVersion(work.teamId, work.configVersion);
   async function evidence(work, protocol, team, verified) {
@@ -1835,7 +1994,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
     }
   }
   async function preparedSession(work, member, saved) {
-    if (!saved || !store.isActiveOperation(saved) || saved.status !== "created" || saved.teamId !== work.teamId || saved.memberId !== member.id || saved.scope?.workspaceKey !== work.scope.workspaceKey || saved.roleVersion !== member.roleVersion || saved.runtimeId !== work.binding.runtimeId) throw Error("Prepared member is unknown, stale or belongs to another scope; no replacement was launched.");
+    if (!saved || !store.isActiveOperation(saved) || saved.status !== "created" || saved.teamId !== work.teamId || saved.memberId !== member.id || saved.scope?.workspaceKey !== work.scope.workspaceKey || saved.roleVersion !== member.roleVersion || memberControlRuntime(work, saved) !== controlRuntime(work)) throw Error("Prepared member is unknown, stale or belongs to another scope; no replacement was launched.");
     const preferences = { agent: saved.nativeRequest.agent, model: saved.nativeRequest.sessionOptions?.model ?? "default", effort: saved.nativeRequest.sessionOptions?.effort ?? "default" };
     if (Object.keys(preferences).some((key) => preferences[key] !== member[key])) throw Error("Prepared session preferences differ; reuse cannot override model or effort.");
     let terminal, binding, sessionFence;
@@ -2038,7 +2197,7 @@ async function notifyQuestionEvent(store, notify, { workId, id: id2, kind, title
 }
 function createQuestionService({ store, rpc, userData, consent, works, notify }) {
   const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, store.readCurrentWork(id2)?.binding.runtimeId, fn));
+  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const matchingIntent = (question, native) => native.intents.find((intent) => intent.nativeTaskId === question.proof?.nativeTaskId && JSON.stringify(intent) === JSON.stringify(question.proof) && JSON.stringify(intent.spec.origin ?? null) === JSON.stringify(question.origin ?? null));
   const reportFor = (question, native) => {
     const intent = matchingIntent(question, native), source = intent && (native.sourceReports ?? []).find((row) => row.nativeTaskId === intent.nativeTaskId && row.appQuestionId === question.id)?.sourceReport;
@@ -2219,7 +2378,7 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
 function createStaffingService({ store, rpc, userData, works, consent, notify }) {
   const current = (id2) => store.readCurrentWork?.(id2) ?? store.readWork(id2);
   const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, current(id2)?.binding.runtimeId, fn));
+  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(current(id2)), fn));
   async function check(id2) {
     const root = current(id2);
     if (!root || root.status === "completed") return;
@@ -2310,9 +2469,32 @@ var sameStopIdentity = (a, b) => JSON.stringify(canonical3(a)) === JSON.stringif
 function stopStore({ db, readPrivate, putPrivate, atomic }) {
   const listStops = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%' ORDER BY rowid").all().map((row) => JSON.parse(row.json));
   const readStop = (id2) => readPrivate(`stop:${id2}`);
+  const recoveryInput = (input) => {
+    if (!input || Object.keys(input).some((k) => !["requestId", "stopRequestId", "version"].includes(k)) || typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || typeof input.stopRequestId !== "string" || !Number.isSafeInteger(input.version) || input.version < 1) throw Error("Choose a saved unknown stop and its current version.");
+    return createHash9("sha256").update(JSON.stringify(canonical3(input))).digest("hex");
+  };
+  const readStopRecovery = (input) => {
+    const fingerprint2 = recoveryInput(input), prior = readPrivate(`stop-recovery:${input.requestId}`);
+    if (prior && prior.fingerprint !== fingerprint2) throw Error("Stop recovery identity conflicts with another input.");
+    return prior;
+  };
   return {
     listStops,
     readStop,
+    readStopRecovery,
+    claimStopRecovery(input, plan) {
+      return atomic(() => {
+        if (readStopRecovery(input)) return false;
+        const row = readStop(input.stopRequestId);
+        if (!row || row.version !== input.version || row.state !== "unknown" || row.plan?.method !== "orchestration.workerStop") throw Error("Stop recovery was superseded or is unavailable.");
+        const { exitedProof, ...effectPlan } = plan;
+        if (!sameStopIdentity(effectPlan, row.plan)) throw Error("Stop recovery must preserve the original native request and execution plan.");
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        putPrivate(`stop-recovery:${input.requestId}`, { requestId: input.requestId, stopRequestId: row.requestId, fingerprint: recoveryInput(input), previous: row, createdAt: now });
+        putPrivate(`stop:${row.requestId}`, { ...row, state: exitedProof ? "stopped" : "submitted", ...exitedProof ? { proof: exitedProof, confirmedAt: now } : {}, recoveryRequestId: input.requestId, version: row.version + 1, detail: exitedProof ? "Exact native worker observation confirms the original execution already exited." : "Explicit recovery of the same native stop request submitted; exit remains unconfirmed." });
+        return true;
+      });
+    },
     prepareStop(input, target) {
       return atomic(() => {
         if (typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId)) throw Error("A stable stop request identity is required.");
@@ -2341,7 +2523,7 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
       const row = listStops().findLast((row2) => row2.state === "stopped" && row2.target.memberId === memberId && (attemptId ? row2.target.attemptId === attemptId : row2.target.operationRequestId === requestId && row2.target.instanceGeneration === instanceGeneration) && (!binding || sameStopIdentity(row2.target.binding, binding)));
       return row ? { ...row.proof, binding: row.target.binding, requestId: row.target.operationRequestId, instanceGeneration: row.target.instanceGeneration, attemptId: row.target.attemptId, stopRequestId: row.requestId } : null;
     },
-    stopProjection: () => listStops().map(({ requestId, target, state, detail: detail2, submittedAt, confirmedAt }) => ({ requestId, teamId: target.teamId, memberId: target.memberId, workId: target.workId, attemptId: target.attemptId, state, detail: detail2, submittedAt, confirmedAt }))
+    stopProjection: () => listStops().map(({ requestId, target, state, detail: detail2, submittedAt, confirmedAt, version, plan }) => ({ requestId, version, recoverable: state === "unknown" && plan?.method === "orchestration.workerStop", teamId: target.teamId, memberId: target.memberId, workId: target.workId, attemptId: target.attemptId, state, detail: detail2, submittedAt, confirmedAt }))
   };
 }
 
@@ -3206,6 +3388,7 @@ function createStopService({ store, rpc, userData, consent }) {
       if (workspace?.id !== t.scope.workspaceId || (workspace.hostId ?? workspace.identity?.executionHostId) !== t.scope.executionHostId) throw Error("Stop workspace or host changed.");
       let plan;
       if (t.attemptId) {
+        if (!status.capabilities?.includes("orchestration.contract.v1")) throw Object.assign(Error("Current native orchestration stop contract is unsupported."), { unsupported: true });
         const work = workFor(t.workId), attempt = store.listDispatches(t.workId).find((a) => a.id === t.attemptId), proof = await readNativeDispatchEvidence(userData, { work, protocol: store.readDispatchProtocol(work.id), team: store.readTeamVersion(work.teamId, work.configVersion), owner: work.instance, admitted: [attempt] }), found = proof.observations?.find((a) => a.id === attempt.id);
         if (proof.state !== "verified" || found?.state !== "verified" || found.dispatchId !== t.dispatchId || !sameStopIdentity(found.binding, b)) throw Error("Native Task/Dispatch author and current member binding are unverified.");
         const shown = await rpc("orchestration.workerShow", { dispatch: t.dispatchId }), d = shown?.dispatch, w = shown?.worker, h = d?.hostScope;
@@ -3272,6 +3455,14 @@ function createStopService({ store, rpc, userData, consent }) {
         throw error;
       }
     },
+    async recover(input) {
+      await consent();
+      if (store.readStopRecovery(input)) return { requestId: input.stopRequestId, plan: null };
+      const row = store.readStop(input.stopRequestId);
+      if (!row || row.version !== input.version || row.state !== "unknown" || row.plan?.method !== "orchestration.workerStop") throw Error("Choose the current unknown native worker stop.");
+      const plan = await verify(row), claimed = store.claimStopRecovery(input, plan);
+      return { requestId: row.requestId, plan: claimed && !plan.exitedProof ? plan : null };
+    },
     settle,
     async check(id2) {
       const row = store.readStop(id2);
@@ -3305,7 +3496,7 @@ function createStopService({ store, rpc, userData, consent }) {
 // src/local/lifecycle.mjs
 function createLifecycleService({ store, rpc, userData, consent, works, notify }) {
   const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, store.readCurrentWork(id2)?.binding.runtimeId, fn));
+  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   async function evidence(id2) {
     const work = store.readCurrentWork(id2);
     if (!work || work.status === "completed") return null;
@@ -3477,7 +3668,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   const lifecycle = createLifecycleService({ store, rpc, userData, consent, works, notify: (params) => host.call("notifications.show", params) });
   const recovery = createRecoveryService({ store, rpc, userData, consent });
   const wake = createWakeService({ store, rpc, userData, consent, works, notify: (params) => host.call("notifications.show", params) });
-  let workTimer, polling = false, stopped = false;
+  let workTimer, polling = false, stopped = false, reconnecting = false;
   const reconcileExisting = async () => {
     await recovery.reconcile();
     await stops.reconcile();
@@ -3492,7 +3683,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
     }
   };
   async function resumeWork() {
-    if (polling || stopped) return;
+    if (polling || stopped || reconnecting) return;
     polling = true;
     try {
       await consent();
@@ -3616,6 +3807,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           await reconcileExisting();
           return stops.prepare(params);
         }
+        if (op === "_stopRecover") return stops.recover(params);
         if (op === "_stopValidate") return stops.validate(params.requestId);
         if (op === "_stopSettle") return stops.settle(params.requestId, params.receipt, params.error);
         if (op === "_decideWork") {
@@ -3728,6 +3920,18 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           return params.value;
         }
         throw Error("Unknown internal observation phase.");
+      }
+      if (op === "reconnectWork") {
+        if (polling || reconnecting) throw Error("A saved evidence check is still running. Wait briefly, then try reconnecting again.");
+        reconnecting = true;
+        try {
+          const work = await works.reconnect(params);
+          stopped = false;
+          return { value: store.readSnapshot(), work };
+        } finally {
+          reconnecting = false;
+          scheduleWork();
+        }
       }
       if (op === "submitWork" || op === "checkWork" || op === "retryObjective") {
         if (op !== "checkWork") await reconcileExisting();
@@ -3843,6 +4047,163 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   };
 }
 
+// src/local/runtime-reconnect-store.mjs
+import { createHash as createHash13 } from "node:crypto";
+var digest3 = (value) => createHash13("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+var fail = (message) => {
+  throw Error(message);
+};
+function runtimeReconnectStore({
+  db,
+  readPrivate,
+  putPrivate,
+  readWork,
+  persistWork,
+  readSnapshot,
+  readOperation,
+  readDispatchProtocol,
+  atomic
+}) {
+  const all = () => db.prepare("SELECT id,json FROM receipts ORDER BY id").all().map((row) => ({ key: row.id, value: JSON.parse(row.json) }));
+  function readControl(work) {
+    const pointer = readPrivate(`runtime-control:${work.id}`);
+    if (!pointer) return null;
+    const row = readPrivate(`runtime-reconnect:${pointer.requestId}`);
+    if (row && work.currentSupervisor && row.bindingRequestId !== work.binding.requestId)
+      return null;
+    if (!row || row.format !== "same-instance-runtime-control/v1" || row.workId !== work.id || row.bindingRequestId !== work.binding.requestId || row.scopeKey !== work.scope.workspaceKey || row.runId !== work.run.id || row.generation !== work.run.consumerGeneration || row.ownerDigest !== digest3(work.instance) || typeof row.runtimeId !== "string" || !row.runtimeId || !Array.isArray(row.members) || row.members.length === 0 || row.proofDigest !== digest3(row.proof))
+      fail(
+        "Saved runtime recovery evidence is damaged. Keep the existing sessions and reconnect the plugin."
+      );
+    return row;
+  }
+  function snapshot(input) {
+    const work = readWork(input.workId), state = readSnapshot(), team = state.teams.find((t) => t.id === work?.teamId);
+    if (!work || work.parent || work.currentSupervisor || work.recoveryRequestId || work.status === "completed" || work.run.state === "fenced" || work.scope.executionHostId !== "local" || work.binding.kind !== "terminal" || !work.run.id || !Number.isSafeInteger(work.run.consumerGeneration) || !work.instance)
+      fail("Reconnect requires the original local terminal supervisor and its saved Run.");
+    if (work.version !== input.expectedWorkVersion || state.revision !== input.expectedRevision)
+      fail("Work or team changed. Reload before reconnecting the existing team.");
+    if (!team || team.configVersion !== work.configVersion || readPrivate(`active-work:${team.id}`)?.workId !== work.id)
+      fail("The active work or saved team configuration changed.");
+    const protocol = readDispatchProtocol(work.id);
+    if (work.input.state !== "accepted" || !work.nativeSend || protocol?.state !== "accepted" || protocol.generation !== work.run.consumerGeneration)
+      fail("Objective or admission input is unresolved. Reconnect never resends it.");
+    const operations = team.members.map((member) => {
+      const pointer = readPrivate(`binding:${member.id}`), op = pointer && readOperation(pointer.requestId), original = work.recipientBindings?.find((r) => r.memberId === member.id);
+      if (!op || !original || op.requestId !== original.requestId || op.status !== "created" || op.kind !== "terminal" || op.runtimeId !== work.binding.runtimeId || op.teamId !== team.id || op.configVersion !== work.configVersion || op.roleVersion !== member.roleVersion || op.scope?.workspaceKey !== work.scope.workspaceKey || (pointer.instanceGeneration ?? 1) !== (op.instanceGeneration ?? 1) || (original.instanceGeneration ?? 1) !== (op.instanceGeneration ?? 1) || op.nativeRequest.agent !== member.agent || (op.nativeRequest.sessionOptions?.model ?? "default") !== member.model || (op.nativeRequest.sessionOptions?.effort ?? "default") !== member.effort)
+        fail("A prepared member changed or has unresolved launch evidence.");
+      if (["handle", "paneKey", "kind", "runtimeId", "roleVersion", "configVersion"].some(
+        (key) => op[key] !== original[key]
+      ) || digest3(op.nativeRequest) !== digest3(original.nativeRequest) || ["ptyId", "incarnationId", "processIncarnation"].some(
+        (key) => op.observation?.[key] !== original.observation?.[key]
+      ))
+        fail("The original prepared recipient identity changed.");
+      if (!op.observation?.ptyId || !op.observation?.incarnationId || op.observation.processIncarnation !== `${op.observation.ptyId}:${op.observation.incarnationId}` || !op.paneKey || /placeholder/.test(op.paneKey))
+        fail("A prepared member lacks exact original process and pane evidence.");
+      return op;
+    });
+    if (operations.find((o) => o.memberId === work.supervisorMemberId)?.requestId !== work.binding.requestId)
+      fail("The original supervisor binding changed.");
+    if (new Set(operations.map((o) => o.handle)).size !== operations.length || new Set(operations.map((o) => o.paneKey)).size !== operations.length)
+      fail("Prepared member identities overlap.");
+    const members = new Set(team.members.map((m) => m.id)), records = all();
+    for (const { key, value: r } of records) {
+      const sameWork = r.workId === work.id || r.teamWorkId === work.id;
+      if (sameWork && /^(dispatch:|dispatch-queue:|question:|question-answer:|question-event:|collaboration:|staffing-proposal:|roster-delta:|configuration-amendment:|delivery:|native-run-binding:|intent-withdrawal:)/.test(
+        key
+      ))
+        fail("Reconnect requires a quiet Run with no Task, question, staffing or delivery work.");
+      if (key.startsWith("stop:") && members.has(r.target?.memberId) && ["intent", "submitted", "unknown"].includes(r.state))
+        fail("An unresolved Stop prevents reconnecting.");
+      if (key.startsWith("wake:") && members.has(r.memberId) && !["bound", "resumed"].includes(r.state))
+        fail("An unresolved member recovery prevents reconnecting.");
+      if (key.startsWith("organization:") && r.teamId === team.id && r.state === "pending")
+        fail("A pending organization change prevents reconnecting.");
+      if (key.startsWith("operation:") && r.teamId === team.id && r.status === "unknown")
+        fail("An unresolved launch prevents reconnecting.");
+      if (sameWork && ["sending", "unknown", "queued"].includes(r.input?.state))
+        fail("A pending or unknown input prevents reconnecting.");
+    }
+    const checkpoint = {
+      work,
+      team,
+      revision: state.revision,
+      operations,
+      protocol,
+      control: readControl(work),
+      records: records.filter(
+        ({ value: r }) => r.workId === work.id || r.teamWorkId === work.id || r.teamId === team.id || members.has(r.memberId) || members.has(r.target?.memberId)
+      )
+    };
+    return { ...checkpoint, digest: digest3(checkpoint) };
+  }
+  return {
+    readRuntimeControl: readControl,
+    runtimeReconnectSnapshot: snapshot,
+    replayRuntimeReconnect(input) {
+      const row = readPrivate(`runtime-reconnect:${input.requestId}`);
+      if (!row) return null;
+      if (row.inputDigest !== digest3(input))
+        fail("Reconnect request identity conflicts with another input.");
+      return row;
+    },
+    commitRuntimeReconnect(input, expected, proof) {
+      return atomic(() => {
+        const prior = readPrivate(`runtime-reconnect:${input.requestId}`);
+        if (prior) {
+          if (prior.inputDigest !== digest3(input))
+            fail("Reconnect request identity conflicts with another input.");
+          return prior;
+        }
+        const current = snapshot(input);
+        if (current.digest !== expected.digest)
+          fail("Team evidence changed during reconnect. No control binding was changed.");
+        const work = current.work, previous = current.control;
+        if (previous?.runtimeId === proof.runtimeId)
+          fail("These sessions are already connected to this Orca runtime.");
+        const row = {
+          format: "same-instance-runtime-control/v1",
+          requestId: input.requestId,
+          inputDigest: digest3(input),
+          workId: work.id,
+          teamId: work.teamId,
+          bindingRequestId: work.binding.requestId,
+          scopeKey: work.scope.workspaceKey,
+          runId: work.run.id,
+          generation: work.run.consumerGeneration,
+          ownerDigest: digest3(work.instance),
+          fromRuntimeId: previous?.runtimeId ?? work.binding.runtimeId,
+          runtimeId: proof.runtimeId,
+          previousRequestId: previous?.requestId ?? null,
+          members: current.operations.map((o) => ({
+            requestId: o.requestId,
+            memberId: o.memberId,
+            instanceGeneration: o.instanceGeneration ?? 1
+          })),
+          proof,
+          proofDigest: digest3(proof),
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        putPrivate(`runtime-reconnect:${input.requestId}`, row);
+        putPrivate(`runtime-control:${work.id}`, { requestId: input.requestId, workId: work.id });
+        persistWork({
+          ...work,
+          version: work.version + 1,
+          status: "active",
+          run: {
+            ...work.run,
+            state: "verified",
+            detail: "The original Run and all prepared sessions were rechecked after Orca restarted."
+          },
+          snapshot: { tasks: [], stale: false, observedAt: row.createdAt },
+          error: void 0
+        });
+        return row;
+      });
+    }
+  };
+}
+
 // src/local/native-history-store.mjs
 function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
   const rows = (prefix) => db.prepare("SELECT json FROM receipts WHERE id LIKE ? ORDER BY rowid").all(prefix + "%").map((r) => JSON.parse(r.json));
@@ -3888,13 +4249,20 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
 }
 
 // src/local/history-cleanup.mjs
-import { randomUUID as randomUUID8, createHash as createHash13 } from "node:crypto";
+import { randomUUID as randomUUID8, createHash as createHash14 } from "node:crypto";
 var CLEARED = "[History manually cleared]";
-var hash4 = (v) => createHash13("sha256").update(JSON.stringify(v)).digest("hex");
+var hash4 = (v) => createHash14("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
-var known = /* @__PURE__ */ new Set(["work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
+var known = /* @__PURE__ */ new Set(["runtime-control", "runtime-reconnect", "work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "stop-recovery", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
 var contains = (value, ids) => typeof value === "string" ? ids.has(value) || [...ids].some((id2) => id2.length >= 32 && value.includes(id2)) : Array.isArray(value) ? value.some((v) => contains(v, ids)) : value && typeof value === "object" ? Object.values(value).some((v) => contains(v, ids)) : false;
 var uncertain = (value) => value && typeof value === "object" && Object.entries(value).some(([key, v]) => ["state", "status", "processed"].includes(key) && ["unknown", "sending", "submitted", "needs_decision", "pending", "unconfirmed"].includes(v) || typeof v === "object" && !["processing", "run", "snapshot", "proof", "controlProof", "nativeSend", "nativeRequest", "binding", "oldBinding", "observation"].includes(key) && uncertain(v));
+function settledStopRecovery(row, byId) {
+  const audit = row.value, previous = audit.previous, current = byId.get(`stop:${audit.stopRequestId}`)?.value;
+  if (audit.requestId !== row.id.slice("stop-recovery:".length) || !previous || previous.state !== "unknown" || previous.requestId !== audit.stopRequestId || previous.plan?.method !== "orchestration.workerStop" || !current || current.requestId !== audit.stopRequestId || current.state !== "stopped") return false;
+  if (typeof previous.nativeRequestId !== "string" || !previous.nativeRequestId || typeof previous.target?.dispatchId !== "string" || !previous.target.dispatchId || previous.plan.params?.dispatch !== previous.target.dispatchId || previous.plan.envelope?.orchestrationRequestId !== previous.nativeRequestId || typeof current.confirmedAt !== "string" || !current.confirmedAt || !Number.isSafeInteger(previous.version) || !Number.isSafeInteger(current.version) || current.version <= previous.version) return false;
+  if (current.nativeRequestId !== previous.nativeRequestId || !sameStopIdentity(current.target, previous.target) || !sameStopIdentity(current.plan, previous.plan)) return false;
+  return current.proof?.kind === "native-pty-exit" && current.proof.ptyKilled === true || current.proof?.kind === "native-worker-exit" && current.proof.dispatchId === current.target.dispatchId;
+}
 function historyCleanup({ db, readSnapshot, write, atomic }) {
   const previews = /* @__PURE__ */ new Map();
   function plan(ids) {
@@ -3916,15 +4284,16 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
       }
       teamIds.add(work.teamId);
       const contexts = /* @__PURE__ */ new Set([id2, ...rows.filter((r) => family(r.id) === "native-run-binding" && r.value.teamWorkId === id2).map((r) => r.value.id)]);
-      const own = (r) => contexts.has(r.value.workId) || contexts.has(r.value.teamWorkId) || contexts.has(r.value.target?.workId) || family(r.id) === "wake" && contexts.has(r.value.newInstance?.workId) || contexts.has(r.value.id) && ["work", "native-run-binding"].includes(family(r.id));
+      const own = (r) => contexts.has(r.value.workId) || contexts.has(r.value.teamWorkId) || contexts.has(r.value.target?.workId) || family(r.id) === "stop-recovery" && contexts.has(r.value.previous?.target?.workId) || family(r.id) === "wake" && contexts.has(r.value.newInstance?.workId) || contexts.has(r.value.id) && ["work", "native-run-binding"].includes(family(r.id));
       const members = rows.filter(own), identities = /* @__PURE__ */ new Set([...contexts, ...members.flatMap((r) => [r.value.id, r.value.attemptId, r.value.dispatchId, r.value.nativeTaskId, r.value.evidenceId, r.value.binding?.requestId, r.value.currentSupervisor?.binding?.requestId, ...(r.value.recipientBindings ?? []).map((b) => b.requestId), ...(r.value.currentRecipientBindings ?? []).map((b) => b.requestId)]).filter((v) => typeof v === "string")]);
       let reason = unknownSchema ? "An unknown storage table or column may reference this history; use a compatible cleanup implementation." : void 0;
       for (const r of rows) if (own(r) || contains(r.value, identities)) graph.set(r.id, r.json);
       if (!members.some((r) => family(r.id) === "work-decision" && r.value.workId === id2 && r.value.decision === "accept" && r.value.deliveryId === work.handoff?.deliveryId)) reason = "User acceptance provenance is missing.";
       for (const r of rows) {
-        const k = family(r.id), v = r.value, related = own(r), sameTeam = v.teamId === work.teamId || v.target?.teamId === work.teamId;
+        const k = family(r.id), v = r.value, related = own(r), sameTeam = v.teamId === work.teamId || v.target?.teamId === work.teamId || k === "stop-recovery" && v.previous?.target?.teamId === work.teamId;
+        const uncertainty = k === "stop-recovery" && settledStopRecovery(r, byId) ? { ...v, previous: void 0 } : v;
         if (!known.has(k) && (contains(v, identities) || sameTeam)) reason = "An unknown record references this history; preserve it for a compatible plugin.";
-        if (related && (v.format && /-(v[0-9]+)$/.test(v.format) && !v.format.endsWith("-v1") || !(k === "question-event" && v.kind === "goal-delivery" && !v.nativeSend) && uncertain(v))) reason = "Unknown, pending or unprocessed evidence remains in this work.";
+        if (related && (v.format && /-(v[0-9]+)$/.test(v.format) && !v.format.endsWith("-v1") || !(k === "question-event" && v.kind === "goal-delivery" && !v.nativeSend) && uncertain(uncertainty))) reason = "Unknown, pending or unprocessed evidence remains in this work.";
         if (related && k === "native-run-binding" && (v.status !== "completed" || v.currentSupervisor && v.currentSupervisor.status !== "completed")) reason = "A descendant manager context remains active.";
         if (related && k === "dispatch" && !["accepted", "rework", "rejected"].includes(v.status)) reason = "A task is running or still requires supervisor acceptance.";
         if (sameTeam && k === "goal" && ["queued", "reserved"].includes(v.status)) reason = "A later goal awaits its Work transition.";
@@ -4022,7 +4391,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
 }
 
 // src/local/organization-store.mjs
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 function reorganize(team, changes) {
   const members = structuredClone(team.members), ids = /* @__PURE__ */ new Set();
   if (!Array.isArray(changes) || !changes.length || changes.length > 49) throw Error("Choose at least one organization change.");
@@ -4063,7 +4432,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
     scheduleOrganization(input) {
       return atomic(() => {
         if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || Object.keys(input).some((k) => !["requestId", "teamId", "workId", "expectedRevision", "configVersion", "changes", "pause"].includes(k))) throw Error("Invalid organization request.");
-        const key = `organization:${input.requestId}`, fingerprint2 = createHash14("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
+        const key = `organization:${input.requestId}`, fingerprint2 = createHash15("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Organization request conflicts with saved input.");
           return prior;
@@ -4120,9 +4489,9 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
 }
 
 // src/local/staffing-store.mjs
-import { createHash as createHash15, randomUUID as randomUUID9 } from "node:crypto";
+import { createHash as createHash16, randomUUID as randomUUID9 } from "node:crypto";
 var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
-var hash5 = (v) => createHash15("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
+var hash5 = (v) => createHash16("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
 var text8 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 var id = (v) => text8(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
 function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, readSnapshot, write, archive, atomic }) {
@@ -4285,9 +4654,9 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
 }
 
 // src/local/lifecycle-store.mjs
-import { randomUUID as randomUUID10, createHash as createHash16 } from "node:crypto";
-var digest3 = (value) => createHash16("sha256").update(JSON.stringify(value)).digest("hex");
-var fail = (message) => {
+import { randomUUID as randomUUID10, createHash as createHash17 } from "node:crypto";
+var digest4 = (value) => createHash17("sha256").update(JSON.stringify(value)).digest("hex");
+var fail2 = (message) => {
   throw Error(message);
 };
 var boundedHandoff = (h) => ({ ...h, summary: h.summary.slice(0, 2e3), evidenceRefs: h.evidenceRefs.slice(0, 10).map((r) => r.slice(0, 160)), truncated: h.summary.length > 2e3 || h.evidenceRefs.length > 10 || h.evidenceRefs.some((r) => r.length > 160) });
@@ -4322,16 +4691,16 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
     recordDelivery(workId, proposal) {
       return atomic(() => {
         const w = readWork(workId);
-        if (w?.parent) fail("Only the highest supervisor may deliver the total objective.");
+        if (w?.parent) fail2("Only the highest supervisor may deliver the total objective.");
         if (!w || w.status === "completed") return null;
         const existing = deliveries(workId).find((d2) => d2.id === proposal.id);
         if (existing) {
-          if (existing.proof.payloadHash !== proposal.proof.payloadHash) fail("Delivery identity conflicts.");
+          if (existing.proof.payloadHash !== proposal.proof.payloadHash) fail2("Delivery identity conflicts.");
           return existing;
         }
         const previous = current(workId);
-        if ((proposal.previousDeliveryId ?? null) !== (previous?.id ?? null)) fail("Delivery must reference the current delivery revision.");
-        if ((proposal.epoch ?? 0) !== (w.epoch ?? 0) || w.epoch && proposal.protocolToken !== readPrivate(`dispatch-protocol:${workId}`)?.token || proposal.generation !== w.run.consumerGeneration) fail("Delivery Run generation changed.");
+        if ((proposal.previousDeliveryId ?? null) !== (previous?.id ?? null)) fail2("Delivery must reference the current delivery revision.");
+        if ((proposal.epoch ?? 0) !== (w.epoch ?? 0) || w.epoch && proposal.protocolToken !== readPrivate(`dispatch-protocol:${workId}`)?.token || proposal.generation !== w.run.consumerGeneration) fail2("Delivery Run generation changed.");
         const d = { ...proposal, workId, epoch: w.epoch ?? 0, revision: (previous?.revision ?? 0) + 1, status: "pending", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         putPrivate(`delivery:${workId}:${d.id}`, d);
         w.status = "awaiting_acceptance";
@@ -4345,20 +4714,20 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
     },
     decideWork(input) {
       return atomic(() => {
-        if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !["accept", "rework"].includes(input.decision) || Object.keys(input).some((k) => !["requestId", "workId", "deliveryId", "expectedWorkVersion", "decision", "feedback"].includes(k))) fail("Invalid user delivery decision.");
-        const key = `work-decision:${input.requestId}`, fingerprint2 = digest3(input), prior = readPrivate(key);
+        if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !["accept", "rework"].includes(input.decision) || Object.keys(input).some((k) => !["requestId", "workId", "deliveryId", "expectedWorkVersion", "decision", "feedback"].includes(k))) fail2("Invalid user delivery decision.");
+        const key = `work-decision:${input.requestId}`, fingerprint2 = digest4(input), prior = readPrivate(key);
         if (prior) {
-          if (prior.fingerprint !== fingerprint2) fail("User decision identity conflicts.");
+          if (prior.fingerprint !== fingerprint2) fail2("User decision identity conflicts.");
           return prior;
         }
         const w = readWork(input.workId), d = current(input.workId);
-        if (!w || w.version !== input.expectedWorkVersion || w.status !== "awaiting_acceptance" || d?.id !== input.deliveryId || d.status !== "pending" || (d.epoch ?? 0) !== (w.epoch ?? 0)) fail("Delivery changed or was superseded. Reload before deciding.");
-        if (input.decision === "rework" && (typeof input.feedback !== "string" || !input.feedback.trim() || input.feedback.length > 8e3)) fail("Describe the requested corrections (1\u20138000 characters).");
+        if (!w || w.version !== input.expectedWorkVersion || w.status !== "awaiting_acceptance" || d?.id !== input.deliveryId || d.status !== "pending" || (d.epoch ?? 0) !== (w.epoch ?? 0)) fail2("Delivery changed or was superseded. Reload before deciding.");
+        if (input.decision === "rework" && (typeof input.feedback !== "string" || !input.feedback.trim() || input.feedback.length > 8e3)) fail2("Describe the requested corrections (1\u20138000 characters).");
         if (input.decision === "accept") {
           const reasons = blockers(w);
-          if (reasons.length) fail("Required work remains: " + reasons.join("; "));
+          if (reasons.length) fail2("Required work remains: " + reasons.join("; "));
           const latest = latestBusinessAttempts(listDispatches(w.id));
-          if (latest.some((a) => !d.attemptIds.includes(a.id) || !d.evidenceRefs.includes(a.evidenceId))) fail("Delivery omits required accepted task evidence.");
+          if (latest.some((a) => !d.attemptIds.includes(a.id) || !d.evidenceRefs.includes(a.evidenceId))) fail2("Delivery omits required accepted task evidence.");
         }
         const event = { ...input, fingerprint: fingerprint2, recordedAt: (/* @__PURE__ */ new Date()).toISOString(), input: { state: input.decision === "rework" ? "not_sent" : "none" } };
         d.status = input.decision === "accept" ? "accepted" : "changes_requested";
@@ -4366,13 +4735,13 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
         w.status = input.decision === "accept" ? "completed" : "active";
         w.version++;
         if (input.decision === "accept") {
-          if (readPrivate(`active-work:${w.teamId}`)?.workId !== w.id) fail("Active TeamWork pointer changed.");
+          if (readPrivate(`active-work:${w.teamId}`)?.workId !== w.id) fail2("Active TeamWork pointer changed.");
           const state = readSnapshot(), team = state.teams.find((t) => t.id === w.teamId);
           const expectedRecipients = [...w.currentRecipientBindings ?? w.recipientBindings ?? [w.binding], ...staffing?.().staffingRecipientBindings(w.id) ?? []];
-          if (Object.values(team.launch?.members ?? {}).some((r) => !expectedRecipients.some((e) => e.requestId === r.requestId))) fail("Current member binding changed during Work; reconcile before closure.");
+          if (Object.values(team.launch?.members ?? {}).some((r) => !expectedRecipients.some((e) => e.requestId === r.requestId))) fail2("Current member binding changed during Work; reconcile before closure.");
           for (const expected of expectedRecipients) {
             const pointer = readPrivate(`binding:${expected.memberId}`);
-            if (pointer?.requestId !== expected.requestId || (pointer.instanceGeneration ?? 1) !== (expected.instanceGeneration ?? 1)) fail("Current member binding changed; closure must not retire a replacement.");
+            if (pointer?.requestId !== expected.requestId || (pointer.instanceGeneration ?? 1) !== (expected.instanceGeneration ?? 1)) fail2("Current member binding changed; closure must not retire a replacement.");
             db.prepare("DELETE FROM receipts WHERE id=?").run(`binding:${expected.memberId}`);
             putPrivate(`binding-generation:${expected.memberId}`, { generation: expected.instanceGeneration ?? 1 });
             if (team.launch?.members?.[expected.memberId]?.requestId === expected.requestId) delete team.launch.members[expected.memberId];
@@ -4415,7 +4784,7 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
     updateWorkDecision(requestId, patch) {
       return atomic(() => {
         const event = readPrivate(`work-decision:${requestId}`);
-        if (!event) fail("Saved decision not found.");
+        if (!event) fail2("Saved decision not found.");
         Object.assign(event, patch);
         putPrivate(`work-decision:${requestId}`, event);
         return event;
@@ -4428,9 +4797,9 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
         if (readPrivate(`active-work:${teamId}`)) return null;
         const state = readSnapshot(), team = state.teams.find((t) => t.id === teamId), goal = listGoals(teamId).find((g) => g.status === "queued");
         if (!team || !goal) return null;
-        if (Object.keys(team.launch?.members ?? {}).length) fail("Existing preparation bindings must be resolved before a fresh queued goal.");
+        if (Object.keys(team.launch?.members ?? {}).length) fail2("Existing preparation bindings must be resolved before a fresh queued goal.");
         const old = db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%' ORDER BY rowid DESC").all().map((r) => JSON.parse(r.json)).find((w) => w.teamId === teamId && w.status === "completed");
-        if (!old) fail("Submit the first total objective with its prepared supervisor before advancing later goals.");
+        if (!old) fail2("Submit the first total objective with its prepared supervisor before advancing later goals.");
         Object.assign(goal, { status: "reserved", previousWorkId: old.id, handoff: boundedHandoff(old.handoff), launchRequests: Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID10()])), workRequestId: randomUUID10(), configVersion: team.configVersion, supervisorMemberId: team.members.find((m) => m.boss === null).id });
         putPrivate(`goal:${goal.id}`, goal);
         putPrivate(`next-goal:${teamId}`, { goalId: goal.id });
@@ -4450,13 +4819,13 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 // src/local/store.mjs
 import { mkdir as mkdir2, realpath as realpath9, stat as stat2, open as open2 } from "node:fs/promises";
 import { join as join10, isAbsolute as isAbsolute9, relative as relative8, sep as sep8 } from "node:path";
-import { randomUUID as randomUUID11, createHash as createHash17 } from "node:crypto";
+import { randomUUID as randomUUID11, createHash as createHash18 } from "node:crypto";
 var FORMAT = "orca-team-store";
 var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
-var fingerprint = (value) => createHash17("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
+var fingerprint = (value) => createHash18("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
 var publicScope = ({ workspaceId, ...scope }) => scope;
 var empty = () => ({ format: FORMAT, version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
-var fail2 = (message) => {
+var fail3 = (message) => {
   throw new Error(message);
 };
 async function openTeamStore(options) {
@@ -4468,19 +4837,19 @@ async function openTeamStore(options) {
   }
 }
 async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}) {
-  if (typeof userData !== "string" || !isAbsolute9(userData) || userData.includes("\0")) fail2("Verified Orca profile is required for team storage.");
+  if (typeof userData !== "string" || !isAbsolute9(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
   let DatabaseSync, backup;
   try {
     ({ DatabaseSync, backup } = await sqlite());
   } catch {
-    fail2("This worker does not support node:sqlite. Team persistence is unavailable.");
+    fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
   }
-  if (typeof DatabaseSync !== "function") fail2("This worker does not support node:sqlite. Team persistence is unavailable.");
+  if (typeof DatabaseSync !== "function") fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
   const profile = await realpath9(userData);
   const directory = join10(profile, "plugins-data", "herman925.team-orchestrator");
   const inside = (path2) => {
     const rel = relative8(profile, path2);
-    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute9(rel)) fail2("Plugin data directory escapes the verified Orca profile.");
+    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute9(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
   };
   for (const target of [join10(profile, "plugins-data"), directory]) {
     try {
@@ -4532,6 +4901,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       db.prepare("INSERT INTO snapshot VALUES (1,?)").run(JSON.stringify(empty()));
       db.exec("COMMIT");
     }
+    let runtimeReconnect;
     const readWork = (id2) => {
       const row = db.prepare("SELECT json FROM receipts WHERE id=?").get(`work:${id2}`) ?? db.prepare("SELECT json FROM receipts WHERE id=?").get(`native-run-binding:${id2}`);
       return row ? validateWork(JSON.parse(row.json)) : null;
@@ -4542,12 +4912,15 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
         const parent = readWork(work.parent.workId), epoch = parent?.currentSupervisor, attempt = readPrivate(`dispatch:${work.parent.attemptId}`);
         if (epoch && attempt?.reviewAuthority?.recoveryRequestId === epoch.recoveryRequestId && attempt.reviewAuthority.generation === epoch.run.consumerGeneration) work.parentAuthority = { generation: epoch.run.consumerGeneration, recoveryRequestId: epoch.recoveryRequestId };
       }
+      if (work) delete work.runtimeControl;
+      const control = work && runtimeReconnect?.readRuntimeControl(work);
+      if (control) work.runtimeControl = control;
       return work;
     };
     const listCurrentWorks = () => listWorks().map((work) => readCurrentWork(work.id));
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map((row) => validateWork(JSON.parse(row.json)));
     const persistWork = (work) => {
-      const { parentAuthority, ...saved } = work;
+      const { parentAuthority, runtimeControl, ...saved } = work;
       return db.prepare("INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json").run(`${work.parent ? "native-run-binding" : "work"}:${work.id}`, JSON.stringify(saved));
     };
     const persistCurrentWork = (work) => {
@@ -4598,32 +4971,32 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     const questions = questionStore({ db, readPrivate, putPrivate, readWork: readCurrentWork, listDispatches, effectiveTeamForWork: (id2) => staffing.effectiveTeamForWork(id2), atomic: atomicDispatch });
     const readSnapshot = () => {
       const value = JSON.parse(db.prepare("SELECT json FROM snapshot WHERE id=1").get()?.json ?? "null");
-      if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail2("Team database snapshot is invalid; original data has been preserved.");
+      if (!value || value.format !== FORMAT || value.version !== 2 || !Number.isInteger(value.revision) || !Array.isArray(value.teams)) fail3("Team database snapshot is invalid; original data has been preserved.");
       return { ...validatePersistentState(value), stops: stops.stopProjection(), goals: listGoals(), organizationChanges: organization.organizationProjection(), recoveries: db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().map((r) => publicWake(JSON.parse(r.json))), works: listCurrentWorks().map((work) => ({ ...publicWork(work), ...dispatchProjection(work.id), ...questions.questionProjection(work.id), ...lifecycle.deliveryProjection(work.id), ...staffing.staffingProjection(work.id) })) };
     };
     const write = ({ works, goals, recoveries, organizationChanges, stops: ignoredStops, ...value }) => db.prepare("UPDATE snapshot SET json=? WHERE id=1").run(JSON.stringify(value));
     const lifecycle = lifecycleStore({ db, readPrivate, putPrivate, readWork: readCurrentWork, persistWork: persistCurrentWork, listDispatches: listTeamDispatches, listRunWorks, listGoals, questions, staffing: () => staffing, atomic: atomicDispatch, readSnapshot, write, applyOrganization: (work, team) => organization.applyOrganization(work, team) });
     const mutate = (op, input, action) => {
-      if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail2("Invalid mutation request identity or revision.");
-      const digest4 = fingerprint({ op, input });
+      if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.expectedRevision)) fail3("Invalid mutation request identity or revision.");
+      const digest5 = fingerprint({ op, input });
       db.exec("BEGIN IMMEDIATE");
       try {
         const previous = db.prepare("SELECT * FROM requests WHERE id=?").get(input.requestId);
         if (previous) {
-          if (previous.fingerprint !== digest4) fail2("Request identity conflicts with another input.");
+          if (previous.fingerprint !== digest5) fail3("Request identity conflicts with another input.");
           const saved = JSON.parse(previous.result);
           const result = saved.format === "history-pruned-replay-v1" ? readSnapshot() : validatePersistentState(saved);
           db.exec("COMMIT");
           return result;
         }
         const next = readSnapshot();
-        if (next.revision !== input.expectedRevision) fail2("Another panel changed the team data. Reload saved teams before trying again; your changes were not saved.");
-        if (op !== "setAdmission" && input.teamId && readPrivate(`next-goal:${input.teamId}`)) fail2("A queued-goal transition is reserved; finish it before changing team configuration.");
+        if (next.revision !== input.expectedRevision) fail3("Another panel changed the team data. Reload saved teams before trying again; your changes were not saved.");
+        if (op !== "setAdmission" && input.teamId && readPrivate(`next-goal:${input.teamId}`)) fail3("A queued-goal transition is reserved; finish it before changing team configuration.");
         action(next);
         next.revision++;
         validatePersistentState(next);
         write(next);
-        db.prepare("INSERT INTO requests VALUES (?,?,?)").run(input.requestId, digest4, JSON.stringify(next));
+        db.prepare("INSERT INTO requests VALUES (?,?,?)").run(input.requestId, digest5, JSON.stringify(next));
         db.exec("COMMIT");
         return next;
       } catch (error) {
@@ -4661,20 +5034,20 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           changed = true;
         }
       }
-      if (stops.listStops().some((r) => affected.has(r.target.memberId) && ["intent", "submitted", "unknown"].includes(r.state))) fail2("Unresolved Stop blocks idle replacement.");
+      if (stops.listStops().some((r) => affected.has(r.target.memberId) && ["intent", "submitted", "unknown"].includes(r.state))) fail3("Unresolved Stop blocks idle replacement.");
       if (db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some((r) => {
         const w = JSON.parse(r.json);
         return affected.has(w.memberId) && w.memberId !== memberId && !["bound", "resumed"].includes(w.state);
-      })) fail2("Descendant recovery blocks idle replacement.");
-      for (const a of listDispatches().filter((a2) => affected.has(a2.memberId))) if (!["accepted", "rework"].includes(a.status) || !a.evidenceId) fail2("Member has running, unknown or unreviewed execution.");
+      })) fail3("Descendant recovery blocks idle replacement.");
+      for (const a of listDispatches().filter((a2) => affected.has(a2.memberId))) if (!["accepted", "rework"].includes(a.status) || !a.evidenceId) fail3("Member has running, unknown or unreviewed execution.");
       for (const saved of db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%'").all()) {
         const q = JSON.parse(saved.json);
-        if (affected.has(q.memberId) || affected.has(q.supervisorMemberId)) fail2("Queued execution blocks idle replacement.");
+        if (affected.has(q.memberId) || affected.has(q.supervisorMemberId)) fail3("Queued execution blocks idle replacement.");
       }
       const roots = listCurrentWorks().filter((w) => w.teamId === memberTeam?.id && w.status !== "completed").flatMap((w) => listRunWorks(w.id));
       for (const w of roots) {
-        if (affected.has(w.supervisorMemberId) && ["sending", "unknown", "queued"].includes(w.input.state)) fail2("Supervisor input remains pending or unknown.");
-        for (const q of questions.listQuestions(w.id)) if (questionNeedsProcessing(q)) fail2("Unresolved question blocks idle replacement.");
+        if (affected.has(w.supervisorMemberId) && ["sending", "unknown", "queued"].includes(w.input.state)) fail3("Supervisor input remains pending or unknown.");
+        for (const q of questions.listQuestions(w.id)) if (questionNeedsProcessing(q)) fail3("Unresolved question blocks idle replacement.");
       }
     };
     const replacementTeam = (teamId) => {
@@ -4682,10 +5055,12 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       return work ? staffing.effectiveTeamForWork(work.id) : readSnapshot().teams.find((t) => t.id === teamId);
     };
     const staffing = staffingStore({ db, readPrivate, putPrivate, readWork: readCurrentWork, listRunWorks, readSnapshot, write, archive, atomic: atomicDispatch });
+    runtimeReconnect = runtimeReconnectStore({ db, readPrivate, putPrivate, readWork, persistWork, readSnapshot, readOperation, readDispatchProtocol, atomic: atomicDispatch });
     readSnapshot();
     let closed = false;
     return {
       ...historyCleanup({ db, readSnapshot, write, atomic: atomicDispatch }),
+      ...runtimeReconnect,
       storageInfo: () => ({ schema: STORAGE_SCHEMA, backupId: prepared?.backupId ?? null }),
       ...staffing,
       ...questions,
@@ -4694,11 +5069,11 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       reserveIdleReplacement(input, operation, proof) {
         return mutate("reserveIdleReplacement", input, (next) => {
           const team = next.teams.find((t) => t.id === input.teamId), member = team?.members.find((m) => m.id === input.memberId), current = operation.sourceAttemptId ? readPrivate(`dispatch:${operation.sourceAttemptId}`) : readOperation(operation.requestId);
-          if (!member || current?.version !== operation.version) fail2("Current member execution changed; reload.");
+          if (!member || current?.version !== operation.version) fail3("Current member execution changed; reload.");
           const pointer = readPrivate(operation.sourceAttemptId ? `dispatch-member:${member.id}` : `binding:${member.id}`);
-          if ((pointer?.requestId ?? pointer?.id) !== operation.requestId || readPrivate(`wake-member:${member.id}`)) fail2("Current member replacement reservation changed.");
+          if ((pointer?.requestId ?? pointer?.id) !== operation.requestId || readPrivate(`wake-member:${member.id}`)) fail3("Current member replacement reservation changed.");
           assertReplacementIdle(member.id);
-          if (!["codex", "claude"].includes(input.agent) || [input.model, input.effort].some((v) => typeof v !== "string" || !v.trim() || v.length > 120) || input.model === "default" && input.effort !== "default") fail2("Choose valid requested agent/model/effort preferences.");
+          if (!["codex", "claude"].includes(input.agent) || [input.model, input.effort].some((v) => typeof v !== "string" || !v.trim() || v.length > 120) || input.model === "default" && input.effort !== "default") fail3("Choose valid requested agent/model/effort preferences.");
           team.admission ??= { paused: false, members: {} };
           team.admission.members[member.id] = true;
           Object.assign(member, { agent: input.agent, model: input.model, effort: input.effort, preferenceOverride: true });
@@ -4746,7 +5121,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       setAdmission(input) {
         return mutate("setAdmission", input, (next) => {
           const team = next.teams.find((row) => row.id === input.teamId);
-          if (!team || typeof input.paused !== "boolean" || input.memberId && !team.members.some((row) => row.id === input.memberId)) fail2("Choose a saved team or member.");
+          if (!team || typeof input.paused !== "boolean" || input.memberId && !team.members.some((row) => row.id === input.memberId)) fail3("Choose a saved team or member.");
           team.admission ??= { paused: false, members: {} };
           if (input.memberId) team.admission.members[input.memberId] = input.paused;
           else team.admission.paused = input.paused;
@@ -4754,7 +5129,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       },
       assertAdmission(teamId, memberId) {
         const team = readSnapshot().teams.find((row) => row.id === teamId);
-        if (!team) fail2("Saved team is unavailable.");
+        if (!team) fail3("Saved team is unavailable.");
         if (db.prepare("SELECT json FROM receipts WHERE id LIKE 'wake:%'").all().some((r) => {
           const wake = JSON.parse(r.json);
           if (wake.mode !== "idle-replacement" || wake.teamId !== teamId || ["bound", "resumed"].includes(wake.state)) return false;
@@ -4764,24 +5139,24 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
             member = team.members.find((m) => m.id === member.boss);
           }
           return false;
-        })) fail2("Member replacement handoff is reserved; new assignments are paused.");
-        if (team.admission?.paused || team.admission?.members?.[memberId]) fail2("New assignments are paused. Existing executions remain unchanged.");
-        if (stops.listStops().some((row) => row.target.teamId === teamId && row.target.memberId === memberId && ["intent", "submitted", "unknown"].includes(row.state))) fail2("Stop outcome is unresolved; reconcile this member before a new assignment.");
+        })) fail3("Member replacement handoff is reserved; new assignments are paused.");
+        if (team.admission?.paused || team.admission?.members?.[memberId]) fail3("New assignments are paused. Existing executions remain unchanged.");
+        if (stops.listStops().some((row) => row.target.teamId === teamId && row.target.memberId === memberId && ["intent", "submitted", "unknown"].includes(row.state))) fail3("Stop outcome is unresolved; reconcile this member before a new assignment.");
       },
       listGoals,
       enqueueGoal(input) {
         workInput(input);
         return atomicDispatch(() => {
-          const key = `goal-request:${input.requestId}`, digest4 = fingerprint(input), prior = readPrivate(key);
+          const key = `goal-request:${input.requestId}`, digest5 = fingerprint(input), prior = readPrivate(key);
           if (prior) {
-            if (prior.fingerprint !== digest4) fail2("Queued goal request identity conflicts.");
+            if (prior.fingerprint !== digest5) fail3("Queued goal request identity conflicts.");
             return readPrivate(`goal:${prior.id}`);
           }
           const state = readSnapshot(), team = state.teams.find((row) => row.id === input.teamId);
-          if (!team || state.revision !== input.expectedRevision) fail2("Team changed; reload before queueing a goal.");
+          if (!team || state.revision !== input.expectedRevision) fail3("Team changed; reload before queueing a goal.");
           const goal = { id: randomUUID11(), teamId: team.id, objective: input.objective, status: "queued", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           putPrivate(`goal:${goal.id}`, goal);
-          putPrivate(key, { id: goal.id, fingerprint: digest4 });
+          putPrivate(key, { id: goal.id, fingerprint: digest5 });
           state.revision++;
           write(state);
           return goal;
@@ -4792,10 +5167,10 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       recordIntentWithdrawals(workId, rows) {
         return atomicDispatch(() => {
           for (const row of rows) {
-            if (row.workId !== workId) fail2("Withdrawal belongs to another work.");
+            if (row.workId !== workId) fail3("Withdrawal belongs to another work.");
             const key = `intent-withdrawal:${workId}:${row.nativeTaskId}`, prior = readPrivate(key);
             if (prior) {
-              if (fingerprint(prior) !== fingerprint(row)) fail2("Recorded withdrawal changed.");
+              if (fingerprint(prior) !== fingerprint(row)) fail3("Recorded withdrawal changed.");
               continue;
             }
             putPrivate(key, row);
@@ -4821,7 +5196,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           if (prior) return prior;
           const root = readCurrentWork(parentWork.teamWorkId ?? parentWork.id);
           const team = this.effectiveTeamForWork?.(root.id) ?? JSON.parse(db.prepare("SELECT json FROM team_versions WHERE team_id=? AND version=?").get(root.teamId, root.configVersion).json), member = team.members.find((m) => m.id === attempt?.memberId);
-          if (root.status === "completed" || parentWork.run.state !== "verified" || attempt?.status !== "running" || attempt.admission !== "committed" || !attempt.dispatchId || !attempt.binding || attempt.supervisorMemberId !== parentWork.supervisorMemberId || !team.members.some((m) => m.boss === member?.id) || listDispatches(parentWorkId).filter((a) => a.taskKey === attempt.taskKey).at(-1)?.id !== attempt.id) fail2("A current genuine manager parent assignment is required.");
+          if (root.status === "completed" || parentWork.run.state !== "verified" || attempt?.status !== "running" || attempt.admission !== "committed" || !attempt.dispatchId || !attempt.binding || attempt.supervisorMemberId !== parentWork.supervisorMemberId || !team.members.some((m) => m.boss === member?.id) || listDispatches(parentWorkId).filter((a) => a.taskKey === attempt.taskKey).at(-1)?.id !== attempt.id) fail3("A current genuine manager parent assignment is required.");
           const id2 = randomUUID11(), protocolToken = randomUUID11(), b = attempt.binding;
           const binding = { status: "created", requestId: attempt.id, sourceAttemptId: attempt.id, memberId: member.id, teamId: root.teamId, kind: b.kind, handle: b.handle, ...b.sessionId ? { sessionId: b.liveSessionId ?? b.sessionId } : {}, paneKey: b.paneKey, runtimeId: b.runtimeId, scope: root.scope, nativeRequest: { agent: member.agent, sessionOptions: { model: member.model, effort: member.effort } } };
           const work = { format: "team-work-v1", id: id2, teamWorkId: root.id, teamId: root.teamId, requestId: attempt.id, objective: attempt.instruction, configVersion: team.configVersion, roleVersion: attempt.roleVersion, supervisorMemberId: member.id, scope: root.scope, binding, protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
@@ -4834,10 +5209,10 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
       ensureDispatchProtocol(workId) {
         return atomicDispatch(() => {
           const work = readCurrentWork(workId);
-          if (work?.status === "completed" || work?.run.state !== "verified" || !work.instance) fail2("Verify the real supervisor Run before enabling dispatch.");
+          if (work?.status === "completed" || work?.run.state !== "verified" || !work.instance) fail3("Verify the real supervisor Run before enabling dispatch.");
           const prior = readDispatchProtocol(workId);
           if (prior) {
-            if (prior.generation !== work.run.consumerGeneration) fail2("Dispatch protocol belongs to an older Run generation.");
+            if (prior.generation !== work.run.consumerGeneration) fail3("Dispatch protocol belongs to an older Run generation.");
             return prior;
           }
           const protocol = { format: "team-dispatch-protocol-v1", workId, generation: work.run.consumerGeneration, token: randomUUID11(), state: "not_sent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -4847,10 +5222,10 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
       },
       updateDispatchProtocol(workId, version, patch) {
         return atomicDispatch(() => {
-          if (readWork(workId)?.status === "completed") fail2("Completed TeamWork is sealed.");
+          if (readWork(workId)?.status === "completed") fail3("Completed TeamWork is sealed.");
           const row = readDispatchProtocol(workId);
-          if (!row || row.version !== version) fail2("Dispatch protocol changed while observing evidence.");
-          if (Object.keys(patch).some((key) => !["state", "detail", "nativeSend"].includes(key))) fail2("Immutable dispatch protocol cannot change.");
+          if (!row || row.version !== version) fail3("Dispatch protocol changed while observing evidence.");
+          if (Object.keys(patch).some((key) => !["state", "detail", "nativeSend"].includes(key))) fail3("Immutable dispatch protocol cannot change.");
           Object.assign(row, patch, { version: version + 1 });
           validateDispatchProtocol(row);
           putPrivate(`dispatch-protocol:${workId}`, row);
@@ -4866,45 +5241,45 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
       prepareDispatch(workId, intent, startParams, reuse) {
         return atomicDispatch(() => {
           const work = readCurrentWork(workId), protocol = readDispatchProtocol(workId);
-          if (work?.status === "completed" || work?.run.state !== "verified" || protocol?.state !== "accepted" || protocol.generation !== work.run.consumerGeneration || intent.spec.token !== protocol.token) fail2("Current supervisor admission authority is required.");
+          if (work?.status === "completed" || work?.run.state !== "verified" || protocol?.state !== "accepted" || protocol.generation !== work.run.consumerGeneration || intent.spec.token !== protocol.token) fail3("Current supervisor admission authority is required.");
           if (work.parent) {
             const parent = readWork(work.parent.workId), a = listDispatches(parent.id).find((a2) => a2.id === work.parent.attemptId);
-            if (readWork(work.teamWorkId)?.status === "completed" || a?.status !== "running" || a.evidenceId || a.dispatchId !== work.parent.dispatchId || listDispatches(parent.id).filter((r) => r.taskKey === a.taskKey).at(-1)?.id !== a.id) fail2("Parent attempt is stale or settled; child admission is fenced.");
+            if (readWork(work.teamWorkId)?.status === "completed" || a?.status !== "running" || a.evidenceId || a.dispatchId !== work.parent.dispatchId || listDispatches(parent.id).filter((r) => r.taskKey === a.taskKey).at(-1)?.id !== a.id) fail3("Parent attempt is stale or settled; child admission is fenced.");
           }
-          const key = `dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId ? `:${intent.spec.previousAttemptId}` : ""}`, digest4 = fingerprint({ spec: intent.spec, nativeTaskId: intent.nativeTaskId });
+          const key = `dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId ? `:${intent.spec.previousAttemptId}` : ""}`, digest5 = fingerprint({ spec: intent.spec, nativeTaskId: intent.nativeTaskId });
           const prior = readPrivate(key);
           if (prior) {
-            if (prior.fingerprint !== digest4) fail2("Task intent identity conflicts with another input.");
+            if (prior.fingerprint !== digest5) fail3("Task intent identity conflicts with another input.");
             return { attempt: validateDispatch(readPrivate(`dispatch:${prior.id}`)), fresh: false };
           }
           this.assertAdmission(work.teamId, intent.spec.memberId);
           questions.questionTaskGate(workId, intent.spec.taskKey, intent.nativeTaskId);
           const team = staffing.effectiveTeamForWork(workId), member = team?.members.find((row) => row.id === intent.spec.memberId);
-          if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== intent.spec.roleVersion || intent.spec.configVersion !== team.configVersion) fail2("Only the true direct supervisor can admit this frozen member role.");
+          if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== intent.spec.roleVersion || intent.spec.configVersion !== team.configVersion) fail3("Only the true direct supervisor can admit this frozen member role.");
           const history = listDispatches(workId), previous = history.filter((row) => row.taskKey === intent.spec.taskKey).at(-1);
           const recovery = reuse?.recoveryRequestId && readPrivate(`wake:${reuse.recoveryRequestId}`), recoveredPrior = recovery && recovery.handoff?.decision === "replace" && recovery.handoff.reviewer === work.supervisorMemberId && (recovery.oldBinding.sourceAttemptId === previous?.id || previous?.reuse?.requestId === recovery.oldBinding.requestId) && recovery.newInstance?.requestId === reuse.requestId;
-          if (previous && (!intent.spec.previousAttemptId || intent.spec.previousAttemptId !== previous.id || previous.status !== "rework" && !recoveredPrior || previous.memberId !== member.id)) fail2("A new attempt requires the current direct supervisor rework decision.");
-          if (!previous && intent.spec.previousAttemptId) fail2("Rework attempt does not exist in this TeamWork.");
+          if (previous && (!intent.spec.previousAttemptId || intent.spec.previousAttemptId !== previous.id || previous.status !== "rework" && !recoveredPrior || previous.memberId !== member.id)) fail3("A new attempt requires the current direct supervisor rework decision.");
+          if (!previous && intent.spec.previousAttemptId) fail3("Rework attempt does not exist in this TeamWork.");
           const stopAttempts = new Set(stops.listStops().filter((row) => ["intent", "submitted", "unknown"].includes(row.state)).map((row) => row.target.attemptId));
           const writeScope = declaredWriteScope(intent.spec.writeScope), conflict = scopeBlocker(listTeamDispatches(work.teamWorkId ?? work.id).filter((a) => a.id !== work.parent?.attemptId).map((a) => ({ ...a, originalTaskKey: a.taskKey, ...stopAttempts.has(a.id) ? { status: "unknown" } : {}, taskKey: `${a.workId}:${a.taskKey}` })), `${workId}:${intent.spec.taskKey}`, writeScope);
-          if (conflict && !intent.unadmitted) fail2(`Write scope conflicts with ${conflict.originalTaskKey ?? conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
-          if (previous && JSON.stringify(writeScope) !== JSON.stringify(previous.writeScope ?? [])) fail2("Rework must preserve the declared write scope.");
+          if (conflict && !intent.unadmitted) fail3(`Write scope conflicts with ${conflict.originalTaskKey ?? conflict.taskKey}; wait for direct supervisor acceptance or resolve its unknown result.`);
+          if (previous && JSON.stringify(writeScope) !== JSON.stringify(previous.writeScope ?? [])) fail3("Rework must preserve the declared write scope.");
           const dependencies = intent.spec.dependencies ?? [];
-          if (previous && JSON.stringify(dependencies) !== JSON.stringify(previous.dependencies ?? [])) fail2("Rework must preserve business task dependencies.");
-          if (dependencies.some((key2) => history.filter((row) => row.taskKey === key2).at(-1)?.status !== "accepted")) fail2("Application dependencies await direct supervisor acceptance.");
+          if (previous && JSON.stringify(dependencies) !== JSON.stringify(previous.dependencies ?? [])) fail3("Rework must preserve business task dependencies.");
+          if (dependencies.some((key2) => history.filter((row) => row.taskKey === key2).at(-1)?.status !== "accepted")) fail3("Application dependencies await direct supervisor acceptance.");
           const reservation = readPrivate(`dispatch-member:${member.id}`), retained = reservation && history.find((row) => row.id === reservation.id);
           const preparedPointer = readPrivate(`binding:${member.id}`), prepared2 = preparedPointer && readOperation(preparedPointer.requestId);
-          if (preparedPointer && (!reuse || reuse.kind === "prepared" && (reuse.requestId !== preparedPointer.requestId || (reuse.instanceGeneration ?? 1) !== (preparedPointer.instanceGeneration ?? 1) || prepared2?.status !== "created" || prepared2.memberId !== member.id || prepared2.teamId !== work.teamId || prepared2.scope?.workspaceKey !== work.scope.workspaceKey))) fail2("This member already has an active launch binding; verify it before reuse.");
+          if (preparedPointer && (!reuse || reuse.kind === "prepared" && (reuse.requestId !== preparedPointer.requestId || (reuse.instanceGeneration ?? 1) !== (preparedPointer.instanceGeneration ?? 1) || prepared2?.status !== "created" || prepared2.memberId !== member.id || prepared2.teamId !== work.teamId || prepared2.scope?.workspaceKey !== work.scope.workspaceKey))) fail3("This member already has an active launch binding; verify it before reuse.");
           const recoveredMember = recovery && recovery.newInstance?.requestId === prepared2?.requestId && (recovery.oldBinding.sourceAttemptId === retained?.id || retained?.reuse?.requestId === recovery.oldBinding.requestId) && (["accepted", "rework"].includes(retained?.status) || recovery.handoff?.decision === "replace" && recovery.handoff.reviewer === work.supervisorMemberId);
-          if (reuse?.kind === "prepared" && (!prepared2 || reservation && !recoveredMember || startParams.terminal !== reuse.terminal)) fail2("Prepared member reservation changed.");
-          if (reservation && !recoveredMember && (!reuse || retained?.id !== reuse.attemptId || !["accepted", "rework"].includes(retained.status) || JSON.stringify(retained.binding) !== JSON.stringify(reuse.binding) || startParams.terminal !== reuse.terminal)) fail2("This member already has a reserved or active binding. Reconcile it before another dispatch.");
-          if (reuse && reuse.kind !== "prepared" && !reservation) fail2("Retained member reservation changed.");
+          if (reuse?.kind === "prepared" && (!prepared2 || reservation && !recoveredMember || startParams.terminal !== reuse.terminal)) fail3("Prepared member reservation changed.");
+          if (reservation && !recoveredMember && (!reuse || retained?.id !== reuse.attemptId || !["accepted", "rework"].includes(retained.status) || JSON.stringify(retained.binding) !== JSON.stringify(reuse.binding) || startParams.terminal !== reuse.terminal)) fail3("This member already has a reserved or active binding. Reconcile it before another dispatch.");
+          if (reuse && reuse.kind !== "prepared" && !reservation) fail3("Retained member reservation changed.");
           const instanceGeneration = reuse?.instanceGeneration ?? retained?.instanceGeneration ?? (readPrivate(`binding-generation:${member.id}`)?.generation ?? 0) + 1;
           const id2 = randomUUID11(), attempt = { format: "team-dispatch-v1", id: id2, attemptId: id2, instanceGeneration, workId, teamWorkId: work.teamWorkId ?? work.id, runId: work.run.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, memberId: member.id, memberName: member.name, nativeTaskId: intent.nativeTaskId, taskKey: intent.spec.taskKey, taskSpec: intent.taskSpec, dependencies, writeScope, reviewToken: randomUUID11(), ...previous ? { previousAttemptId: previous.id } : {}, configVersion: team.configVersion, roleVersion: member.roleVersion, role: intent.spec.role, instruction: intent.spec.instruction, token: protocol.token, generation: protocol.generation, scope: work.scope, startParams, ...reuse ? { reuse } : {}, createRequestId: intent.requestId, createPayloadHash: intent.payloadHash, admission: intent.unadmitted ? "unadmitted" : "committed", status: intent.unadmitted ? "unknown" : "admitted", permit: { state: intent.unadmitted ? "unknown" : "not_sent" }, ...intent.unadmitted ? { detail: "Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent." } : {}, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           validateDispatch(attempt);
           db.prepare("DELETE FROM receipts WHERE id=?").run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);
           putPrivate(`dispatch:${id2}`, attempt);
-          putPrivate(key, { id: id2, fingerprint: digest4 });
+          putPrivate(key, { id: id2, fingerprint: digest5 });
           putPrivate(`dispatch-member:${member.id}`, { id: id2, workId });
           return { attempt, fresh: true };
         });
@@ -4914,11 +5289,11 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           const row = validateDispatch(readPrivate(`dispatch:${id2}`)), work = readCurrentWork(row.workId), current = listDispatches(row.workId).filter((other) => other.taskKey === row.taskKey).at(-1);
           if (row.review) {
             if (row.review.requestId === review.requestId && row.review.payloadHash === review.payloadHash) return row;
-            fail2("This attempt already has an immutable supervisor decision.");
+            fail3("This attempt already has an immutable supervisor decision.");
           }
-          if (work?.status === "completed" || review.reviewToken !== (row.reviewAuthority?.reviewToken ?? row.reviewToken) || review.protocolToken !== readDispatchProtocol(row.workId)?.token || current?.id !== row.id || row.status !== "pending_acceptance" || work?.run.state !== "verified" || work.run.consumerGeneration !== review.generation || (row.reviewAuthority?.generation ?? row.generation) !== review.generation || review.attemptId !== id2 || review.reviewerMemberId !== row.supervisorMemberId || !review.evidenceRefs?.includes(row.evidenceId) || !["accept", "rework"].includes(review.decision)) fail2("Review is not for the current completed attempt and supervisor.");
+          if (work?.status === "completed" || review.reviewToken !== (row.reviewAuthority?.reviewToken ?? row.reviewToken) || review.protocolToken !== readDispatchProtocol(row.workId)?.token || current?.id !== row.id || row.status !== "pending_acceptance" || work?.run.state !== "verified" || work.run.consumerGeneration !== review.generation || (row.reviewAuthority?.generation ?? row.generation) !== review.generation || review.attemptId !== id2 || review.reviewerMemberId !== row.supervisorMemberId || !review.evidenceRefs?.includes(row.evidenceId) || !["accept", "rework"].includes(review.decision)) fail3("Review is not for the current completed attempt and supervisor.");
           if (review.decision === "accept") for (const child of listRunWorks(row.teamWorkId ?? row.workId).filter((w) => w.parent?.attemptId === row.id)) {
-            if (child.run.state !== "verified" || latestBusinessAttempts(listDispatches(child.id)).some((a) => a.status !== "accepted") || queuedTasks(child.id).length || questions.listQuestions(child.id).some(questionNeedsProcessing)) fail2("Manager acceptance awaits descendant results and questions.");
+            if (child.run.state !== "verified" || latestBusinessAttempts(listDispatches(child.id)).some((a) => a.status !== "accepted") || queuedTasks(child.id).length || questions.listQuestions(child.id).some(questionNeedsProcessing)) fail3("Manager acceptance awaits descendant results and questions.");
           }
           const event = { ...review, workId: row.workId, taskKey: row.taskKey, nativeTaskId: row.nativeTaskId, dispatchId: row.dispatchId, recordedAt: (/* @__PURE__ */ new Date()).toISOString() };
           row.review = event;
@@ -4934,15 +5309,15 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
       updateDispatch(id2, version, patch, expectedWorkVersion) {
         return atomicDispatch(() => {
           const row = validateDispatch(readPrivate(`dispatch:${id2}`));
-          if (readWork(row.workId)?.status === "completed") fail2("Completed TeamWork is sealed.");
-          if (expectedWorkVersion !== void 0 && readWork(row.workId)?.version !== expectedWorkVersion) fail2("TeamWork changed during recovery.");
-          if (row.version !== version) fail2(DISPATCH_OBSERVATION_CHANGED);
-          if (Object.keys(patch).some((key) => !["admission", "status", "permit", "dispatchId", "creatorDispatchId", "depth", "binding", "nativeState", "startRequestId", "startPayloadHash", "outcome", "result", "evidenceId", "detail", "recovery"].includes(key))) fail2("Immutable Dispatch identity cannot change.");
-          if (patch.admission !== void 0 && (patch.admission !== "unadmitted" || row.permit.state !== "not_sent")) fail2("Admission cannot be rewritten after a permit attempt.");
-          if (row.dispatchId && patch.dispatchId && row.dispatchId !== patch.dispatchId) fail2("Late native evidence belongs to a different Dispatch.");
-          if (row.evidenceId && patch.evidenceId && row.evidenceId !== patch.evidenceId) fail2("Execution result already has immutable native evidence.");
-          if (row.binding && patch.binding && ["kind", "handle", "sessionId", "paneKey", "incarnationId", "runtimeId", "workspaceId", "executionHostId"].some((key) => row.binding[key] !== patch.binding[key])) fail2("Saved member execution instance changed; prior binding remains reserved.");
-          if (patch.binding && listDispatches().some((other) => other.memberId !== row.memberId && other.binding && (patch.binding.sessionId ? other.binding.sessionId === patch.binding.sessionId : other.binding.handle === patch.binding.handle && other.binding.incarnationId === patch.binding.incarnationId))) fail2("Native session is already bound to another member.");
+          if (readWork(row.workId)?.status === "completed") fail3("Completed TeamWork is sealed.");
+          if (expectedWorkVersion !== void 0 && readWork(row.workId)?.version !== expectedWorkVersion) fail3("TeamWork changed during recovery.");
+          if (row.version !== version) fail3(DISPATCH_OBSERVATION_CHANGED);
+          if (Object.keys(patch).some((key) => !["admission", "status", "permit", "dispatchId", "creatorDispatchId", "depth", "binding", "nativeState", "startRequestId", "startPayloadHash", "outcome", "result", "evidenceId", "detail", "recovery"].includes(key))) fail3("Immutable Dispatch identity cannot change.");
+          if (patch.admission !== void 0 && (patch.admission !== "unadmitted" || row.permit.state !== "not_sent")) fail3("Admission cannot be rewritten after a permit attempt.");
+          if (row.dispatchId && patch.dispatchId && row.dispatchId !== patch.dispatchId) fail3("Late native evidence belongs to a different Dispatch.");
+          if (row.evidenceId && patch.evidenceId && row.evidenceId !== patch.evidenceId) fail3("Execution result already has immutable native evidence.");
+          if (row.binding && patch.binding && ["kind", "handle", "sessionId", "paneKey", "incarnationId", "runtimeId", "workspaceId", "executionHostId"].some((key) => row.binding[key] !== patch.binding[key])) fail3("Saved member execution instance changed; prior binding remains reserved.");
+          if (patch.binding && listDispatches().some((other) => other.memberId !== row.memberId && other.binding && (patch.binding.sessionId ? other.binding.sessionId === patch.binding.sessionId : other.binding.handle === patch.binding.handle && other.binding.incarnationId === patch.binding.incarnationId))) fail3("Native session is already bound to another member.");
           if (row.evidenceId) {
             if (patch.recovery) {
               row.recovery = patch.recovery;
@@ -4970,30 +5345,30 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
       },
       prepareWork(input) {
         workInput(input);
-        const digest4 = fingerprint(input);
+        const digest5 = fingerprint(input);
         db.exec("BEGIN IMMEDIATE");
         try {
           const request = db.prepare("SELECT json FROM receipts WHERE id=?").get(`work-request:${input.requestId}`);
           if (request) {
             const saved = JSON.parse(request.json);
-            if (saved.fingerprint !== digest4) fail2("Objective request identity conflicts with another input.");
+            if (saved.fingerprint !== digest5) fail3("Objective request identity conflicts with another input.");
             const work2 = readWork(saved.workId);
-            if (!work2) fail2("Saved objective is missing.");
+            if (!work2) fail3("Saved objective is missing.");
             db.exec("COMMIT");
             return { work: work2, fresh: false };
           }
           const state = readSnapshot(), team = state.teams.find((row) => row.id === input.teamId), supervisor = team?.members.find((row) => row.boss === null);
           const nextGoal = lifecycle.nextGoal(input.teamId);
-          if (nextGoal && (input.requestId !== nextGoal.workRequestId || input.objective !== nextGoal.objective || team?.configVersion !== nextGoal.configVersion)) fail2("A queued-goal transition reserves this team.");
-          if (nextGoal && Object.entries(nextGoal.launchRequests).some(([memberId, id3]) => readPrivate(`binding:${memberId}`)?.requestId !== id3 || readOperation(id3)?.status !== "created")) fail2("Queued goal awaits verified fresh preparation sessions.");
-          if (!supervisor) fail2("Saved team supervisor is missing.");
-          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`active-work:${team.id}`)) fail2("This team already has a total objective in progress. Check its active work.");
-          if (state.revision !== input.expectedRevision) fail2("Another panel changed team data. Reload before submitting the objective.");
+          if (nextGoal && (input.requestId !== nextGoal.workRequestId || input.objective !== nextGoal.objective || team?.configVersion !== nextGoal.configVersion)) fail3("A queued-goal transition reserves this team.");
+          if (nextGoal && Object.entries(nextGoal.launchRequests).some(([memberId, id3]) => readPrivate(`binding:${memberId}`)?.requestId !== id3 || readOperation(id3)?.status !== "created")) fail3("Queued goal awaits verified fresh preparation sessions.");
+          if (!supervisor) fail3("Saved team supervisor is missing.");
+          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`active-work:${team.id}`)) fail3("This team already has a total objective in progress. Check its active work.");
+          if (state.revision !== input.expectedRevision) fail3("Another panel changed team data. Reload before submitting the objective.");
           const requestId = team.launch?.members?.[supervisor.id]?.requestId, binding = requestId && readOperation(requestId);
-          if (binding?.status !== "created" || binding.teamId !== team.id || binding.memberId !== supervisor.id || !binding.handle) fail2("Launch and verify the registered highest supervisor before submitting a total objective.");
-          if (listWorks().some((w) => w.teamId === team.id && (binding.kind === "structured" ? w.binding.sessionId === binding.sessionId : w.binding.handle === binding.handle || w.binding.paneKey === binding.paneKey))) fail2("New TeamWork requires a fresh native conversation; old session authority cannot be reused.");
-          if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? "default") || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? "default")) fail2("The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.");
-          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`session-work:${requestId}`)) fail2("This preparation session has already accepted a total objective.");
+          if (binding?.status !== "created" || binding.teamId !== team.id || binding.memberId !== supervisor.id || !binding.handle) fail3("Launch and verify the registered highest supervisor before submitting a total objective.");
+          if (listWorks().some((w) => w.teamId === team.id && (binding.kind === "structured" ? w.binding.sessionId === binding.sessionId : w.binding.handle === binding.handle || w.binding.paneKey === binding.paneKey))) fail3("New TeamWork requires a fresh native conversation; old session authority cannot be reused.");
+          if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? "default") || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? "default")) fail3("The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.");
+          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`session-work:${requestId}`)) fail3("This preparation session has already accepted a total objective.");
           const scope = JSON.parse(db.prepare("SELECT json FROM scopes WHERE team_id=?").get(team.id).json);
           const id2 = randomUUID11(), protocolToken = randomUUID11();
           const work = { format: "team-work-v1", id: id2, teamId: team.id, requestId: input.requestId, objective: input.objective, configVersion: team.configVersion, roleVersion: supervisor.roleVersion, supervisorMemberId: supervisor.id, scope, binding, recipientBindings: Object.values(team.launch?.members ?? {}).map((r) => readOperation(r.requestId)).filter(Boolean), protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
@@ -5007,7 +5382,7 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
             db.prepare("DELETE FROM receipts WHERE id=?").run(`next-goal:${team.id}`);
           }
           persistWork(work);
-          for (const [key, value] of [[`work-request:${input.requestId}`, { workId: id2, fingerprint: digest4 }], [`active-work:${team.id}`, { workId: id2 }], [`session-work:${requestId}`, { workId: id2 }]]) db.prepare("INSERT INTO receipts VALUES (?,?)").run(key, JSON.stringify(value));
+          for (const [key, value] of [[`work-request:${input.requestId}`, { workId: id2, fingerprint: digest5 }], [`active-work:${team.id}`, { workId: id2 }], [`session-work:${requestId}`, { workId: id2 }]]) db.prepare("INSERT INTO receipts VALUES (?,?)").run(key, JSON.stringify(value));
           state.revision++;
           write(state);
           db.exec("COMMIT");
@@ -5021,10 +5396,10 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         db.exec("BEGIN IMMEDIATE");
         try {
           const work = readWork(id2);
-          if (!work || work.version !== version) fail2("TeamWork changed while native evidence was being observed.");
-          if (work.status === "completed") fail2("Completed TeamWork is sealed.");
+          if (!work || work.version !== version) fail3("TeamWork changed while native evidence was being observed.");
+          if (work.status === "completed") fail3("Completed TeamWork is sealed.");
           const permitted = ["status", "input", "processing", "run", "snapshot", "error", "instance", "nativeSend"];
-          if (Object.keys(patch).some((key) => !permitted.includes(key))) fail2("Immutable TeamWork identity cannot be changed.");
+          if (Object.keys(patch).some((key) => !permitted.includes(key))) fail3("Immutable TeamWork identity cannot be changed.");
           const current = readCurrentWork(id2), before = Object.fromEntries(Object.keys(patch).map((key) => [key, current[key]])), after = { ...patch };
           for (const value of [before, after]) for (const key of ["run", "snapshot"]) if (value[key]) value[key] = { ...value[key], observedAt: void 0 };
           const nextVersion = version + (fingerprint(before) === fingerprint(after) ? 0 : 1);
@@ -5042,25 +5417,25 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         }
       },
       prepareOperation(input, intent) {
-        const digest4 = fingerprint(input);
+        const digest5 = fingerprint(input);
         db.exec("BEGIN IMMEDIATE");
         try {
           const previous = readOperation(input.requestId);
           if (previous) {
-            if (previous.fingerprint !== digest4) fail2("Request identity conflicts with another launch input.");
+            if (previous.fingerprint !== digest5) fail3("Request identity conflicts with another launch input.");
             db.exec("COMMIT");
             return { operation: previous, fresh: false };
           }
           const team = readSnapshot().teams.find((row) => row.id === input.teamId);
           const member = team?.members.find((row) => row.id === input.memberId);
-          if (!member || !initialMembers(team).some((row) => row.id === member.id) || team.configVersion !== input.configVersion) fail2("Launch requires a member selected by the saved roster preparation mode.");
+          if (!member || !initialMembers(team).some((row) => row.id === member.id) || team.configVersion !== input.configVersion) fail3("Launch requires a member selected by the saved roster preparation mode.");
           staffing.assertStaffingPreparation(member.id, input.requestId);
           const nextGoal = lifecycle.nextGoal(input.teamId);
-          if (nextGoal && (nextGoal.launchRequests[input.memberId] !== input.requestId || nextGoal.configVersion !== input.configVersion)) fail2("Queued transition requires its saved fresh launch identity.");
+          if (nextGoal && (nextGoal.launchRequests[input.memberId] !== input.requestId || nextGoal.configVersion !== input.configVersion)) fail3("Queued transition requires its saved fresh launch identity.");
           const bindingKey = `binding:${input.memberId}`;
-          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(bindingKey) || readPrivate(`dispatch-member:${member.id}`) || team.launch?.members?.[member.id]) fail2("This member already has a launch or unresolved binding. Inspect its saved operation.");
+          if (db.prepare("SELECT id FROM receipts WHERE id=?").get(bindingKey) || readPrivate(`dispatch-member:${member.id}`) || team.launch?.members?.[member.id]) fail3("This member already has a launch or unresolved binding. Inspect its saved operation.");
           const instanceGeneration = (readPrivate(`binding-generation:${input.memberId}`)?.generation ?? 0) + 1;
-          const operation = { ...intent, ...input, fingerprint: digest4, status: "unknown", effectState: "intent", instanceGeneration, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const operation = { ...intent, ...input, fingerprint: digest5, status: "unknown", effectState: "intent", instanceGeneration, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           db.prepare("INSERT INTO receipts VALUES (?,?)").run(bindingKey, JSON.stringify({ requestId: input.requestId, instanceGeneration }));
           persistOperation(operation);
           db.exec("COMMIT");
@@ -5074,13 +5449,13 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         db.exec("BEGIN IMMEDIATE");
         try {
           const operation = readOperation(requestId);
-          if (!operation || operation.nativeRequest.operationId !== nativeOperationId) fail2("Launch settlement does not match its operation.");
-          if (expectedVersion !== void 0 && (operation.version ?? 1) !== expectedVersion) fail2("Operation changed while observing evidence; stale panel observation discarded.");
+          if (!operation || operation.nativeRequest.operationId !== nativeOperationId) fail3("Launch settlement does not match its operation.");
+          if (expectedVersion !== void 0 && (operation.version ?? 1) !== expectedVersion) fail3("Operation changed while observing evidence; stale panel observation discarded.");
           if (operation.status === "created" && patch.status === "unknown") {
             db.exec("COMMIT");
             return operation;
           }
-          if (operation.handle && patch.handle && (operation.kind !== patch.kind || (operation.kind === "structured" ? operation.sessionId !== patch.sessionId : operation.handle !== patch.handle && (!operation.paneKey || operation.paneKey !== patch.paneKey)))) fail2("Launch settlement conflicts with its saved identity.");
+          if (operation.handle && patch.handle && (operation.kind !== patch.kind || (operation.kind === "structured" ? operation.sessionId !== patch.sessionId : operation.handle !== patch.handle && (!operation.paneKey || operation.paneKey !== patch.paneKey)))) fail3("Launch settlement conflicts with its saved identity.");
           const observationOnly = (!patch.status || patch.status === operation.status) && (!patch.handle || patch.handle === operation.handle);
           Object.assign(operation, patch, { version: (operation.version ?? 1) + 1 });
           persistOperation(operation, observationOnly);
@@ -5094,24 +5469,24 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       readSnapshot,
       replay(op, input) {
         readSnapshot();
-        if (typeof input?.requestId !== "string") fail2("Invalid request identity.");
+        if (typeof input?.requestId !== "string") fail3("Invalid request identity.");
         const previous = db.prepare("SELECT fingerprint,result FROM requests WHERE id=?").get(input.requestId);
         if (!previous) return null;
-        if (previous.fingerprint !== fingerprint({ op, input })) fail2("Request identity conflicts with another input.");
+        if (previous.fingerprint !== fingerprint({ op, input })) fail3("Request identity conflicts with another input.");
         const saved = JSON.parse(previous.result);
         return saved.format === "history-pruned-replay-v1" ? readSnapshot() : validatePersistentState(saved);
       },
       readScope(teamId) {
         const row = db.prepare("SELECT json FROM scopes WHERE team_id=?").get(teamId);
-        if (!row) fail2("Saved team scope was not found.");
+        if (!row) fail3("Saved team scope was not found.");
         const scope = JSON.parse(row.json);
         const saved = readSnapshot().teams.find((team) => team.id === teamId)?.scope;
-        if (!saved || !scope || ["workspaceKey", "executionHostId", "kind"].some((key) => saved[key] !== scope[key]) || fingerprint([scope.workspaceId, scope.executionHostId]) !== scope.workspaceKey) fail2("Saved project binding is damaged. Original data has been preserved.");
+        if (!saved || !scope || ["workspaceKey", "executionHostId", "kind"].some((key) => saved[key] !== scope[key]) || fingerprint([scope.workspaceId, scope.executionHostId]) !== scope.workspaceKey) fail3("Saved project binding is damaged. Original data has been preserved.");
         return scope;
       },
       createTeam(input, scope) {
         return mutate("createTeam", input, (next) => {
-          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail2("Confirm a verified project and execution host before saving.");
+          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("Confirm a verified project and execution host before saving.");
           const team = planTeam(input.form);
           const ids = new Map(team.members.map((member) => [member.id, randomUUID11()]));
           team.id = randomUUID11();
@@ -5127,11 +5502,11 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       updateAgentPreferences(input) {
         return mutate("updateAgentPreferences", input, (next) => {
           const team = next.teams.find((row) => row.id === input.teamId);
-          if (!team) fail2("Choose a saved team.");
+          if (!team) fail3("Choose a saved team.");
           const member = input.memberId ? team.members.find((row) => row.id === input.memberId) : null;
-          if (input.memberId ? !member || input.level !== void 0 : ![1, 2, 3].includes(input.level) || !team.members.some((row) => row.level === input.level)) fail2("Choose a member or hierarchy level.");
+          if (input.memberId ? !member || input.level !== void 0 : ![1, 2, 3].includes(input.level) || !team.members.some((row) => row.level === input.level)) fail3("Choose a member or hierarchy level.");
           const preferences = input.inherit === true && member ? { agent: team.configuration.agents[member.level - 1], model: team.configuration.models[member.level - 1], effort: team.configuration.efforts[member.level - 1] } : { agent: input.agent, model: input.model, effort: input.effort };
-          if (!["codex", "claude"].includes(preferences.agent) || [preferences.model, preferences.effort].some((value) => typeof value !== "string" || !value.trim() || value.length > 120) || preferences.model === "default" && preferences.effort !== "default") fail2("Choose a valid agent, model and effort; default model inherits its effort.");
+          if (!["codex", "claude"].includes(preferences.agent) || [preferences.model, preferences.effort].some((value) => typeof value !== "string" || !value.trim() || value.length > 120) || preferences.model === "default" && preferences.effort !== "default") fail3("Choose a valid agent, model and effort; default model inherits its effort.");
           if (member) Object.assign(member, preferences, { preferenceOverride: input.inherit !== true });
           else {
             for (const [key, values] of [["agent", "agents"], ["model", "models"], ["effort", "efforts"]]) team.configuration[values][input.level - 1] = preferences[key];
@@ -5143,12 +5518,12 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       },
       exportTemplate(teamId) {
         const team = readSnapshot().teams.find((row) => row.id === teamId);
-        if (!team) fail2("Saved team was not found.");
+        if (!team) fail3("Saved team was not found.");
         return exportTeamTemplate(team);
       },
       importTemplate(input, scope) {
         return mutate("importTemplate", input, (next) => {
-          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail2("Confirm a verified project and execution host before importing.");
+          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("Confirm a verified project and execution host before importing.");
           const template = parseTeamTemplate(input.template);
           const definition = template.team;
           const ids = new Map(definition.members.map((member) => [member.ref, randomUUID11()]));
@@ -5171,8 +5546,8 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       beginLaunch(input) {
         return mutate("beginLaunch", input, (next) => {
           const team = next.teams.find((row) => row.id === input.teamId);
-          if (!team || !["on-demand", "all"].includes(input.mode)) fail2("Choose a saved team and launch mode.");
-          if (team.launch) fail2("This launch has already been attempted. Inspect the saved receipts.");
+          if (!team || !["on-demand", "all"].includes(input.mode)) fail3("Choose a saved team and launch mode.");
+          if (team.launch) fail3("This launch has already been attempted. Inspect the saved receipts.");
           team.launch = { native: true, status: "sending", mode: input.mode, workspaceKey: team.scope.workspaceKey, configVersion: team.configVersion, members: {} };
         });
       },
@@ -5201,7 +5576,7 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       },
       updateSettings(input) {
         return mutate("updateSettings", input, (next) => {
-          if (typeof input.settings?.chart !== "boolean" || !["stacked", "columns"].includes(input.settings.layout)) fail2("Invalid display settings.");
+          if (typeof input.settings?.chart !== "boolean" || !["stacked", "columns"].includes(input.settings.layout)) fail3("Invalid display settings.");
           next.settings = { chart: input.settings.chart, layout: input.settings.layout };
         });
       },
@@ -5209,9 +5584,9 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         return mutate("updateRole", input, (next) => {
           const team = next.teams.find((row) => row.id === input.teamId);
           const member = team?.members.find((row) => row.id === input.memberId);
-          if (!member) fail2("Member was not found in this team.");
+          if (!member) fail3("Member was not found in this team.");
           for (const key of ["brief", "habits", "collaboration"]) {
-            if (typeof input[key] !== "string" || input[key].length > 1500 || key === "brief" && !input[key].trim()) fail2("Role text must be valid and under 1500 characters.");
+            if (typeof input[key] !== "string" || input[key].length > 1500 || key === "brief" && !input[key].trim()) fail3("Role text must be valid and under 1500 characters.");
             member[key] = input[key];
           }
           member.roleVersion++;
@@ -5222,12 +5597,12 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       },
       readTeamVersion(teamId, version) {
         const row = db.prepare("SELECT json FROM team_versions WHERE team_id=? AND version=?").get(teamId, version);
-        if (!row) fail2("Configuration version was not found.");
+        if (!row) fail3("Configuration version was not found.");
         return JSON.parse(row.json);
       },
       readRoleVersion(memberId, version) {
         const row = db.prepare("SELECT json FROM role_versions WHERE member_id=? AND version=?").get(memberId, version);
-        if (!row) fail2("Role version was not found.");
+        if (!row) fail3("Role version was not found.");
         return JSON.parse(row.json);
       },
       close() {
@@ -5270,7 +5645,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.08", internalKey });
+      const report = await bootstrap({ version: "0.1.09", internalKey });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;
