@@ -62,3 +62,14 @@ test('native stop uses the current orchestration contract with its saved idempot
  await assert.rejects(rpc('orchestration.workerStop',params,{...envelope,orchestrationContractVersion:2}),/overrides/);
  assert.equal(requests.length,1);
 });
+test('sidebar naming reaches the authenticated native socket with only its exact terminal and title',async t=>{
+ const profile=await mkdtemp(join(tmpdir(),'native-naming-')),endpoint=join(profile,'runtime.sock'),requests=[];
+ const server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());requests.push(request);socket.end(JSON.stringify({id:request.id,ok:true,result:{rename:{handle:request.params.terminal,tabId:'worker-tab',title:request.params.title}},_meta:{runtimeId:'runtime-one'}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});
+ await writeFile(join(profile,'orca-runtime.json'),JSON.stringify({runtimeId:'runtime-one',pid:process.pid,transports:[{kind:'unix',endpoint}],authToken:'private-token'}));
+ let approved=true;const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{if(!approved)throw Error('Consent revoked');}});
+ const result=await rpc.withRuntime('runtime-one',()=>rpc('terminal.rename',{terminal:'worker-handle',title:'proposal/Worker-1'}));
+ assert.deepEqual(result.rename,{handle:'worker-handle',tabId:'worker-tab',title:'proposal/Worker-1'});
+ assert.deepEqual(requests[0].params,{terminal:'worker-handle',title:'proposal/Worker-1'});assert.equal(requests[0].from,undefined);
+ approved=false;await assert.rejects(rpc('terminal.rename',{terminal:'worker-handle',title:'Other'}),/Consent revoked/);assert.equal(requests.length,1);
+});

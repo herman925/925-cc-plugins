@@ -126,7 +126,7 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
    const nativeRequest=nativeLaunchIntent(team,member,row.oldBinding.scope);
    const work=allWorks().find(w=>w.binding.requestId===row.oldBinding.requestId&&w.status!=='completed'&&!(row.mode==='idle-replacement'&&w.parent&&['accepted','rework'].includes(store.listDispatches(w.parent.workId).find(a=>a.id===w.parent.attemptId)?.status)));
    nativeRequest.prompt.text+=`\nTEAM_RECOVERY_HANDOFF\nOriginal member ${row.memberId}; original instance ${row.oldBinding.requestId}.\n${row.handoff.summary}\nEvidence: ${row.handoff.evidenceRefs.join(', ')}\nPreserve all original Task/Dispatch identities. ${work?`As your own native identity, run-use ${work.run.id} with the installed Orca CLI; the exact objective remains ${JSON.stringify(work.nativeObjective)}. Never impersonate the old supervisor.`:''} Await verified Run ownership and admission before work.`;
-   return store.prepareWakeReplacement(id,row.version,{scope:row.oldBinding.scope,nativeRequest,configVersion:team.configVersion,roleVersion:member.roleVersion,title:row.oldBinding.title,executionHostId:row.oldBinding.executionHostId,runtimeId:row.proof.runtimeId,hostGeneration:row.proof.hostGeneration??null});
+   return store.prepareWakeReplacement(id,row.version,{scope:row.oldBinding.scope,nativeRequest,configVersion:team.configVersion,roleVersion:member.roleVersion,title:`${team.name}/${member.name}`,executionHostId:row.oldBinding.executionHostId,runtimeId:row.proof.runtimeId,hostGeneration:row.proof.hostGeneration??null});
   });
  },
  async check(id){

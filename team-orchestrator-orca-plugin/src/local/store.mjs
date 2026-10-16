@@ -194,6 +194,15 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       ...lifecycle,
       readOperation,
       readMemberDispatch(memberId) {const pointer=readPrivate(`dispatch-member:${memberId}`);return pointer?listDispatches(pointer.workId).find(a=>a.id===pointer.id):null;},
+      recordDispatchName(id,version,naming) { return atomicDispatch(()=>{
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));
+        if(row.version!==version||readCurrentWork(row.workId)?.status==='completed'||readPrivate(`dispatch-member:${row.memberId}`)?.id!==id)fail('Member changed before sidebar naming.');
+        if(row.binding?.kind!=='terminal'||row.admission!=='committed'||row.reuse||typeof naming.title!=='string'||!naming.title||!['attempted','confirmed','unconfirmed'].includes(naming.outcome)||typeof naming.at!=='string')fail('Verified terminal naming is required.');
+        if(!row.sidebarNaming&&naming.outcome!=='attempted')fail('Sidebar naming intent must precede its receipt.');
+        if(row.sidebarNaming&&row.sidebarNaming.outcome!=='attempted')return row;
+        if(row.sidebarNaming&&naming.title!==row.sidebarNaming.title)fail('Saved sidebar name cannot change.');
+        row.sidebarNaming=naming;row.version++;putPrivate(`dispatch:${id}`,row);return row;
+      }); },
       readMemberOperation(memberId) { const pointer=readPrivate(`binding:${memberId}`); return pointer?readOperation(pointer.requestId):null; },
       listOperations:()=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'operation:%'").all().map(row=>JSON.parse(row.json)),
       isActiveOperation(operation){const pointer=readPrivate(`binding:${operation.memberId}`);return pointer?.requestId===operation.requestId&&(pointer.instanceGeneration??1)===(operation.instanceGeneration??1)&&readSnapshot().teams.some(team=>team.id===operation.teamId&&team.members.some(member=>member.id===operation.memberId));},
