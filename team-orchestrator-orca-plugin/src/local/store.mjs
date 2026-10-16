@@ -1,3 +1,4 @@
+import {runtimeReconnectStore} from './runtime-reconnect-store.mjs';
 import {nativeHistoryReader} from './native-history-store.mjs';
 import {latestBusinessAttempts,questionNeedsProcessing} from './acceptance.mjs';
 import {historyCleanup} from './history-cleanup.mjs';
@@ -73,15 +74,18 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       db.prepare('INSERT INTO snapshot VALUES (1,?)').run(JSON.stringify(empty()));
       db.exec('COMMIT');
     }
+    let runtimeReconnect;
     const readWork = id => { const row = db.prepare('SELECT json FROM receipts WHERE id=?').get(`work:${id}`) ?? db.prepare('SELECT json FROM receipts WHERE id=?').get(`native-run-binding:${id}`); return row ? validateWork(JSON.parse(row.json)) : null; };
     const readCurrentWork = id => {
       const raw=readWork(id),work=raw?.currentSupervisor?{...raw,...raw.currentSupervisor,nativeSend:raw.currentSupervisor.nativeSend,error:raw.currentSupervisor.error,originalBinding:raw.binding}:raw;
       if(work?.parent){const parent=readWork(work.parent.workId),epoch=parent?.currentSupervisor,attempt=readPrivate(`dispatch:${work.parent.attemptId}`);if(epoch&&attempt?.reviewAuthority?.recoveryRequestId===epoch.recoveryRequestId&&attempt.reviewAuthority.generation===epoch.run.consumerGeneration)work.parentAuthority={generation:epoch.run.consumerGeneration,recoveryRequestId:epoch.recoveryRequestId};}
+      if(work)delete work.runtimeControl;
+      const control=work&&runtimeReconnect?.readRuntimeControl(work);if(control)work.runtimeControl=control;
       return work;
     };
     const listCurrentWorks = () => listWorks().map(work=>readCurrentWork(work.id));
     const listWorks = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%'").all().map(row=>validateWork(JSON.parse(row.json)));
-    const persistWork = work => {const {parentAuthority,...saved}=work;return db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(saved));};
+    const persistWork = work => {const {parentAuthority,runtimeControl,...saved}=work;return db.prepare('INSERT INTO receipts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(`${work.parent?'native-run-binding':'work'}:${work.id}`, JSON.stringify(saved));};
     const persistCurrentWork = work => {
       const raw=readWork(work.id);if(!raw?.currentSupervisor)return persistWork(work);
       for(const key of ['status','input','processing','run','snapshot','error','instance','nativeSend'])raw.currentSupervisor[key]=work[key];
@@ -160,11 +164,13 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     };
     const replacementTeam=teamId=>{const work=listCurrentWorks().find(w=>w.teamId===teamId&&w.status!=='completed');return work?staffing.effectiveTeamForWork(work.id):readSnapshot().teams.find(t=>t.id===teamId);};
     const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listRunWorks,readSnapshot,write,archive,atomic:atomicDispatch});
+    runtimeReconnect=runtimeReconnectStore({db,readPrivate,putPrivate,readWork,persistWork,readSnapshot,readOperation,readDispatchProtocol,atomic:atomicDispatch});
     readSnapshot();
 
     let closed = false;
     return {
       ...historyCleanup({db,readSnapshot,write,atomic:atomicDispatch}),
+      ...runtimeReconnect,
       storageInfo:()=>({schema:STORAGE_SCHEMA,backupId:prepared?.backupId??null}),
       ...staffing,
       ...questions,

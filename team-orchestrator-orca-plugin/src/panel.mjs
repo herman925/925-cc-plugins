@@ -37,6 +37,7 @@ const staffingDrafts=new Map(),staffingRequests=new Map();
 
 const wakeDrafts = new Map(), wakeRequests = new Map();
 const answerDrafts = new Map(), answerRequests = new Map();
+const reconnectRequests=new Map();
 const objectives = new Map(), workRequests = new Map(), goalDrafts=new Map(), goalRequests=new Map(), decisionRequests=new Map(), reworkDrafts=new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
@@ -195,7 +196,7 @@ function deliverySection(work){
 }
 function activeWorkSection(team) {
   const work = state.works?.find(row => row.teamId === team.id&&row.status!=='completed');
-  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${!work.recoveryRequestId && work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}${staffingSection(team,work)}</section>`;
+  if (work) return `<section class="section" aria-label="TeamWork"><h3>Total objective</h3><p>${escape(work.objective)}</p><small>Configuration ${work.configVersion} · Role ${work.roleVersion} · ${escape(work.scope.displayName)} · ${escape(work.scope.executionHostId)}</small><p>Input: ${escape(work.input.state)}${work.input.dispatchState ? ` (journal: ${escape(work.input.dispatchState)})` : ''} · Processing: ${escape(work.processing.state)} · Run: ${escape(work.run.state)}</p>${work.run.id ? `<p>Native Run: ${escape(work.run.id)} · Consumer generation ${work.run.consumerGeneration}</p>` : ''}<p class="subtle">${escape(work.run.detail || 'Waiting for the real supervisor to create its Run.')}</p>${work.error ? `<p role="alert">${escape(work.error)}</p>` : ''}${button('Check work evidence', 'check-work', `data-work="${work.id}"`, 'small')}${work.canReconnectRuntime?`<p>After restarting Orca, recheck this team before continuing. Each agent must be idle and this work must have no tasks.</p>${button('Reconnect existing team','reconnect-work',`data-work="${work.id}"`,'small')}`:''}${work.runtimeRecovery?'<p class="subtle">Existing sessions reconnected. The original objective and work history are retained.</p>':''}${!work.recoveryRequestId && work.input.state === 'not_sent' ? button('Retry unsent objective', 'retry-objective', `data-work="${work.id}"`, 'small') : ''}${work.snapshot ? `<p>${work.snapshot.tasks.length} native task(s) in the ${work.snapshot.stale ? 'last observed' : 'confirmed'} Run. Execution status does not imply user acceptance.</p>` : ''}${deliverySection(work)}${workTasks(team, work)}${staffingSection(team,work)}</section>`;
   const head = team.members.find(member => member.boss === null);
   if (team.launch?.members?.[head.id]?.status !== 'created') return '';
   return `<section class="section"><h3>Start team work</h3><label class="field">Total objective<textarea data-objective="${team.id}" rows="3" maxlength="8000">${escape(objectives.get(team.id) || '')}</textarea></label>${button('Submit total objective', 'submit-work', `data-team="${team.id}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small')}<p class="subtle">Uses the prepared highest supervisor and this team's saved project. One total objective may remain in progress at a time.</p></section>`;
@@ -425,6 +426,15 @@ app.addEventListener('click', async event => {
       message = action === 'open-member' ? 'Opened the verified native session.' : `Saved launch: ${result.status}.`;
     } catch (error) { problem = error.message; }
     finally { try { state = validatePersistentState((await call('storage.get', {})).value); } catch (error) { problem = error.message; } busy = false; render(); }
+  }
+  else if(action==='reconnect-work'){
+    busy=true;problem='';message='';render();
+    try{
+      const work=state.works.find(w=>w.id===target.dataset.work);
+      if(!reconnectRequests.has(work.id))reconnectRequests.set(work.id,mutation({workId:work.id,expectedWorkVersion:work.version}));
+      const result=await call('reconnectWork',reconnectRequests.get(work.id));state=validatePersistentState(result.value);reconnectRequests.delete(work.id);message='Existing sessions reconnected. Continue the original objective when ready.';
+    }catch(error){problem=error.message;if(/changed|reload/i.test(error.message))reconnectRequests.delete(target.dataset.work);try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
+    finally{busy=false;render();}
   }
   else if (action === 'submit-work' || action === 'check-work' || action === 'retry-objective') {
     busy = true; problem = ''; message = ''; render();
