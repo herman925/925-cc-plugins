@@ -193,3 +193,14 @@ test('all-at-start prepares four saved members and keeps independent successes a
  expect(await page.evaluate(()=>bridgeCalls.filter(row=>row.params?.teamWorker?.args?.op==='launchSupervisor').length)).toBe(4);
  await page.reload();await expect(panel(page).locator('.team-card')).toContainText('3 actual session receipt');
 });
+
+test('repo-backed composite folder is presented and saved as a folder', async ({ page }) => {
+  await page.goto('/?mode=composite-folder');
+  const ui = panel(page);
+  await ui.getByRole('button', { name: /Squad/ }).click();
+  await expect(ui.getByRole('heading', { name: 'Project and execution host' }).locator('..')).toContainText('folder');
+  await saveTeam(ui);
+  await expect(ui.locator('.team-card')).toContainText('folder');
+  await page.reload();
+  await expect(panel(page).locator('.team-card')).toContainText('folder');
+});

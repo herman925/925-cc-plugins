@@ -12,12 +12,20 @@ import { readNativeRunEvidence } from '../src/local/native-run.mjs';
 import { nativeMutationFingerprint } from '../src/local/native-dispatch.mjs';
 import { installAdapter } from '../src/local/adapter.mjs';
 import { build } from 'esbuild';
-const revision = '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { verifyCallerScope } from './verify-host-caller-scope.mjs';
+for (const revision of ['9fdd90ffa7721e145f1353ad9fb9df2f70c31f43', 'ff4a51c872e723d87ab141044814301ea5a78634']) {
+const scopedHost = revision.startsWith('ff4a51c');
 const root = await realpath(await mkdtemp(join(tmpdir(), 'orca-plugin-contract-')));
 const project = fileURLToPath(new URL('../', import.meta.url));
 const source = async path => {
   try { return await readFile(path, 'utf8'); } catch {}
   const ref = relative(root, path).replaceAll('\\', '/');
+  if (process.env.ORCA_CONTRACT_REPO) {
+    const { stdout } = await promisify(execFile)('git', ['-C', process.env.ORCA_CONTRACT_REPO, 'show', `${revision}:${ref}`], { maxBuffer: 4 * 1024 * 1024 });
+    await mkdir(dirname(path), { recursive: true }); await writeFile(path, stdout); return stdout;
+  }
   const response = await fetch(`https://raw.githubusercontent.com/stablyai/orca/${revision}/${ref}`);
   if (!response.ok) throw new Error(`Cannot fetch ${ref}: ${response.status}`);
   const text = await response.text();
@@ -27,10 +35,27 @@ const source = async path => {
 };
 const bundle = async name => {
   const entry = join(root, 'contract.ts');
-  await writeFile(entry, `export { RestartResumeParams } from './src/main/runtime/rpc/methods/structured-agent-session-schemas';\nexport { EnsureAgentSessionParams } from './src/shared/rpc-contract/agent-session-params';\nexport { TerminalStopExact } from './src/shared/rpc-contract/terminal-unary-params';\nexport {resolveCreatorDepth,resolveCreatorDispatchId,resolveChildDispatchDepth} from './src/main/runtime/orchestration/db/dispatch-depth';\nexport {findActiveDispatchForAssignee} from './src/main/runtime/orchestration/db/dispatch-context/dispatch-lookup';\nexport {createGraphTablesSql} from './src/main/runtime/orchestration/db/schema/create-graph-tables-sql';\nexport {createTask} from './src/main/runtime/orchestration/db/tasks/task-store';\nexport {resolveNestedWorkerMaxDepth} from './src/shared/nested-worker-depth';\nexport { prepareLocalWorkerStart } from './src/main/runtime/rpc/methods/orchestration/worker/worker-start-validation';\nexport { placeWorkerAgent } from './src/main/runtime/rpc/methods/orchestration/worker/worker-start-agent-placement';\nexport { WorkerDispatchParams, WorkerReadParams } from './src/shared/rpc-contract/orchestration-worker-control-params';\nexport { agentSessionLeaseOwnerVerdict } from './src/shared/agent-session-lease-adjudication';\nexport { TaskUpdateParams, SendParams as OrchestrationSendParams } from './src/main/runtime/rpc/methods/orchestration/schemas';\nexport { TaskCreateParams, AskParams } from './src/shared/rpc-contract/orchestration-params';\nexport { WorkerStartParams } from './src/shared/rpc-contract/orchestration-worker-start-params';\nexport { replayStableCallerParams, hashCanonical } from './src/main/runtime/rpc/orchestration-mutation-receipt';\nexport { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  await writeFile(entry, `export { getRepoKind } from './src/shared/repo-kind';\nexport { getFolderWorkspaceRootId, getFolderWorkspaceInstanceId } from './src/main/ipc/worktrees/folder-workspace-model';\nexport { SCHEMA_VERSION } from './src/main/runtime/orchestration/db/contract-constants';\nexport { JOURNAL_DB_SCHEMA_VERSION, createAgentSessionRecordTablesSql } from './src/main/native-chat/agent-session-journal/journal-database-schema';\nexport { RestartResumeParams } from './src/main/runtime/rpc/methods/structured-agent-session-schemas';\nexport { EnsureAgentSessionParams } from './src/shared/rpc-contract/agent-session-params';\nexport { TerminalStopExact } from './src/shared/rpc-contract/terminal-unary-params';\nexport {resolveCreatorDepth,resolveCreatorDispatchId,resolveChildDispatchDepth} from './src/main/runtime/orchestration/db/dispatch-depth';\nexport {findActiveDispatchForAssignee} from './src/main/runtime/orchestration/db/dispatch-context/dispatch-lookup';\nexport {createGraphTablesSql} from './src/main/runtime/orchestration/db/schema/create-graph-tables-sql';\nexport {createTask} from './src/main/runtime/orchestration/db/tasks/task-store';\nexport {resolveNestedWorkerMaxDepth} from './src/shared/nested-worker-depth';\nexport { prepareLocalWorkerStart } from './src/main/runtime/rpc/methods/orchestration/worker/worker-start-validation';\nexport { placeWorkerAgent } from './src/main/runtime/rpc/methods/orchestration/worker/worker-start-agent-placement';\nexport { WorkerDispatchParams, WorkerReadParams } from './src/shared/rpc-contract/orchestration-worker-control-params';\nexport { agentSessionLeaseOwnerVerdict } from './src/shared/agent-session-lease-adjudication';\nexport { TaskUpdateParams, SendParams as OrchestrationSendParams } from './src/main/runtime/rpc/methods/orchestration/schemas';\nexport { TaskCreateParams, AskParams } from './src/shared/rpc-contract/orchestration-params';\nexport { WorkerStartParams } from './src/shared/rpc-contract/orchestration-worker-start-params';\nexport { replayStableCallerParams, hashCanonical } from './src/main/runtime/rpc/orchestration-mutation-receipt';\nexport { SendParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { computeAgentSessionPayloadFingerprint } from './src/shared/agent-session-mutation-envelope';\nexport { resolveRpcCallerIdentity, rpcCallerOperationKey } from './src/main/runtime/rpc/rpc-caller-identity';\nexport { createCoreTablesSql } from './src/main/runtime/orchestration/db/schema/create-core-tables-sql';\nexport { currentRunCoordinatorOrcaSessionId } from './src/main/runtime/orchestration/db/runs/run-coordinator-orca-session';\nexport { AgentLaunch, AgentLaunchReplay } from './src/shared/rpc-contract/agent-launch-params';\nexport { computeAgentLaunchFingerprint } from './src/shared/agent-launch-operation';\nexport { PreflightDetectRemoteAgents } from './src/shared/rpc-contract/preflight-params';\nexport { ModelCatalogParams, CreateSupportParams } from './src/shared/rpc-contract/structured-agent-session-params';\nexport { getDefaultUserDataPath } from './src/cli/runtime/metadata';\nexport { buildPluginWorkerEnv } from './src/main/plugins/plugin-worker-env';\nexport { parsePluginManifest } from './src/shared/plugins/plugin-manifest';\nexport { gatePluginHostCall } from './src/shared/plugins/plugin-capability-gate';\nexport { executePluginHostCall } from './src/main/plugins/plugin-host-methods';\nexport { bindPluginHostServices } from './src/main/plugins/plugin-host-service-bindings';\nexport { fingerprintPluginConsent } from './src/shared/plugins/plugin-consent-fingerprint';\nexport { PluginPanelSessions } from './src/main/plugins/plugin-panel-sessions';\nexport { panelActionRequestSchema } from './src/shared/plugins/plugin-panel-bridge';`);
+  if (scopedHost) await writeFile(entry, (await readFile(entry, 'utf8')) + `
+export { RpcDispatcher } from './src/main/runtime/rpc/dispatcher';
+export { RuntimeRpcRequestAdmission } from './src/main/runtime/runtime-rpc/runtime-rpc-request-admission';
+export { OWNER_RPC_CALLER_SCOPE, denyRpcMethodForCaller, bindRpcCallToCallerScope } from './src/main/runtime/rpc/rpc-caller-scope';
+export { sshBridgeCredentials } from './src/main/runtime/rpc/ssh-bridge-credentials';
+export { z } from 'zod';
+`);
   const outfile = join(root, `${name}.mjs`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
+      // These boundaries are not executed: existing-worker reuse returns before provider creation;
+      // the dispatcher receives explicit test methods; admission receives an inert transport base.
+      // All real auth, caller scope, owner, receipts, schemas and consent code remains bundled.
+      if (scopedHost) api.onResolve({ filter: /agent-launch-mode$/ }, () => ({ path: 'launch-mode', namespace: 'unexecuted-boundary' }));
+      api.onResolve({ filter: /^\.\/methods$/ }, args => args.importer.endsWith('/rpc/dispatcher.ts') ? { path: 'methods', namespace: 'unexecuted-boundary' } : undefined);
+      api.onResolve({ filter: /runtime-rpc-binary-routing$/ }, () => ({ path: 'transport', namespace: 'unexecuted-boundary' }));
+      api.onLoad({ filter: /.*/, namespace: 'unexecuted-boundary' }, args => ({ contents: args.path === 'transport'
+        ? 'export class RuntimeRpcBinaryRouting {}'
+        : args.path === 'launch-mode' ? 'const unused = () => { throw Error("Unexecuted launch-mode/provider boundary reached"); }; export { unused as decideAgentLaunchMode, unused as downgradeAgentLaunchModeForHost, unused as readAgentLaunchModeSettings, unused as resolveAgentLaunchModeOnHost, unused as warnStructuredLaunchDowngrade };'
+        : `export const ALL_RPC_METHODS = new Proxy([], { get() { throw Error('Unexecuted ${args.path} boundary reached'); } });`, loader: 'js' }));
       api.onResolve({ filter: /^electron$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onResolve({ filter: /safe-storage-availability$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onLoad({ filter: /.*/, namespace: 'contract-fake' }, () => ({ contents: 'export const guardedSafeStorage = { isEncryptionAvailable: () => false }; export const safeStorage = guardedSafeStorage;', loader: 'js' }));
@@ -47,6 +72,18 @@ const bundle = async name => {
 };
 try {
   const before = await bundle('before');
+  if (scopedHost) await verifyCallerScope(before);
+  assert.equal(before.SCHEMA_VERSION, 43);
+  assert.equal(before.JOURNAL_DB_SCHEMA_VERSION, 4);
+  assert.equal(before.getRepoKind({}), 'git');
+  assert.equal(before.getRepoKind({ kind: 'folder' }), 'folder');
+  assert.equal(before.getRepoKind({ kind: 'git' }), 'git');
+  const folderRepo = { id: 'repo-folder', path: '/work', kind: 'folder' };
+  assert.equal(before.getFolderWorkspaceRootId(folderRepo), 'repo-folder::/work');
+  assert.equal(before.getFolderWorkspaceInstanceId(folderRepo, '11111111-2222-4333-8444-555555555555'), 'repo-folder::/work::workspace:11111111-2222-4333-8444-555555555555');
+  const repoMethods = await source(join(root, 'src/main/runtime/rpc/methods/repo.ts'));
+  assert.match(repoMethods, /name: 'repo.show',[\s\S]*?params: RepoSelector,[\s\S]*?context.runtime.showRepo\(params.repo\)/);
+
   {
    // Unmodified pinned depth implementation over its actual native SQLite schema.
    const db=new DatabaseSync(':memory:');db.exec(before.createCoreTablesSql());db.exec(before.createGraphTablesSql());
@@ -183,7 +220,7 @@ try {
   for (const variant of [nativeInput, { ...nativeInput, agentArgs: null }, { ...nativeInput, agentArgs: '--configured', presentation: 'background' }]) assert.equal(nativeLaunchFingerprint(variant), before.computeAgentLaunchFingerprint(variant));
   assert.notEqual(nativeLaunchFingerprint(nativeInput), nativeLaunchFingerprint({ ...nativeInput, agentArgs: null }));
   const nativeDb = new DatabaseSync(join(root, 'agent-session-journal.db'));
-  nativeDb.exec('PRAGMA user_version=4; CREATE TABLE agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
+  nativeDb.exec(before.createAgentSessionRecordTablesSql()); nativeDb.exec('PRAGMA user_version=4');
   const originalReceipt = { worktreeId: 'folder:/verified', outcome: { kind: 'structured', sessionId: 'claude:fixture', handle: 'host-handle' }, receipt: { mode: 'structured', preferred: 'structured', reason: 'user_default', detail: 'fixture' }, prompt: { delivery: 'submit', outcome: 'unconfirmed' } };
   nativeDb.prepare('INSERT INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${nativeInput.operationId}`, JSON.stringify({ callerKey: 'trusted-local:desktop', operationId: nativeInput.operationId, fingerprint: before.computeAgentLaunchFingerprint(nativeInput), operationTimestamp: Number(nativeInput.operationId.split('-')[0]), recordedAt: Date.now(), expiresAt: Date.now() + 60000, outcome: { status: 'succeeded', sessionId: 'claude:fixture', launch: originalReceipt } }));
   nativeDb.close();
@@ -260,5 +297,7 @@ try {
   assert.equal((await handlers.get('plugins:panelAction')(event, call)).ok, false);
   assert.equal(invoked, 1);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
-  console.log(`PASS: unmodified Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, pinned TaskCreate/WorkerStart parsers, resolved-caller hashes and pane normalization, capability read schemas, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. No source patch applied.`);
+  console.log(`PASS: pinned Orca ${revision}: stock manifest, trusted-worker consent change, panel transport envelope, original workspace gate, pinned TaskCreate/WorkerStart parsers, resolved-caller hashes and pane normalization, capability read schemas, worker storage/audit, revoked authority, scrubbed Windows environment and explicit desktop runtime profile. Boundaries: inert network base; unexecuted launch-mode/provider boundary and default method registry throw if used. Existing-worker reuse only, not provider launch acceptance.`);
 } finally { await rm(root, { recursive: true, force: true }); }
+
+}
