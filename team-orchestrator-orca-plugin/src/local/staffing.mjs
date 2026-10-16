@@ -1,3 +1,4 @@
+import {controlRuntime} from './runtime-control.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {notifyQuestionEvent} from './questions.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
@@ -6,7 +7,7 @@ import {readNativeQuestionEvidence} from './native-questions.mjs';
 export function createStaffingService({store,rpc,userData,works,consent,notify}) {
  const current=id=>store.readCurrentWork?.(id)??store.readWork(id);
  const serialize=createKeyedSerializer();
- const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,current(id)?.binding.runtimeId,fn));
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,controlRuntime(current(id)),fn));
  async function check(id){
   const root=current(id);if(!root||root.status==='completed')return;
   for(const work of store.listRunWorks?.(id)??[root]){

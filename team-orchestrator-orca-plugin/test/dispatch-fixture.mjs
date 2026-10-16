@@ -12,7 +12,7 @@ import { createWorkService } from '../src/local/teamwork.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
 // Scripted native-host boundary, separate from the product's proof reader.
 export const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-export async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured',queuedPermits=false}={}) {
+export async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured',queuedPermits=false,allPrepared=false}={}) {
  const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
  const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,launchMode:prestarted?'all':'on-demand',agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
@@ -20,11 +20,13 @@ export async function fixture(t,{headAgent='codex',workerAgent='claude',kind='st
  const op=store.prepareOperation(launch,{scope,nativeRequest:nativeLaunchIntent(team,head,scope),roleVersion:1,title:'Head',executionHostId:'local',runtimeId:'runtime-one'}).operation;
  const binding={status:'created',kind,handle:kind==='structured'?'chat-head':'term-head',...(kind==='structured'?{sessionId:'codex_head'}:{paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),briefAccepted:true};
  store.settleOperation('launch',op.nativeRequest.operationId,{...binding,public:publicOperation({...op,...binding})});
+ if(allPrepared){const current=store.readOperation('launch');store.settleOperation('launch',current.nativeRequest.operationId,{observation:{ptyId:'head-pty',incarnationId:'head-instance',processIncarnation:'head-pty:head-instance'}});}
  if(prestarted){
   const input={teamId:team.id,memberId:member.id,configVersion:1,requestId:'prepared-child'},op=store.prepareOperation(input,{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;
-  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf',observation:{incarnationId:'child-instance'}}),briefAccepted:true};
+  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf',observation:{incarnationId:'child-instance',...(allPrepared?{ptyId:'child-pty',processIncarnation:'child-pty:child-instance'}:{})}}),briefAccepted:true};
   store.settleOperation(input.requestId,op.nativeRequest.operationId,{...value,public:publicOperation({...op,...value})});
  }
+ if(allPrepared)for(const [index,other] of team.members.slice(2).entries()){const input={teamId:team.id,memberId:other.id,configVersion:1,requestId:'prepared-extra-'+index};const op=store.prepareOperation(input,{scope,nativeRequest:nativeLaunchIntent(team,other,scope),roleVersion:1,title:other.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;const value={status:'created',kind:'terminal',handle:'term-extra-'+index,paneKey:'extra-tab-'+index+':extra-leaf-'+index,observation:{ptyId:'extra-pty-'+index,incarnationId:'extra-instance-'+index,processIncarnation:'extra-pty-'+index+':extra-instance-'+index},briefAccepted:true};store.settleOperation(input.requestId,op.nativeRequest.operationId,{...value,public:publicOperation({...op,...value})});}
  const db=new DatabaseSync(join(profile,'orchestration.db'));
  db.exec(`PRAGMA user_version=43;
  CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER);
@@ -45,11 +47,13 @@ export async function fixture(t,{headAgent='codex',workerAgent='claude',kind='st
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
   if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
+  if(allPrepared&&method==='terminal.show'&&params.terminal.startsWith('term-extra-')){const index=params.terminal.slice('term-extra-'.length);return {terminal:{handle:params.terminal,worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'extra-instance-'+index,ptyId:'extra-pty-'+index,agentIdentity:workerAgent,tabId:'extra-tab-'+index,leafId:'extra-leaf-'+index}};}
   if(method==='terminal.show'&&params.terminal==='structworker_child')return {terminal:{handle:'structworker_child',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'child-instance',ptyId:'child-pty',agentIdentity:workerAgent,tabId:'child-tab',leafId:'child-leaf'}};
   if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',ptyId:'head-pty',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
-  if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
+  if(method==='terminal.wait'){assert.deepEqual(params,{terminal:params.terminal,for:'tui-idle',timeoutMs:1000});return {wait:{handle:params.terminal,condition:'tui-idle',satisfied:true,status:'running',exitCode:null}};}
+  if(method==='terminal.agentStatus')return {agentStatus:{handle:allPrepared?params.terminal:'term-head',isRunningAgent:true,status:'idle'}};
   if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
-  if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks').all()};
+  if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks WHERE run_id=?').all(params.run)};
   if(method==='settings.get')return {settings:{}};
   if(method==='preflight.detectAgents')return ['codex','claude'];
   if(method==='agentSession.createSupport')return {supported:true};
