@@ -25,7 +25,7 @@ async function fixture(id, mode) {
     };
     const internalKey = `fixture-${id}`;
     let executor; const history = new Map(); const agents = new Map();
-    const journal=new DatabaseSync(join(profile,'agent-session-journal.db'));journal.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT)');
+    const journal=new DatabaseSync(join(profile,'agent-session-journal.db'));journal.exec('PRAGMA user_version=4; CREATE TABLE agent_session_records(session_id TEXT PRIMARY KEY,record_json TEXT); CREATE TABLE agent_session_operations(operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
     const nativeDb = new DatabaseSync(join(profile, 'orchestration.db'));
     nativeDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER); PRAGMA user_version=43');
     nativeDb.exec(`
@@ -124,6 +124,11 @@ async function fixture(id, mode) {
       if (method === 'agent.launchReplay') {
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
+        if(mode==='launch-reconciled'){
+          const pending=store.readSnapshot().teams.flatMap(team=>Object.values(team.launch?.members??{})).find(row=>store.readOperation(row.requestId)?.nativeRequest.operationId===params.operationId);
+          assert.ok(pending);await executor.execute({op:'load'});
+          assert.match(store.readOperation(pending.requestId).error,/ledger row is absent/);
+        }
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
         const structured = mode?.startsWith('idle-replacement') || mode === 'goal-lifecycle' || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };

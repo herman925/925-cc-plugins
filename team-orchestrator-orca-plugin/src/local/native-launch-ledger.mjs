@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { join, relative, isAbsolute, sep } from 'node:path';
+export const LAUNCH_LEDGER_ABSENT = 'Original native launch ledger row is absent; no launch was retried.';
 const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
 // Pinned shared/agent-launch-operation.ts + agent-session-mutation-envelope.ts.
 export function nativeLaunchFingerprint(input) {
@@ -18,7 +19,7 @@ export async function readNativeLaunchLedger(userData, request) {
     if (db.prepare('PRAGMA user_version').get().user_version !== 4) throw Error();
     const callerKey = 'trusted-local:desktop';
     const stored = db.prepare('SELECT row_json FROM agent_session_operations WHERE operation_key=?').get(`${callerKey}\0${request.operationId}`);
-    if (!stored) return { state: 'unknown', detail: 'Original native launch ledger row is absent; no launch was retried.' };
+    if (!stored) return { state: 'unknown', detail: LAUNCH_LEDGER_ABSENT };
     if (typeof stored.row_json !== 'string' || stored.row_json.length > 262144) throw Error();
     const row = JSON.parse(stored.row_json), now = Date.now();
     if (row.callerKey !== callerKey || row.operationId !== request.operationId || row.fingerprint !== nativeLaunchFingerprint(request) || row.operationTimestamp !== Number(request.operationId.split('-')[0]) || !Number.isSafeInteger(row.recordedAt) || !Number.isSafeInteger(row.expiresAt) || row.recordedAt > now + 300000 || row.expiresAt <= now || row.expiresAt <= row.recordedAt) throw Error();

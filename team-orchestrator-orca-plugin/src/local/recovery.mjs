@@ -3,7 +3,7 @@ import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {realpath} from 'node:fs/promises';
 import {join,relative,isAbsolute,sep} from 'node:path';
 import {withNativeRuntime} from './native-runtime.mjs';
-import {readNativeLaunchLedger} from './native-launch-ledger.mjs';
+import {readNativeLaunchLedger,LAUNCH_LEDGER_ABSENT} from './native-launch-ledger.mjs';
 import {launchReceipt,publicOperation} from './native-launch.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
 const stamp=()=>new Date().toISOString();
@@ -38,10 +38,12 @@ export function createRecoveryService({store,rpc,userData,consent}){
   let patch={},recovery={state:operation.status==='created'?'confirmed_effect':'unknown',liveness:'unknown',source:'saved-operation',observedAt:stamp(),detail:'Persisted intent retained. Missing evidence never authorizes a second launch.'};
   try{
    await consent();
-   if(operation.status==='unknown'){
+   if(operation.status==='unknown'&&operation.effectState==='intent'){
+    recovery={...recovery,state:'intent',detail:'Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it.'};
+   }else if(operation.status==='unknown'){
     const ledger=await readNativeLaunchLedger(userData,operation.nativeRequest);
     if(ledger.state==='succeeded'){patch={...launchReceipt(ledger.result,operation),error:undefined};recovery={...recovery,state:'confirmed_effect',source:'native-launch-ledger',detail:'Original native launch receipt recovered; current execution is separate.'};}
-    else {recovery.detail=ledger.detail;patch.error=ledger.detail;if(operation.effectState==='intent')recovery={...recovery,state:'intent',detail:'Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it.'};}
+    else {recovery.detail=ledger.detail;patch.error=ledger.detail;}
    }
    const saved={...operation,...patch};
    if(saved.status==='created'){
@@ -67,7 +69,12 @@ export function createRecoveryService({store,rpc,userData,consent}){
      if(await host(saved.scope)!==generation)throw Error('SSH generation changed during observation; output is incomplete.');
      const final=await rpc('status.get');if(final?.runtimeId!==status.runtimeId)throw Error('Native runtime changed during reconciliation.');
     });
-    if(terminalObservation)patch.observation=terminalObservation;
+    if(terminalObservation){
+     patch.observation=terminalObservation;
+     // Repair the known pre-settlement diagnostic on already-created legacy rows.
+     // A connected terminal does not clear arbitrary launch/provider errors.
+     if(recovery.liveness==='live'&&operation.error===LAUNCH_LEDGER_ABSENT)patch.error=undefined;
+    }
    }
   }catch(error){recovery={...recovery,state:(patch.status??operation.status)==='created'?'confirmed_effect':'unknown',liveness:'unknown',incomplete:true,detail:detail(error)};}
   patch.recovery=recovery;patch.public=publicOperation({...operation,...patch});

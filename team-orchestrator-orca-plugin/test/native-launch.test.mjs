@@ -271,3 +271,27 @@ test('public launch observation keeps private PTY process identity out of the pa
  const observed=publicOperation({requestId:'launch',observation:{state:'idle',incarnationId:'raw-incarnation',ptyId:'repo::/private/work@@pty',processIncarnation:'repo::/private/work@@pty:raw-incarnation'}});
  assert.deepEqual(observed.observation,{state:'idle',incarnationId:'raw-incarnation'});
 });
+
+test('successful native launch clears an absent-ledger warning observed while its receipt was still in flight',async t=>{
+ const f=await fixture(t);
+ const db=new DatabaseSync(join(f.profile,'agent-session-journal.db'));db.exec('PRAGMA user_version=4; CREATE TABLE agent_session_operations(operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');db.close();
+ let release,entered;const pending=new Promise(resolve=>{release=resolve;}),inFlight=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
+ f.effect(async()=>{entered();await pending;return {worktreeId:'folder:/saved',outcome:{kind:'terminal',handle:'native-handle',paneKey:'native-tab:native-leaf'},receipt:{mode:'terminal',preferred:'terminal',reason:'user_default',detail:'Native creation confirmed'},prompt:{delivery:'submit',outcome:'handed-to-terminal'}};});
+ const launch=f.send('launchSupervisor');await inFlight;
+ const observed=await f.send('recoverLaunch');assert.equal(observed.value.status,'unknown');assert.match(observed.value.error,/ledger row is absent/);
+ release();const result=await launch;assert.equal(result.value.status,'created');
+ assert.equal(result.value.error,undefined);assert.equal(result.value.recovery,undefined);
+ assert.equal(f.store().readOperation(f.input.requestId).error,undefined);
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,1);
+});
+
+test('matching launch settlement retains a current incomplete recovery warning instead of claiming liveness',async t=>{
+ const f=await fixture(t);let release,entered;const pending=new Promise(resolve=>{release=resolve;}),inFlight=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
+ const nativeResult={worktreeId:'folder:/saved',outcome:{kind:'terminal',handle:'native-handle',paneKey:'native-tab:native-leaf'},receipt:{mode:'terminal',preferred:'terminal',reason:'user_default',detail:'Created'},prompt:{delivery:'submit',outcome:'unconfirmed'}};
+ f.effect(async request=>{f.recordNative(request,nativeResult);entered();await pending;return nativeResult;});
+ const launch=f.send('launchSupervisor');await inFlight;
+ const observed=await f.send('recoverLaunch');assert.equal(observed.value.status,'created');assert.equal(observed.value.recovery.incomplete,true);
+ const warning=observed.value.recovery.detail;release();const result=await launch;
+ assert.equal(result.value.status,'created');assert.equal(result.value.recovery.incomplete,true);assert.equal(result.value.recovery.detail,warning);assert.equal(result.value.recovery.liveness,'unknown');
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,1);
+});

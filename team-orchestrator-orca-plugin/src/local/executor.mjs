@@ -182,7 +182,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           if (op === '_launchSettle') {
             launchPlans.delete(params.phaseId);
             let patch;
-            try { if (params.error) throw Error(params.error); patch = launchReceipt(params.result, operation); }
+            try {
+              if (params.error) throw Error(params.error);
+              patch = { ...launchReceipt(params.result, operation), error: undefined };
+              // A matching creation receipt supersedes a pre-receipt absence observation.
+              // Current consent/identity/liveness failures remain separate recovery evidence.
+              if (['intent', 'unknown'].includes(operation.recovery?.state) && !operation.recovery.incomplete) patch.recovery = undefined;
+            }
             catch (error) { patch = { status: 'unknown', error: error.message.slice(0, 1200) }; }
             const saved = settled(operation, patch);
             return saved.status === 'created' && store.isActiveOperation(saved) ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };
