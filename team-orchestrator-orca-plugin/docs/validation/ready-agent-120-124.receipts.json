@@ -1,0 +1,329 @@
+{
+  "date": "2026-10-16",
+  "sourceInputCommit": "57d43ababa5a4453fa2dab3b59ec385da953b3d4",
+  "releaseCommit": "c8ffe1929314b504ad919eb1834c3534e97f74c6",
+  "version": "0.1.11",
+  "artifactSHA256": {
+    "main.mjs": "f471497d3cd09386102381d86309afe4e7a294a581d5950427e022ed7662240f",
+    "panel.html": "489ac277b2fb6a484292607343d179ed91ebcb1f508da5545697e731e018f00d",
+    "runtime-adapter.cjs": "42f50b01555f575f774f3a4855791536b117056547c2896f6f96f85395464b63",
+    "orca-plugin.json": "c4a0d0a061a93d0a133f422a815f0fd015ea48bff131798cb5f4543ec6c86d15"
+  },
+  "automatedChecks": {
+    "build": "pass",
+    "metadata": "pass",
+    "artifact_syntax": "pass",
+    "domain_bridge": {
+      "passed": 526,
+      "failed": 0,
+      "skipped": 0
+    },
+    "browser": {
+      "passed": 64,
+      "failed": 0,
+      "port": 4182
+    },
+    "pinned_host_contracts": [
+      "9fdd90ffa7721e145f1353ad9fb9df2f70c31f43",
+      "ff4a51c872e723d87ab141044814301ea5a78634"
+    ],
+    "hashes": "pass",
+    "diff_check": "pass"
+  },
+  "nativeEnvironment": {
+    "platform": "macOS arm64",
+    "orcaVersion": "1.4.223",
+    "build": "ff4a51c872e723d87ab141044814301ea5a78634",
+    "electron": "43.7.5",
+    "node": "24.21.0",
+    "runtimeId": "21b969f1-2209-4232-a416-8b8b9dcc554e"
+  },
+  "providerRequests": {
+    "codex": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "claude": {
+      "model": "default",
+      "effort": "default"
+    }
+  },
+  "templates": {
+    "stockAppVersion": "1.4.223",
+    "separateDesktopPid": 33923,
+    "runtimeId": "b12b7ff9-c916-4461-8b60-78af1fbf6450",
+    "pluginVersion": "0.1.10",
+    "teamId": "d514c0ad-93f1-40d4-a920-08fb65bdb994",
+    "memberIds": [
+      "13ca16d7-f852-416a-9cd9-72ee36a9715a",
+      "041f940b-2b02-4a1d-8fc1-389cbaa3ee0d",
+      "8dfab992-b4dc-4d2d-9ff5-f99e283c8bfc",
+      "2929103a-7720-43f4-99f1-778789ef2a0f"
+    ],
+    "rolesPreferencesAndTreeEqual": true,
+    "sourceUUIDsDisjoint": true,
+    "nativeWorkOperationDispatchRows": 0,
+    "workspaceDisplayName": "template-target",
+    "exportSha256": "7eca5b55aa8ca4c665ef975b05350fd0b7829742d295a309428bb19775406274",
+    "sameNameCopies": 2,
+    "workerPidBeforeReload": 40527,
+    "workerPidAfterReload": 47741,
+    "rereadAfterNativePluginDisableEnable": true,
+    "malformedJSONRefusedWithoutRosterChange": true,
+    "targetTeamIds": [
+      "d514c0ad-93f1-40d4-a920-08fb65bdb994",
+      "359b9f12-3750-444c-847c-3962ec9f2e36"
+    ]
+  },
+  "memberChanges": {
+    "idleReplacementHistory": [
+      {
+        "requestId": "f343c129-7828-46c5-840b-7410c07881fe",
+        "memberId": "57b30548-605c-467a-8d85-4b8d407dfcb4",
+        "state": "bound",
+        "previousInstance": 1,
+        "newInstance": {
+          "requestId": "replace-f343c129-7828-46c5-840b-7410c07881fe",
+          "instanceGeneration": 2
+        },
+        "createdNativeRequestAgent": "claude",
+        "requestedSessionOptions": null,
+        "status": "created",
+        "handle": "term_375135db-0977-462e-9f41-b49fdd9d621b",
+        "title": "staffing-all-qa/Worker-1"
+      },
+      {
+        "requestId": "850fcd4c-6eb7-4ca6-af00-2c7b9b1d16d3",
+        "memberId": "57b30548-605c-467a-8d85-4b8d407dfcb4",
+        "state": "bound",
+        "previousInstance": 2,
+        "newInstance": {
+          "requestId": "replace-850fcd4c-6eb7-4ca6-af00-2c7b9b1d16d3",
+          "instanceGeneration": 3
+        },
+        "createdNativeRequestAgent": "codex",
+        "requestedSessionOptions": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "status": "created",
+        "handle": "term_7c5f6022-2c13-43cf-ad3c-2cd9b78256a8",
+        "title": "staffing-all-qa/Worker-1"
+      }
+    ],
+    "busyRefusal": {
+      "dispatchId": "ctx_6d488b7f48c8",
+      "message": "Member has running, unknown or unreviewed execution.",
+      "replacementRequestCountBefore": 2,
+      "replacementRequestCountAfter": 2
+    },
+    "organizationBoundary": {
+      "workId": "88e44354-d5c7-40a9-93c2-7e44b900ce19",
+      "beforeAcceptanceNames": [
+        "Head",
+        "Worker-1",
+        "ApprovedReviewer",
+        "DirectReviewer"
+      ],
+      "afterAcceptanceNames": [
+        "Head",
+        "ApprovedReviewer",
+        "DirectReviewer"
+      ],
+      "beforeConfigVersion": 3,
+      "afterConfigVersion": 4
+    }
+  },
+  "hierarchy": {
+    "rootWorkId": "48a38c6f-58c0-4ab0-a0fa-0c8f33a80676",
+    "rootRunId": "run_765a3d34b169",
+    "managerRunId": "run_c735fa28d8cf",
+    "attempts": [
+      {
+        "id": "6865795e-bf50-4389-b2d9-18dbd3326535",
+        "workId": "48a38c6f-58c0-4ab0-a0fa-0c8f33a80676",
+        "taskKey": "parent-review",
+        "nativeTaskId": "task_32bdeaeab618",
+        "dispatchId": "ctx_f06834af3ce4",
+        "memberId": "09c16fc1-fd71-4435-b6ae-75a96502015c",
+        "supervisorMemberId": "499f3c1d-5e11-409b-bb5a-a31290abd823",
+        "status": "accepted",
+        "evidenceId": "worker_report:msg_ca7d2b071782",
+        "configVersion": 1,
+        "roleVersion": 1,
+        "depth": 1
+      },
+      {
+        "id": "773925ac-7f10-4a6c-9966-bffc5e8fc36a",
+        "workId": "09d277b5-44fc-46f6-ba8b-f88c621a616d",
+        "taskKey": "leaf-review",
+        "nativeTaskId": "task_8de59c4835d9",
+        "dispatchId": "ctx_0d232df2e5f3",
+        "memberId": "1680a982-6ad4-4984-8005-6acc73f4de99",
+        "supervisorMemberId": "09c16fc1-fd71-4435-b6ae-75a96502015c",
+        "status": "accepted",
+        "evidenceId": "worker_report:msg_2197d00f8663",
+        "configVersion": 1,
+        "roleVersion": 1,
+        "depth": 2,
+        "creatorDispatchId": "ctx_f06834af3ce4"
+      }
+    ],
+    "nativePanelEvidence": {
+      "creatorDispatchId": "ctx_f06834af3ce4",
+      "leafDepth": 2
+    },
+    "depthRestoration": {
+      "userAuthorizedTemporaryChange": true,
+      "before": 1,
+      "temporary": 2,
+      "nativeUIReadback": 2,
+      "changedAt": "2026-10-16T11:01:01.536782+00:00",
+      "restorePending": false,
+      "authoritativeStorage": "profile-state.db settings domain",
+      "temporarySavedRevision": 19657,
+      "temporarySavedAt": "2026-10-16T11:04:21.890Z",
+      "restored": 1,
+      "restoredRevision": 19851,
+      "restoredAtUnixMs": 1792149463269,
+      "verifiedAt": "2026-10-16T11:17:43.404974+00:00",
+      "initialAXOnlyChangeWasNotPersisted": true,
+      "oldJSONWasNotCurrentAuthority": true
+    },
+    "incompleteDeliveryBlocked": {
+      "deliveryId": "task_d40a6e0c8aca",
+      "missingAttemptId": "773925ac-7f10-4a6c-9966-bffc5e8fc36a",
+      "userDecisionCount": 0
+    },
+    "status": "completed",
+    "closedAt": "2026-10-16T11:22:29.280Z",
+    "acceptedDeliveryId": "task_a2088bccb319",
+    "previousIncompleteDeliveryId": "task_d40a6e0c8aca",
+    "productPanelVerifiedCreatorDispatch": "ctx_f06834af3ce4",
+    "productPanelVerifiedLeafDepth": 2,
+    "nativeCleanup": {
+      "leafDispatch": "ctx_0d232df2e5f3",
+      "leafResourceState": "released",
+      "leafLiveness": "exited",
+      "leafCleanupSource": "actual lower-manager worker-release",
+      "parentResourceState": "retained external prepared terminal",
+      "parentReclaimableRows": 0,
+      "headAndLeadOperatorClosed": true
+    }
+  },
+  "historyCleanup": [
+    {
+      "sourceSHA": "7e83b80c40b0a396f419512cb860f97179961959",
+      "candidateVersion": "0.1.10",
+      "workId": "88e44354-d5c7-40a9-93c2-7e44b900ce19",
+      "status": "completed",
+      "expiry": {
+        "kind": "accepted-work-closure",
+        "workId": "88e44354-d5c7-40a9-93c2-7e44b900ce19",
+        "deliveryId": "task_a8a1816553d3",
+        "decisionRequestId": "66576ed3-209d-4efc-962f-deca8cb7b714",
+        "recordedAt": "2026-10-16T10:14:19.554Z"
+      },
+      "originalNativeProposalAndFingerprintUnchanged": true,
+      "nativeProposalSHA256": "00ea8713616cc7bc1bc87a9571c221b75dfd4d042ee347156891a6e542e1b3d3",
+      "historyPruned": {
+        "at": "2026-10-16T10:40:27.021Z",
+        "kind": "summary-results",
+        "workId": "88e44354-d5c7-40a9-93c2-7e44b900ce19"
+      },
+      "projectFilesUnchanged": true,
+      "preview": {
+        "eligibleWorks": 1,
+        "records": 6,
+        "cachedSnapshots": 5,
+        "logicalBytes": 41043
+      }
+    },
+    {
+      "sourceSHA": "8ecf3c75d38df51df2640b03f1b9254e5079dd5b",
+      "candidateVersion": "0.1.10",
+      "workId": "04fa9093-1513-4ada-8114-b661f695d0db",
+      "preview": {
+        "eligibleWorks": 1,
+        "records": 6,
+        "cachedSnapshots": 0,
+        "logicalBytes": 62452
+      },
+      "historyPruned": {
+        "at": "2026-10-16T10:53:30.865Z",
+        "kind": "summary-results",
+        "workId": "04fa9093-1513-4ada-8114-b661f695d0db"
+      },
+      "frozenHistoricalUnknownStatusesUnchanged": true,
+      "wakeAndNativeOperationRowsUnchanged": true,
+      "rawRecipientSnapshotSHA256": "f42c138e62c08d06582266785366d73f65ace5c45203ec536b0d01d133181cb4",
+      "projectFilesUnchanged": true
+    },
+    {
+      "sourceSHA": "57d43ababa5a4453fa2dab3b59ec385da953b3d4",
+      "installedCandidateVersion": "0.1.11",
+      "liveWorkerPid": 2869,
+      "workId": "48a38c6f-58c0-4ab0-a0fa-0c8f33a80676",
+      "historyPruned": {
+        "at": "2026-10-16T11:33:54.027Z",
+        "kind": "summary-results",
+        "workId": "48a38c6f-58c0-4ab0-a0fa-0c8f33a80676"
+      },
+      "preview": {
+        "eligibleWorks": 1,
+        "records": 8,
+        "cachedSnapshots": 0,
+        "logicalBytes": 67273
+      },
+      "deliveries": [
+        {
+          "deliveryId": "task_d40a6e0c8aca",
+          "statusUnchanged": "pending",
+          "nativeProofSHA256": "4bfe168498837b03f14d4190674da03de6402e524774625e76308b7ed2a51fb0",
+          "nativeProofUnchanged": true
+        },
+        {
+          "deliveryId": "task_a2088bccb319",
+          "statusUnchanged": "accepted",
+          "nativeProofSHA256": "4cad7c999a4a27be33f0eb08b0597b043a9d46b6e6edb1ba59bfe36176329849",
+          "nativeProofUnchanged": true
+        }
+      ],
+      "projectFilesUnchanged": true
+    }
+  ],
+  "cleanup": {
+    "nativeAgentProcessesStopped": true,
+    "templateProfileRemoved": true,
+    "testProjectRemoved": true,
+    "pluginTestDatabaseRemoved": true,
+    "temporaryWorktreesRemoved": true,
+    "privateArtifactsRemoved": true,
+    "scopedClaudeTestDirectoriesRemoved": true,
+    "testTerminalTabsRemoved": true,
+    "nativeOrProviderGlobalArchivesManuallyEdited": false
+  },
+  "finalFormalInstallation": {
+    "path": "/Users/lin/Workspace/925-cc-plugins/team-orchestrator-orca-plugin",
+    "version": "0.1.11",
+    "workerPid": 8437,
+    "connection": "pass",
+    "rosterEmpty": true,
+    "globalNestedDepth": 1,
+    "settingsRevision": 19967,
+    "verifiedAt": "2026-10-16T11:41:47.239879+00:00"
+  },
+  "independentReview": {
+    "sourceCommit": "57d43ababa5a4453fa2dab3b59ec385da953b3d4",
+    "specActionableFindings": 0,
+    "standardsActionableFindings": 0
+  },
+  "artifactManifestSHA256": "d4b95a12cfb7c16e52aae382cbabe731ef08d4f4c582793390158d5e849ade5f",
+  "validationBoundary": {
+    "providerExecutionAndTemplatesVersion": "0.1.10 and pre-release source candidates",
+    "finalVersionLiveHistoryCleanup": "0.1.11",
+    "finalFormalConnection": "0.1.11",
+    "destructiveFaultInjection": "isolated fixtures/stores",
+    "windowsSSHOrScaleAcceptance": false
+  }
+}
