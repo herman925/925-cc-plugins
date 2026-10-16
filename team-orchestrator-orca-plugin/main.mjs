@@ -3,6 +3,16 @@ import { mkdir, realpath, open, rename, readFile, readdir, stat } from "node:fs/
 import { join, relative, isAbsolute, sep } from "node:path";
 import { randomUUID, createHash as createHash2 } from "node:crypto";
 
+// src/local/acceptance.mjs
+var latestBusinessAttempts = (attempts) => [...new Map(attempts.map((a) => [JSON.stringify([a.workId, a.taskKey]), a])).values()];
+var isUnsentBlockedAnswer = (a) => a.state === "blocked" && a.processed === "unconfirmed" && ["nativeSend", "receipt", "deliveryReceipt", "dispatchState", "nativeAnswer", "acknowledgement"].every((key) => !Object.hasOwn(a, key));
+function questionAnswerResolved(q, a) {
+  if (a.processed === "confirmed") return true;
+  const latest = q.answers.at(-1);
+  return q.sourceReport?.kind === "worker-report" && isUnsentBlockedAnswer(a) && latest !== a && latest?.supplement === true && latest.processed === "confirmed" && ["accepted", "unknown", "sending"].includes(latest.state) && Boolean(latest.nativeSend && latest.acknowledgement?.nativeTaskId && latest.acknowledgement?.payloadHash) && latest.supersedesBlockedAnswers?.includes(a.id) === true;
+}
+var questionNeedsProcessing = (q) => !q.resolution && (q.status === "pending" || q.status === "closed" && !q.answers.some((a) => a.processed === "confirmed") || q.answers.some((a) => !questionAnswerResolved(q, a)));
+
 // src/local/questions-store.mjs
 import { createHash } from "node:crypto";
 var hash = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
@@ -10,16 +20,21 @@ var text = (v, n = 8e3) => typeof v === "string" && v.trim().length > 0 && v.len
 function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, effectiveTeamForWork, atomic }) {
   const list = (workId) => db.prepare("SELECT json FROM receipts WHERE id LIKE 'question:%'").all().map((r) => {
     const q = JSON.parse(r.json);
-    if (q.format !== "team-question-v1" || !["id", "workId", "teamId", "fromMemberId", "runId", "summary"].every((k) => text(q[k])) || !Number.isSafeInteger(q.revision) || q.revision < 1 || !Number.isSafeInteger(q.generation) || q.generation < 1 || !["options", "blockingTaskKeys", "evidence", "answers"].every((k) => Array.isArray(q[k])) || q.options.some((v) => !text(v, 2e3)) || q.blockingTaskKeys.some((v) => !text(v, 120)) || q.evidence.some((v) => !text(v, 2e3)) || !["queued", "attempted", "delivered", "unconfirmed", "unavailable"].includes(q.notification?.state) || q.answers.some((a) => !text(a.id, 120) || !text(a.body) || !["queued", "sending", "accepted", "unknown", "blocked"].includes(a.state) || !["unconfirmed", "confirmed"].includes(a.processed) || a.revision !== q.revision || a.from !== "user" || a.toMemberId !== q.fromMemberId) || new Set(q.answers.map((a) => a.id)).size !== q.answers.length || !["pending", "answered", "closed"].includes(q.status)) throw Error("Saved pending question is damaged; preserve original data.");
+    if (q.format !== "team-question-v1" || !["id", "workId", "teamId", "fromMemberId", "runId", "summary"].every((k) => text(q[k])) || !Number.isSafeInteger(q.revision) || q.revision < 1 || !Number.isSafeInteger(q.generation) || q.generation < 1 || !["options", "blockingTaskKeys", "evidence", "answers"].every((k) => Array.isArray(q[k])) || q.options.some((v) => !text(v, 2e3)) || q.blockingTaskKeys.some((v) => !text(v, 120)) || q.evidence.some((v) => !text(v, 2e3)) || !["queued", "attempted", "delivered", "unconfirmed", "unavailable"].includes(q.notification?.state) || q.answers.some((a) => !text(a.id, 120) || !text(a.body) || !["queued", "sending", "accepted", "unknown", "blocked"].includes(a.state) || !["unconfirmed", "confirmed"].includes(a.processed) || a.revision !== q.revision || a.from !== "user" || a.toMemberId !== q.fromMemberId || a.supplement !== void 0 && typeof a.supplement !== "boolean" || a.supersedesBlockedAnswers !== void 0 && (!Array.isArray(a.supersedesBlockedAnswers) || a.supplement !== true || a.supersedesBlockedAnswers.some((id2) => !text(id2, 120)) || new Set(a.supersedesBlockedAnswers).size !== a.supersedesBlockedAnswers.length)) || new Set(q.answers.map((a) => a.id)).size !== q.answers.length || !["pending", "answered", "closed"].includes(q.status)) throw Error("Saved pending question is damaged; preserve original data.");
     return q;
   }).filter((q) => q.workId === workId);
   const api = {
     listQuestions: list,
-    claimQuestionAnswer(workId, id2, answerId, nativeSend) {
+    claimQuestionAnswer(workId, id2, answerId, nativeSend, supersedesBlockedAnswers = []) {
       return atomic(() => {
         if (readWork(workId)?.status === "completed") throw Error("Completed TeamWork is sealed.");
         const key = `question:${workId}:${id2}`, q = readPrivate(key), a = q?.answers.find((a2) => a2.id === answerId);
         if (!a || a.state !== "queued") return false;
+        if (supersedesBlockedAnswers.length) {
+          const expected = q.answers.slice(0, q.answers.indexOf(a)).filter(isUnsentBlockedAnswer).map((row) => row.id);
+          if (!q.sourceReport || a.supplement !== true || JSON.stringify(expected) !== JSON.stringify(supersedesBlockedAnswers)) throw Error("Explicit report supplement supersession changed.");
+          a.supersedesBlockedAnswers = supersedesBlockedAnswers;
+        }
         Object.assign(a, { state: "sending", nativeSend });
         putPrivate(key, q);
         return true;
@@ -98,7 +113,7 @@ function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, 
         return event;
       });
     },
-    questionProjection: (workId) => ({ messages: api.listTeamMessages(workId).map(({ payloadHash, controlProof: controlProof2, ...row }) => row), collaborations: api.listCollaborations(workId).map(({ fingerprint: fingerprint2, payloadHash, ...row }) => row), questions: list(workId).map(({ fingerprint: fingerprint2, proof, ...q }) => ({ ...q, origin: q.origin ? Object.fromEntries(Object.entries(q.origin).filter(([k]) => k !== "askParams")) : null, answers: q.answers.map(({ nativeSend, fingerprint: fingerprint3, ...a }) => a) })), failureStreaks: api.failureStreaks(workId) }),
+    questionProjection: (workId) => ({ messages: api.listTeamMessages(workId).map(({ payloadHash, controlProof: controlProof2, ...row }) => row), collaborations: api.listCollaborations(workId).map(({ fingerprint: fingerprint2, payloadHash, ...row }) => row), questions: list(workId).map(({ fingerprint: fingerprint2, proof, ...q }) => ({ ...q, supersedableBlockedAnswers: q.sourceReport ? q.answers.filter(isUnsentBlockedAnswer).map((a) => a.id) : [], origin: q.sourceReport ? null : q.origin ? Object.fromEntries(Object.entries(q.origin).filter(([k]) => k !== "askParams")) : null, answers: q.answers.map(({ nativeSend, fingerprint: fingerprint3, ...a }) => a) })), failureStreaks: api.failureStreaks(workId) }),
     ingestQuestion(workId, intent) {
       return atomic(() => {
         const work = readWork(workId), s = intent.spec, key = `question:${workId}:${s.appQuestionId}`, fingerprint2 = hash(intent), prior = readPrivate(key);
@@ -132,7 +147,7 @@ function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, 
         }
         if (q.revision !== input.questionRevision || q.status === "closed") throw Error("Question changed or closed; reopen its saved evidence.");
         if (q.answers.length && !input.supplement) throw Error("An answer already exists; submit an explicit supplement.");
-        const a = { id: input.answerId, body: input.body, revision: q.revision, from: "user", toMemberId: q.fromMemberId, state: "queued", processed: "unconfirmed", fingerprint: fingerprint2, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const a = { id: input.answerId, body: input.body, supplement: input.supplement, revision: q.revision, from: "user", toMemberId: q.fromMemberId, state: "queued", processed: "unconfirmed", fingerprint: fingerprint2, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         q.answers.push(a);
         q.status = "pending";
         putPrivate(`question:${q.workId}:${q.id}`, q);
@@ -294,7 +309,7 @@ function validatePersistentState(value) {
     const { configuration, scope, ...roster } = team;
     validateState({ version: 1, teams: [roster] });
     for (const member of team.members) {
-      if (member.preferenceOverride !== void 0 && typeof member.preferenceOverride !== "boolean" || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some((text8) => typeof text8 !== "string" || text8.length > 1500)) throw new Error("Saved role identity/version is invalid. It has been left untouched.");
+      if (member.preferenceOverride !== void 0 && typeof member.preferenceOverride !== "boolean" || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some((text9) => typeof text9 !== "string" || text9.length > 1500)) throw new Error("Saved role identity/version is invalid. It has been left untouched.");
       memberIds.add(member.id);
     }
     teamIds.add(team.id);
@@ -309,36 +324,36 @@ function workInput(input) {
   return input;
 }
 function validateWork(work) {
-  const text8 = (value, max = 4096) => typeof value === "string" && value.length > 0 && value.length <= max;
+  const text9 = (value, max = 4096) => typeof value === "string" && value.length > 0 && value.length <= max;
   const fail3 = () => {
     throw Error("Saved TeamWork evidence is damaged; existing data was preserved.");
   };
-  if (!work || work.format !== "team-work-v1" || !text8(work.id, 120) || !text8(work.teamId, 120) || !text8(work.requestId, 120) || !text8(work.supervisorMemberId, 120) || !text8(work.objective, 8e3) || !text8(work.protocolToken, 120) || !Number.isSafeInteger(work.version) || work.version < 1 || !Number.isSafeInteger(work.configVersion) || work.configVersion < 1 || !Number.isSafeInteger(work.roleVersion) || work.roleVersion < 1 || !["preparing", "awaiting_input", "awaiting_run", "active", "needs_attention", "awaiting_acceptance", "completed"].includes(work.status)) fail3();
-  if (work.parent && (!text8(work.teamWorkId, 120) || work.teamWorkId === work.id || !["workId", "runId", "taskId", "dispatchId", "attemptId"].every((k) => text8(work.parent[k], 256)) || !Number.isSafeInteger(work.parent.generation) || work.parent.generation < 1 || (work.binding?.sourceAttemptId ?? work.binding?.originAttemptId) !== work.parent.attemptId)) fail3();
+  if (!work || work.format !== "team-work-v1" || !text9(work.id, 120) || !text9(work.teamId, 120) || !text9(work.requestId, 120) || !text9(work.supervisorMemberId, 120) || !text9(work.objective, 8e3) || !text9(work.protocolToken, 120) || !Number.isSafeInteger(work.version) || work.version < 1 || !Number.isSafeInteger(work.configVersion) || work.configVersion < 1 || !Number.isSafeInteger(work.roleVersion) || work.roleVersion < 1 || !["preparing", "awaiting_input", "awaiting_run", "active", "needs_attention", "awaiting_acceptance", "completed"].includes(work.status)) fail3();
+  if (work.parent && (!text9(work.teamWorkId, 120) || work.teamWorkId === work.id || !["workId", "runId", "taskId", "dispatchId", "attemptId"].every((k) => text9(work.parent[k], 256)) || !Number.isSafeInteger(work.parent.generation) || work.parent.generation < 1 || (work.binding?.sourceAttemptId ?? work.binding?.originAttemptId) !== work.parent.attemptId)) fail3();
   const scope = work.scope, binding = work.binding;
-  if (!scope || !text8(scope.workspaceId) || !text8(scope.displayName) || !["git", "folder"].includes(scope.kind) || !/^(local|ssh:[^\s|]+)$/.test(scope.executionHostId) || !/^[a-f0-9]{64}$/.test(scope.workspaceKey) || !binding || binding.status !== "created" || binding.teamId !== work.teamId || binding.memberId !== work.supervisorMemberId || !text8(binding.requestId, 120) || !text8(binding.runtimeId, 256) || !["structured", "terminal"].includes(binding.kind) || !text8(binding.handle) || binding.scope?.workspaceId !== scope.workspaceId || binding.scope?.executionHostId !== scope.executionHostId || binding.scope?.workspaceKey !== scope.workspaceKey || binding.kind === "structured" && !text8(binding.sessionId)) fail3();
+  if (!scope || !text9(scope.workspaceId) || !text9(scope.displayName) || !["git", "folder"].includes(scope.kind) || !/^(local|ssh:[^\s|]+)$/.test(scope.executionHostId) || !/^[a-f0-9]{64}$/.test(scope.workspaceKey) || !binding || binding.status !== "created" || binding.teamId !== work.teamId || binding.memberId !== work.supervisorMemberId || !text9(binding.requestId, 120) || !text9(binding.runtimeId, 256) || !["structured", "terminal"].includes(binding.kind) || !text9(binding.handle) || binding.scope?.workspaceId !== scope.workspaceId || binding.scope?.executionHostId !== scope.executionHostId || binding.scope?.workspaceKey !== scope.workspaceKey || binding.kind === "structured" && !text9(binding.sessionId)) fail3();
   if (work.nativeObjective !== `TeamWork ${work.id} ${work.protocolToken}
 ${work.objective}` || !["not_sent", "sending", "accepted", "queued", "unknown", "rejected"].includes(work.input?.state) || !["unknown", "observed"].includes(work.processing?.state) || !["unverified", "verified", "fenced"].includes(work.run?.state)) fail3();
-  if (work.run.state === "verified" && (!text8(work.run.id, 256) || !Number.isSafeInteger(work.run.consumerGeneration) || work.run.consumerGeneration < 1)) fail3();
+  if (work.run.state === "verified" && (!text9(work.run.id, 256) || !Number.isSafeInteger(work.run.consumerGeneration) || work.run.consumerGeneration < 1)) fail3();
   if (work.input.state !== "not_sent" && (!work.nativeSend || !["agentSession.send", "terminal.send"].includes(work.nativeSend.method) || !work.nativeSend.params)) fail3();
   if (work.nativeSend) {
     const request = work.nativeSend.params, instance = work.instance;
     if (!instance || instance.kind !== binding.kind) fail3();
     if (binding.kind === "structured") {
-      if (work.nativeSend.method !== "agentSession.send" || request.envelope?.sessionId !== binding.sessionId || instance.liveSessionId !== binding.sessionId || !text8(instance.sessionId) || request.envelope?.expectedRuntimeFence !== instance.fence || !Number.isSafeInteger(instance.fence) || instance.fence < 1 || !/^[0-9]{13}-[0-9a-f]{32}$/.test(request.envelope?.clientOperationId) || !/^[a-f0-9]{64}$/.test(request.envelope?.payloadFingerprint) || request.body?.kind !== "message" || request.body?.role !== "user" || !Array.isArray(request.body.blocks) || request.body.blocks.length !== 1 || request.body.blocks[0].type !== "text" || !text8(request.body.blocks[0].text, 3e4)) fail3();
-    } else if (work.nativeSend.method !== "terminal.send" || request.terminal !== binding.handle || instance.handle !== binding.handle || instance.paneKey !== binding.paneKey || !text8(instance.incarnationId) || request.agentPrompt !== true || request.enter !== true || !text8(request.text, 3e4) || !/^[0-9a-f-]{36}$/.test(work.nativeSend.envelope?.orchestrationRequestId)) fail3();
+      if (work.nativeSend.method !== "agentSession.send" || request.envelope?.sessionId !== binding.sessionId || instance.liveSessionId !== binding.sessionId || !text9(instance.sessionId) || request.envelope?.expectedRuntimeFence !== instance.fence || !Number.isSafeInteger(instance.fence) || instance.fence < 1 || !/^[0-9]{13}-[0-9a-f]{32}$/.test(request.envelope?.clientOperationId) || !/^[a-f0-9]{64}$/.test(request.envelope?.payloadFingerprint) || request.body?.kind !== "message" || request.body?.role !== "user" || !Array.isArray(request.body.blocks) || request.body.blocks.length !== 1 || request.body.blocks[0].type !== "text" || !text9(request.body.blocks[0].text, 3e4)) fail3();
+    } else if (work.nativeSend.method !== "terminal.send" || request.terminal !== binding.handle || instance.handle !== binding.handle || instance.paneKey !== binding.paneKey || !text9(instance.incarnationId) || request.agentPrompt !== true || request.enter !== true || !text9(request.text, 3e4) || !/^[0-9a-f-]{36}$/.test(work.nativeSend.envelope?.orchestrationRequestId)) fail3();
   }
   if (work.currentSupervisor) {
     const current = work.currentSupervisor;
-    if (!Number.isSafeInteger(current.epoch) || current.epoch < 1 || !text8(current.recoveryRequestId, 120)) fail3();
+    if (!Number.isSafeInteger(current.epoch) || current.epoch < 1 || !text9(current.recoveryRequestId, 120)) fail3();
     validateWork({ ...work, ...current, currentSupervisor: void 0, nativeSend: current.nativeSend });
   }
   return work;
 }
 function publicWork(work) {
   validateWork(work);
-  const fields = ["id", "teamId", "supervisorMemberId", "objective", "configVersion", "roleVersion", "createdAt", "version", "epoch", "recoveryRequestId", "status", "processing", "run", "snapshot", "error", "closedAt", "handoff", "historyPruned"];
-  return { ...Object.fromEntries(fields.filter((key) => work[key] !== void 0).map((key) => [key, work[key]])), scope: { displayName: work.scope.displayName, kind: work.scope.kind, executionHostId: work.scope.executionHostId }, input: { state: work.input.state, ...work.input.source ? { source: work.input.source } : {}, ...work.input.dispatchState ? { dispatchState: work.input.dispatchState } : {}, ...work.input.queued ? { queued: work.input.queued } : {}, ...work.input.messageId ? { messageId: work.input.messageId } : {}, ...work.input.detail ? { detail: work.input.detail } : {} } };
+  const fields2 = ["id", "teamId", "supervisorMemberId", "objective", "configVersion", "roleVersion", "createdAt", "version", "epoch", "recoveryRequestId", "status", "processing", "run", "snapshot", "error", "closedAt", "handoff", "historyPruned"];
+  return { ...Object.fromEntries(fields2.filter((key) => work[key] !== void 0).map((key) => [key, work[key]])), scope: { displayName: work.scope.displayName, kind: work.scope.kind, executionHostId: work.scope.executionHostId }, input: { state: work.input.state, ...work.input.source ? { source: work.input.source } : {}, ...work.input.dispatchState ? { dispatchState: work.input.dispatchState } : {}, ...work.input.queued ? { queued: work.input.queued } : {}, ...work.input.messageId ? { messageId: work.input.messageId } : {}, ...work.input.detail ? { detail: work.input.detail } : {} } };
 }
 
 // src/scheduling.mjs
@@ -365,6 +380,7 @@ function scopeBlocker(history, taskKey, scope) {
 }
 
 // src/dispatch.mjs
+var DISPATCH_OBSERVATION_CHANGED = "Dispatch attempt changed while observing evidence.";
 var WORKER_RULES = "Use only approved roster members through admitted native Orca dispatch. Do not self-create provider-native subagents. Report results and questions to your original direct manager; assigned collaboration does not transfer acceptance. These are cooperative role instructions, not global provider tool interception.";
 var DISPATCH_STATUSES = ["admitted", "awaiting_start", "running", "unknown", "pending_acceptance", "accepted", "rework", "rejected"];
 var text2 = (value, limit = 4096) => typeof value === "string" && value.length > 0 && value.length <= limit;
@@ -388,8 +404,9 @@ function publicDispatch(row) {
   const keys = ["workId", "teamWorkId", "runId", "creatorDispatchId", "depth", "id", "nativeTaskId", "taskKey", "memberId", "memberName", "supervisorMemberId", "configVersion", "roleVersion", "attemptId", "instanceGeneration", "status", "admission", "instruction", "dispatchId", "outcome", "result", "evidenceId", "detail", "createdAt", "review", "dependencies", "writeScope", "previousAttemptId", "recovery"];
   return Object.fromEntries(keys.filter((key) => row[key] !== void 0).map((key) => [key, row[key]]));
 }
-function publicDispatchProtocol(row) {
-  return row ? { state: row.state, generation: row.generation, ...row.detail ? { detail: row.detail } : {} } : void 0;
+function publicDispatchProtocol(row, completed = false) {
+  const superseded = completed && row?.state === "accepted" && row.detail === DISPATCH_OBSERVATION_CHANGED;
+  return row ? { state: row.state, generation: row.generation, ...row.detail && !superseded ? { detail: row.detail } : {} } : void 0;
 }
 
 // src/local/storage-maintenance.mjs
@@ -485,7 +502,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.07" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.08" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -608,8 +625,13 @@ function validateRuntime(runtime) {
   };
   if (runtime.platform === "win32") reject2("platform_unverified", "Windows build is unverified. Capture its package/runtime contract before enabling this compatibility layer.");
   const build = runtime.build;
-  if (runtime.appName?.toLowerCase() !== "orca" || runtime.platform !== "darwin" || runtime.arch !== "arm64" || runtime.appVersion !== "1.4.222" || runtime.electron !== "43.7.5" || runtime.node !== "24.21.0" || build?.version !== "1.4.222" || build?.commit !== "9fdd90ffa7721e145f1353ad9fb9df2f70c31f43" || build?.buildId !== "1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64" || build?.platform !== runtime.platform || build?.architecture !== runtime.arch) {
-    reject2("unsupported_build", "Unsupported Orca build. Only macOS arm64 1.4.222 / 9fdd90f / Electron 43.7.5 / Node 24.21.0 has a pinned contract; revalidate before adding another build.");
+  const commits = {
+    "1.4.222": "9fdd90ffa7721e145f1353ad9fb9df2f70c31f43",
+    "1.4.223": "ff4a51c872e723d87ab141044814301ea5a78634"
+  };
+  const commit = Object.hasOwn(commits, runtime.appVersion) ? commits[runtime.appVersion] : void 0;
+  if (runtime.appName?.toLowerCase() !== "orca" || runtime.platform !== "darwin" || runtime.arch !== "arm64" || !commit || runtime.electron !== "43.7.5" || runtime.node !== "24.21.0" || build?.version !== runtime.appVersion || build?.commit !== commit || build?.buildId !== `${runtime.appVersion}-${commit}-arm64` || build?.platform !== runtime.platform || build?.architecture !== runtime.arch) {
+    reject2("unsupported_build", "Unsupported Orca build. Only macOS arm64 1.4.222 / 9fdd90f and 1.4.223 / ff4a51c with Electron 43.7.5 / Node 24.21.0 have pinned contracts; revalidate before adding another build.");
   }
   if (!runtime.sqlite) reject2("node_capability_missing", "The parent runtime does not provide Node SQLite DatabaseSync.");
   return { verification: "pinned-contract", buildId: build.buildId, electron: runtime.electron, node: runtime.node, sqlite: true, liveProviderVerified: false };
@@ -724,7 +746,7 @@ async function targets(port) {
   }
 }
 var failure = (code, message) => Object.assign(new Error(message), { code });
-async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.07", internalKey } = {}) {
+async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.08", internalKey } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
@@ -845,6 +867,73 @@ function createKeyedSerializer() {
     });
     return pending;
   };
+}
+
+// src/local/native-worker-report.mjs
+var parse = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+function verifiedWorkerReport(fact, message, dispatch, worker) {
+  const report = parse(fact?.payload), payload = parse(message?.payload);
+  if (!fact || !dispatch || !worker || fact.facet !== "worker_report" || fact.dispatch_id !== dispatch.id || fact.task_id !== dispatch.task_id || fact.authority_id !== `run_home:${dispatch.run_id}` || !fact.id.startsWith("worker_report:") || report?.status !== "accepted" || report.reportId !== fact.id || !["succeeded", "failed"].includes(report.outcome)) return null;
+  if (!message || message.id !== fact.id.slice("worker_report:".length) || message.run_id !== dispatch.run_id || message.type !== "worker_done" || message.from_handle !== dispatch.assignee_handle || message.sender_pane_key !== dispatch.assignee_pane_key || payload?.dispatchId !== dispatch.id || payload.taskId !== dispatch.task_id || payload.outcome !== report.outcome) return null;
+  if (dispatch.status !== (report.outcome === "succeeded" ? "completed" : "failed") || worker.state !== report.outcome) return null;
+  return { outcome: report.outcome, result: String(message.body ?? "").slice(0, 16e3), evidenceId: fact.id };
+}
+
+// src/local/native-mutation.mjs
+import { createHash as createHash4 } from "node:crypto";
+var canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== void 0).map((key) => [key, canonical(value[key])])) : value;
+var nativeMutationFingerprint = (method, params, owner, target) => {
+  const stable = { ...params };
+  delete stable.waitSubmitMs;
+  if (owner.kind === "structured") stable.__orcaCallerOrcaSessionId = owner.sessionId;
+  if (typeof stable.terminal === "string" && target?.kind === "terminal" && target.paneKey) {
+    const parts = target.paneKey.split(":");
+    stable.terminal = parts.length === 2 && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(parts[1]) ? { paneLeafId: parts[1] } : { paneKey: target.paneKey };
+  }
+  for (const key of ["from", "callerTerminalHandle"]) if (typeof stable[key] === "string" && owner.paneKey) {
+    const parts = owner.paneKey.split(":"), leaf = parts[1];
+    stable[key] = parts.length === 2 && parts[0] && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(leaf) ? { paneLeafId: leaf } : { paneKey: owner.paneKey };
+  }
+  return createHash4("sha256").update(JSON.stringify(canonical({ method, params: stable }))).digest("hex");
+};
+
+// src/local/native-question-origin.mjs
+var parse2 = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+var text3 = (value) => typeof value === "string" && value.length > 0 && value.length <= 256;
+var reportKeys = ["attemptId", "dispatchId", "nativeTaskId", "messageId"];
+function questionOriginKind(origin) {
+  if (!origin || typeof origin !== "object" || Array.isArray(origin) || reportKeys.some((key) => !text3(origin[key]))) return null;
+  const keys = Object.keys(origin);
+  if (keys.length === 4 && keys.every((key) => reportKeys.includes(key))) return "report";
+  if (keys.length === 6 && keys.every((key) => [...reportKeys, "askRequestId", "askParams"].includes(key)) && text3(origin.askRequestId) && origin.askParams && typeof origin.askParams === "object" && !Array.isArray(origin.askParams)) return "ask";
+  return null;
+}
+function verifiedReportOrigin(db, { work, attempts, spec }) {
+  if (work.parent || spec.kind !== "user-question" || spec.relay || questionOriginKind(spec.origin) !== "report") return null;
+  const o = spec.origin, a = attempts.find((row) => row.id === o.attemptId), b = a?.binding, evidenceId = `worker_report:${o.messageId}`;
+  if (!a || a.admission !== "committed" || a.supervisorMemberId !== work.supervisorMemberId || a.runId !== work.run.id || a.dispatchId !== o.dispatchId || a.nativeTaskId !== o.nativeTaskId || a.evidenceId !== evidenceId || !["failed", "succeeded"].includes(a.outcome) || !spec.evidence?.includes(evidenceId) || !b || !["terminal", "structured"].includes(b.kind) || a.scope?.workspaceId !== work.scope.workspaceId || a.scope?.executionHostId !== work.scope.executionHostId || b.workspaceId !== work.scope.workspaceId || b.executionHostId !== work.scope.executionHostId) return null;
+  const owner = a.originalSupervisorInstance ?? work.instance, identity = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
+  if (!owner || !identity?.caller_fingerprint || !a.startRequestId || !a.startPayloadHash) return null;
+  const starts = db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.workerStart' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.taskId')=?").all(identity.caller_fingerprint, a.nativeTaskId), start = starts[0], value = parse2(start?.receipt), caller4 = owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
+  if (starts.length !== 1 || start.request_id !== a.startRequestId || start.payload_hash !== a.startPayloadHash || start.payload_hash !== nativeMutationFingerprint("orchestration.workerStart", { ...a.startParams, from: caller4, devMode: false }, owner, a.reuse?.binding) || value?.runId !== a.runId || value.dispatchId !== o.dispatchId) return null;
+  const d = db.prepare("SELECT * FROM dispatch_contexts WHERE id=?").get(o.dispatchId), w = db.prepare("SELECT * FROM worker_dispatches WHERE dispatch_id=?").get(o.dispatchId), h = parse2(d?.host_scope);
+  const host = work.scope.executionHostId === "local" ? h?.kind === "local" && h.hostId === "local" : h?.kind === "ssh" && `ssh:${encodeURIComponent(h.targetId)}` === work.scope.executionHostId;
+  if (!d || (owner.kind === "structured" ? d.creator_orca_session_id !== owner.sessionId : d.creator_handle !== owner.handle || d.creator_pane_key !== owner.paneKey) || d.run_id !== a.runId || d.task_id !== a.nativeTaskId || d.assignee_handle !== b.handle || d.assignee_pane_key !== b.paneKey || d.process_incarnation !== b.incarnationId || (b.kind === "structured" ? d.assignee_orca_session_id !== b.sessionId : Boolean(d.assignee_orca_session_id)) || !host || !w || w.agent_terminal_handle !== b.handle || w.worktree_id !== b.workspaceId || w.runtime_epoch !== b.runtimeId || w.state !== a.outcome || d.status !== (a.outcome === "failed" ? "failed" : "completed")) return null;
+  const fact = db.prepare("SELECT * FROM attempt_observation_facts WHERE id=? AND dispatch_id=? AND facet='worker_report'").get(evidenceId, d.id), message = db.prepare("SELECT * FROM messages WHERE id=?").get(o.messageId), completion = verifiedWorkerReport(fact, message, d, w);
+  if (!completion || completion.evidenceId !== a.evidenceId || completion.outcome !== a.outcome) return null;
+  return { kind: "worker-report", attemptId: a.id, dispatchId: d.id, nativeTaskId: a.nativeTaskId, messageId: message.id, evidenceId, runId: a.runId, memberId: a.memberId, supervisorMemberId: a.supervisorMemberId, outcome: a.outcome };
 }
 
 // src/local/native-runtime.mjs
@@ -972,27 +1061,9 @@ async function withOrchestrationSnapshot(userData, { pathError, schemaError }, r
   }
 }
 
-// src/local/native-mutation.mjs
-import { createHash as createHash4 } from "node:crypto";
-var canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== void 0).map((key) => [key, canonical(value[key])])) : value;
-var nativeMutationFingerprint = (method, params, owner, target) => {
-  const stable = { ...params };
-  delete stable.waitSubmitMs;
-  if (owner.kind === "structured") stable.__orcaCallerOrcaSessionId = owner.sessionId;
-  if (typeof stable.terminal === "string" && target?.kind === "terminal" && target.paneKey) {
-    const parts = target.paneKey.split(":");
-    stable.terminal = parts.length === 2 && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(parts[1]) ? { paneLeafId: parts[1] } : { paneKey: target.paneKey };
-  }
-  for (const key of ["from", "callerTerminalHandle"]) if (typeof stable[key] === "string" && owner.paneKey) {
-    const parts = owner.paneKey.split(":"), leaf = parts[1];
-    stable[key] = parts.length === 2 && parts[0] && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(leaf) ? { paneLeafId: leaf } : { paneKey: owner.paneKey };
-  }
-  return createHash4("sha256").update(JSON.stringify(canonical({ method, params: stable }))).digest("hex");
-};
-
 // src/local/native-history.mjs
 import { createHash as createHash5 } from "node:crypto";
-var parse = (value) => {
+var parse3 = (value) => {
   try {
     return JSON.parse(value);
   } catch {
@@ -1033,14 +1104,19 @@ function savedControl(entry, spec, task, receipt) {
       return false;
   }
 }
-function isHistoricalControl(db, work, task, history) {
-  const spec = parse(task.spec);
+function isHistoricalControl(db, work, task, history, attempts = []) {
+  const spec = parse3(task.spec);
   if (!spec || spec.workId !== work.id || task.run_id !== work.run.id || !["team-questions/v1", "team-delivery/v1"].includes(spec.protocol) || db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id)) return false;
   const identity = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
   if (!identity?.caller_fingerprint) return false;
-  const receipts = db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, task.id), receipt = receipts[0], value = parse(receipt?.receipt);
+  const receipts = db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, task.id), receipt = receipts[0], value = parse3(receipt?.receipt);
   if (receipts.length !== 1 || value?.task?.spec !== task.spec || value.task.run_id !== task.run_id) return false;
-  return history.controls.some((entry) => savedControl(entry, spec, task, receipt) && authority(history, spec, entry.epoch).some(({ owner, protocol }) => receipt.payload_hash === nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller(owner) }, owner) && (owner.kind === "structured" || owner.kind === "terminal" && task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.incarnationId && task.created_by_run_generation === protocol.generation)));
+  const reportValid = (entry) => {
+    if (entry.kind !== "question" || !entry.record.sourceReport && questionOriginKind(spec.origin) !== "report") return true;
+    const report = verifiedReportOrigin(db, { work, attempts, spec });
+    return Boolean(report && (!entry.record.sourceReport || same(entry.record.sourceReport, report)));
+  };
+  return history.controls.some((entry) => savedControl(entry, spec, task, receipt) && reportValid(entry) && authority(history, spec, entry.epoch).some(({ owner, protocol }) => receipt.payload_hash === nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller(owner) }, owner) && (owner.kind === "structured" || owner.kind === "terminal" && task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.processIncarnation && task.created_by_run_generation === protocol.generation)));
 }
 function isHistoricalReview(work, attempt, proof, task, review, history) {
   const saved = attempt.review, status = attempt.outcome === "succeeded" ? "completed" : "failed";
@@ -1052,21 +1128,21 @@ function changedRecordedControls(db, work, history) {
   return history.controls.flatMap((entry) => {
     const id2 = controlProof(entry)?.nativeTaskId;
     if (!id2) return [];
-    const task = db.prepare("SELECT * FROM tasks WHERE id=?").get(id2), spec = parse(task?.spec);
-    const receipts = identity ? db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, id2) : [], receipt = receipts[0], value = parse(receipt?.receipt);
+    const task = db.prepare("SELECT * FROM tasks WHERE id=?").get(id2), spec = parse3(task?.spec);
+    const receipts = identity ? db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, id2) : [], receipt = receipts[0], value = parse3(receipt?.receipt);
     return task?.run_id === work.run.id && spec?.workId === work.id && receipts.length === 1 && value?.task?.spec === task.spec && value.task.run_id === work.run.id && savedControl(entry, spec, task, receipt) ? [] : [{ nativeTaskId: id2, detail: "Recorded native control evidence is missing or changed." }];
   });
 }
 
 // src/local/native-questions.mjs
-var parse2 = (v) => {
+var parse4 = (v) => {
   try {
     return JSON.parse(v);
   } catch {
     return null;
   }
 };
-var text3 = (v, n = 8e3) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
+var text4 = (v, n = 8e3) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 async function readNativeQuestionEvidence(userData, { work, protocol, owner, attempts = [], nativeHistory = { authorities: [], controls: [] } }) {
   try {
     return await withOrchestrationSnapshot(userData, { pathError: "Invalid native evidence path.", schemaError: "Unsupported native question schema." }, (db) => {
@@ -1075,19 +1151,23 @@ async function readNativeQuestionEvidence(userData, { work, protocol, owner, att
       if (owner.kind === "structured" ? run.coordinator_orca_session_id !== owner.sessionId || run.coordinator_orca_session_id_generation !== protocol.generation : run.coordinator_handle !== owner.handle || run.coordinator_pane_key !== owner.paneKey) throw Error("Question supervisor changed.");
       const identity = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
       if (!identity?.caller_fingerprint) throw Error("Native author proof unavailable.");
-      const intents = [], rejected = [], threads = [];
+      const intents = [], rejected = [], threads = [], sourceReports = [], verifiedAsks = /* @__PURE__ */ new Set();
       for (const task of db.prepare("SELECT * FROM tasks WHERE run_id=?").all(work.run.id)) {
-        const spec = parse2(task.spec);
+        const spec = parse4(task.spec);
         if (spec?.protocol !== "team-questions/v1" || spec.workId !== work.id) continue;
-        if (isHistoricalControl(db, work, task, nativeHistory)) continue;
+        if (isHistoricalControl(db, work, task, nativeHistory, attempts)) continue;
         try {
-          if (spec.token !== protocol.token || spec.generation !== protocol.generation || !text3(spec.appQuestionId, 120) || !/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId) || !["user-question", "relay-question", "answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack"].includes(spec.kind)) throw Error("Question intent identity invalid.");
+          if (spec.token !== protocol.token || spec.generation !== protocol.generation || !text4(spec.appQuestionId, 120) || !/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId) || !["user-question", "relay-question", "answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack"].includes(spec.kind)) throw Error("Question intent identity invalid.");
           const receipts = db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, task.id);
-          const receipt = receipts[0], value = parse2(receipt?.receipt), caller3 = owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
-          if (receipts.length !== 1 || receipt.payload_hash !== nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3 }, owner) || value?.task?.spec !== task.spec || value.task.run_id !== work.run.id) throw Error("Question author proof unavailable.");
-          if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.incarnationId || task.created_by_run_generation !== protocol.generation)) throw Error("Question terminal creator unverified.");
+          const receipt = receipts[0], value = parse4(receipt?.receipt), caller4 = owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
+          if (receipts.length !== 1 || receipt.payload_hash !== nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller4 }, owner) || value?.task?.spec !== task.spec || value.task.run_id !== work.run.id) throw Error("Question author proof unavailable.");
+          if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) throw Error("Question terminal creator unverified.");
           if (spec.kind === "user-question" && work.parent || spec.kind === "relay-question" && !work.parent) throw Error("Only the highest supervisor asks the user; lower managers relay.");
-          if (["user-question", "relay-question"].includes(spec.kind) && (spec.evidence !== void 0 && (!Array.isArray(spec.evidence) || spec.evidence.length > 100 || spec.evidence.some((v) => !text3(v, 2e3))) || !text3(spec.summary) || !Array.isArray(spec.options) || spec.options.length > 20 || spec.options.some((v) => !text3(v, 2e3)) || !Array.isArray(spec.blockingTaskKeys) || spec.blockingTaskKeys.some((v) => !text3(v, 120)))) throw Error("Invalid question text or blocking scope.");
+          if (["user-question", "relay-question"].includes(spec.kind) && (spec.evidence !== void 0 && (!Array.isArray(spec.evidence) || spec.evidence.length > 100 || spec.evidence.some((v) => !text4(v, 2e3))) || !text4(spec.summary) || !Array.isArray(spec.options) || spec.options.length > 20 || spec.options.some((v) => !text4(v, 2e3)) || !Array.isArray(spec.blockingTaskKeys) || spec.blockingTaskKeys.some((v) => !text4(v, 120)))) throw Error("Invalid question text or blocking scope.");
+          if (["user-question", "relay-question"].includes(spec.kind)) {
+            const hasOrigin = spec.origin !== void 0 && spec.origin !== null, kind = hasOrigin && questionOriginKind(spec.origin);
+            if (hasOrigin && !kind || (spec.kind === "relay-question" || spec.relay) && kind !== "ask" || kind === "report" && (work.parent || spec.kind !== "user-question" || spec.relay)) throw Error("Question origin must be an exact native ask or highest-Head completion reference.");
+          }
           if (spec.origin) {
             const a = attempts.find((a2) => a2.id === spec.origin.attemptId);
             if (!a || a.admission !== "committed" || !a.binding || a.dispatchId !== spec.origin.dispatchId || a.nativeTaskId !== spec.origin.nativeTaskId || a.runId !== work.run.id) throw Error("Question origin does not match an admitted attempt.");
@@ -1099,14 +1179,19 @@ async function readNativeQuestionEvidence(userData, { work, protocol, owner, att
       }
       if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='question_threads'").get()) for (const a of attempts.filter((a2) => a2.binding && a2.dispatchId && a2.admission === "committed")) {
         const d = db.prepare("SELECT * FROM dispatch_contexts WHERE id=?").get(a.dispatchId);
-        if (!d || d.run_id !== a.runId || d.task_id !== a.nativeTaskId || d.assignee_handle !== a.binding.handle || d.assignee_pane_key !== a.binding.paneKey || d.process_incarnation !== a.binding.incarnationId || parse2(d.host_scope)?.kind !== "local" || work.scope.executionHostId !== "local") continue;
+        if (!d || d.run_id !== a.runId || d.task_id !== a.nativeTaskId || d.assignee_handle !== a.binding.handle || d.assignee_pane_key !== a.binding.paneKey || d.process_incarnation !== a.binding.incarnationId || parse4(d.host_scope)?.kind !== "local" || work.scope.executionHostId !== "local") continue;
         for (const q of db.prepare("SELECT * FROM question_threads WHERE dispatch_id=? AND run_id=?").all(a.dispatchId, a.runId)) {
-          const m = db.prepare("SELECT * FROM messages WHERE id=?").get(q.message_id), p = parse2(m?.payload);
+          const m = db.prepare("SELECT * FROM messages WHERE id=?").get(q.message_id), p = parse4(m?.payload);
           if (!m || m.run_id !== a.runId || m.from_handle !== `dispatch:${a.dispatchId}` || m.to_handle !== `run:${a.runId}` || m.type !== "question" || m.thread_id !== q.message_id || p?.dispatchId !== a.dispatchId || p.taskId !== a.nativeTaskId || q.asker_handle !== a.binding.handle) continue;
-          const origin = intents.find((i) => i.spec.origin?.messageId === q.message_id)?.spec.origin;
-          const r = origin && db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND request_id=? AND method='orchestration.ask' AND state='completed'").get(identity.caller_fingerprint, origin.askRequestId);
-          const v = parse2(r?.receipt);
-          if (!r || !origin.askParams || origin.askParams.question !== m.body || origin.askParams.run !== a.runId || origin.askParams.resume || v?.messageId !== q.message_id || r.payload_hash !== nativeMutationFingerprint("orchestration.ask", origin.askParams, a.binding)) continue;
+          const candidates = intents.filter((i) => questionOriginKind(i.spec.origin) === "ask" && i.spec.origin.messageId === q.message_id && i.spec.origin.attemptId === a.id && i.spec.origin.dispatchId === a.dispatchId && i.spec.origin.nativeTaskId === a.nativeTaskId);
+          let authenticated = false;
+          for (const candidate of candidates) {
+            const origin = candidate.spec.origin, r = db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND request_id=? AND method='orchestration.ask' AND state='completed'").get(identity.caller_fingerprint, origin.askRequestId), v = parse4(r?.receipt);
+            if (!r || origin.askParams.question !== m.body || origin.askParams.run !== a.runId || origin.askParams.resume || v?.messageId !== q.message_id || r.payload_hash !== nativeMutationFingerprint("orchestration.ask", origin.askParams, a.binding)) continue;
+            verifiedAsks.add(candidate.nativeTaskId);
+            authenticated = true;
+          }
+          if (!authenticated) continue;
           let answer;
           if (q.status === "answered" && q.answered_by_generation === protocol.generation) {
             const am = db.prepare("SELECT * FROM messages WHERE id=?").get(q.answer_message_id);
@@ -1115,6 +1200,19 @@ async function readNativeQuestionEvidence(userData, { work, protocol, owner, att
           threads.push({ messageId: q.message_id, attemptId: a.id, dispatchId: a.dispatchId, nativeTaskId: a.nativeTaskId, runId: a.runId, fromMemberId: a.memberId, toMemberId: a.supervisorMemberId, status: q.status, body: m.body, ...answer ? { answer } : {} });
         }
       }
+      for (let index = intents.length - 1; index >= 0; index--) {
+        const intent = intents[index], spec = intent.spec;
+        if (!["user-question", "relay-question"].includes(spec.kind) || !spec.origin) continue;
+        if (questionOriginKind(spec.origin) === "report") {
+          const sourceReport = verifiedReportOrigin(db, { work, attempts, spec });
+          if (sourceReport) {
+            sourceReports.push({ nativeTaskId: intent.nativeTaskId, appQuestionId: spec.appQuestionId, sourceReport });
+            continue;
+          }
+        } else if (verifiedAsks.has(intent.nativeTaskId)) continue;
+        rejected.push({ id: intent.nativeTaskId, detail: "Question origin lacks exact authenticated native ask or completion evidence." });
+        intents.splice(index, 1);
+      }
       const messages = [];
       for (const intent of intents.filter((i) => i.spec.kind === "message-evidence")) {
         const s = intent.spec, n = s.nativeMessage, a = attempts.find((a2) => a2.id === s.fromAttemptId);
@@ -1122,16 +1220,28 @@ async function readNativeQuestionEvidence(userData, { work, protocol, owner, att
         const d = db.prepare("SELECT * FROM dispatch_contexts WHERE id=?").get(a.dispatchId);
         if (!d || d.assignee_orca_session_id !== a.binding.sessionId || d.run_id !== a.runId || d.task_id !== a.nativeTaskId || d.assignee_handle !== a.binding.handle || d.process_incarnation !== a.binding.incarnationId) continue;
         const r = db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND request_id=? AND method='orchestration.send' AND state='completed'").get(identity.caller_fingerprint, n.requestId), m = db.prepare("SELECT * FROM messages WHERE id=?").get(n.messageId);
-        if (!r || !m || parse2(r.receipt)?.message?.id !== m.id || r.payload_hash !== nativeMutationFingerprint("orchestration.send", n.params, a.binding) || m.run_id !== a.runId || m.from_handle !== a.binding.handle || m.sender_pane_key !== a.binding.paneKey || m.body !== n.params.body || m.type !== n.params.type || m.to_handle !== n.params.to) continue;
+        if (!r || !m || parse4(r.receipt)?.message?.id !== m.id || r.payload_hash !== nativeMutationFingerprint("orchestration.send", n.params, a.binding) || m.run_id !== a.runId || m.from_handle !== a.binding.handle || m.sender_pane_key !== a.binding.paneKey || m.body !== n.params.body || m.type !== n.params.type || m.to_handle !== n.params.to) continue;
         const target = attempts.find((b) => b.memberId === s.toMemberId && b.id === s.toAttemptId);
         if (s.toMemberId === a.supervisorMemberId ? n.params.to !== `run:${a.runId}` : !target || n.params.to !== target.binding?.handle) continue;
         messages.push({ controlProof: intent, id: m.id, workId: work.id, fromMemberId: a.memberId, toMemberId: s.toMemberId, attemptId: a.id, toAttemptId: target?.id, dispatchId: a.dispatchId, nativeTaskId: a.nativeTaskId, runId: a.runId, body: m.body, type: m.type, requestId: r.request_id, payloadHash: r.payload_hash, state: "native_committed", processing: "unconfirmed" });
       }
-      return { state: "verified", intents, rejected, threads, messages };
+      return { state: "verified", intents, rejected, threads, messages, sourceReports };
     });
   } catch (error) {
     return { state: "unverified", detail: error.code ? "Native question evidence is unavailable. Preserve pending answers and reconnect the owning runtime." : error.message, intents: [], rejected: [], threads: [] };
   }
+}
+
+// src/local/terminal-identity.mjs
+function terminalIdentity(terminal) {
+  const { ptyId, incarnationId } = terminal ?? {};
+  if (typeof ptyId !== "string" || !ptyId || typeof incarnationId !== "string" || !incarnationId) throw Error("Exact native terminal PTY and incarnation are unverified.");
+  return { ptyId, incarnationId, processIncarnation: `${ptyId}:${incarnationId}` };
+}
+function matchesTerminalObservation(terminal, saved) {
+  if (!saved || !saved.incarnationId && !saved.processIncarnation) return false;
+  const actual = terminalIdentity(terminal);
+  return (!saved.incarnationId || saved.incarnationId === actual.incarnationId) && (!saved.ptyId || saved.ptyId === actual.ptyId) && (!saved.processIncarnation || saved.processIncarnation === actual.processIncarnation);
 }
 
 // src/local/dispatch.mjs
@@ -1251,13 +1361,14 @@ function createWorkService({ store, rpc, userData, consent }) {
     }
     const shown = (await rpc("terminal.show", { terminal: binding.handle }))?.terminal;
     if (shown?.handle !== binding.handle || shown.worktreeId !== work.scope.workspaceId || shown.executionHostId !== work.scope.executionHostId || !shown.connected || !shown.writable || !shown.incarnationId || shown.agentIdentity !== binding.nativeRequest.agent || `${shown.tabId}:${shown.leafId}` !== binding.paneKey) throw Error("The prepared terminal agent, host or execution instance is unverified. Open its native session and resolve login or permission issues.");
+    if (binding.observation && (binding.observation.incarnationId || binding.observation.processIncarnation) && !matchesTerminalObservation(shown, binding.observation)) throw Error("Prepared terminal PTY or incarnation changed.");
     if (forSend) {
       const activity = (await rpc("terminal.agentStatus", { terminal: binding.handle }))?.agentStatus;
       if (activity?.handle !== binding.handle || activity.isRunningAgent !== true || activity.status === "permission") throw Error("The supervisor is not ready for user input or is waiting for permission. Resolve its native session first.");
     }
-    const instance = { kind: "terminal", handle: binding.handle, paneKey: binding.paneKey, incarnationId: shown.incarnationId };
-    if (parentAssignee && (parentAssignee.handle !== instance.handle || parentAssignee.paneKey !== instance.paneKey || parentAssignee.incarnationId !== instance.incarnationId)) throw Error("Recovered manager does not match the actual parent Dispatch execution instance.");
-    if (work.instance && work.instance.incarnationId !== instance.incarnationId) throw Error("Supervisor terminal incarnation changed; the existing work remains reserved.");
+    const instance = { kind: "terminal", handle: binding.handle, paneKey: binding.paneKey, ...terminalIdentity(shown) };
+    if (parentAssignee && (parentAssignee.handle !== instance.handle || parentAssignee.paneKey !== instance.paneKey || parentAssignee.incarnationId !== instance.processIncarnation)) throw Error("Recovered manager does not match the actual parent Dispatch execution instance.");
+    if (work.instance && (["handle", "paneKey", "incarnationId"].some((key) => work.instance[key] !== instance[key]) || work.instance.ptyId && work.instance.ptyId !== instance.ptyId || work.instance.processIncarnation && work.instance.processIncarnation !== instance.processIncarnation)) throw Error("Supervisor terminal incarnation changed; the existing work remains reserved.");
     if (!status.capabilities.includes("terminal.prompt-delivery.v1")) throw Error("This host does not support durable terminal prompt delivery. Update the owning Orca host before submitting.");
     await verifyHost(work, hostGeneration);
     return { instance, status, hostGeneration };
@@ -1378,10 +1489,74 @@ function createWorkService({ store, rpc, userData, consent }) {
   };
 }
 
-// src/local/native-dispatch.mjs
-var caller2 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
+// src/local/native-intent-withdrawal.mjs
+var parse5 = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
 var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
-var parse3 = (value) => {
+var fields = ["protocol", "workId", "token", "generation", "supervisorMemberId", "nativeTaskId", "taskKey", "memberId", "replacementNativeTaskId", "reason"];
+var caller2 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
+function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitted, identity, receipts, verifyIntent: verifyIntent2, history = [], historyContexts = [] }) {
+  const withdrawn = [], rejected = [];
+  if (!history.length && !tasks.some((task) => parse5(task.result)?.protocol === "team-intent-withdrawal/v1")) return { withdrawn, rejected };
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const starts = db.prepare("SELECT state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method IN ('orchestration.workerStart','orchestration.dispatch','orchestration.federationAttachStart')").all(identity.caller_fingerprint);
+  for (const task of tasks) {
+    const result = parse5(task.result), saved = history.find((row) => row.nativeTaskId === task.id);
+    if (result?.protocol !== "team-intent-withdrawal/v1" && !saved) continue;
+    try {
+      const original = parse5(task.spec);
+      let proofProtocol = protocol, proofTeam = team, proofOwner = owner, proofEpoch = work.epoch ?? 0;
+      if (saved) {
+        const contexts = historyContexts.filter((context2) => context2.nativeTaskId === task.id && context2.epoch === saved.epoch), context = contexts[0];
+        if (contexts.length !== 1 || !context.team || context.team.id !== work.teamId) throw Error("Recorded withdrawal frozen configuration is unavailable.");
+        proofTeam = context.team;
+        if (saved.epoch !== proofEpoch) {
+          if (!Number.isSafeInteger(saved.epoch) || saved.epoch < 0 || saved.epoch >= proofEpoch || context.authorities.length !== 1) throw Error("Recorded withdrawal archived authority is unavailable.");
+          const authority2 = context.authorities[0];
+          proofProtocol = authority2.protocol;
+          proofOwner = authority2.owner;
+          proofEpoch = authority2.epoch;
+        }
+      }
+      if (!result || Object.keys(result).length !== fields.length || fields.some((key) => !Object.hasOwn(result, key)) || result.protocol !== "team-intent-withdrawal/v1" || result.reason !== "missing-worker-rules" || result.workId !== work.id || result.token !== proofProtocol.token || result.generation !== proofProtocol.generation || result.supervisorMemberId !== work.supervisorMemberId || result.nativeTaskId !== task.id || result.taskKey !== original?.taskKey || result.memberId !== original?.memberId || typeof result.replacementNativeTaskId !== "string" || result.replacementNativeTaskId.length > 120 || result.replacementNativeTaskId === task.id || task.status !== "failed" || task.result.length > 8e3) throw Error("Withdrawal does not match the current supervisor and failed original intent.");
+      if (!original || Object.hasOwn(original, "workerRules") || admitted.some((row) => row.nativeTaskId === task.id) || db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id)) throw Error("Only a missing-rules intent with no admission or past Dispatch can be withdrawn.");
+      for (const start of starts) {
+        const value = parse5(start.receipt), taskId = value?.taskId ?? value?.task?.id;
+        if (taskId === task.id || typeof taskId !== "string" || !taskId) throw Error("Native start evidence is present or unresolved; withdrawal is refused.");
+      }
+      const created = receipts("orchestration.taskCreate", task.id);
+      if (created.length !== 1) throw Error("Original Task creation proof is missing or ambiguous.");
+      verifyIntent2(task, { ...original, workerRules: WORKER_RULES }, work, proofProtocol, proofTeam, proofOwner, created[0]);
+      const replacement = byId.get(result.replacementNativeTaskId), replacementSpec = parse5(replacement?.spec);
+      if (!replacement || replacement.run_id !== task.run_id || !same2({ ...original, workerRules: WORKER_RULES }, replacementSpec)) throw Error("Replacement must preserve the exact business intent and add the approved workerRules.");
+      const replacementCreated = receipts("orchestration.taskCreate", replacement.id);
+      if (replacementCreated.length !== 1) throw Error("Replacement Task creation proof is missing or ambiguous.");
+      verifyIntent2(replacement, replacementSpec, work, proofProtocol, proofTeam, proofOwner, replacementCreated[0]);
+      const updates = receipts("orchestration.taskUpdate", task.id), update = updates[0];
+      const expected = nativeMutationFingerprint("orchestration.taskUpdate", { id: task.id, status: "failed", result: task.result, run: work.run.id, callerTerminalHandle: caller2(proofOwner) }, proofOwner);
+      if (updates.length !== 1 || update.payload_hash !== expected || update.value?.task?.id !== task.id || update.value.task.run_id !== work.run.id || update.value.task.status !== "failed" || update.value.task.spec !== task.spec || update.value.task.result !== task.result) throw Error("Withdrawal needs the exact authenticated owning supervisor Task update.");
+      const record = { workId: work.id, nativeTaskId: task.id, replacementNativeTaskId: replacement.id, taskKey: original.taskKey, memberId: original.memberId, reason: result.reason, generation: proofProtocol.generation, epoch: proofEpoch, originalSpec: task.spec, replacementSpec: replacement.spec, result: task.result, createProof: { requestId: created[0].request_id, payloadHash: created[0].payload_hash }, replacementProof: { requestId: replacementCreated[0].request_id, payloadHash: replacementCreated[0].payload_hash }, updateProof: { requestId: update.request_id, payloadHash: update.payload_hash } };
+      if (saved && !same2(saved, record)) throw Error("Recorded withdrawal evidence changed.");
+      withdrawn.push(record);
+    } catch (error) {
+      rejected.push({ nativeTaskId: task.id, detail: error.message });
+    }
+  }
+  const duplicates = new Set(withdrawn.filter((row) => withdrawn.some((other) => other.nativeTaskId !== row.nativeTaskId && other.replacementNativeTaskId === row.replacementNativeTaskId)).map((row) => row.nativeTaskId));
+  for (const row of history) if (!byId.has(row.nativeTaskId)) rejected.push({ nativeTaskId: row.nativeTaskId, detail: "Recorded withdrawn Task is missing." });
+  for (const id2 of duplicates) rejected.push({ nativeTaskId: id2, detail: "Multiple withdrawn intents cannot share a replacement." });
+  return { withdrawn: withdrawn.filter((row) => !duplicates.has(row.nativeTaskId)), rejected };
+}
+
+// src/local/native-dispatch.mjs
+var caller3 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
+var same3 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var parse6 = (value) => {
   try {
     return JSON.parse(value);
   } catch {
@@ -1395,10 +1570,10 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
   if (spec.dependencies !== void 0 && (!Array.isArray(spec.dependencies) || spec.dependencies.length > 100 || spec.dependencies.some((key) => typeof key !== "string" || !/^[A-Za-z0-9-]{1,120}$/.test(key) || key === spec.taskKey) || new Set(spec.dependencies).size !== spec.dependencies.length)) throw Error("Invalid application dependencies.");
   if (spec.writeScope !== void 0) declaredWriteScope(spec.writeScope);
   const member = team.members.find((row) => row.id === spec.memberId);
-  if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== spec.roleVersion || !same2(spec.role, { brief: member.brief, habits: member.habits, collaboration: member.collaboration })) throw Error("Task member, direct supervisor or frozen role version does not match.");
-  const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller2(owner) }, owner);
+  if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== spec.roleVersion || !same3(spec.role, { brief: member.brief, habits: member.habits, collaboration: member.collaboration })) throw Error("Task member, direct supervisor or frozen role version does not match.");
+  const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
   if (receipt.payload_hash !== expected || receipt.value?.task?.id !== task.id || receipt.value.task.spec !== task.spec || receipt.value.task.run_id !== work.run.id) throw Error("Native Task author proof is unavailable. Use the exact task-create protocol without extra flags.");
-  if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.incarnationId || task.created_by_run_generation !== protocol.generation)) throw Error("Native terminal Task creator instance is unverified.");
+  if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) throw Error("Native terminal Task creator instance is unverified.");
   return { spec, member, nativeTaskId: task.id, taskSpec: task.spec, requestId: receipt.request_id, payloadHash: receipt.payload_hash };
 }
 async function readNativeDispatchEvidence(userData, { work, protocol, team, owner, admitted = [], allowSettledParent = false, nativeHistory = { authorities: [], controls: [] } }) {
@@ -1411,25 +1586,29 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
       if (work.parent) {
         parentDispatch = db.prepare("SELECT * FROM dispatch_contexts WHERE id=?").get(work.parent.dispatchId);
         const p = parentDispatch;
-        if (!p || p.run_id !== work.parent.runId || p.task_id !== work.parent.taskId || !Number.isSafeInteger(p.depth) || p.depth < 1 || (owner.kind === "structured" ? p.assignee_orca_session_id !== owner.sessionId : p.assignee_handle !== owner.handle || p.assignee_pane_key !== owner.paneKey || p.process_incarnation !== owner.incarnationId) || !allowSettledParent && !["pending", "dispatched"].includes(p.status)) throw Error("Parent Dispatch is stale, settled or does not own this manager Run.");
+        if (!p || p.run_id !== work.parent.runId || p.task_id !== work.parent.taskId || !Number.isSafeInteger(p.depth) || p.depth < 1 || (owner.kind === "structured" ? p.assignee_orca_session_id !== owner.sessionId : p.assignee_handle !== owner.handle || p.assignee_pane_key !== owner.paneKey || p.process_incarnation !== owner.processIncarnation) || !allowSettledParent && !["pending", "dispatched"].includes(p.status)) throw Error("Parent Dispatch is stale, settled or does not own this manager Run.");
         const parentRun = db.prepare("SELECT * FROM runs WHERE id=?").get(p.run_id);
         if (!parentRun || parentRun.consumer_generation !== (work.parentAuthority?.generation ?? work.parent.generation)) throw Error("Parent Run generation changed; child authority is fenced.");
       }
       const identity = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
       if (!identity?.caller_fingerprint) throw Error("Native mutation author evidence is unavailable.");
-      const receipts = (method, taskId, field = "task.id") => db.prepare(`SELECT request_id,payload_hash,state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method=? AND state='completed' AND json_valid(receipt) AND json_extract(receipt,?)=? LIMIT 3`).all(identity.caller_fingerprint, method, `$.${field}`, taskId).map((row) => ({ ...row, value: parse3(row.receipt) }));
+      const receipts = (method, taskId, field = "task.id") => db.prepare(`SELECT request_id,payload_hash,state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method=? AND state='completed' AND json_valid(receipt) AND json_extract(receipt,?)=? LIMIT 3`).all(identity.caller_fingerprint, method, `$.${field}`, taskId).map((row) => ({ ...row, value: parse6(row.receipt) }));
       const intents = [], rejected = [], observations = [], reviews = [], deliveries = [];
       const tasks = db.prepare("SELECT id,run_id,spec,status,result,created_by_terminal_handle,created_by_pane_key,created_by_process_incarnation,created_by_run_generation FROM tasks WHERE run_id=?").all(work.run.id);
       for (const task of tasks) {
-        const spec = parse3(task.spec);
+        const spec = parse6(task.spec);
         if (spec?.protocol !== "team-delivery/v1" || spec.workId !== work.id) continue;
         const proof = receipts("orchestration.taskCreate", task.id);
-        const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller2(owner) }, owner);
-        if (proof.length !== 1 || proof[0].payload_hash !== expected || proof[0].value?.task?.spec !== task.spec || proof[0].value.task.run_id !== work.run.id || spec.token !== protocol.token || spec.generation !== protocol.generation || spec.supervisorMemberId !== work.supervisorMemberId || !team.members.some((m) => m.id === spec.supervisorMemberId && m.boss === null) || typeof spec.summary !== "string" || !spec.summary.trim() || spec.summary.length > 8e3 || !Array.isArray(spec.evidenceRefs) || !spec.evidenceRefs.length || spec.evidenceRefs.length > 100 || spec.evidenceRefs.some((r) => typeof r !== "string" || !r.trim() || r.length > 2e3) || !Array.isArray(spec.attemptIds) || spec.attemptIds.length > 100 || spec.attemptIds.some((r) => typeof r !== "string" || r.length > 120) || owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.incarnationId || task.created_by_run_generation !== protocol.generation)) continue;
+        const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
+        if (proof.length !== 1 || proof[0].payload_hash !== expected || proof[0].value?.task?.spec !== task.spec || proof[0].value.task.run_id !== work.run.id || spec.token !== protocol.token || spec.generation !== protocol.generation || spec.supervisorMemberId !== work.supervisorMemberId || !team.members.some((m) => m.id === spec.supervisorMemberId && m.boss === null) || typeof spec.summary !== "string" || !spec.summary.trim() || spec.summary.length > 8e3 || !Array.isArray(spec.evidenceRefs) || !spec.evidenceRefs.length || spec.evidenceRefs.length > 100 || spec.evidenceRefs.some((r) => typeof r !== "string" || !r.trim() || r.length > 2e3) || !Array.isArray(spec.attemptIds) || spec.attemptIds.length > 100 || spec.attemptIds.some((r) => typeof r !== "string" || r.length > 120) || owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) continue;
         deliveries.push({ id: task.id, epoch: work.epoch ?? 0, protocolToken: protocol.token, previousDeliveryId: spec.previousDeliveryId ?? null, summary: spec.summary, evidenceRefs: spec.evidenceRefs, attemptIds: spec.attemptIds, generation: spec.generation, supervisorMemberId: spec.supervisorMemberId, proof: { requestId: proof[0].request_id, payloadHash: proof[0].payload_hash } });
       }
+      const withdrawal = readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitted, identity, receipts, verifyIntent, history: nativeHistory.withdrawals ?? [], historyContexts: nativeHistory.withdrawalContexts ?? [] });
+      const withdrawnIds = new Set(withdrawal.withdrawn.map((row) => row.nativeTaskId));
+      rejected.push(...withdrawal.rejected);
       for (const task of tasks) {
-        const spec = parse3(task.spec);
+        if (withdrawnIds.has(task.id)) continue;
+        const spec = parse6(task.spec);
         if (spec?.protocol !== "team-dispatch/v1" || spec.workId !== work.id || admitted.some((row) => row.nativeTaskId === task.id)) continue;
         try {
           const proof = receipts("orchestration.taskCreate", task.id);
@@ -1453,7 +1632,7 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
           continue;
         }
         const attemptOwner = attempt.originalSupervisorInstance ?? owner;
-        const start = starts[0], expected = nativeMutationFingerprint("orchestration.workerStart", { ...attempt.startParams, from: caller2(attemptOwner), devMode: false }, attemptOwner, attempt.reuse?.binding);
+        const start = starts[0], expected = nativeMutationFingerprint("orchestration.workerStart", { ...attempt.startParams, from: caller3(attemptOwner), devMode: false }, attemptOwner, attempt.reuse?.binding);
         if (start.payload_hash !== expected || start.value.runId !== work.run.id || typeof start.value.dispatchId !== "string") {
           observations.push({ id: attempt.id, state: "unverified", detail: "Native worker-start author or input does not match admission." });
           continue;
@@ -1464,7 +1643,7 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
           continue;
         }
         const worker = d && db.prepare("SELECT dispatch_id,worktree_id,agent_terminal_handle,state,runtime_epoch,start_options FROM worker_dispatches WHERE dispatch_id=?").get(d.id);
-        const host = parse3(d?.host_scope), options = parse3(worker?.start_options), hostMatches = work.scope.executionHostId === "local" ? host?.kind === "local" && host.hostId === "local" : host?.kind === "ssh" && `ssh:${encodeURIComponent(host.targetId)}` === work.scope.executionHostId;
+        const host = parse6(d?.host_scope), options = parse6(worker?.start_options), hostMatches = work.scope.executionHostId === "local" ? host?.kind === "local" && host.hostId === "local" : host?.kind === "ssh" && `ssh:${encodeURIComponent(host.targetId)}` === work.scope.executionHostId;
         if (!d || d.run_id !== work.run.id || d.task_id !== attempt.nativeTaskId || !worker || worker.worktree_id !== work.scope.workspaceId || worker.agent_terminal_handle !== d.assignee_handle || !hostMatches || (attempt.reuse ? d.assignee_orca_session_id ? d.assignee_orca_session_id !== attempt.reuse.binding.sessionId : d.assignee_handle !== attempt.reuse.binding.handle || d.process_incarnation !== attempt.reuse.binding.incarnationId : options?.agent !== attempt.startParams.agent) || (attemptOwner.kind === "structured" ? d.creator_orca_session_id !== attemptOwner.sessionId : d.creator_handle !== attemptOwner.handle || d.creator_pane_key !== attemptOwner.paneKey)) {
           observations.push({ id: attempt.id, state: "unverified", detail: "Native Dispatch creator, member instance or execution host is unverified." });
           continue;
@@ -1475,17 +1654,12 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
           continue;
         }
         const binding = { kind: d.assignee_orca_session_id ? "structured" : "terminal", handle: d.assignee_handle, paneKey: d.assignee_pane_key, incarnationId: d.process_incarnation, ...reusedChat ? { sessionFence: attempt.reuse.sessionFence, ...attempt.reuse.binding.liveSessionId ? { liveSessionId: attempt.reuse.binding.liveSessionId } : {} } : {}, ...d.assignee_orca_session_id ? { sessionId: d.assignee_orca_session_id } : {}, workspaceId: worker.worktree_id, executionHostId: work.scope.executionHostId, runtimeId: worker.runtime_epoch };
-        const facts = db.prepare("SELECT id,task_id,authority_id,payload FROM attempt_observation_facts WHERE dispatch_id=? AND facet='worker_report'").all(d.id);
+        const facts = db.prepare("SELECT id,dispatch_id,task_id,authority_id,facet,payload FROM attempt_observation_facts WHERE dispatch_id=? AND facet='worker_report'").all(d.id);
         let completion;
         for (const fact of facts) {
-          const report = parse3(fact.payload);
-          if (fact.task_id !== attempt.nativeTaskId || fact.authority_id !== `run_home:${work.run.id}` || !fact.id.startsWith("worker_report:") || report?.status !== "accepted" || report.reportId !== fact.id || !["succeeded", "failed"].includes(report.outcome)) continue;
-          const message = db.prepare("SELECT id,run_id,from_handle,sender_pane_key,type,body,payload FROM messages WHERE id=?").get(fact.id.slice("worker_report:".length)), payload = parse3(message?.payload);
-          if (message?.run_id !== work.run.id || message.type !== "worker_done" || payload?.dispatchId !== d.id || payload.taskId !== attempt.nativeTaskId || payload.outcome !== report.outcome || message.from_handle !== d.assignee_handle || message.sender_pane_key !== d.assignee_pane_key) continue;
-          const expectedStatus = report.outcome === "succeeded" ? "completed" : "failed";
-          if (d.status !== expectedStatus || worker.state !== report.outcome) continue;
-          completion = { outcome: report.outcome, result: String(message.body ?? "").slice(0, 16e3), evidenceId: fact.id };
-          break;
+          const message = db.prepare("SELECT id,run_id,from_handle,sender_pane_key,type,body,payload FROM messages WHERE id=?").get(fact.id.slice("worker_report:".length));
+          completion = verifiedWorkerReport(fact, message, d, worker);
+          if (completion) break;
         }
         observations.push({ id: attempt.id, state: "verified", dispatchId: d.id, creatorDispatchId: d.creator_dispatch_id, ...Number.isSafeInteger(d.depth) ? { depth: d.depth } : {}, binding, nativeState: worker.state, startRequestId: start.request_id, startPayloadHash: start.payload_hash, ...completion ? { completion } : {} });
       }
@@ -1502,14 +1676,14 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
         }
         if (attempt.review && !proofs.some((p) => p.request_id === attempt.review.requestId && p.payload_hash === attempt.review.payloadHash)) rejected.push({ detail: "Recorded supervisor review evidence is missing or changed." });
         for (const proof of proofs) {
-          const task = parse3(proof.receipt)?.task, review = parse3(task?.result);
+          const task = parse6(proof.receipt)?.task, review = parse6(task?.result);
           if (review?.protocol !== "team-review/v1") {
             if (attempt.review?.requestId === proof.request_id) rejected.push({ detail: "Recorded supervisor review evidence is malformed." });
             continue;
           }
           if (isHistoricalReview(work, attempt, proof, task, review, nativeHistory)) continue;
           const status = attempt.outcome === "succeeded" ? "completed" : "failed";
-          const expected = nativeMutationFingerprint("orchestration.taskUpdate", { id: attempt.nativeTaskId, status, result: task.result, run: work.run.id, callerTerminalHandle: caller2(owner) }, owner);
+          const expected = nativeMutationFingerprint("orchestration.taskUpdate", { id: attempt.nativeTaskId, status, result: task.result, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
           if (proof.payload_hash !== expected || task.run_id !== work.run.id || task.status !== status || review.workId !== work.id || review.token !== protocol.token || review.generation !== protocol.generation || review.taskKey !== attempt.taskKey || review.attemptId !== attempt.id || review.nativeTaskId !== attempt.nativeTaskId || review.dispatchId !== attempt.dispatchId || review.reviewToken !== (attempt.reviewAuthority?.reviewToken ?? attempt.reviewToken) || review.reviewerMemberId !== attempt.supervisorMemberId || !team.members.some((m) => m.id === attempt.memberId && m.boss === review.reviewerMemberId) || !["accept", "rework"].includes(review.decision) || !Array.isArray(review.evidenceRefs) || review.evidenceRefs.length > 100 || !review.evidenceRefs.includes(attempt.evidenceId) || review.evidenceRefs.some((ref) => typeof ref !== "string" || !ref || ref.length > 2e3) || typeof review.summary !== "string" || !review.summary.trim() || review.summary.length > 8e3) {
             rejected.push({ detail: "Supervisor review author, attempt or validation evidence is unverified." });
             continue;
@@ -1519,15 +1693,15 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
       }
       const unmanaged = [];
       for (const task of tasks) {
-        if (admitted.some((a) => a.nativeTaskId === task.id) || isHistoricalControl(db, work, task, nativeHistory)) continue;
-        const spec = parse3(task.spec), proof = receipts("orchestration.taskCreate", task.id);
-        const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller2(owner) }, owner);
-        const control = (spec?.protocol === "team-delivery/v1" && !work.parent || spec?.protocol === "team-questions/v1" && ["answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack", work.parent ? "relay-question" : "user-question"].includes(spec.kind)) && spec.workId === work.id && spec.token === protocol.token && spec.generation === protocol.generation && proof.length === 1 && proof[0].payload_hash === expected && proof[0].value?.task?.spec === task.spec && proof[0].value.task.run_id === work.run.id && (owner.kind !== "terminal" || task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.incarnationId && task.created_by_run_generation === protocol.generation) && !db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id);
+        if (withdrawnIds.has(task.id) || admitted.some((a) => a.nativeTaskId === task.id) || isHistoricalControl(db, work, task, nativeHistory, admitted)) continue;
+        const spec = parse6(task.spec), proof = receipts("orchestration.taskCreate", task.id);
+        const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
+        const control = (spec?.protocol === "team-delivery/v1" && !work.parent || spec?.protocol === "team-questions/v1" && ["answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack", work.parent ? "relay-question" : "user-question"].includes(spec.kind)) && spec.workId === work.id && spec.token === protocol.token && spec.generation === protocol.generation && proof.length === 1 && proof[0].payload_hash === expected && proof[0].value?.task?.spec === task.spec && proof[0].value.task.run_id === work.run.id && (owner.kind !== "terminal" || task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.processIncarnation && task.created_by_run_generation === protocol.generation) && !db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id);
         if (!control) unmanaged.push(task.id);
       }
       for (const d of db.prepare("SELECT id FROM dispatch_contexts WHERE run_id=?").all(work.run.id)) if (!admitted.some((a) => a.dispatchId === d.id)) unmanaged.push(d.id);
       rejected.push(...changedRecordedControls(db, work, nativeHistory));
-      return { state: "verified", intents, rejected, observations, reviews, deliveries, unmanaged };
+      return { state: "verified", intents, rejected, observations, reviews, deliveries, unmanaged, withdrawnIntents: withdrawal.withdrawn };
     });
   } catch (error) {
     return { state: "unverified", detail: error.code ? "Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime." : String(error.message ?? "Native evidence unavailable").slice(0, 1200), intents: [], observations: [], rejected: [] };
@@ -1553,14 +1727,14 @@ function preferenceIssue(preference, capabilities, { requireCore = false } = {})
 }
 
 // src/local/capabilities.mjs
-var text4 = (value, limit = 120) => typeof value === "string" && value.trim() && value.length <= limit ? value : null;
+var text5 = (value, limit = 120) => typeof value === "string" && value.trim() && value.length <= limit ? value : null;
 var bounded = (value) => Array.isArray(value) ? value.slice(0, 256) : [];
 function models(value) {
   const seen = /* @__PURE__ */ new Set();
   return bounded(value).flatMap((row) => {
-    if (!text4(row?.id) || seen.has(row.id)) return [];
+    if (!text5(row?.id) || seen.has(row.id)) return [];
     seen.add(row.id);
-    return [{ id: row.id, label: text4(row.label) || row.id, isDefault: row.isDefault === true, efforts: bounded(row.efforts).flatMap((effort) => text4(effort?.value) ? [{ value: effort.value, label: text4(effort.label) || effort.value }] : []) }];
+    return [{ id: row.id, label: text5(row.label) || row.id, isDefault: row.isDefault === true, efforts: bounded(row.efforts).flatMap((effort) => text5(effort?.value) ? [{ value: effort.value, label: text5(effort.label) || effort.value }] : []) }];
   });
 }
 async function discoverCapabilities(rpc, scope) {
@@ -1588,12 +1762,12 @@ async function discoverCapabilities(rpc, scope) {
   }
   const detected = connection === "connected" ? await read(targetId ? "preflight.detectRemoteAgents" : "preflight.detectAgents", targetId ? { connectionId: targetId } : void 0) : null;
   const registered = status?.capabilities?.includes("agent-session.structured.registered-agents.v1") ? await read("agentSession.agents", {}) : null;
-  const result = { workspaceKey: scope.workspaceKey, executionHostId: scope.executionHostId, observedAt: Date.now(), runtimeId: text4(status?.runtimeId, 256), connection, defaultAgent: AGENTS.includes(settings.defaultTuiAgent) ? settings.defaultTuiAgent : null, launchSupported: status?.capabilities?.includes("agent.launch.v2") === true && status?.capabilities?.includes("agent.launch.replay-required.v1") === true, agents: {} };
+  const result = { workspaceKey: scope.workspaceKey, executionHostId: scope.executionHostId, observedAt: Date.now(), runtimeId: text5(status?.runtimeId, 256), connection, defaultAgent: AGENTS.includes(settings.defaultTuiAgent) ? settings.defaultTuiAgent : null, launchSupported: status?.capabilities?.includes("agent.launch.v2") === true && status?.capabilities?.includes("agent.launch.replay-required.v1") === true, agents: {} };
   for (const agent of AGENTS) {
     const support = connection === "connected" ? await read("agentSession.createSupport", { worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}`, agent }) : null;
     const catalog = !targetId && connection === "connected" ? await read("agentSession.modelCatalog", { agent, worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}` }) : null;
     const configured = {};
-    for (const field of ["model", "effort"]) if (text4(support?.seedOptions?.[field])) configured[field] = support.seedOptions[field];
+    for (const field of ["model", "effort"]) if (text5(support?.seedOptions?.[field])) configured[field] = support.seedOptions[field];
     const customCommand = typeof settings.agentCmdOverrides?.[agent] === "string" && Boolean(settings.agentCmdOverrides[agent].trim());
     result.agents[agent] = {
       availability: !Array.isArray(detected) ? "unknown" : detected.includes(agent) ? "detected" : customCommand ? "unknown" : "unavailable",
@@ -1625,14 +1799,14 @@ async function discoverCapabilities(rpc, scope) {
 // src/local/dispatch.mjs
 function dispatchInstructions(work, team, protocol, attempts = []) {
   const children = team.members.filter((row) => row.boss === work.supervisorMemberId).map((row) => ({ memberId: row.id, name: row.name, agent: row.agent, model: row.model, effort: row.effort, roleVersion: row.roleVersion, role: { brief: row.brief, habits: row.habits, collaboration: row.collaboration } }));
-  return "TEAM_DISPATCH_PROTOCOL\n" + JSON.stringify({ protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. Keep every originating member and owning Run; never use ordinary message labels as proof. User answers arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. This only requests user approval; never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:<native-message-id> and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (every latest accepted app attempt ID). This proposes overall delivery for the user; never approve it as the user." });
+  return "TEAM_DISPATCH_PROTOCOL\n" + JSON.stringify({ protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. For a highest-Head decision based on a native worker_done completion instead, origin may contain ONLY {attemptId,dispatchId,nativeTaskId,messageId} and evidence must include its exact worker_report:messageId. The plugin verifies this as sourceReport; it is not a native ask and requires no orchestration reply or requester resume. Ordinary message IDs are not completion proof. Keep every originating member and owning Run; never use ordinary message labels as proof. User answers arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. This only requests user approval; never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. If you omitted workerRules from a never-admitted, never-dispatched Task, preserve that original. Create one corrected Task whose parsed spec is identical except for adding the exact workerRules. You may then task-update the original --status failed --result JSON --run this Run --json, with no forged --from. The exact result fields are protocol=team-intent-withdrawal/v1, workId, token, generation, supervisorMemberId (your member ID), nativeTaskId (original), taskKey, memberId, replacementNativeTaskId (corrected), reason=missing-worker-rules. Never use withdrawal for a Task with any admission, permit, Dispatch or uncertain execution; it is not a worker failure or a retry. Wait for normal permits for the corrected Task.  Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:MESSAGE_ID, where MESSAGE_ID is the id of that attempt's actual native worker_done message, and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (use the attemptId delivered in each latest TEAM_DISPATCH_PERMIT). The execution evidenceId for an accepted attempt is exactly worker_report:MESSAGE_ID for its actual native worker_done message; use the same reference you included in its native acceptance review. Never invent a message ID or include a superseded attempt. After completing your genuine native acceptance reviews for every latest required attempt, publish the delivery proposal using those IDs and real validation references. Do not wait for a separate plugin acceptance notification. The plugin independently verifies reviews and gates user acceptance; proposing a delivery does not assert plugin or user acceptance. Never approve the overall delivery as the user." });
 }
-function userMessage(work, instance, text8, status) {
+function userMessage(work, instance, text9, status) {
   if (work.binding.kind === "structured") {
-    const body = { kind: "message", role: "user", blocks: [{ type: "text", text: text8 }] }, sessionId = work.binding.sessionId, delivery = status?.capabilities?.includes("agent-session.queued-messages.v1") ? "queue-if-active" : void 0;
+    const body = { kind: "message", role: "user", blocks: [{ type: "text", text: text9 }] }, sessionId = work.binding.sessionId, delivery = status?.capabilities?.includes("agent-session.queued-messages.v1") ? "queue-if-active" : void 0;
     return { method: "agentSession.send", params: { envelope: { sessionId, clientOperationId: `${Date.now()}-${randomBytes2(16).toString("hex")}`, expectedRuntimeFence: instance.fence, payloadFingerprint: sendFingerprint(sessionId, body, delivery) }, body, ...delivery ? { delivery } : {} }, envelope: {} };
   }
-  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text8, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID4() } };
+  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text9, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID4() } };
 }
 function accepted(receipt, send, instance) {
   if (send.method === "agentSession.send") return receipt?.ok === true && receipt.value?.clientMessageId === send.params.envelope.clientOperationId && (receipt.value.queued ? send.params.delivery === "queue-if-active" && typeof receipt.value.queued.messageId === "string" && ["waiting", "dispatched"].includes(receipt.value.queued.state) : ["pending", "accepted"].includes(receipt.value.submission?.dispatchState));
@@ -1644,7 +1818,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
   const project = (id2) => store.dispatchProjection(id2);
   const teamFor = (work) => store.effectiveTeamForWork?.(work.id) ?? store.readTeamVersion(work.teamId, work.configVersion);
   async function evidence(work, protocol, team, verified) {
-    return readNativeDispatchEvidence(userData, { work, protocol, team, owner: verified.instance, admitted: store.listDispatches(work.id) });
+    return readNativeDispatchEvidence(userData, { work, protocol, team, owner: verified.instance, admitted: store.listDispatches(work.id), nativeHistory: store.readNativeHistory(work.id) });
   }
   async function sendProtocol(work, team, protocol, verified) {
     if (protocol.state !== "not_sent") return protocol;
@@ -1677,9 +1851,9 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
       binding = { kind: "structured", handle: terminal, sessionId: terminal.slice("orca_session_id:".length), liveSessionId: saved.sessionId, paneKey: null, incarnationId: null, sessionFence, workspaceId: work.scope.workspaceId, executionHostId: work.scope.executionHostId, runtimeId: saved.runtimeId };
     } else {
       const live = (await rpc("terminal.show", { terminal: saved.handle }))?.terminal;
-      if (live?.handle !== saved.handle || !live.incarnationId || live.incarnationId !== saved.observation?.incarnationId || `${live.tabId}:${live.leafId}` !== saved.paneKey || live.worktreeId !== work.scope.workspaceId || live.executionHostId !== work.scope.executionHostId || live.agentIdentity !== member.agent || !live.connected || !live.writable || saved.handle === work.binding.handle) throw Error("Prepared member terminal is unverified; no replacement was launched.");
+      if (live?.handle !== saved.handle || !matchesTerminalObservation(live, saved.observation) || `${live.tabId}:${live.leafId}` !== saved.paneKey || live.worktreeId !== work.scope.workspaceId || live.executionHostId !== work.scope.executionHostId || live.agentIdentity !== member.agent || !live.connected || !live.writable || saved.handle === work.binding.handle) throw Error("Prepared member terminal is unverified; no replacement was launched.");
       terminal = saved.handle;
-      binding = { kind: "terminal", handle: terminal, paneKey: saved.paneKey, incarnationId: live.incarnationId, workspaceId: work.scope.workspaceId, executionHostId: work.scope.executionHostId, runtimeId: saved.runtimeId };
+      binding = { kind: "terminal", handle: terminal, paneKey: saved.paneKey, incarnationId: terminalIdentity(live).processIncarnation, workspaceId: work.scope.workspaceId, executionHostId: work.scope.executionHostId, runtimeId: saved.runtimeId };
     }
     if (!store.isActiveOperation(saved)) throw Error("Prepared member generation changed during verification.");
     return { kind: "prepared", requestId: saved.requestId, ...saved.wakeRequestId ? { recoveryRequestId: saved.wakeRequestId } : {}, ...saved.instanceGeneration ? { instanceGeneration: saved.instanceGeneration } : {}, binding, terminal, ...sessionFence ? { sessionFence } : {}, preferences };
@@ -1700,7 +1874,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
       if (history?.ok !== true || history.page?.sessionId !== location.sessionId || !Number.isSafeInteger(sessionFence) || sessionFence < 1 || saved.sessionFence !== void 0 && saved.sessionFence !== sessionFence) throw Error("Retained member session fence is unavailable.");
     } else {
       const live = (await rpc("terminal.show", { terminal: saved.handle }))?.terminal;
-      if (live?.handle !== saved.handle || live.incarnationId !== saved.incarnationId || `${live.tabId}:${live.leafId}` !== saved.paneKey || live.worktreeId !== work.scope.workspaceId || live.executionHostId !== work.scope.executionHostId || live.agentIdentity !== member.agent || !live.connected || !live.writable) throw Error("Retained member terminal instance is unverified.");
+      if (live?.handle !== saved.handle || terminalIdentity(live).processIncarnation !== saved.incarnationId || `${live.tabId}:${live.leafId}` !== saved.paneKey || live.worktreeId !== work.scope.workspaceId || live.executionHostId !== work.scope.executionHostId || live.agentIdentity !== member.agent || !live.connected || !live.writable) throw Error("Retained member terminal instance is unverified.");
       terminal = saved.handle;
     }
     const original = prior.reuse?.preferences ?? { agent: prior.startParams.agent, model: prior.startParams.model ?? "default", effort: prior.startParams.effort ?? "default" };
@@ -1725,8 +1899,8 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
       store.updateDispatch(attempt.id, attempt.version, { admission: "unadmitted", status: "unknown", permit: { state: "unknown" }, detail: "Native work appeared before the user-input permit. It is retained unadmitted; no permit or replacement was sent." });
       return;
     }
-    const text8 = "TEAM_DISPATCH_PERMIT\n" + JSON.stringify({ workId: work.id, attemptId: attempt.id, memberId: attempt.memberId, roleVersion: attempt.roleVersion, configVersion: attempt.configVersion, nativeTaskId: attempt.nativeTaskId, generation: attempt.generation, reviewToken: attempt.reviewToken, reviewProtocol: "team-review/v1", startParams: attempt.startParams, instruction: "Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker." });
-    const nativeSend = userMessage(work, verified.instance, text8, verified.status);
+    const text9 = "TEAM_DISPATCH_PERMIT\n" + JSON.stringify({ workId: work.id, attemptId: attempt.id, memberId: attempt.memberId, roleVersion: attempt.roleVersion, configVersion: attempt.configVersion, nativeTaskId: attempt.nativeTaskId, generation: attempt.generation, reviewToken: attempt.reviewToken, reviewProtocol: "team-review/v1", startParams: attempt.startParams, instruction: "Admission was committed. Execute this native worker-start once as your own supervisor identity. Never override from/devMode. Preserve reported request/Dispatch IDs; uncertain delivery is not permission for another worker." });
+    const nativeSend = userMessage(work, verified.instance, text9, verified.status);
     await consent();
     store.assertAdmission(work.teamId, attempt.memberId);
     attempt = store.updateDispatch(attempt.id, attempt.version, { permit: { state: "sending", nativeSend } });
@@ -1745,6 +1919,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
     if (!work || work.status === "completed" || work.run.state !== "verified") return project(workId);
     try {
       const verified = await works.verifyWork(workId), team = teamFor(work);
+      let checkIssue = false;
       let protocol = store.ensureDispatchProtocol(workId);
       let native = await evidence(work, protocol, team, verified);
       if (native.state !== "verified") throw Error(native.detail);
@@ -1785,6 +1960,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
           const admitted = store.prepareDispatch(workId, currentIntent, startParams, reuse);
           if (admitted.fresh && !currentIntent.unadmitted) await permit(work, admitted.attempt);
         } catch (error) {
+          checkIssue = true;
           store.queueDispatch(workId, intent, error.message);
           protocol = store.updateDispatchProtocol(workId, store.readDispatchProtocol(workId).version, { detail: String(error.message).slice(0, 1200) });
         }
@@ -1792,13 +1968,14 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
       for (const attempt of store.listDispatches(workId)) if (attempt.permit.state === "not_sent") try {
         await permit(work, attempt);
       } catch (error) {
+        checkIssue = true;
         store.updateDispatch(attempt.id, attempt.version, { detail: String(error.message).slice(0, 1200) });
       }
       native = await evidence(store.readCurrentWork(workId), protocol, team, await works.verifyWork(workId));
       if (native.state !== "verified") throw Error(native.detail);
       for (const observed of native.observations) {
+        let attempt = store.listDispatches(workId).find((row) => row.id === observed.id);
         try {
-          let attempt = store.listDispatches(workId).find((row) => row.id === observed.id);
           if (attempt.evidenceId) continue;
           if (observed.state !== "verified") {
             if (attempt.permit.state === "sending") attempt = store.updateDispatch(attempt.id, attempt.version, { status: "unknown", permit: { ...attempt.permit, state: "unknown" }, detail: "Permit delivery interrupted; reconciliation never resends." });
@@ -1810,25 +1987,31 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
           await onNativeWait?.(workId, { ...attempt, binding: observed.binding, dispatchId: observed.dispatchId }, shown);
           const final = await evidence(store.readCurrentWork(workId), protocol, team, await works.verifyWork(workId)), settled = final.observations.find((row) => row.id === attempt.id);
           if (final.state !== "verified" || settled?.state !== "verified" || settled.dispatchId !== observed.dispatchId || JSON.stringify(settled.binding) !== JSON.stringify(observed.binding)) throw Error("Native Dispatch changed during observation.");
-          try {
-            store.updateDispatch(attempt.id, attempt.version, { dispatchId: settled.dispatchId, creatorDispatchId: settled.creatorDispatchId, ...settled.depth ? { depth: settled.depth } : {}, binding: settled.binding, permit: { ...attempt.permit, state: "accepted", source: "native-worker-start" }, nativeState: settled.nativeState, startRequestId: settled.startRequestId, startPayloadHash: settled.startPayloadHash, ...settled.completion ? { status: "pending_acceptance", ...settled.completion, detail: "Native execution report recorded. Direct supervisor acceptance is still required." } : { status: settled.nativeState === "ready" && shown.observation?.exactWorker === true && shown.observation.status === "live" && !shown.observation.agentWait ? "running" : "unknown", detail: shown.observation?.agentWait ? "Native session is waiting for input or authorization. Resolve its native tab; no replacement was started." : shown.observation?.exactWorker === true && shown.observation.status === "live" ? "Native assignment observed; execution result is not yet proven." : "Native worker observation is unverified; its saved identity remains reserved." } });
-          } catch (error) {
-            store.updateDispatch(attempt.id, attempt.version, { status: "unknown", detail: String(error.message).slice(0, 1200) });
+          if (store.listDispatches(workId).find((row) => row.id === attempt.id)?.version !== attempt.version) {
+            checkIssue = true;
+            continue;
           }
+          store.updateDispatch(attempt.id, attempt.version, { dispatchId: settled.dispatchId, creatorDispatchId: settled.creatorDispatchId, ...settled.depth ? { depth: settled.depth } : {}, binding: settled.binding, permit: { ...attempt.permit, state: "accepted", source: "native-worker-start" }, nativeState: settled.nativeState, startRequestId: settled.startRequestId, startPayloadHash: settled.startPayloadHash, ...settled.completion ? { status: "pending_acceptance", ...settled.completion, detail: "Native execution report recorded. Direct supervisor acceptance is still required." } : { status: settled.nativeState === "ready" && shown.observation?.exactWorker === true && shown.observation.status === "live" && !shown.observation.agentWait ? "running" : "unknown", detail: shown.observation?.agentWait ? "Native session is waiting for input or authorization. Resolve its native tab; no replacement was started." : shown.observation?.exactWorker === true && shown.observation.status === "live" ? "Native assignment observed; execution result is not yet proven." : "Native worker observation is unverified; its saved identity remains reserved." } });
         } catch (error) {
+          checkIssue = true;
           const failed = store.listDispatches(workId).find((row) => row.id === observed.id);
-          if (failed && !failed.evidenceId) store.updateDispatch(failed.id, failed.version, { status: "unknown", detail: String(error.message).slice(0, 1200) });
+          if (failed && !failed.evidenceId && failed.version === attempt.version) store.updateDispatch(failed.id, failed.version, { status: "unknown", detail: String(error.message).slice(0, 1200) });
         }
       }
       const reviewEvidence = await evidence(store.readCurrentWork(workId), protocol, team, await works.verifyWork(workId));
       if (reviewEvidence.state !== "verified") throw Error(reviewEvidence.detail);
+      store.recordIntentWithdrawals(workId, reviewEvidence.withdrawnIntents ?? []);
       for (const review of reviewEvidence.reviews ?? []) try {
         store.recordDispatchReview(review.attemptId, review);
       } catch (error) {
+        checkIssue = true;
         store.updateDispatchProtocol(workId, store.readDispatchProtocol(workId).version, { detail: String(error.message).slice(0, 1200) });
       }
       if (reviewEvidence.rejected.length) native.rejected = reviewEvidence.rejected;
       if (native.rejected.length) store.updateDispatchProtocol(workId, store.readDispatchProtocol(workId).version, { detail: native.rejected[0].detail });
+      const attempts = store.listDispatches(workId), currentProtocol = store.readDispatchProtocol(workId);
+      const detail2 = "Native supervisor protocol and current Dispatch evidence verified.";
+      if (!checkIssue && !native.rejected.length && !reviewEvidence.rejected.length && !reviewEvidence.intents.length && !reviewEvidence.unmanaged.length && attempts.length && attempts.every((attempt) => ["running", "pending_acceptance", "accepted", "rework"].includes(attempt.status) && reviewEvidence.observations.some((row) => row.id === attempt.id && row.state === "verified" && row.dispatchId === attempt.dispatchId && JSON.stringify(row.binding) === JSON.stringify(attempt.binding))) && currentProtocol.version === protocol.version && currentProtocol.detail !== detail2) store.updateDispatchProtocol(workId, currentProtocol.version, { detail: detail2 });
     } catch (error) {
       const protocol = store.readDispatchProtocol(workId);
       if (protocol) store.updateDispatchProtocol(workId, protocol.version, { detail: String(error.message).slice(0, 1200) });
@@ -1856,6 +2039,16 @@ async function notifyQuestionEvent(store, notify, { workId, id: id2, kind, title
 function createQuestionService({ store, rpc, userData, consent, works, notify }) {
   const serialize = createKeyedSerializer();
   const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, store.readCurrentWork(id2)?.binding.runtimeId, fn));
+  const matchingIntent = (question, native) => native.intents.find((intent) => intent.nativeTaskId === question.proof?.nativeTaskId && JSON.stringify(intent) === JSON.stringify(question.proof) && JSON.stringify(intent.spec.origin ?? null) === JSON.stringify(question.origin ?? null));
+  const reportFor = (question, native) => {
+    const intent = matchingIntent(question, native), source = intent && (native.sourceReports ?? []).find((row) => row.nativeTaskId === intent.nativeTaskId && row.appQuestionId === question.id)?.sourceReport;
+    return source && (!question.sourceReport || JSON.stringify(question.sourceReport) === JSON.stringify(source)) ? source : null;
+  };
+  const recordReport = (question, sourceReport) => {
+    if (sourceReport && !question.sourceReport) store.updateQuestion(question.workId, question.id, (saved) => {
+      saved.sourceReport = sourceReport;
+    });
+  };
   const updateAnswer = (workId, id2, answerId, patch) => store.updateQuestion(workId, id2, (q) => {
     const a = q.answers.find((a2) => a2.id === answerId);
     if (!a) throw Error("Answer missing.");
@@ -1865,7 +2058,7 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
   async function evidence(workId) {
     const { instance: owner, hostGeneration } = await works.verifyWork(workId, true), work = store.readCurrentWork(workId), protocol = store.readDispatchProtocol(workId);
     if (!protocol || work.run.consumerGeneration !== protocol.generation) throw Error("Saved supervisor generation is stale.");
-    const native = await readNativeQuestionEvidence(userData, { work, protocol, owner, attempts: store.listDispatches(workId) });
+    const native = await readNativeQuestionEvidence(userData, { work, protocol, owner, attempts: store.listDispatches(workId), nativeHistory: store.readNativeHistory(workId) });
     if (native.state !== "verified") throw Error(native.detail);
     return { work, owner, native, hostGeneration };
   }
@@ -1891,18 +2084,24 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
       await consent();
       const { work, owner, native, hostGeneration } = await evidence(workId);
       if ((question.epoch ?? 0) !== (work.epoch ?? 0) || question.generation !== work.run.consumerGeneration || question.runId !== work.run.id) throw Error("Answer target is stale. Preserve it and request a new supervisor decision.");
-      if (question.origin) {
+      const sourceReport = reportFor(question, native), reportReference = questionOriginKind(question.origin) === "report" || Boolean(question.sourceReport);
+      if (reportReference && !sourceReport) throw Error("Completion report or question authority is unverified; this answer was not sent.");
+      if (question.origin && !matchingIntent(question, native)) throw Error("Original question proof changed; this answer was not sent.");
+      recordReport(question, sourceReport);
+      const nativeOrigin = sourceReport ? void 0 : question.origin;
+      const supersedesBlockedAnswers = sourceReport && a.supplement === true ? question.answers.slice(0, question.answers.indexOf(a)).filter(isUnsentBlockedAnswer).map((row) => row.id) : [];
+      if (nativeOrigin) {
         const thread = native.threads.find((t) => t.messageId === question.origin.messageId);
         if (!thread || thread.status !== "pending") throw Error("Original native question is closed, answered or unverified; this answer cannot resume it.");
       }
-      const text8 = "TEAM_USER_ANSWER\n" + JSON.stringify({ protocol: "team-questions/v1", workId, appQuestionId: id2, questionRevision: a.revision, answerId: a.id, body: a.body, origin: question.origin, relay: question.relay, instruction: "This is a saved user answer. Process it once using answerId. Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. For a two-failure decision include nextNativeTaskId of the specific permitted next Task. An input receipt is not an acknowledgement." });
-      const nativeSend = userMessage(work, owner, text8);
-      if (!store.claimQuestionAnswer(workId, id2, answerId, nativeSend)) return;
+      const text9 = "TEAM_USER_ANSWER\n" + JSON.stringify({ protocol: "team-questions/v1", workId, appQuestionId: id2, questionRevision: a.revision, answerId: a.id, body: a.body, origin: nativeOrigin, ...sourceReport ? { sourceReport } : {}, ...supersedesBlockedAnswers.length ? { supersedesBlockedAnswers } : {}, relay: question.relay, instruction: "This is a saved user answer. Process it once using answerId. " + (sourceReport ? "This is the highest Head decision based on the verified sourceReport completion. Do not call orchestration.reply or resume a native requester for this completion report. If supersedesBlockedAnswers is present, this explicit supplement replaces only those earlier unsent blocked answer IDs; do not acknowledge those old IDs. " : nativeOrigin ? "Reply to the original native question ONLY as its actual owning Run manager (orca orchestration reply --id MESSAGE --body ANSWER --run OWNING_RUN --json). For a lower manager, send the decision to that real manager; do not impersonate them. Preserve the origin chain. " : "This is the Head decision; no native requester reply is required. ") + "Then publish a Head-authored team-questions/v1 Task kind=answer-ack with appQuestionId, answerId, token and generation. Only when the user authorizes another execution after two failures, include nextNativeTaskId of that specific permitted next Task; a decision to accept expected negative QA does not authorize or require a new Task. An input receipt is not an acknowledgement." });
+      const nativeSend = userMessage(work, owner, text9);
+      if (!store.claimQuestionAnswer(workId, id2, answerId, nativeSend, supersedesBlockedAnswers)) return;
       sending = true;
       await works.verifyHost(workId, hostGeneration);
       const receipt = await rpc(nativeSend.method, nativeSend.params, nativeSend.envelope);
       if (!accepted(receipt, nativeSend, owner)) throw Error("Native input receipt is unconfirmed.");
-      updateAnswer(workId, id2, answerId, { state: "accepted", dispatchState: receipt.value?.submission?.dispatchState ?? "input_accepted", detail: "Native input accepted; manager processing and native reply remain unconfirmed." });
+      updateAnswer(workId, id2, answerId, { state: "accepted", dispatchState: receipt.value?.submission?.dispatchState ?? "input_accepted", detail: sourceReport ? "Native input accepted by the Head; processing awaits its authenticated answer acknowledgement. No native requester reply is needed." : "Native input accepted; manager processing and native reply remain unconfirmed." });
     } catch (error) {
       updateAnswer(workId, id2, answerId, { state: sending ? "unknown" : "blocked", detail: sending ? "Answer delivery is unknown; it will not be automatically sent again." : String(error.message).slice(0, 1200) });
     }
@@ -1929,8 +2128,8 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
       try {
         await consent();
         const current = await evidence(workId);
-        const text8 = "TEAM_FAILURE_SUMMARY_NEEDED\n" + JSON.stringify({ workId, taskKey: streak.taskKey, evidence: event.data.evidence, instruction: "Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. If you are highest supervisor publish a native team-questions/v1 user-question Task; otherwise publish relay-question and ask your real parent manager to escalate it, preserving relay {workId,appQuestionId}. Include a Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step." });
-        const nativeSend = userMessage(current.work, current.owner, text8);
+        const text9 = "TEAM_FAILURE_SUMMARY_NEEDED\n" + JSON.stringify({ workId, taskKey: streak.taskKey, evidence: event.data.evidence, instruction: "Two consecutive proven execution attempts failed. This task is blocked; independent tasks may continue. If you are highest supervisor publish a native team-questions/v1 user-question Task; otherwise publish relay-question and ask your real parent manager to escalate it, preserving relay {workId,appQuestionId}. Include a Task with your causes, options, the exact two evidence IDs, and this blockingTaskKeys entry. Do not invent success or silently retry. The user decision must identify the intended next step." });
+        const nativeSend = userMessage(current.work, current.owner, text9);
         if (!store.claimQuestionEvent(workId, id2, "sending", nativeSend)) continue;
         await works.verifyHost(workId, current.hostGeneration);
         const receipt = await rpc(nativeSend.method, nativeSend.params, nativeSend.envelope);
@@ -1941,7 +2140,8 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
     }
     for (const intent of native.intents) if (["user-question", "relay-question"].includes(intent.spec.kind)) try {
       if ((intent.spec.kind === "relay-question" || intent.spec.relay) && (!intent.spec.origin || !native.threads.some((t) => t.messageId === intent.spec.origin.messageId))) continue;
-      store.ingestQuestion(workId, intent);
+      const question = store.ingestQuestion(workId, intent);
+      recordReport(question, reportFor(question, native));
     } catch {
     }
     for (const intent of native.intents) if (intent.spec.kind === "collaboration-directive") try {
@@ -1955,6 +2155,9 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
     for (const intent of native.intents) if (intent.spec.kind === "answer-ack") {
       const s = intent.spec, q = store.listQuestions(workId).find((q2) => q2.id === s.appQuestionId), a = q?.answers.find((a2) => a2.id === s.answerId);
       if (!a || !["accepted", "unknown", "sending"].includes(a.state) || !await relayResolved(q)) continue;
+      const current = store.readCurrentWork(workId);
+      if ((q.epoch ?? 0) !== (current.epoch ?? 0) || q.generation !== current.run.consumerGeneration || q.runId !== current.run.id) continue;
+      if ((questionOriginKind(q.origin) === "report" || q.sourceReport) && !reportFor(q, native)) continue;
       store.updateQuestion(workId, q.id, (saved) => {
         const answer = saved.answers.find((a2) => a2.id === s.answerId);
         answer.processed = "confirmed";
@@ -2052,8 +2255,8 @@ function createStaffingService({ store, rpc, userData, works, consent, notify })
         const verified = await works.verifyWork(target.id, true), work = current(target.id), protocol = store.readDispatchProtocol(work.id);
         if (!protocol || protocol.generation !== work.run.consumerGeneration) continue;
         const team = store.readTeamVersion(work.teamId, delta.configVersion), children = team.members.filter((m) => m.boss === delta.supervisorMemberId).map((m) => ({ memberId: m.id, name: m.name, agent: m.agent, model: m.model, effort: m.effort, roleVersion: m.roleVersion, role: { brief: m.brief, habits: m.habits, collaboration: m.collaboration } }));
-        const text8 = "TEAM_ROSTER_DELTA\n" + JSON.stringify({ protocol: "team-questions/v1", kind: "roster-delta", workId: work.id, teamWorkId: delta.workId, deltaId: delta.id, configVersion: delta.configVersion, supervisorMemberId: delta.supervisorMemberId, memberIds: delta.memberIds, children, token: protocol.token, generation: protocol.generation, instruction: "The user saved this configuration. Use registered direct children and this configVersion for future task-create admission. Prior Tasks retain their versions. Do not create sessions or bypass dependencies, write scopes, host checks or TEAM_DISPATCH_PERMIT. Confirm incorporation with native task-create --spec JSON --run your actual Run --json, protocol team-questions/v1, kind roster-ack, workId, token, generation, appQuestionId, deltaId and configVersion. Native input acceptance alone is not your acknowledgement." });
-        const nativeSend = userMessage(work, verified.instance, text8, verified.status);
+        const text9 = "TEAM_ROSTER_DELTA\n" + JSON.stringify({ protocol: "team-questions/v1", kind: "roster-delta", workId: work.id, teamWorkId: delta.workId, deltaId: delta.id, configVersion: delta.configVersion, supervisorMemberId: delta.supervisorMemberId, memberIds: delta.memberIds, children, token: protocol.token, generation: protocol.generation, instruction: "The user saved this configuration. Use registered direct children and this configVersion for future task-create admission. Prior Tasks retain their versions. Do not create sessions or bypass dependencies, write scopes, host checks or TEAM_DISPATCH_PERMIT. Confirm incorporation with native task-create --spec JSON --run your actual Run --json, protocol team-questions/v1, kind roster-ack, workId, token, generation, appQuestionId, deltaId and configVersion. Native input acceptance alone is not your acknowledgement." });
+        const nativeSend = userMessage(work, verified.instance, text9, verified.status);
         if (!store.claimRosterDelta(delta.id, { nativeSend, contextId: work.id, runId: work.run.id, generation: work.run.consumerGeneration, supervisorMemberId: work.supervisorMemberId })) continue;
         await works.verifyHost(work.id, verified.hostGeneration);
         await consent();
@@ -2100,6 +2303,48 @@ function createHierarchyService({ store, userData, works }) {
   } };
 }
 
+// src/local/stop-store.mjs
+import { randomUUID as randomUUID5, createHash as createHash9 } from "node:crypto";
+var canonical3 = (v) => Array.isArray(v) ? v.map(canonical3) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical3(v[k])])) : v;
+var sameStopIdentity = (a, b) => JSON.stringify(canonical3(a)) === JSON.stringify(canonical3(b));
+function stopStore({ db, readPrivate, putPrivate, atomic }) {
+  const listStops = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%' ORDER BY rowid").all().map((row) => JSON.parse(row.json));
+  const readStop = (id2) => readPrivate(`stop:${id2}`);
+  return {
+    listStops,
+    readStop,
+    prepareStop(input, target) {
+      return atomic(() => {
+        if (typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId)) throw Error("A stable stop request identity is required.");
+        const fingerprint2 = createHash9("sha256").update(JSON.stringify(canonical3(input))).digest("hex"), prior = readStop(input.requestId);
+        if (prior) {
+          if (prior.fingerprint !== fingerprint2) throw Error("Stop identity conflicts with another input.");
+          return prior;
+        }
+        const duplicate = listStops().findLast((row2) => sameStopIdentity(row2.target, target));
+        if (duplicate) return duplicate;
+        const row = { requestId: input.requestId, nativeRequestId: randomUUID5(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        putPrivate(`stop:${row.requestId}`, row);
+        return row;
+      });
+    },
+    settleStop(id2, version, patch) {
+      return atomic(() => {
+        const row = readStop(id2);
+        if (!row || row.version !== version) throw Error("Stop observation was superseded.");
+        const next = { ...row, ...patch, version: version + 1 };
+        putPrivate(`stop:${id2}`, next);
+        return next;
+      });
+    },
+    readStopProof({ memberId, requestId, instanceGeneration, attemptId, binding }) {
+      const row = listStops().findLast((row2) => row2.state === "stopped" && row2.target.memberId === memberId && (attemptId ? row2.target.attemptId === attemptId : row2.target.operationRequestId === requestId && row2.target.instanceGeneration === instanceGeneration) && (!binding || sameStopIdentity(row2.target.binding, binding)));
+      return row ? { ...row.proof, binding: row.target.binding, requestId: row.target.operationRequestId, instanceGeneration: row.target.instanceGeneration, attemptId: row.target.attemptId, stopRequestId: row.requestId } : null;
+    },
+    stopProjection: () => listStops().map(({ requestId, target, state, detail: detail2, submittedAt, confirmedAt }) => ({ requestId, teamId: target.teamId, memberId: target.memberId, workId: target.workId, attemptId: target.attemptId, state, detail: detail2, submittedAt, confirmedAt }))
+  };
+}
+
 // src/local/wake-evidence.mjs
 import { realpath as realpath5 } from "node:fs/promises";
 import { join as join6, relative as relative4, isAbsolute as isAbsolute5, sep as sep4 } from "node:path";
@@ -2122,6 +2367,33 @@ async function resumedOwner(userData, operation, oldFence) {
     db?.close();
   }
 }
+async function readNativeWorkerExit({ store, rpc, userData, operation: op }) {
+  try {
+    if (op.kind !== "terminal" || !op.sourceAttemptId || !op.sourceDispatchId || !op.sourceWorkId) return null;
+    const work = store.readCurrentWork(op.sourceWorkId), attempt = store.listDispatches(op.sourceWorkId).find((a) => a.id === op.sourceAttemptId), binding = attempt?.binding;
+    const current = () => {
+      const saved = store.listDispatches(op.sourceWorkId).find((a) => a.id === op.sourceAttemptId);
+      return store.readMemberDispatch(op.memberId)?.id === op.sourceAttemptId && saved?.dispatchId === op.sourceDispatchId && saved.runId === attempt.runId && saved.nativeTaskId === attempt.nativeTaskId && sameStopIdentity(saved.binding, binding);
+    };
+    if (!work || !attempt || !binding || binding.kind !== "terminal" || attempt.memberId !== op.memberId || attempt.teamId !== op.teamId || attempt.workId !== op.sourceWorkId || attempt.runId !== work.run.id || attempt.dispatchId !== op.sourceDispatchId || binding.handle !== op.handle || binding.paneKey !== op.paneKey || binding.incarnationId !== op.observation?.processIncarnation || binding.runtimeId !== op.runtimeId || binding.workspaceId !== op.scope.workspaceId || binding.executionHostId !== op.scope.executionHostId || work.scope.workspaceKey !== op.scope.workspaceKey || work.scope.workspaceId !== op.scope.workspaceId || work.scope.executionHostId !== op.scope.executionHostId || attempt.scope.workspaceId !== op.scope.workspaceId || attempt.scope.executionHostId !== op.scope.executionHostId || !current()) return null;
+    if ((await rpc("status.get"))?.runtimeId !== binding.runtimeId) return null;
+    const protocol = store.readDispatchProtocol(work.id), team = store.effectiveTeamForWork?.(work.id) ?? store.readTeamVersion(work.teamId, work.configVersion);
+    const evidence = () => readNativeDispatchEvidence(userData, { work, protocol, team, owner: work.instance, admitted: [attempt], allowSettledParent: true });
+    const match = (native) => {
+      const found2 = native.observations?.find((row) => row.id === attempt.id);
+      return native.state === "verified" && found2?.state === "verified" && found2.dispatchId === op.sourceDispatchId && sameStopIdentity(found2.binding, binding) && (found2.creatorDispatchId ?? null) === (attempt.creatorDispatchId ?? null) ? found2 : null;
+    };
+    const found = match(await evidence());
+    if (!found) return null;
+    const shown = await rpc("orchestration.workerShow", { dispatch: op.sourceDispatchId }), d = shown?.dispatch, w = shown?.worker, h = d?.hostScope;
+    const host = op.scope.executionHostId === "local" ? h?.kind === "local" && h.hostId === "local" : h?.kind === "ssh" && `ssh:${encodeURIComponent(h.targetId)}` === op.scope.executionHostId;
+    if (shown?.observation?.status !== "exited" || shown.observation.exactWorker !== true || !host || d?.id !== op.sourceDispatchId || d.runId !== attempt.runId || d.taskId !== attempt.nativeTaskId || d.assigneeHandle !== binding.handle || d.assigneePaneKey !== binding.paneKey || d.processIncarnation !== binding.incarnationId || (d.creatorDispatchId ?? null) !== (found.creatorDispatchId ?? null) || w?.dispatchId !== op.sourceDispatchId || w.agentTerminalHandle !== binding.handle || w.worktreeId !== binding.workspaceId || w.runtimeEpoch !== binding.runtimeId) return null;
+    if (!match(await evidence()) || !current() || (await rpc("status.get"))?.runtimeId !== binding.runtimeId) return null;
+    return { kind: "native-worker-exit", source: "native-worker-show", dispatchId: op.sourceDispatchId, attemptId: attempt.id, runId: attempt.runId, nativeTaskId: attempt.nativeTaskId, binding, observedAt: Date.now() };
+  } catch {
+    return null;
+  }
+}
 
 // src/local/idle-replacement.mjs
 async function verifyIdleReplacement({ store, rpc, userData, works, operation, retirementRequestId }) {
@@ -2130,10 +2402,10 @@ async function verifyIdleReplacement({ store, rpc, userData, works, operation, r
   for (const context of contexts) {
     if (!works) throw Error("Current native execution evidence is required before idle replacement.");
     const verified = await works.verifyWork(context.id, false, { allowSettledParent: true, retirementRequestId }), team = store.effectiveTeamForWork?.(context.id) ?? store.readTeamVersion(context.teamId, context.configVersion), attempts = store.listDispatches(context.id);
-    const evidence = await readNativeDispatchEvidence(userData, { work: context, protocol: store.readDispatchProtocol(context.id), team, owner: verified.instance, admitted: attempts, allowSettledParent: true });
+    const evidence = await readNativeDispatchEvidence(userData, { work: context, protocol: store.readDispatchProtocol(context.id), team, owner: verified.instance, admitted: attempts, allowSettledParent: true, nativeHistory: store.readNativeHistory(context.id) });
     if (evidence.state !== "verified" || evidence.unmanaged?.length || evidence.rejected.length || evidence.intents.some((i) => i.spec.memberId === op.memberId || context.supervisorMemberId === op.memberId)) throw Error("Native unadmitted or unknown execution prevents idle replacement.");
     for (const a of attempts.filter((a2) => a2.memberId === op.memberId || a2.supervisorMemberId === op.memberId)) if (!evidence.observations.some((o) => o.id === a.id && o.state === "verified" && o.completion?.evidenceId === a.evidenceId)) throw Error("Accepted execution evidence changed; idle replacement is blocked.");
-    const questions = await readNativeQuestionEvidence(userData, { work: context, protocol: store.readDispatchProtocol(context.id), owner: verified.instance, attempts });
+    const questions = await readNativeQuestionEvidence(userData, { work: context, protocol: store.readDispatchProtocol(context.id), owner: verified.instance, attempts, nativeHistory: store.readNativeHistory(context.id) });
     if (questions.state !== "verified" || questions.rejected.length || questions.threads.some((q) => q.status !== "answered" || !q.answer) || questions.intents.some((i) => ["user-question", "relay-question"].includes(i.spec.kind) && !store.listQuestions(context.id).some((q) => q.id === i.spec.appQuestionId))) throw Error("Native question or decision remains unresolved before idle replacement.");
     await works.verifyHost(context.id, verified.hostGeneration);
   }
@@ -2144,7 +2416,7 @@ async function verifyIdleReplacement({ store, rpc, userData, works, operation, r
     return { kind: "confirmed-idle-app-retirement", ownerFence: fence, turnId: p.latestTurn.itemId };
   }
   const shown = (await rpc("terminal.show", { terminal: op.handle }))?.terminal, status = (await rpc("terminal.agentStatus", { terminal: op.handle }))?.agentStatus;
-  if (!op.observation?.incarnationId || shown?.handle !== op.handle || shown.incarnationId !== op.observation.incarnationId || `${shown.tabId}:${shown.leafId}` !== op.paneKey || shown.worktreeId !== op.scope.workspaceId || shown.executionHostId !== op.scope.executionHostId || shown.connected !== true || shown.writable !== true || status?.handle !== op.handle || status.isRunningAgent !== true || status.status !== "idle") throw Error("Current native idle terminal identity is required; unknown execution needs exact stop.");
+  if (!matchesTerminalObservation(shown, op.observation) || shown?.handle !== op.handle || `${shown.tabId}:${shown.leafId}` !== op.paneKey || shown.worktreeId !== op.scope.workspaceId || shown.executionHostId !== op.scope.executionHostId || shown.connected !== true || shown.writable !== true || status?.handle !== op.handle || status.isRunningAgent !== true || status.status !== "idle") throw Error("Current native idle terminal identity is required; unknown execution needs exact stop.");
   return { kind: "confirmed-idle-app-retirement", incarnationId: shown.incarnationId };
 }
 
@@ -2185,9 +2457,9 @@ The plugin has saved your role and roster; do not claim to persist or change the
 }
 
 // src/local/native-launch.mjs
-var text5 = (value, limit = 2048) => typeof value === "string" && value.length > 0 && value.length <= limit;
+var text6 = (value, limit = 2048) => typeof value === "string" && value.length > 0 && value.length <= limit;
 function launchInput(input) {
-  if (!input || Object.keys(input).some((key) => !["teamId", "memberId", "requestId", "configVersion"].includes(key)) || !text5(input.teamId, 120) || !text5(input.memberId, 120) || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.configVersion)) throw Error("Invalid saved supervisor launch request.");
+  if (!input || Object.keys(input).some((key) => !["teamId", "memberId", "requestId", "configVersion"].includes(key)) || !text6(input.teamId, 120) || !text6(input.memberId, 120) || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || !Number.isInteger(input.configVersion)) throw Error("Invalid saved supervisor launch request.");
   return input;
 }
 function nativeLaunchIntent(team, member, scope) {
@@ -2206,7 +2478,7 @@ function nativeLaunchIntent(team, member, scope) {
 }
 function launchReceipt(result, operation) {
   const outcome = result?.outcome, prompt = result?.prompt, mode = result?.receipt;
-  if (!text5(result?.worktreeId, 4096) || result.worktreeId !== operation.scope.workspaceId || !["terminal", "structured"].includes(outcome?.kind) || !text5(outcome.handle) || outcome.kind === "structured" && !text5(outcome.sessionId) || outcome.paneKey !== void 0 && !text5(outcome.paneKey) || outcome.tabId !== void 0 && !text5(outcome.tabId) || mode?.mode !== outcome.kind || !["terminal", "structured"].includes(mode.preferred) || !text5(mode.reason) || !text5(mode.detail) || prompt && (!["submit", "draft"].includes(prompt.delivery) || !["journaled", "handed-to-terminal", "not-delivered", "unconfirmed"].includes(prompt.outcome) || prompt.outcome === "journaled" && !text5(prompt.messageId))) throw Error("Native launch identity, scope or receipt is unverified. Inspect Orca before retrying.");
+  if (!text6(result?.worktreeId, 4096) || result.worktreeId !== operation.scope.workspaceId || !["terminal", "structured"].includes(outcome?.kind) || !text6(outcome.handle) || outcome.kind === "structured" && !text6(outcome.sessionId) || outcome.paneKey !== void 0 && !text6(outcome.paneKey) || outcome.tabId !== void 0 && !text6(outcome.tabId) || mode?.mode !== outcome.kind || !["terminal", "structured"].includes(mode.preferred) || !text6(mode.reason) || !text6(mode.detail) || prompt && (!["submit", "draft"].includes(prompt.delivery) || !["journaled", "handed-to-terminal", "not-delivered", "unconfirmed"].includes(prompt.outcome) || prompt.outcome === "journaled" && !text6(prompt.messageId))) throw Error("Native launch identity, scope or receipt is unverified. Inspect Orca before retrying.");
   return {
     status: "created",
     handle: outcome.handle,
@@ -2218,18 +2490,23 @@ function launchReceipt(result, operation) {
     prompt: prompt ? { delivery: prompt.delivery, outcome: prompt.outcome, ...prompt.messageId ? { messageId: prompt.messageId } : {} } : null,
     briefAccepted: ["journaled", "handed-to-terminal"].includes(prompt?.outcome),
     observation: { state: "unknown", detail: "Session created; provider start and login are not yet observed." },
-    ...text5(result.warning, 1500) ? { warning: result.warning } : {}
+    ...text6(result.warning, 1500) ? { warning: result.warning } : {}
   };
 }
 function publicOperation(operation) {
   if (!operation) return null;
   const keys = ["requestId", "memberId", "teamId", "status", "title", "handle", "kind", "sessionId", "paneKey", "tabId", "mode", "prompt", "briefAccepted", "observation", "warning", "error", "executionHostId", "configVersion", "roleVersion", "instanceGeneration", "recovery"];
-  return Object.fromEntries(keys.filter((key) => operation[key] !== void 0).map((key) => [key, operation[key]]));
+  const value = Object.fromEntries(keys.filter((key) => operation[key] !== void 0).map((key) => [key, operation[key]]));
+  if (value.observation) {
+    const { ptyId, processIncarnation, ...observation } = value.observation;
+    value.observation = observation;
+  }
+  return value;
 }
 
 // src/local/wake-store.mjs
-import { randomUUID as randomUUID5, createHash as createHash9 } from "node:crypto";
-var digest2 = (v) => createHash9("sha256").update(JSON.stringify(v)).digest("hex");
+import { randomUUID as randomUUID6, createHash as createHash10 } from "node:crypto";
+var digest2 = (v) => createHash10("sha256").update(JSON.stringify(v)).digest("hex");
 var publicWake = (row) => {
   if (!row) return null;
   const { oldBinding, nativeAction, fingerprint: fingerprint2, managerRequest, ...value } = row;
@@ -2281,9 +2558,10 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
         raw.supervisorHistory.push({ binding: work.binding, instance: work.instance, run: work.run, recoveryRequestId: id2, endedAt: (/* @__PURE__ */ new Date()).toISOString() });
         for (const saved of db.prepare("SELECT id,json FROM receipts WHERE id LIKE 'dispatch:%'").all()) {
           const attempt = JSON.parse(saved.json);
-          if (attempt.workId !== workId || attempt.supervisorMemberId !== row.memberId || attempt.review) continue;
+          if (attempt.workId !== workId || attempt.supervisorMemberId !== row.memberId) continue;
+          if (attempt.review && attempt.originalSupervisorInstance) continue;
           attempt.originalSupervisorInstance ??= work.instance;
-          attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID5(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
+          if (!attempt.review) attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID6(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
           attempt.version++;
           putPrivate(saved.id, attempt);
         }
@@ -2399,12 +2677,13 @@ import { realpath as realpath7 } from "node:fs/promises";
 import { join as join8, relative as relative6, isAbsolute as isAbsolute7, sep as sep6 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 import { realpath as realpath6 } from "node:fs/promises";
 import { join as join7, relative as relative5, isAbsolute as isAbsolute6, sep as sep5 } from "node:path";
-var canonical3 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical3).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical3(entry)}`).join(",")}}`;
+var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
+var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
-  return createHash10("sha256").update(canonical3(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
+  return createHash11("sha256").update(canonical4(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
 }
 async function readNativeLaunchLedger(userData, request) {
   let db;
@@ -2418,7 +2697,7 @@ async function readNativeLaunchLedger(userData, request) {
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) throw Error();
     const callerKey = "trusted-local:desktop";
     const stored = db.prepare("SELECT row_json FROM agent_session_operations WHERE operation_key=?").get(`${callerKey}\0${request.operationId}`);
-    if (!stored) return { state: "unknown", detail: "Original native launch ledger row is absent; no launch was retried." };
+    if (!stored) return { state: "unknown", detail: LAUNCH_LEDGER_ABSENT };
     if (typeof stored.row_json !== "string" || stored.row_json.length > 262144) throw Error();
     const row = JSON.parse(stored.row_json), now = Date.now();
     if (row.callerKey !== callerKey || row.operationId !== request.operationId || row.fingerprint !== nativeLaunchFingerprint(request) || row.operationTimestamp !== Number(request.operationId.split("-")[0]) || !Number.isSafeInteger(row.recordedAt) || !Number.isSafeInteger(row.expiresAt) || row.recordedAt > now + 3e5 || row.expiresAt <= now || row.expiresAt <= row.recordedAt) throw Error();
@@ -2470,7 +2749,9 @@ function createRecoveryService({ store, rpc, userData, consent }) {
     let patch = {}, recovery = { state: operation.status === "created" ? "confirmed_effect" : "unknown", liveness: "unknown", source: "saved-operation", observedAt: stamp(), detail: "Persisted intent retained. Missing evidence never authorizes a second launch." };
     try {
       await consent();
-      if (operation.status === "unknown") {
+      if (operation.status === "unknown" && operation.effectState === "intent") {
+        recovery = { ...recovery, state: "intent", detail: "Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it." };
+      } else if (operation.status === "unknown") {
         const ledger = await readNativeLaunchLedger(userData, operation.nativeRequest);
         if (ledger.state === "succeeded") {
           patch = { ...launchReceipt(ledger.result, operation), error: void 0 };
@@ -2478,13 +2759,13 @@ function createRecoveryService({ store, rpc, userData, consent }) {
         } else {
           recovery.detail = ledger.detail;
           patch.error = ledger.detail;
-          if (operation.effectState === "intent") recovery = { ...recovery, state: "intent", detail: "Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it." };
         }
       }
       const saved = { ...operation, ...patch };
       if (saved.status === "created") {
         recovery.detail = "Native session creation is confirmed; current execution remains unverified.";
         const status = await rpc("status.get");
+        let terminalObservation;
         await withNativeRuntime(rpc, status?.runtimeId, async () => {
           const generation = await host(saved.scope);
           if (generation !== null && saved.hostGeneration != null && generation !== saved.hostGeneration) throw Error("Saved SSH connection generation changed; observations remain incomplete.");
@@ -2496,9 +2777,10 @@ function createRecoveryService({ store, rpc, userData, consent }) {
             if (death) recovery = { ...recovery, state: "stopped", liveness: "stopped", source: "native-owner-death", death, detail: "Native death evidence names the exact saved owner fence. The member reservation remains until an authorized lifecycle action." };
           } else {
             const instance = store.listCurrentWorks().find((work) => work.binding.requestId === requestId)?.instance;
-            const expected = instance?.incarnationId ?? saved.observation?.incarnationId;
+            const expected = instance ?? saved.observation;
             const shown = (await rpc("terminal.show", { terminal: saved.handle }))?.terminal;
-            if (!expected || shown?.incarnationId !== expected || shown.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || shown.executionHostId !== saved.scope.executionHostId || `${shown.tabId}:${shown.leafId}` !== saved.paneKey) throw Error("Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.");
+            if (!matchesTerminalObservation(shown, expected) || (saved.observation?.incarnationId || saved.observation?.processIncarnation) && !matchesTerminalObservation(shown, saved.observation) || shown.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || shown.executionHostId !== saved.scope.executionHostId || `${shown.tabId}:${shown.leafId}` !== saved.paneKey) throw Error("Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.");
+            terminalObservation = { ...saved.observation, ...terminalIdentity(shown) };
             if (shown.connected === true) {
               recovery = { ...recovery, liveness: "live", source: "native-terminal", detail: "Exact terminal instance is connected. Provider readiness and task acceptance are separate." };
             }
@@ -2507,6 +2789,10 @@ function createRecoveryService({ store, rpc, userData, consent }) {
           const final = await rpc("status.get");
           if (final?.runtimeId !== status.runtimeId) throw Error("Native runtime changed during reconciliation.");
         });
+        if (terminalObservation) {
+          patch.observation = terminalObservation;
+          if (recovery.liveness === "live" && operation.error === LAUNCH_LEDGER_ABSENT) patch.error = void 0;
+        }
       }
     } catch (error) {
       recovery = { ...recovery, state: (patch.status ?? operation.status) === "created" ? "confirmed_effect" : "unknown", liveness: "unknown", incomplete: true, detail: detail(error) };
@@ -2609,8 +2895,8 @@ function createWakeService({ store, rpc, userData, consent, works, notify }) {
     const attempt = store.listDispatches().find((a) => a.id === input.bindingRequestId && a.teamId === input.teamId && a.memberId === input.memberId), b = attempt?.binding, team = attempt && store.readTeamVersion(attempt.teamId, attempt.configVersion), member = team?.members.find((m) => m.id === input.memberId);
     if (!b || !member) return null;
     const prepared = store.readMemberOperation(input.memberId);
-    if (prepared && (b.kind === "structured" ? (b.liveSessionId ?? b.sessionId) !== prepared.sessionId : b.handle !== prepared.handle || b.incarnationId !== prepared.observation?.incarnationId)) return null;
-    return { ...prepared ? { sourceOperationRequestId: prepared.requestId } : {}, requestId: input.bindingRequestId, sourceAttemptId: attempt.id, sourceDispatchId: attempt.dispatchId, sourceWorkId: attempt.workId, teamId: attempt.teamId, memberId: attempt.memberId, configVersion: attempt.configVersion, roleVersion: attempt.roleVersion, version: attempt.version, instanceGeneration: attempt.instanceGeneration ?? 1, status: "created", kind: b.kind, handle: b.handle, sessionId: b.liveSessionId ?? b.sessionId, paneKey: b.paneKey, scope: attempt.scope, runtimeId: b.runtimeId, executionHostId: b.executionHostId, title: member.name, nativeRequest: { agent: member.agent, sessionOptions: { model: member.model, effort: member.effort } }, observation: { ownerFence: b.sessionFence, incarnationId: b.incarnationId }, recovery: attempt.recovery };
+    if (prepared && (b.kind === "structured" ? (b.liveSessionId ?? b.sessionId) !== prepared.sessionId : b.handle !== prepared.handle || b.incarnationId !== prepared.observation?.processIncarnation)) return null;
+    return { ...prepared ? { sourceOperationRequestId: prepared.requestId } : {}, requestId: input.bindingRequestId, sourceAttemptId: attempt.id, sourceDispatchId: attempt.dispatchId, sourceWorkId: attempt.workId, teamId: attempt.teamId, memberId: attempt.memberId, configVersion: attempt.configVersion, roleVersion: attempt.roleVersion, version: attempt.version, instanceGeneration: attempt.instanceGeneration ?? 1, status: "created", kind: b.kind, handle: b.handle, sessionId: b.liveSessionId ?? b.sessionId, paneKey: b.paneKey, scope: attempt.scope, runtimeId: b.runtimeId, executionHostId: b.executionHostId, title: member.name, nativeRequest: { agent: member.agent, sessionOptions: { model: member.model, effort: member.effort } }, observation: { ownerFence: b.sessionFence, ...b.kind === "terminal" ? { processIncarnation: b.incarnationId } : {} }, recovery: attempt.recovery };
   };
   const active = (op) => op.sourceAttemptId ? store.readMemberDispatch?.(op.memberId)?.id === op.sourceAttemptId : store.isActiveOperation(op);
   async function hostGeneration(scope, expected) {
@@ -2626,7 +2912,13 @@ function createWakeService({ store, rpc, userData, consent, works, notify }) {
       const stop = store.readStopProof?.({ memberId: op.memberId, requestId: op.sourceAttemptId ? void 0 : op.requestId, instanceGeneration: op.sourceAttemptId ? void 0 : op.instanceGeneration, attemptId: op.sourceAttemptId });
       return readSessionDeath(userData, op.sessionId, row.proof.death?.ownerFence ?? op.observation?.ownerFence ?? stop?.death?.ownerFence, op.scope);
     }
-    const proof = store.readStopProof?.({ memberId: op.memberId, requestId: op.sourceAttemptId ? void 0 : op.requestId, instanceGeneration: op.sourceAttemptId ? void 0 : op.instanceGeneration, attemptId: op.sourceAttemptId });
+    let observedGeneration;
+    let proof = store.readStopProof?.({ memberId: op.memberId, requestId: op.sourceAttemptId ? void 0 : op.requestId, instanceGeneration: op.sourceAttemptId ? void 0 : op.instanceGeneration, attemptId: op.sourceAttemptId });
+    if (!proof && op.sourceAttemptId) {
+      const generation = observedGeneration = await hostGeneration(op.scope, row.proof.hostGeneration ?? op.hostGeneration);
+      proof = await readNativeWorkerExit({ store, rpc, userData, operation: op });
+      if (!proof || await hostGeneration(op.scope, generation) !== generation) return null;
+    }
     if (!proof || !["native-exact-stop", "native-pty-exit", "native-worker-exit"].includes(proof.kind)) return null;
     try {
       const shown = (await rpc("terminal.show", { terminal: op.handle }))?.terminal;
@@ -2634,6 +2926,7 @@ function createWakeService({ store, rpc, userData, consent, works, notify }) {
     } catch (error) {
       if (!error.native && !/not found|missing|not_found/i.test(error.message)) return null;
     }
+    if (proof.source === "native-worker-show" && (await hostGeneration(op.scope, observedGeneration) !== observedGeneration || (await rpc("status.get"))?.runtimeId !== op.runtimeId)) return null;
     return proof;
   }
   async function requestDecision(row) {
@@ -2715,8 +3008,8 @@ function createWakeService({ store, rpc, userData, consent, works, notify }) {
           instance = { kind: "structured", sessionId: address.slice("orca_session_id:".length), liveSessionId: binding.sessionId, fence: owner.fence };
         } else {
           const shown2 = (await rpc("terminal.show", { terminal: binding.handle }))?.terminal;
-          if (shown2?.handle !== binding.handle || shown2.worktreeId !== work.scope.workspaceId || shown2.executionHostId !== work.scope.executionHostId || shown2.incarnationId !== binding.observation?.incarnationId || !shown2.connected || !shown2.writable) return publicWake(row);
-          instance = { kind: "terminal", handle: binding.handle, paneKey: binding.paneKey, incarnationId: shown2.incarnationId };
+          if (shown2?.handle !== binding.handle || shown2.worktreeId !== work.scope.workspaceId || shown2.executionHostId !== work.scope.executionHostId || !matchesTerminalObservation(shown2, binding.observation) || !shown2.connected || !shown2.writable) return publicWake(row);
+          instance = { kind: "terminal", handle: binding.handle, paneKey: binding.paneKey, ...terminalIdentity(shown2) };
         }
         const run = await readNativeRunEvidence(userData, { objective: work.nativeObjective, owner: instance, runId: work.run.id });
         if (run.state !== "verified" || row.state === "replacing" && run.consumerGeneration <= (work.run.consumerGeneration ?? 0)) return publicWake(row);
@@ -2728,7 +3021,7 @@ function createWakeService({ store, rpc, userData, consent, works, notify }) {
           const parentWork = store.readCurrentWork(work.parent.workId), attempt = store.listDispatches(parentWork.id).find((a) => a.id === work.parent.attemptId);
           if (!attempt) return publicWake(row);
           const parent = await readNativeParentEvidence(userData, { parentWork, attempt });
-          if (parent.state !== "verified" || (instance.kind === "structured" ? parent.assignee.sessionId !== instance.sessionId : parent.assignee.handle !== instance.handle || parent.assignee.paneKey !== instance.paneKey || parent.assignee.incarnationId !== instance.incarnationId)) return publicWake(row);
+          if (parent.state !== "verified" || (instance.kind === "structured" ? parent.assignee.sessionId !== instance.sessionId : parent.assignee.handle !== instance.handle || parent.assignee.paneKey !== instance.paneKey || parent.assignee.incarnationId !== instance.processIncarnation)) return publicWake(row);
         }
         return publicWake(store.rebindWake(id2, row.version, work.id, instance, run));
       });
@@ -2848,48 +3141,6 @@ Member ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id ?
   };
 }
 
-// src/local/stop-store.mjs
-import { randomUUID as randomUUID6, createHash as createHash11 } from "node:crypto";
-var canonical4 = (v) => Array.isArray(v) ? v.map(canonical4) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical4(v[k])])) : v;
-var sameStopIdentity = (a, b) => JSON.stringify(canonical4(a)) === JSON.stringify(canonical4(b));
-function stopStore({ db, readPrivate, putPrivate, atomic }) {
-  const listStops = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%' ORDER BY rowid").all().map((row) => JSON.parse(row.json));
-  const readStop = (id2) => readPrivate(`stop:${id2}`);
-  return {
-    listStops,
-    readStop,
-    prepareStop(input, target) {
-      return atomic(() => {
-        if (typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId)) throw Error("A stable stop request identity is required.");
-        const fingerprint2 = createHash11("sha256").update(JSON.stringify(canonical4(input))).digest("hex"), prior = readStop(input.requestId);
-        if (prior) {
-          if (prior.fingerprint !== fingerprint2) throw Error("Stop identity conflicts with another input.");
-          return prior;
-        }
-        const duplicate = listStops().findLast((row2) => sameStopIdentity(row2.target, target));
-        if (duplicate) return duplicate;
-        const row = { requestId: input.requestId, nativeRequestId: randomUUID6(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
-        putPrivate(`stop:${row.requestId}`, row);
-        return row;
-      });
-    },
-    settleStop(id2, version, patch) {
-      return atomic(() => {
-        const row = readStop(id2);
-        if (!row || row.version !== version) throw Error("Stop observation was superseded.");
-        const next = { ...row, ...patch, version: version + 1 };
-        putPrivate(`stop:${id2}`, next);
-        return next;
-      });
-    },
-    readStopProof({ memberId, requestId, instanceGeneration, attemptId, binding }) {
-      const row = listStops().findLast((row2) => row2.state === "stopped" && row2.target.memberId === memberId && (attemptId ? row2.target.attemptId === attemptId : row2.target.operationRequestId === requestId && row2.target.instanceGeneration === instanceGeneration) && (!binding || sameStopIdentity(row2.target.binding, binding)));
-      return row ? { ...row.proof, binding: row.target.binding, requestId: row.target.operationRequestId, instanceGeneration: row.target.instanceGeneration, attemptId: row.target.attemptId, stopRequestId: row.requestId } : null;
-    },
-    stopProjection: () => listStops().map(({ requestId, target, state, detail: detail2, submittedAt, confirmedAt }) => ({ requestId, teamId: target.teamId, memberId: target.memberId, workId: target.workId, attemptId: target.attemptId, state, detail: detail2, submittedAt, confirmedAt }))
-  };
-}
-
 // src/local/native-stop.mjs
 import { realpath as realpath8 } from "node:fs/promises";
 import { join as join9, relative as relative7, isAbsolute as isAbsolute8, sep as sep7 } from "node:path";
@@ -2901,9 +3152,9 @@ async function readStopReceipt(userData, row) {
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 43) return null;
-    const caller3 = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
-    if (!caller3) return null;
-    const saved = db.prepare("SELECT method,payload_hash,state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND request_id=?").get(caller3.caller_fingerprint, row.nativeRequestId);
+    const caller4 = db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();
+    if (!caller4) return null;
+    const saved = db.prepare("SELECT method,payload_hash,state,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND request_id=?").get(caller4.caller_fingerprint, row.nativeRequestId);
     if (saved?.method !== "orchestration.workerStop" || saved.state !== "completed" || saved.payload_hash !== nativeMutationFingerprint(saved.method, { dispatch: row.target.dispatchId }, { kind: "local-user" })) return null;
     const receipt = JSON.parse(saved.receipt);
     return receipt?.dispatchId === row.target.dispatchId ? receipt : null;
@@ -2930,7 +3181,7 @@ function createStopService({ store, rpc, userData, consent }) {
     }
     const operation = store.readOperation(input.operationRequestId);
     if (reserved || !operation || !store.isActiveOperation(operation) || operation.teamId !== team.id || operation.memberId !== input.memberId || operation.status !== "created") throw Error("Choose the current exact member execution; assigned members require their Task and Dispatch.");
-    const work = (store.listCurrentWorks?.() ?? store.listWorks()).find((w) => w.binding.requestId === operation.requestId), binding = { kind: operation.kind, handle: operation.handle, paneKey: operation.paneKey, sessionId: operation.sessionId, runtimeId: operation.runtimeId, incarnationId: work?.instance?.incarnationId ?? operation.observation?.incarnationId, ownerFence: work?.instance?.fence ?? operation.observation?.ownerFence };
+    const work = (store.listCurrentWorks?.() ?? store.listWorks()).find((w) => w.binding.requestId === operation.requestId), binding = { kind: operation.kind, handle: operation.handle, paneKey: operation.paneKey, sessionId: operation.sessionId, runtimeId: operation.runtimeId, incarnationId: work?.instance?.incarnationId ?? operation.observation?.incarnationId, ptyId: work?.instance?.ptyId ?? operation.observation?.ptyId, processIncarnation: work?.instance?.processIncarnation ?? operation.observation?.processIncarnation, ownerFence: work?.instance?.fence ?? operation.observation?.ownerFence };
     return { teamId: team.id, memberId: input.memberId, operationRequestId: operation.requestId, instanceGeneration: operation.instanceGeneration ?? 1, ...work ? { workId: work.id } : {}, binding, scope: operation.scope };
   }
   function current(row) {
@@ -2964,7 +3215,7 @@ function createStopService({ store, rpc, userData, consent }) {
       } else if (b.kind === "terminal") {
         if (t.scope.executionHostId !== "local") throw Object.assign(Error("Exact standalone terminal stop is unsupported for this remote host."), { unsupported: true });
         const shown = (await rpc("terminal.show", { terminal: b.handle }))?.terminal;
-        if (!b.incarnationId || shown?.incarnationId !== b.incarnationId || shown.handle !== b.handle || `${shown.tabId}:${shown.leafId}` !== b.paneKey || shown.worktreeId !== t.scope.workspaceId || shown.executionHostId !== t.scope.executionHostId || typeof shown.ptyId !== "string" || !shown.ptyId) throw Error("Exact native terminal PTY and incarnation are unverified.");
+        if (!matchesTerminalObservation(shown, b) || shown.handle !== b.handle || `${shown.tabId}:${shown.leafId}` !== b.paneKey || shown.worktreeId !== t.scope.workspaceId || shown.executionHostId !== t.scope.executionHostId || typeof shown.ptyId !== "string" || !shown.ptyId) throw Error("Exact native terminal PTY and incarnation are unverified.");
         plan = { method: "terminal.stopExact", params: { worktree: t.scope.workspaceId.startsWith("folder:") ? t.scope.workspaceId : `id:${t.scope.workspaceId}`, expectedPtyIds: [shown.ptyId], keepHistory: true, targetOnly: true }, envelope: {} };
       } else {
         if (t.scope.executionHostId !== "local" || !Number.isSafeInteger(b.ownerFence) || b.ownerFence < 1) throw Object.assign(Error("Exact structured owner fence is unavailable; native stop is unsupported for this binding."), { unsupported: true });
@@ -3050,10 +3301,6 @@ function createStopService({ store, rpc, userData, consent }) {
     }
   };
 }
-
-// src/local/acceptance.mjs
-var latestBusinessAttempts = (attempts) => [...new Map(attempts.map((a) => [JSON.stringify([a.workId, a.taskKey]), a])).values()];
-var questionNeedsProcessing = (q) => !q.resolution && (q.status === "pending" || q.status === "closed" && !q.answers.some((a) => a.processed === "confirmed") || q.answers.some((a) => a.processed !== "confirmed"));
 
 // src/local/lifecycle.mjs
 function createLifecycleService({ store, rpc, userData, consent, works, notify }) {
@@ -3156,7 +3403,7 @@ function exportTeamTemplate(team) {
 var reject = (detail2) => {
   throw new Error(`Invalid team template: ${detail2}`);
 };
-var text6 = (value, max, empty2 = false) => typeof value === "string" && value.length <= max && (empty2 || value.trim().length > 0);
+var text7 = (value, max, empty2 = false) => typeof value === "string" && value.length <= max && (empty2 || value.trim().length > 0);
 var name = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
 var only = (value, keys) => {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key)) || keys.some((key) => !Object.hasOwn(value, key))) reject("fields are missing or unsupported. Runtime/session/account fields cannot be imported.");
@@ -3180,19 +3427,19 @@ function parseTeamTemplate(value) {
   only(value, ["format", "version", "team"]);
   const team = value.team;
   only(team, ["name", "purpose", "structure", "configuration", "members"]);
-  if (!name(team.name) || !text6(team.purpose, 500, true) || !["team", "organisation"].includes(team.structure) || !Array.isArray(team.members) || !team.members.length || team.members.length > 49) reject("choose a supported team name, structure and roster of 1\u201349 members.");
+  if (!name(team.name) || !text7(team.purpose, 500, true) || !["team", "organisation"].includes(team.structure) || !Array.isArray(team.members) || !team.members.length || team.members.length > 49) reject("choose a supported team name, structure and roster of 1\u201349 members.");
   const config = { ...team.configuration, launchMode: team.configuration?.launchMode ?? "on-demand" };
   only(config, formFields);
-  if (!text6(config.name, 64) || !text6(config.purpose, 500, true) || config.structure !== team.structure || ![1, 2, 3].includes(config.levels) || ![1, 2, 3, 4, 5].includes(config.fan) || !text6(config.groups, 520, true)) reject("the saved setup configuration is invalid.");
+  if (!text7(config.name, 64) || !text7(config.purpose, 500, true) || config.structure !== team.structure || ![1, 2, 3].includes(config.levels) || ![1, 2, 3, 4, 5].includes(config.fan) || !text7(config.groups, 520, true)) reject("the saved setup configuration is invalid.");
   if (config.launchMode !== void 0 && !["on-demand", "all"].includes(config.launchMode)) reject("unsupported launch mode.");
   for (const key of ["agents", "models", "efforts"]) {
-    if (!Array.isArray(config[key]) || config[key].length !== 3 || config[key].some((value2) => !text6(value2, 120))) reject("three level preferences are required.");
+    if (!Array.isArray(config[key]) || config[key].length !== 3 || config[key].some((value2) => !text7(value2, 120))) reject("three level preferences are required.");
   }
   if (config.agents.some((agent) => !["codex", "claude"].includes(agent))) reject("only Codex and Claude Code agent identities are supported.");
   const byRef = /* @__PURE__ */ new Map(), names = /* @__PURE__ */ new Set();
   for (const member of team.members) {
     only(member, ["ref", "boss", ...memberFields, "preferenceOverride"]);
-    if (!text6(member.ref, 120) || byRef.has(member.ref) || !text6(member.name, 120) || names.has(member.name.toLowerCase()) || !name(member.team) || !["ceo", "head", "lead", "worker"].includes(member.role) || ![1, 2, 3].includes(member.level) || !["codex", "claude"].includes(member.agent) || !text6(member.model, 120) || !text6(member.effort, 120) || typeof member.preferenceOverride !== "boolean" || !text6(member.brief, 1500) || !text6(member.habits, 1500, true) || !text6(member.collaboration, 1500, true) || member.boss !== null && !text6(member.boss, 120)) reject("member identities, roles or requested preferences are invalid.");
+    if (!text7(member.ref, 120) || byRef.has(member.ref) || !text7(member.name, 120) || names.has(member.name.toLowerCase()) || !name(member.team) || !["ceo", "head", "lead", "worker"].includes(member.role) || ![1, 2, 3].includes(member.level) || !["codex", "claude"].includes(member.agent) || !text7(member.model, 120) || !text7(member.effort, 120) || typeof member.preferenceOverride !== "boolean" || !text7(member.brief, 1500) || !text7(member.habits, 1500, true) || !text7(member.collaboration, 1500, true) || member.boss !== null && !text7(member.boss, 120)) reject("member identities, roles or requested preferences are invalid.");
     byRef.set(member.ref, member);
     names.add(member.name.toLowerCase());
   }
@@ -3281,12 +3528,17 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
     const result = await cli(["worktree", "show", "--worktree", selector]);
     const workspace = result?.worktree;
     if (!workspace?.id || workspace.id !== workspaceId) throw new Error("Open the intended workspace first; Orca returned no active workspace identity.");
-    return workspace;
+    if (workspace.id.startsWith("folder:")) return { ...workspace, kind: "folder" };
+    if (typeof workspace.repoId !== "string" || !workspace.repoId || workspace.repoId.length > 4096) throw new Error("Orca did not verify the workspace repository identity.");
+    const { repo } = await cli(["repo", "show", "--repo", `id:${workspace.repoId}`]) ?? {};
+    if (!repo || repo.id !== workspace.repoId) throw new Error("Orca returned a mismatching workspace repository identity.");
+    if (repo.kind !== void 0 && repo.kind !== "git" && repo.kind !== "folder") throw new Error("Orca returned an unsupported repository kind.");
+    return { ...workspace, kind: repo.kind ?? "git" };
   }
   function verifiedScope(workspace) {
     const executionHostId = workspace.hostId ?? workspace.identity?.executionHostId;
     if (typeof executionHostId !== "string" || !/^(local|ssh:[^\s|]+)$/.test(executionHostId)) throw new Error("Orca did not verify a supported local or SSH execution host for this workspace.");
-    return { workspaceId: workspace.id, executionHostId, kind: workspace.id.startsWith("folder:") ? "folder" : "git", displayName: workspace.displayName || workspace.branch || "Workspace", branch: workspace.branch || "", workspaceKey: hash3(JSON.stringify([workspace.id, executionHostId])) };
+    return { workspaceId: workspace.id, executionHostId, kind: workspace.kind, displayName: workspace.displayName || workspace.branch || "Workspace", branch: workspace.branch || "", workspaceKey: hash3(JSON.stringify([workspace.id, executionHostId])) };
   }
   const publicScope2 = ({ workspaceId, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
   async function context(workspaceId, teamId) {
@@ -3436,7 +3688,8 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
             let patch;
             try {
               if (params.error) throw Error(params.error);
-              patch = launchReceipt(params.result, operation);
+              patch = { ...launchReceipt(params.result, operation), error: void 0 };
+              if (["intent", "unknown"].includes(operation.recovery?.state) && !operation.recovery.incomplete) patch.recovery = void 0;
             } catch (error) {
               patch = { status: "unknown", error: error.message.slice(0, 1200) };
             }
@@ -3599,12 +3852,14 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
       const owner = previous.instance, send = protocol.nativeSend;
       if (protocol.workId !== workId || previous.run.id !== work.run.id || previous.run.consumerGeneration !== protocol.generation || !owner) continue;
       if (owner.kind === "structured" ? send?.method !== "agentSession.send" || send.params.envelope.sessionId !== previous.binding.sessionId || send.params.envelope.expectedRuntimeFence !== owner.fence : send?.method !== "terminal.send" || send.params.terminal !== previous.binding.handle) continue;
-      authorities.push({ epoch, protocol, owner });
+      const recovery = readPrivate(`wake:${previous.recoveryRequestId}`);
+      const recoveryVerified = recovery?.state === "bound" && recovery.memberId === work.supervisorMemberId && recovery.oldBinding.requestId === previous.binding.requestId && recovery.newInstance?.workId === workId && recovery.newInstance.runId === work.run.id;
+      authorities.push({ epoch, protocol, owner, recoveryVerified });
     }
     for (const q of questions.listQuestions(workId)) {
       const epoch = q.epoch ?? 0, r = q.resolution, wake = r && readPrivate(`wake:${r.recoveryRequestId}`), recovered = history.findIndex((h) => h.recoveryRequestId === r?.recoveryRequestId);
       const resolved = q.status === "closed" && r?.kind === "superseded-by-recovery" && r.by === "user" && r.note?.trim() && Number.isSafeInteger(epoch) && epoch >= 0 && epoch < (work.epoch ?? 0) && recovered >= epoch && wake?.state === "bound" && wake.memberId === work.supervisorMemberId && wake.newInstance?.workId === workId;
-      const answered = q.status === "answered" && (q.answers.length ? q.answers.every((a) => a.processed === "confirmed") : Boolean(q.nativeQuestion?.answer));
+      const answered = q.status === "answered" && (q.answers.length ? q.answers.every((a) => questionAnswerResolved(q, a)) : Boolean(q.nativeQuestion?.answer));
       if (resolved || answered) {
         controls.push({ kind: "question", record: q, epoch });
         for (const a of q.answers.filter((a2) => a2.processed === "confirmed" && a2.acknowledgement)) controls.push({ kind: "answer-ack", record: q, answer: a });
@@ -3616,7 +3871,19 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
     for (const c of rows("collaboration:").filter((c2) => c2.workId === workId)) controls.push({ kind: "collaboration-directive", record: c });
     for (const m of rows("team-message:").filter((m2) => m2.workId === workId && m2.controlProof)) controls.push({ kind: "message-evidence", record: m });
     for (const w of rows("wake:").filter((w2) => w2.state === "bound" && w2.handoff?.workId === workId && w2.handoff.nativeTaskId)) controls.push({ kind: "recovery-handoff", record: w.handoff });
-    return { authorities, controls };
+    const withdrawals = rows("intent-withdrawal:").filter((row) => row.workId === workId);
+    const withdrawalContexts = withdrawals.map((row) => {
+      let original, result;
+      try {
+        original = JSON.parse(row.originalSpec);
+        result = JSON.parse(row.result);
+      } catch {
+        return { nativeTaskId: row.nativeTaskId };
+      }
+      const team = Number.isSafeInteger(original.configVersion) ? JSON.parse(db.prepare("SELECT json FROM team_versions WHERE team_id=? AND version=?").get(work.teamId, original.configVersion)?.json ?? "null") : null;
+      return { nativeTaskId: row.nativeTaskId, epoch: row.epoch, team, authorities: authorities.filter((a) => a.recoveryVerified && a.epoch === row.epoch && a.protocol.token === result.token && a.protocol.generation === row.generation) };
+    });
+    return { authorities, controls, withdrawals, withdrawalContexts };
   };
 }
 
@@ -3625,7 +3892,7 @@ import { randomUUID as randomUUID8, createHash as createHash13 } from "node:cryp
 var CLEARED = "[History manually cleared]";
 var hash4 = (v) => createHash13("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
-var known = /* @__PURE__ */ new Set(["work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
+var known = /* @__PURE__ */ new Set(["work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
 var contains = (value, ids) => typeof value === "string" ? ids.has(value) || [...ids].some((id2) => id2.length >= 32 && value.includes(id2)) : Array.isArray(value) ? value.some((v) => contains(v, ids)) : value && typeof value === "object" ? Object.values(value).some((v) => contains(v, ids)) : false;
 var uncertain = (value) => value && typeof value === "object" && Object.entries(value).some(([key, v]) => ["state", "status", "processed"].includes(key) && ["unknown", "sending", "submitted", "needs_decision", "pending", "unconfirmed"].includes(v) || typeof v === "object" && !["processing", "run", "snapshot", "proof", "controlProof", "nativeSend", "nativeRequest", "binding", "oldBinding", "observation"].includes(key) && uncertain(v));
 function historyCleanup({ db, readSnapshot, write, atomic }) {
@@ -3678,11 +3945,11 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
       eligibleWorkIds.push(id2);
       const associated = rows.filter((r) => own(r) || family(r.id) === "dispatch-review" && identities.has(r.id.slice("dispatch-review:".length)));
       for (const r of associated) {
-        const v = structuredClone(r.value), k = family(r.id), fields = [];
+        const v = structuredClone(r.value), k = family(r.id), fields2 = [];
         const clear = (obj, key, path = key) => {
           if (obj && typeof obj[key] === "string" && obj[key] !== CLEARED) {
             obj[key] = CLEARED;
-            fields.push(path);
+            fields2.push(path);
           }
         };
         if (["work", "native-run-binding"].includes(k)) {
@@ -3692,7 +3959,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
             clear(task, "summary", `${path}.tasks[${i}].summary`);
           }
           v.historyPruned = { at: "$commit", kind: "summary-results", workId: id2 };
-          fields.push("historyPruned");
+          fields2.push("historyPruned");
         }
         if (k === "delivery") clear(v, "summary");
         if (k === "dispatch") {
@@ -3701,7 +3968,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
           clear(v, "detail");
         }
         if (k === "dispatch-review") clear(v, "summary");
-        if (fields.length) changes.push({ id: r.id, workId: id2, fields, value: v, beforeHash: hash4(r.json), logicalBytes: Buffer.byteLength(r.json) });
+        if (fields2.length) changes.push({ id: r.id, workId: id2, fields: fields2, value: v, beforeHash: hash4(r.json), logicalBytes: Buffer.byteLength(r.json) });
       }
     }
     const requestRows = db.prepare("SELECT id,fingerprint,result FROM requests ORDER BY id").all();
@@ -3721,7 +3988,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
         const ids = [...new Set(input.selectedWorkIds)].sort(), p = plan(ids), previewToken = randomUUID8(), storageRevision = p.storageRevision, expiresAt = Date.now() + 3e5;
         if (previews.size >= 64) previews.delete(previews.keys().next().value);
         previews.set(previewToken, { ...p, storageRevision, expiresAt });
-        return { previewToken, storageRevision, expiresAt, selectedWorkIds: ids, eligibleWorkIds: p.eligibleWorkIds, retained: p.retained, changes: p.changes.map(({ id: id2, workId, fields, logicalBytes }) => ({ recordId: id2, workId, fields, logicalBytes })), snapshotCount: p.snapshots.length, logicalBytes: p.changes.reduce((n, r) => n + r.logicalBytes, 0), notice: "Clears displayed delivery summaries, task results, review summaries and cached public snapshots. Keeps objectives, native request/proof bodies (which may contain copies), questions, notification evidence, closure decisions, identities, replay barriers, configuration and role versions. Migration backups may still contain history. Project files, login data, native sessions and provider conversations are outside this cleanup. No secure erasure or immediate file shrink is promised." };
+        return { previewToken, storageRevision, expiresAt, selectedWorkIds: ids, eligibleWorkIds: p.eligibleWorkIds, retained: p.retained, changes: p.changes.map(({ id: id2, workId, fields: fields2, logicalBytes }) => ({ recordId: id2, workId, fields: fields2, logicalBytes })), snapshotCount: p.snapshots.length, logicalBytes: p.changes.reduce((n, r) => n + r.logicalBytes, 0), notice: "Clears displayed delivery summaries, task results, review summaries and cached public snapshots. Keeps objectives, native request/proof bodies (which may contain copies), questions, notification evidence, closure decisions, identities, replay barriers, configuration and role versions. Migration backups may still contain history. Project files, login data, native sessions and provider conversations are outside this cleanup. No secure erasure or immediate file shrink is promised." };
       });
     },
     applyHistoryCleanup(input) {
@@ -3856,8 +4123,8 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
 import { createHash as createHash15, randomUUID as randomUUID9 } from "node:crypto";
 var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
 var hash5 = (v) => createHash15("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
-var text7 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
-var id = (v) => text7(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
+var text8 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
+var id = (v) => text8(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
 function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, readSnapshot, write, archive, atomic }) {
   const rows = (prefix) => db.prepare("SELECT json FROM receipts WHERE id LIKE ? ORDER BY rowid").all(prefix + "%").map((r) => JSON.parse(r.json));
   const rootWork = (id2) => {
@@ -3955,7 +4222,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
           if (prior.fingerprint !== fingerprint2) throw Error("Proposal identity conflicts.");
           return prior;
         }
-        if (s.kind !== "staffing-proposal" || !id(s.appQuestionId) || s.proposingManagerId !== context.supervisorMemberId || s.configVersion !== team.configVersion || s.roleVersion !== 1 || !text7(s.rationale, 8e3) || !Array.isArray(s.affectedTaskKeys) || s.affectedTaskKeys.some((v) => !id(v)) || !s.member || !team.members.some((m) => m.id === s.member.boss && ["ceo", "head", "lead"].includes(m.role))) throw Error("Staffing proposal configuration or manager is stale.");
+        if (s.kind !== "staffing-proposal" || !id(s.appQuestionId) || s.proposingManagerId !== context.supervisorMemberId || s.configVersion !== team.configVersion || s.roleVersion !== 1 || !text8(s.rationale, 8e3) || !Array.isArray(s.affectedTaskKeys) || s.affectedTaskKeys.some((v) => !id(v)) || !s.member || !team.members.some((m) => m.id === s.member.boss && ["ceo", "head", "lead"].includes(m.role))) throw Error("Staffing proposal configuration or manager is stale.");
         const proposal = { id: s.appQuestionId, workId: work.id, contextId: workId, teamId: team.id, proposingManagerId: context.supervisorMemberId, runId: context.run.id, generation: context.run.consumerGeneration, configVersion: s.configVersion, roleVersion: s.roleVersion, member: s.member, rationale: s.rationale, affectedTaskKeys: s.affectedTaskKeys, status: "pending", proof: intent, fingerprint: fingerprint2, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         putPrivate(key, proposal);
         return proposal;
@@ -3996,9 +4263,9 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         if (state.revision !== input.expectedRevision || team?.configVersion !== input.configVersion || effectiveTeamForWork(work.id)?.configVersion !== input.configVersion) throw Error("Team configuration changed; reload and review staffing again.");
         if (readPrivate(`next-goal:${team.id}`)) throw Error("Queued goal transition is reserved.");
         const source = proposal?.member ?? input.member, boss = team.members.find((m) => m.id === source?.boss);
-        if (!source || Object.keys(source).some((k) => !["name", "boss", "brief", "habits", "collaboration", "agent", "model", "effort"].includes(k)) || !text7(source.name, 120) || !text7(source.brief, 1500) || [source.habits, source.collaboration].some((v) => typeof v !== "string" || v.length > 1500) || !boss || !["ceo", "head", "lead"].includes(boss.role) || boss.level >= 3) throw Error("Choose a current direct manager and valid member role content.");
+        if (!source || Object.keys(source).some((k) => !["name", "boss", "brief", "habits", "collaboration", "agent", "model", "effort"].includes(k)) || !text8(source.name, 120) || !text8(source.brief, 1500) || [source.habits, source.collaboration].some((v) => typeof v !== "string" || v.length > 1500) || !boss || !["ceo", "head", "lead"].includes(boss.role) || boss.level >= 3) throw Error("Choose a current direct manager and valid member role content.");
         if (team.members.length >= 49) throw Error("The current team schema supports at most 49 members.");
-        if (!["claude", "codex"].includes(source.agent) || !text7(source.model, 120) || !text7(source.effort, 120) || source.model === "default" && source.effort !== "default") throw Error("Choose valid agent, model and effort preferences.");
+        if (!["claude", "codex"].includes(source.agent) || !text8(source.model, 120) || !text8(source.effort, 120) || source.model === "default" && source.effort !== "default") throw Error("Choose valid agent, model and effort preferences.");
         if (team.members.some((m) => m.name.toLowerCase() === source.name.toLowerCase())) throw Error("Member name already exists.");
         if (team.scope.workspaceKey !== work.scope.workspaceKey || team.scope.executionHostId !== work.scope.executionHostId) throw Error("TeamWork execution scope changed.");
         const member = { ...source, id: randomUUID9(), team: boss.team, role: boss.role === "ceo" ? "head" : boss.level === 1 && team.configuration.levels === 3 ? "lead" : "worker", level: boss.level + 1, roleVersion: 1, state: "unassigned", preferenceOverride: true };
@@ -4313,7 +4580,8 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       return listDispatches().filter((a) => ids.has(a.workId));
     };
     const queuedTasks = (workId) => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map((row) => JSON.parse(row.json)).filter((row) => row.workId === workId);
-    const dispatchProjection = (workId) => ({ queuedTasks: listRunWorks(workId).flatMap((w) => queuedTasks(w.id)), dispatchProtocol: publicDispatchProtocol(readDispatchProtocol(workId)), tasks: listTeamDispatches(workId).map(publicDispatch), nativeRuns: listRunWorks(workId).map((w) => ({ id: w.id, teamWorkId: w.teamWorkId ?? w.id, supervisorMemberId: w.supervisorMemberId, run: w.run, parent: w.parent, input: { state: w.input.state }, error: w.error, questions: questions.listQuestions(w.id).map((q) => ({ id: q.id, summary: q.summary, status: q.status, to: q.to, relay: q.relay })), dispatchProtocol: publicDispatchProtocol(readDispatchProtocol(w.id)) })) });
+    const withdrawnIntents = (workId) => db.prepare("SELECT json FROM receipts WHERE id LIKE 'intent-withdrawal:%'").all().map((row) => JSON.parse(row.json)).filter((row) => row.workId === workId);
+    const dispatchProjection = (workId) => ({ withdrawnIntents: listRunWorks(workId).flatMap((w) => withdrawnIntents(w.id).map(({ originalSpec, replacementSpec, result, createProof, replacementProof, updateProof, ...row }) => row)), queuedTasks: listRunWorks(workId).flatMap((w) => queuedTasks(w.id)), dispatchProtocol: publicDispatchProtocol(readDispatchProtocol(workId), readCurrentWork(workId)?.status === "completed"), tasks: listTeamDispatches(workId).map(publicDispatch), nativeRuns: listRunWorks(workId).map((w) => ({ id: w.id, teamWorkId: w.teamWorkId ?? w.id, supervisorMemberId: w.supervisorMemberId, run: w.run, parent: w.parent, input: { state: w.input.state }, error: w.error, questions: questions.listQuestions(w.id).map((q) => ({ id: q.id, summary: q.summary, status: q.status, to: q.to, relay: q.relay })), dispatchProtocol: publicDispatchProtocol(readDispatchProtocol(w.id), w.status === "completed") })) });
     const atomicDispatch = (action) => {
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -4521,6 +4789,19 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
       },
       readCurrentWork,
       listCurrentWorks,
+      recordIntentWithdrawals(workId, rows) {
+        return atomicDispatch(() => {
+          for (const row of rows) {
+            if (row.workId !== workId) fail2("Withdrawal belongs to another work.");
+            const key = `intent-withdrawal:${workId}:${row.nativeTaskId}`, prior = readPrivate(key);
+            if (prior) {
+              if (fingerprint(prior) !== fingerprint(row)) fail2("Recorded withdrawal changed.");
+              continue;
+            }
+            putPrivate(key, row);
+          }
+        });
+      },
       readWork,
       listWorks,
       readDispatchProtocol,
@@ -4655,7 +4936,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           const row = validateDispatch(readPrivate(`dispatch:${id2}`));
           if (readWork(row.workId)?.status === "completed") fail2("Completed TeamWork is sealed.");
           if (expectedWorkVersion !== void 0 && readWork(row.workId)?.version !== expectedWorkVersion) fail2("TeamWork changed during recovery.");
-          if (row.version !== version) fail2("Dispatch attempt changed while observing evidence.");
+          if (row.version !== version) fail2(DISPATCH_OBSERVATION_CHANGED);
           if (Object.keys(patch).some((key) => !["admission", "status", "permit", "dispatchId", "creatorDispatchId", "depth", "binding", "nativeState", "startRequestId", "startPayloadHash", "outcome", "result", "evidenceId", "detail", "recovery"].includes(key))) fail2("Immutable Dispatch identity cannot change.");
           if (patch.admission !== void 0 && (patch.admission !== "unadmitted" || row.permit.state !== "not_sent")) fail2("Admission cannot be rewritten after a permit attempt.");
           if (row.dispatchId && patch.dispatchId && row.dispatchId !== patch.dispatchId) fail2("Late native evidence belongs to a different Dispatch.");
@@ -4744,10 +5025,13 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
           if (work.status === "completed") fail2("Completed TeamWork is sealed.");
           const permitted = ["status", "input", "processing", "run", "snapshot", "error", "instance", "nativeSend"];
           if (Object.keys(patch).some((key) => !permitted.includes(key))) fail2("Immutable TeamWork identity cannot be changed.");
+          const current = readCurrentWork(id2), before = Object.fromEntries(Object.keys(patch).map((key) => [key, current[key]])), after = { ...patch };
+          for (const value of [before, after]) for (const key of ["run", "snapshot"]) if (value[key]) value[key] = { ...value[key], observedAt: void 0 };
+          const nextVersion = version + (fingerprint(before) === fingerprint(after) ? 0 : 1);
           if (work.currentSupervisor) {
             Object.assign(work.currentSupervisor, patch);
-            work.version = version + 1;
-          } else Object.assign(work, patch, { version: version + 1 });
+            work.version = nextVersion;
+          } else Object.assign(work, patch, { version: nextVersion });
           validateWork(work);
           persistWork(work);
           db.exec("COMMIT");
@@ -4986,7 +5270,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.07", internalKey });
+      const report = await bootstrap({ version: "0.1.08", internalKey });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

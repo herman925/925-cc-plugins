@@ -4,7 +4,7 @@ An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://gi
 
 It is separate from that Claude Code mod (0.5.37), which runs inside each Claude Code session. The current source keeps new teams in its own SQLite database under the verified Orca profile. It neither imports nor overwrites the mod's `.claude/team-orchestrator/` files or the prototype's `team-definitions-v1` KV data. The source includes native roster preparation, admitted task dispatch, declared scope coordination and evidence reconciliation; the Claude mod remains a separate product.
 
-Release **0.1.07** (strict SemVer `0.1.7`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+Release **0.1.08** (strict SemVer `0.1.8`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
 ## How it works
 
@@ -30,10 +30,10 @@ The saved **Preparation mode** selects **On demand** (highest supervisor and eve
 
 1. Use this folder on the **PC running Orca**, as your existing development plugin path. A checkout on the server alone is not automatically a local PC path.
 2. Refresh **Settings → Plugins** and review/enable Team Orchestrator. Adding `main.mjs` changes Orca's consent to include **trusted Node worker code**. This worker has native process access, beyond the panel's declared host API capabilities.
-3. Open the Team Orchestrator panel and check **v0.1.07**.
+3. Open the Team Orchestrator panel and check **v0.1.08**.
 4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
 5. Click **Test connection**. A successful test verifies a freshly echoed nonce from the worker and displays its actual OS, Orca version and worker PID. Launch stays disabled until that connection and workspace context are verified.
-6. In the current source flow, select the intended Git or folder workspace in Orca, use **Refresh workspace** and **Confirm project and host**, then **Save team**. Saving does not launch agents or submit a total objective. Later choose **Launch this team** to prepare the saved selection, then inspect its native session for login or permission prompts. Release 0.1.07 bundles the reviewed implementation for issue #106; real installed-Orca/provider and remote-host acceptance remain separate human validation.
+6. In the current source flow, select the intended Git or folder workspace in Orca, use **Refresh workspace** and **Confirm project and host**, then **Save team**. Saving does not launch agents or submit a total objective. Later choose **Launch this team** to prepare the saved selection, then inspect its native session for login or permission prompts. Release 0.1.08 bundles the reviewed implementation for issue #106 and fixes verified during macOS local mixed-team testing. See the [live validation record](docs/validation/macos-local-125.md) for completed cases and remaining human acceptance; remote-host validation remains separate.
 
 The `main.mjs`, `runtime-adapter.cjs` and self-contained `panel.html` artifacts ship in this folder. Installation needs no npm packages or web server. The former manual patches and alternate manifest have been removed from this release; they remain in Git history.
 
