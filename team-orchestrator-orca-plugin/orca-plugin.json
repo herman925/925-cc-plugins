@@ -3,7 +3,7 @@
   "id": "team-orchestrator",
   "publisher": "herman925",
   "name": "Team Orchestrator",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Create team hierarchies and launch, name and brief agents through a bundled local worker and automatic runtime adapter.",
   "engines": {
     "orca": ">=1.4.0"

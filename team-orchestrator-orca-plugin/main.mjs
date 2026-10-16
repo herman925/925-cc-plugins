@@ -502,7 +502,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.10" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.11" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -4282,10 +4282,29 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
   };
 }
 
+// src/local/staffing-fingerprint.mjs
+import { createHash as createHash14 } from "node:crypto";
+var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
+var staffingFingerprint = (v) => createHash14("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
+
+// src/local/staffing-expiry.mjs
+function staffingExpiryProof(proposal, read) {
+  const work = read(`work:${proposal.workId}`), delivery = work && read(`delivery:${work.id}:${work.handoff?.deliveryId}`), spec = proposal.proof?.spec;
+  if (!work || work.status !== "completed" || !work.closedAt || work.teamId !== proposal.teamId || !delivery || delivery.status !== "accepted" || delivery.workId !== work.id || delivery.id !== work.handoff?.deliveryId || !delivery.proof?.requestId || !delivery.proof?.payloadHash) return null;
+  if (!spec || spec.protocol !== "team-questions/v1" || spec.kind !== "staffing-proposal" || spec.workId !== proposal.contextId || spec.appQuestionId !== proposal.id || spec.proposingManagerId !== proposal.proposingManagerId || spec.configVersion !== proposal.configVersion || spec.generation !== proposal.generation || !proposal.proof.requestId || !proposal.proof.nativeTaskId || !proposal.proof.payloadHash || proposal.fingerprint !== staffingFingerprint(proposal.proof) || !proposal.createdAt || proposal.createdAt > work.closedAt) return null;
+  const context = read(`${proposal.contextId === work.id ? "work" : "native-run-binding"}:${proposal.contextId}`);
+  if (!context || (context.teamWorkId ?? context.id) !== work.id || context.teamId !== work.teamId) return null;
+  const expiry = proposal.expiry;
+  if (!expiry || expiry.kind !== "accepted-work-closure" || expiry.workId !== work.id || expiry.deliveryId !== delivery.id || expiry.recordedAt !== work.closedAt) return null;
+  const decision = read(`work-decision:${expiry.decisionRequestId}`);
+  if (!decision || decision.requestId !== expiry.decisionRequestId || decision.workId !== work.id || decision.deliveryId !== delivery.id || decision.decision !== "accept" || decision.recordedAt !== work.closedAt || decision.input?.state !== "none" || !decision.fingerprint) return null;
+  return { kind: "accepted-work-closure", workId: work.id, deliveryId: delivery.id, decisionRequestId: decision.requestId, recordedAt: decision.recordedAt };
+}
+
 // src/local/history-cleanup.mjs
-import { randomUUID as randomUUID8, createHash as createHash14 } from "node:crypto";
+import { randomUUID as randomUUID8, createHash as createHash15 } from "node:crypto";
 var CLEARED = "[History manually cleared]";
-var hash4 = (v) => createHash14("sha256").update(JSON.stringify(v)).digest("hex");
+var hash4 = (v) => createHash15("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
 var known = /* @__PURE__ */ new Set(["runtime-control", "runtime-reconnect", "work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "stop-recovery", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
 var contains = (value, ids) => typeof value === "string" ? ids.has(value) || [...ids].some((id2) => id2.length >= 32 && value.includes(id2)) : Array.isArray(value) ? value.some((v) => contains(v, ids)) : value && typeof value === "object" ? Object.values(value).some((v) => contains(v, ids)) : false;
@@ -4296,6 +4315,78 @@ function settledStopRecovery(row, byId) {
   if (typeof previous.nativeRequestId !== "string" || !previous.nativeRequestId || typeof previous.target?.dispatchId !== "string" || !previous.target.dispatchId || previous.plan.params?.dispatch !== previous.target.dispatchId || previous.plan.envelope?.orchestrationRequestId !== previous.nativeRequestId || typeof current.confirmedAt !== "string" || !current.confirmedAt || !Number.isSafeInteger(previous.version) || !Number.isSafeInteger(current.version) || current.version <= previous.version) return false;
   if (current.nativeRequestId !== previous.nativeRequestId || !sameStopIdentity(current.target, previous.target) || !sameStopIdentity(current.plan, previous.plan)) return false;
   return current.proof?.kind === "native-pty-exit" && current.proof.ptyKilled === true || current.proof?.kind === "native-worker-exit" && current.proof.dispatchId === current.target.dispatchId;
+}
+function settledStaffingNotification(row, byId) {
+  const event = row.value;
+  if (event.kind !== "decision" || event.state !== "unconfirmed" || event.nativeSend || typeof event.id !== "string" || !event.id.startsWith("staffing-")) return false;
+  const proposal = byId.get(`staffing-proposal:${event.workId}:${event.id.slice("staffing-".length)}`)?.value;
+  return proposal?.status === "expired" && event.data?.body === proposal.rationale && !!staffingExpiryProof(proposal, (key) => byId.get(key)?.value);
+}
+function settledRecipientIntents(work, byId, settledHistory) {
+  if (work.status !== "completed" || !work.closedAt || !Array.isArray(work.currentRecipientBindings)) return work;
+  const delivery = byId.get(`delivery:${work.id}:${work.handoff?.deliveryId}`)?.value;
+  const accepted2 = delivery?.status === "accepted" && delivery.workId === work.id && [...byId.values()].some((r) => family(r.id) === "work-decision" && r.value.workId === work.id && r.value.deliveryId === delivery.id && r.value.decision === "accept" && r.value.recordedAt === work.closedAt && r.value.input?.state === "none" && r.value.fingerprint);
+  if (!accepted2) return work;
+  const keys = ["requestId", "memberId", "teamId", "instanceGeneration", "configVersion", "roleVersion", "nativeRequest", "scope", "replaces", "resumedFrom", "wakeRequestId", "createdAt", "runtimeId", "executionHostId", "hostGeneration"];
+  function prove(recipient, seen = /* @__PURE__ */ new Set()) {
+    if (seen.has(recipient.requestId)) return null;
+    seen.add(recipient.requestId);
+    const op = byId.get(`operation:${recipient.requestId}`)?.value, wake = byId.get(`wake:${recipient.wakeRequestId}`)?.value;
+    if (recipient.format !== void 0 || op?.format !== void 0 || wake?.format !== void 0 || wake?.oldBinding?.format !== void 0) return null;
+    if (!Number.isSafeInteger(recipient.version) || !Number.isSafeInteger(recipient.instanceGeneration) || recipient.instanceGeneration < 2 || (!recipient.nativeRequest || !recipient.resumedFrom && !recipient.nativeRequest.operationId) || recipient.teamId !== work.teamId || !op || op.status !== "created" || op.public?.status !== "created" || !Number.isSafeInteger(op.version) || op.version < recipient.version || hash4(keys.map((k) => recipient[k])) !== hash4(keys.map((k) => op[k]))) return null;
+    if (recipient.status === "unknown" && (recipient.version !== 1 || recipient.effectState !== "intent" || recipient.public?.status !== "unknown" || op.version <= recipient.version) || !["unknown", "created"].includes(recipient.status)) return null;
+    if (!wake || wake.requestId !== recipient.wakeRequestId || !["bound", "resumed"].includes(wake.state) || uncertain(wake) || wake.teamId !== work.teamId || wake.memberId !== recipient.memberId || wake.newInstance?.requestId !== recipient.requestId || wake.newInstance.instanceGeneration !== recipient.instanceGeneration || (wake.oldBinding?.instanceGeneration ?? 1) + 1 !== recipient.instanceGeneration) return null;
+    if (recipient.resumedFrom) {
+      const death = wake.proof?.death, fence = wake.newInstance.fence;
+      if (recipient.status !== "created" || recipient.public?.status !== "created" || recipient.requestId !== `wake-${wake.requestId}` || wake.oldBinding?.requestId !== recipient.resumedFrom || op.kind !== "structured" || wake.oldBinding.kind !== "structured" || wake.oldBinding.status !== "created" || op.runtimeId !== wake.proof?.runtimeId || !["exit-observed", "pid-absent", "identity-mismatch"].includes(death?.kind) || !Number.isSafeInteger(death.ownerFence) || death.ownerFence < 1 || !Number.isSafeInteger(death.observedAt) || death.provider !== op.nativeRequest.agent || !Number.isSafeInteger(fence) || fence <= death.ownerFence || op.observation?.ownerFence !== fence) return null;
+      const resumedKeys = ["nativeRequest", "scope", "teamId", "memberId", "kind", "handle", "sessionId"];
+      if (hash4(resumedKeys.map((k) => op[k])) !== hash4(resumedKeys.map((k) => wake.oldBinding[k]))) return null;
+    } else if (wake.state !== "bound" || wake.handoff?.decision !== "replace" || wake.oldBinding?.requestId !== recipient.replaces) return null;
+    if (["requestId", "memberId", "teamId", "instanceGeneration", "configVersion", "roleVersion"].some((k) => recipient.public?.[k] !== recipient[k])) return null;
+    if (!op.handle || !(op.kind === "terminal" && op.paneKey || op.kind === "structured" && op.sessionId)) return null;
+    for (const id2 of [wake.oldBinding.sourceWorkId, wake.newInstance.workId].filter(Boolean)) {
+      const context = byId.get(`work:${id2}`)?.value ?? byId.get(`native-run-binding:${id2}`)?.value;
+      if (!context || (context.teamWorkId ?? context.id) !== work.id) return null;
+    }
+    const prior = wake.oldBinding.wakeRequestId ? prove(wake.oldBinding, seen) : [];
+    if (!prior) return null;
+    return [...prior, `wake:${recipient.wakeRequestId}`, `operation:${recipient.requestId}`];
+  }
+  const currentRecipientBindings = work.currentRecipientBindings.map((recipient) => {
+    if (recipient.status !== "unknown" || recipient.public?.status !== "unknown") return recipient;
+    const history = prove(recipient);
+    if (!history) return recipient;
+    for (const id2 of history) settledHistory.add(id2);
+    return { ...recipient, status: void 0, public: { ...recipient.public, status: void 0 } };
+  });
+  return { ...work, currentRecipientBindings };
+}
+function supersededDeliveryHistory(work, byId) {
+  const prefix = `delivery:${work.id}:`, rows = [...byId.values()].filter((r) => family(r.id) === "delivery" && (r.value.workId === work.id || r.id.startsWith(prefix))), current = byId.get(prefix + work.handoff?.deliveryId)?.value;
+  const result = { obsolete: /* @__PURE__ */ new Set(), ancestors: /* @__PURE__ */ new Set(), invalid: false };
+  if (rows.length < 2 && !current?.previousDeliveryId && !(current?.revision > 1)) return result;
+  const invalid = () => ({ ...result, invalid: true });
+  if (work.status !== "completed" || !work.closedAt || !current || current.status !== "accepted" || current.format !== void 0 || current.workId !== work.id || current.epoch !== (work.currentSupervisor?.epoch ?? work.epoch ?? 0) || current.generation !== (work.currentSupervisor?.run ?? work.run).consumerGeneration) return invalid();
+  const accepted2 = [...byId.values()].some((r) => r.id === `work-decision:${r.value.requestId}` && r.value.format === void 0 && r.value.workId === work.id && r.value.deliveryId === current.id && r.value.decision === "accept" && r.value.recordedAt === work.closedAt && r.value.input?.state === "none" && /^[a-f0-9]{64}$/.test(r.value.fingerprint ?? ""));
+  if (!accepted2) return invalid();
+  let row = current, child = null;
+  while (row) {
+    const key = prefix + row.id;
+    if (result.ancestors.has(key) || byId.get(key)?.value !== row || row.format !== void 0 || row.workId !== work.id || !Number.isSafeInteger(row.revision) || row.revision < 1 || !Number.isSafeInteger(row.epoch) || row.epoch < 0 || !Number.isSafeInteger(row.generation) || row.generation < 1 || !row.supervisorMemberId || !row.protocolToken || !row.proof?.requestId || !/^[a-f0-9]{64}$/.test(row.proof.payloadHash ?? "") || !Number.isFinite(Date.parse(row.createdAt)) || row.createdAt > work.closedAt) return invalid();
+    if (child && (row.revision !== child.revision - 1 || row.epoch > child.epoch || row.generation > child.generation || row.createdAt > child.createdAt || row.supervisorMemberId !== child.supervisorMemberId || row.epoch === child.epoch && (row.protocolToken !== child.protocolToken || row.generation !== child.generation) || !["pending", "changes_requested", "superseded"].includes(row.status))) return invalid();
+    result.ancestors.add(key);
+    if (child && row.status === "pending") result.obsolete.add(key);
+    if (row.previousDeliveryId == null) {
+      if (row.revision !== 1) return invalid();
+      break;
+    }
+    if (typeof row.previousDeliveryId !== "string" || !row.previousDeliveryId) return invalid();
+    child = row;
+    row = byId.get(prefix + row.previousDeliveryId)?.value;
+    if (!row) return invalid();
+  }
+  if (rows.length !== result.ancestors.size) return invalid();
+  return result;
 }
 function historyCleanup({ db, readSnapshot, write, atomic }) {
   const previews = /* @__PURE__ */ new Map();
@@ -4322,24 +4413,29 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
       const members = rows.filter(own), identities = /* @__PURE__ */ new Set([...contexts, ...members.flatMap((r) => [r.value.id, r.value.attemptId, r.value.dispatchId, r.value.nativeTaskId, r.value.evidenceId, r.value.binding?.requestId, r.value.currentSupervisor?.binding?.requestId, ...(r.value.recipientBindings ?? []).map((b) => b.requestId), ...(r.value.currentRecipientBindings ?? []).map((b) => b.requestId)]).filter((v) => typeof v === "string")]);
       let reason = unknownSchema ? "An unknown storage table or column may reference this history; use a compatible cleanup implementation." : void 0;
       for (const r of rows) if (own(r) || contains(r.value, identities)) graph.set(r.id, r.json);
+      const settledHistory = /* @__PURE__ */ new Set(), workUncertainty = settledRecipientIntents(work, byId, settledHistory);
+      for (const id3 of settledHistory) graph.set(id3, byId.get(id3).json);
+      const deliveryHistory = supersededDeliveryHistory(work, byId);
+      for (const id3 of deliveryHistory.ancestors) graph.set(id3, byId.get(id3).json);
+      if (deliveryHistory.invalid) reason = "Delivery revision history is incomplete or unverified.";
       if (!members.some((r) => family(r.id) === "work-decision" && r.value.workId === id2 && r.value.decision === "accept" && r.value.deliveryId === work.handoff?.deliveryId)) reason = "User acceptance provenance is missing.";
       for (const r of rows) {
         const k = family(r.id), v = r.value, related = own(r), sameTeam = v.teamId === work.teamId || v.target?.teamId === work.teamId || k === "stop-recovery" && v.previous?.target?.teamId === work.teamId;
-        const uncertainty = k === "stop-recovery" && settledStopRecovery(r, byId) ? { ...v, previous: void 0 } : v;
+        const uncertainty = k === "work" && v.id === work.id ? workUncertainty : k === "delivery" && !deliveryHistory.invalid && deliveryHistory.obsolete.has(r.id) ? { ...v, status: void 0 } : k === "stop-recovery" && settledStopRecovery(r, byId) ? { ...v, previous: void 0 } : k === "question-event" && settledStaffingNotification(r, byId) ? { ...v, state: void 0 } : v;
         if (!known.has(k) && (contains(v, identities) || sameTeam)) reason = "An unknown record references this history; preserve it for a compatible plugin.";
         if (related && (v.format && /-(v[0-9]+)$/.test(v.format) && !v.format.endsWith("-v1") || !(k === "question-event" && v.kind === "goal-delivery" && !v.nativeSend) && uncertain(uncertainty))) reason = "Unknown, pending or unprocessed evidence remains in this work.";
         if (related && k === "native-run-binding" && (v.status !== "completed" || v.currentSupervisor && v.currentSupervisor.status !== "completed")) reason = "A descendant manager context remains active.";
         if (related && k === "dispatch" && !["accepted", "rework", "rejected"].includes(v.status)) reason = "A task is running or still requires supervisor acceptance.";
         if (sameTeam && k === "goal" && ["queued", "reserved"].includes(v.status)) reason = "A later goal awaits its Work transition.";
         if (related && k === "dispatch-queue") reason = "Queued task admission remains.";
-        if (related && k === "staffing-proposal" && !["approved", "rejected"].includes(v.status)) reason = "A staffing proposal needs a decision.";
+        if (related && k === "staffing-proposal" && !(["approved", "rejected"].includes(v.status) || v.status === "expired" && staffingExpiryProof(v, (key) => byId.get(key)?.value))) reason = "A staffing proposal needs a decision.";
         if (related && k === "roster-delta" && !(v.state === "queued" && !v.nativeSend || v.processed === "confirmed")) reason = "A roster update awaits confirmed processing.";
         if (sameTeam && k === "organization" && v.state === "pending") reason = "An organization change awaits its Work boundary.";
         if (sameTeam && k === "wake" && !["bound", "resumed"].includes(v.state)) reason = "Member recovery or replacement remains unresolved.";
         if (sameTeam && k === "stop" && ["intent", "submitted", "unknown"].includes(v.state)) reason = "A stop outcome remains unresolved.";
         if (sameTeam && k === "operation" && v.status !== "created") reason = "An original native operation remains unknown.";
         if (k === "active-work" && contexts.has(v.workId)) reason = "This work is still actively reserved.";
-        if (!related && contains(v, identities) && !(k === "operation" && identities.has(v.requestId) && v.status === "created") && !["work-request", "session-work", "goal-request", "question-answer", "dispatch-intent", "dispatch-review", "staffing-request"].includes(k)) reason = "A surviving record depends on this history (including later goals or another Work).";
+        if (!related && !settledHistory.has(r.id) && contains(v, identities) && !(k === "operation" && identities.has(v.requestId) && v.status === "created") && !["work-request", "session-work", "goal-request", "question-answer", "dispatch-intent", "dispatch-review", "staffing-request"].includes(k)) reason = "A surviving record depends on this history (including later goals or another Work).";
       }
       if (reason) {
         retained.push({ workId: id2, reason });
@@ -4425,7 +4521,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
 }
 
 // src/local/organization-store.mjs
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 function reorganize(team, changes) {
   const members = structuredClone(team.members), ids = /* @__PURE__ */ new Set();
   if (!Array.isArray(changes) || !changes.length || changes.length > 49) throw Error("Choose at least one organization change.");
@@ -4466,7 +4562,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
     scheduleOrganization(input) {
       return atomic(() => {
         if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || Object.keys(input).some((k) => !["requestId", "teamId", "workId", "expectedRevision", "configVersion", "changes", "pause"].includes(k))) throw Error("Invalid organization request.");
-        const key = `organization:${input.requestId}`, fingerprint2 = createHash15("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
+        const key = `organization:${input.requestId}`, fingerprint2 = createHash16("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Organization request conflicts with saved input.");
           return prior;
@@ -4523,9 +4619,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
 }
 
 // src/local/staffing-store.mjs
-import { createHash as createHash16, randomUUID as randomUUID9 } from "node:crypto";
-var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
-var hash5 = (v) => createHash16("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
+import { randomUUID as randomUUID9 } from "node:crypto";
 var text8 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 var id = (v) => text8(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
 function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, readSnapshot, write, archive, atomic }) {
@@ -4566,6 +4660,29 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     listRosterDeltas,
     listStaffingProposals,
     recordConfigurationAmendment,
+    expireStaffingProposals(decision) {
+      if (!db.isTransaction) throw Error("Staffing expiry must share the accepted Work transaction.");
+      let expired = 0;
+      for (const proposal of listStaffingProposals(decision.workId).filter((p) => p.status === "pending")) {
+        const expiry = { kind: "accepted-work-closure", workId: decision.workId, deliveryId: decision.deliveryId, decisionRequestId: decision.requestId, recordedAt: decision.recordedAt };
+        if (!staffingExpiryProof({ ...proposal, expiry }, readPrivate)) continue;
+        putPrivate(`staffing-proposal:${proposal.workId}:${proposal.id}`, { ...proposal, status: "expired", expiry });
+        expired++;
+      }
+      return expired;
+    },
+    reconcileExpiredStaffingProposals() {
+      return atomic(() => {
+        let expired = 0;
+        for (const decision of rows("work-decision:").filter((d) => d.decision === "accept")) expired += api.expireStaffingProposals(decision);
+        if (expired) {
+          const state = readSnapshot();
+          state.revision++;
+          write(state);
+        }
+        return expired;
+      });
+    },
     staffingRecipientBindings(workId) {
       const root = rootWork(workId), ids = new Set(rows("configuration-amendment:").filter((a) => a.workId === root?.id && a.kind === "add-member").flatMap((a) => a.memberIds));
       return rows("operation:").filter((o) => ids.has(o.memberId) && readPrivate(`binding:${o.memberId}`)?.requestId === o.requestId).map((o) => ({ memberId: o.memberId, requestId: o.requestId, instanceGeneration: o.instanceGeneration ?? 1 }));
@@ -4582,7 +4699,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     },
     readStaffingRequest(input) {
       const prior = readPrivate(`staffing-request:${input.requestId}`);
-      if (prior && prior.fingerprint !== hash5(input)) throw Error("Staffing request identity conflicts.");
+      if (prior && prior.fingerprint !== staffingFingerprint(input)) throw Error("Staffing request identity conflicts.");
       return prior?.result ?? null;
     },
     staffingProjection: (workId) => ({ staffingProposals: listStaffingProposals(workId).map(({ proof, fingerprint: fingerprint2, ...p }) => p), rosterDeltas: listRosterDeltas(workId).map(publicDelta), effectiveConfigVersion: effectiveTeamForWork(workId)?.configVersion }),
@@ -4620,7 +4737,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     },
     ingestStaffingProposal(workId, intent) {
       return atomic(() => {
-        const work = active(workId), context = readWork(workId), s = intent.spec, team = effectiveTeamForWork(workId), fingerprint2 = hash5(intent), key = `staffing-proposal:${work.id}:${s.appQuestionId}`, prior = readPrivate(key);
+        const work = active(workId), context = readWork(workId), s = intent.spec, team = effectiveTeamForWork(workId), fingerprint2 = staffingFingerprint(intent), key = `staffing-proposal:${work.id}:${s.appQuestionId}`, prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Proposal identity conflicts.");
           return prior;
@@ -4634,7 +4751,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     saveStaffing(input) {
       return atomic(() => {
         if (!input || !id(input.requestId) || !Number.isSafeInteger(input.expectedRevision) || !Number.isSafeInteger(input.configVersion) || Object.keys(input).some((k) => !["requestId", "workId", "expectedRevision", "configVersion", "member", "proposalId", "decision"].includes(k)) || !input.proposalId && input.decision !== void 0) throw Error("Invalid staffing request identity or revision.");
-        const fingerprint2 = hash5(input), key = `staffing-request:${input.requestId}`, prior = readPrivate(key);
+        const fingerprint2 = staffingFingerprint(input), key = `staffing-request:${input.requestId}`, prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Staffing request identity conflicts.");
           return prior.result;
@@ -4812,6 +4929,7 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
         }
         persistWork(w);
         putPrivate(key, event);
+        if (input.decision === "accept") staffing?.().expireStaffingProposals(event);
         return event;
       });
     },
@@ -5091,6 +5209,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     const staffing = staffingStore({ db, readPrivate, putPrivate, readWork: readCurrentWork, listRunWorks, readSnapshot, write, archive, atomic: atomicDispatch });
     runtimeReconnect = runtimeReconnectStore({ db, readPrivate, putPrivate, readWork, persistWork, readSnapshot, readOperation, readDispatchProtocol, atomic: atomicDispatch });
     readSnapshot();
+    staffing.reconcileExpiredStaffingProposals();
     let closed = false;
     return {
       ...historyCleanup({ db, readSnapshot, write, atomic: atomicDispatch }),
@@ -5693,7 +5812,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.10", internalKey });
+      const report = await bootstrap({ version: "0.1.11", internalKey });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;
