@@ -12,3 +12,11 @@ test('pending count, saved answer and explicit supplement survive panel reopenin
 test('unknown user answer is durable with no resend action',async({page})=>{
  const ui=await prepare(page,'dispatch-question-unknown');await ui.getByRole('button',{name:'Needs your attention (1)',exact:true}).click();const region=ui.getByRole('region',{name:'Needs your attention',exact:true});await region.getByLabel('Your answer').fill('Focused');await region.getByRole('button',{name:'Send answer',exact:true}).click();await expect(region).toContainText('Native input: unknown');await page.reload();await panel(page).getByRole('button',{name:'Needs your attention (1)',exact:true}).click();await expect(panel(page).getByRole('region',{name:'Needs your attention',exact:true})).toContainText('Native input: unknown');
 });
+
+test('verified completion decision shows the old blocked answer and explicit supplement supersession without auto resend',async({page})=>{
+ const ui=await prepare(page,'dispatch-report-question');await ui.getByRole('button',{name:'Needs your attention (1)',exact:true}).click();const region=ui.getByRole('region',{name:'Needs your attention',exact:true});
+ await expect(region).toContainText('legacy-blocked-answer');await expect(region).toContainText('Native input: blocked');await expect(region).toContainText('Completion report');
+ await page.reload();await panel(page).getByRole('button',{name:'Needs your attention (1)',exact:true}).click();const reopened=panel(page).getByRole('region',{name:'Needs your attention',exact:true});
+ await expect(reopened).toContainText('Native input: blocked');await expect(reopened).not.toContainText('Native input: accepted');await reopened.getByLabel('Your supplement').fill('Accept the observed QA result without another attempt');await reopened.getByRole('button',{name:'Send supplement',exact:true}).click();
+ await expect(reopened).toContainText('Native input: blocked');await expect(reopened).toContainText('Native input: accepted');await expect(reopened).toContainText('Manager processing: unconfirmed');await expect(reopened).toContainText('legacy-blocked-answer');await expect(reopened).toContainText('Explicit supplement for unsent blocked answers');
+});

@@ -1,3 +1,4 @@
+import {questionAnswerResolved} from './acceptance.mjs';
 // Only persisted application records can identify historical native controls.
 // Native readers still reauthenticate their exact bytes; this is not a token allowlist.
 export function nativeHistoryReader({db,readPrivate,readWork,questions}){
@@ -15,7 +16,7 @@ export function nativeHistoryReader({db,readPrivate,readWork,questions}){
   for(const q of questions.listQuestions(workId)){
    const epoch=q.epoch??0,r=q.resolution,wake=r&&readPrivate(`wake:${r.recoveryRequestId}`),recovered=history.findIndex(h=>h.recoveryRequestId===r?.recoveryRequestId);
    const resolved=q.status==='closed'&&r?.kind==='superseded-by-recovery'&&r.by==='user'&&r.note?.trim()&&Number.isSafeInteger(epoch)&&epoch>=0&&epoch<(work.epoch??0)&&recovered>=epoch&&wake?.state==='bound'&&wake.memberId===work.supervisorMemberId&&wake.newInstance?.workId===workId;
-   const answered=q.status==='answered'&&(q.answers.length?q.answers.every(a=>a.processed==='confirmed'):Boolean(q.nativeQuestion?.answer));
+   const answered=q.status==='answered'&&(q.answers.length?q.answers.every(a=>questionAnswerResolved(q,a)):Boolean(q.nativeQuestion?.answer));
    if(resolved||answered){controls.push({kind:'question',record:q,epoch});for(const a of q.answers.filter(a=>a.processed==='confirmed'&&a.acknowledgement))controls.push({kind:'answer-ack',record:q,answer:a});}
   }
   for(const d of rows('delivery:').filter(d=>d.workId===workId&&['superseded','changes_requested','accepted'].includes(d.status)))controls.push({kind:'delivery',record:d,epoch:d.epoch??0});
