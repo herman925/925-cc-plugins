@@ -621,3 +621,31 @@ test('background reconciliation yields while the explicit reconnect owns its evi
   assert.equal(settled[0].status, 'fulfilled');
   assert.equal(f.store.readCurrentWork(f.work.id).runtimeControl.runtimeId, 'runtime-two');
 });
+
+test('a late changed launch receipt cannot redirect a prepared member after reconnect', async (t) => {
+  const f = await setup(t);
+  await f.works.reconnect(f.input);
+  const op = f.store.readOperation('prepared-child'),
+    old = await f.rpc('terminal.show', { terminal: op.handle });
+  f.store.settleOperation(op.requestId, op.nativeRequest.operationId, {
+    kind: 'terminal',
+    paneKey: op.paneKey,
+    handle: 'late-new-handle',
+  });
+  f.edit((method, result, params) =>
+    method === 'terminal.show' && params.terminal === 'late-new-handle'
+      ? { terminal: { ...old.terminal, handle: 'late-new-handle' } }
+      : result,
+  );
+  const dispatch = createDispatchService({
+    store: f.store,
+    rpc: f.rpc,
+    userData: f.profile,
+    consent: f.consent,
+    works: f.works,
+  });
+  f.createIntent(f.store.readDispatchProtocol(f.work.id));
+  await dispatch.check(f.work.id);
+  assert.equal(f.messages.filter((text) => text.startsWith('TEAM_DISPATCH_PERMIT\n')).length, 0);
+  assert.equal(f.store.listDispatches(f.work.id).length, 0);
+});
