@@ -67,6 +67,16 @@ async function fixture(id, mode) {
         const task = { id: 'native-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, run_id: work.run.id, spec, status: 'ready', result: null };
         nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(task.id, work.run.id, spec, 'ready', null, owner.kind === 'terminal' ? owner.handle : null, owner.kind === 'terminal' ? owner.paneKey : null, owner.kind === 'terminal' ? owner.processIncarnation : null, owner.kind === 'terminal' ? protocol.generation : null);
         receipt(work, 'create-task-fixture-'+(mode==='dispatch-hierarchy'?work.id+'-':'')+index, 'orchestration.taskCreate', { spec, run: work.run.id, callerTerminalHandle: from }, { task });
+        if(mode==='dispatch-withdrawal'){
+          const malformed=JSON.parse(spec);delete malformed.workerRules;
+          const original={...task,id:'malformed-fixture',spec:JSON.stringify(malformed)};
+          nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(original.id,work.run.id,original.spec,'ready',null,null,null,null,null);
+          receipt(work,'create-malformed','orchestration.taskCreate',{spec:original.spec,run:work.run.id,callerTerminalHandle:from},{task:original});
+          const result=JSON.stringify({protocol:'team-intent-withdrawal/v1',workId:work.id,token:protocol.token,generation:protocol.generation,supervisorMemberId:work.supervisorMemberId,nativeTaskId:original.id,taskKey:malformed.taskKey,memberId:member.memberId,replacementNativeTaskId:task.id,reason:'missing-worker-rules'});
+          nativeDb.prepare("UPDATE tasks SET status='failed',result=? WHERE id=?").run(result,original.id);
+          receipt(work,'withdraw-malformed','orchestration.taskUpdate',{id:original.id,status:'failed',result,run:work.run.id,callerTerminalHandle:from},{task:{...original,status:'failed',result}});
+        }
+
         }
       }
       if(mode==='dispatch-staffing'&&text.startsWith('TEAM_DISPATCH_PROTOCOL\n')){

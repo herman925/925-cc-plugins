@@ -160,6 +160,14 @@ try {
   const stopParams=before.WorkerDispatchParams.parse({dispatch:'saved-dispatch'});
   assert.equal(nativeMutationFingerprint('orchestration.workerStop',stopParams,{kind:'local-user'}),before.hashCanonical({method:'orchestration.workerStop',params:stopParams}));
 
+
+  {
+    const result=JSON.stringify({protocol:'team-intent-withdrawal/v1',workId:'work',token:'protocol-token',generation:1,supervisorMemberId:'head',nativeTaskId:'malformed',taskKey:'check',memberId:'member',replacementNativeTaskId:'corrected',reason:'missing-worker-rules'});
+    const params=before.TaskUpdateParams.parse({id:'malformed',status:'failed',result,run:'run',callerTerminalHandle:'orca_session_id:codex_head'});
+    assert.equal(params.status,'failed');assert.equal(params.result,result);
+    assert.equal(nativeMutationFingerprint('orchestration.taskUpdate',params,{kind:'structured',sessionId:'codex_head'}),before.hashCanonical({method:'orchestration.taskUpdate',params:before.replayStableCallerParams({getTerminalPaneKey:()=>null},params,'codex_head')}));
+    assert.equal(before.TaskUpdateParams.parse({...params,spec:'not editable'}).spec,undefined,'native task-update cannot repair immutable spec');
+  }
   assert.deepEqual(before.WorkerDispatchParams.parse({dispatch:'saved-dispatch'}),{dispatch:'saved-dispatch'});
   assert.deepEqual(before.WorkerReadParams.parse({dispatch:'saved-dispatch',source:'auto',limit:40}),{dispatch:'saved-dispatch',source:'auto',limit:40});
   assert.equal(before.WorkerReadParams.safeParse({dispatch:'saved-dispatch',cursor:-1}).success,false);

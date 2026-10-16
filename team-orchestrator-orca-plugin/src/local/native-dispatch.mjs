@@ -1,3 +1,4 @@
+import {readIntentWithdrawals} from './native-intent-withdrawal.mjs';
 import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
 import { declaredWriteScope } from '../scheduling.mjs';
@@ -46,7 +47,11 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
    if(proof.length!==1||proof[0].payload_hash!==expected||proof[0].value?.task?.spec!==task.spec||proof[0].value.task.run_id!==work.run.id||spec.token!==protocol.token||spec.generation!==protocol.generation||spec.supervisorMemberId!==work.supervisorMemberId||!team.members.some(m=>m.id===spec.supervisorMemberId&&m.boss===null)||typeof spec.summary!=='string'||!spec.summary.trim()||spec.summary.length>8000||!Array.isArray(spec.evidenceRefs)||!spec.evidenceRefs.length||spec.evidenceRefs.length>100||spec.evidenceRefs.some(r=>typeof r!=='string'||!r.trim()||r.length>2000)||!Array.isArray(spec.attemptIds)||spec.attemptIds.length>100||spec.attemptIds.some(r=>typeof r!=='string'||r.length>120)||(owner.kind==='terminal'&&(task.created_by_terminal_handle!==owner.handle||task.created_by_pane_key!==owner.paneKey||task.created_by_process_incarnation!==owner.processIncarnation||task.created_by_run_generation!==protocol.generation)))continue;
    deliveries.push({id:task.id,epoch:work.epoch??0,protocolToken:protocol.token,previousDeliveryId:spec.previousDeliveryId??null,summary:spec.summary,evidenceRefs:spec.evidenceRefs,attemptIds:spec.attemptIds,generation:spec.generation,supervisorMemberId:spec.supervisorMemberId,proof:{requestId:proof[0].request_id,payloadHash:proof[0].payload_hash}});
   }
+  const withdrawal=readIntentWithdrawals({db,tasks,work,protocol,team,owner,admitted,identity,receipts,verifyIntent,history:nativeHistory.withdrawals??[]});
+  const withdrawnIds=new Set(withdrawal.withdrawn.map(row=>row.nativeTaskId));
+  rejected.push(...withdrawal.rejected);
   for(const task of tasks){
+   if(withdrawnIds.has(task.id))continue;
    const spec=parse(task.spec);if(spec?.protocol!=='team-dispatch/v1'||spec.workId!==work.id||admitted.some(row=>row.nativeTaskId===task.id))continue;
    try{
     const proof=receipts('orchestration.taskCreate',task.id);if(proof.length!==1)throw Error('Native Task creation receipt is missing or ambiguous.');
@@ -102,7 +107,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   }
   const unmanaged=[];
   for(const task of tasks){
-   if(admitted.some(a=>a.nativeTaskId===task.id)||isHistoricalControl(db,work,task,nativeHistory))continue;
+   if(withdrawnIds.has(task.id)||admitted.some(a=>a.nativeTaskId===task.id)||isHistoricalControl(db,work,task,nativeHistory))continue;
    const spec=parse(task.spec),proof=receipts('orchestration.taskCreate',task.id);
    const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
    const control=((spec?.protocol==='team-delivery/v1'&&!work.parent)||(spec?.protocol==='team-questions/v1'&&['answer-ack','collaboration-directive','message-evidence','recovery-handoff','staffing-proposal','roster-ack',work.parent?'relay-question':'user-question'].includes(spec.kind)))&&spec.workId===work.id&&spec.token===protocol.token&&spec.generation===protocol.generation&&proof.length===1&&proof[0].payload_hash===expected&&proof[0].value?.task?.spec===task.spec&&proof[0].value.task.run_id===work.run.id&&(owner.kind!=='terminal'||task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.processIncarnation&&task.created_by_run_generation===protocol.generation)&&!db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id);
@@ -111,7 +116,7 @@ export async function readNativeDispatchEvidence(userData,{work,protocol,team,ow
   // Every native Dispatch in this Run must belong to an exact app-admitted attempt.
   for(const d of db.prepare('SELECT id FROM dispatch_contexts WHERE run_id=?').all(work.run.id))if(!admitted.some(a=>a.dispatchId===d.id))unmanaged.push(d.id);
   rejected.push(...changedRecordedControls(db,work,nativeHistory));
-  return {state:'verified',intents,rejected,observations,reviews,deliveries,unmanaged};
+  return {state:'verified',intents,rejected,observations,reviews,deliveries,unmanaged,withdrawnIntents:withdrawal.withdrawn};
   });
  }catch(error){return {state:'unverified',detail:error.code?'Native Task evidence is unavailable or incompatible. Preserve the work and reconnect its owning runtime.':String(error.message??'Native evidence unavailable').slice(0,1200),intents:[],observations:[],rejected:[]};}
 }

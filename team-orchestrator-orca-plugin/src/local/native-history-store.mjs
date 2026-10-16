@@ -22,6 +22,6 @@ export function nativeHistoryReader({db,readPrivate,readWork,questions}){
   for(const c of rows('collaboration:').filter(c=>c.workId===workId))controls.push({kind:'collaboration-directive',record:c});
   for(const m of rows('team-message:').filter(m=>m.workId===workId&&m.controlProof))controls.push({kind:'message-evidence',record:m});
   for(const w of rows('wake:').filter(w=>w.state==='bound'&&w.handoff?.workId===workId&&w.handoff.nativeTaskId))controls.push({kind:'recovery-handoff',record:w.handoff});
-  return {authorities,controls};
+  return {authorities,controls,withdrawals:rows('intent-withdrawal:').filter(row=>row.workId===workId)};
  };
 }
