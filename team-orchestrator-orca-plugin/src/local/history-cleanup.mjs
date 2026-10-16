@@ -55,6 +55,29 @@ function settledRecipientIntents(work,byId,settledHistory){
  });
  return {...work,currentRecipientBindings};
 }
+// Older pending proposals are display history only after the complete native
+// revision chain leads to the exact delivery accepted at this Work's closure.
+function supersededDeliveryHistory(work,byId){
+ const prefix=`delivery:${work.id}:`,rows=[...byId.values()].filter(r=>family(r.id)==='delivery'&&(r.value.workId===work.id||r.id.startsWith(prefix))),current=byId.get(prefix+work.handoff?.deliveryId)?.value;
+ const result={obsolete:new Set(),ancestors:new Set(),invalid:false};
+ if(rows.length<2&&!current?.previousDeliveryId&&!(current?.revision>1))return result;
+ const invalid=()=>({...result,invalid:true});
+ if(work.status!=='completed'||!work.closedAt||!current||current.status!=='accepted'||current.format!==undefined||current.workId!==work.id||current.epoch!==(work.currentSupervisor?.epoch??work.epoch??0)||current.generation!==(work.currentSupervisor?.run??work.run).consumerGeneration)return invalid();
+ const accepted=[...byId.values()].some(r=>r.id===`work-decision:${r.value.requestId}`&&r.value.format===undefined&&r.value.workId===work.id&&r.value.deliveryId===current.id&&r.value.decision==='accept'&&r.value.recordedAt===work.closedAt&&r.value.input?.state==='none'&&/^[a-f0-9]{64}$/.test(r.value.fingerprint??''));
+ if(!accepted)return invalid();
+ let row=current,child=null;
+ while(row){
+  const key=prefix+row.id;
+  if(result.ancestors.has(key)||byId.get(key)?.value!==row||row.format!==undefined||row.workId!==work.id||!Number.isSafeInteger(row.revision)||row.revision<1||!Number.isSafeInteger(row.epoch)||row.epoch<0||!Number.isSafeInteger(row.generation)||row.generation<1||!row.supervisorMemberId||!row.protocolToken||!row.proof?.requestId||!/^[a-f0-9]{64}$/.test(row.proof.payloadHash??'')||!Number.isFinite(Date.parse(row.createdAt))||row.createdAt>work.closedAt)return invalid();
+  if(child&&(row.revision!==child.revision-1||row.epoch>child.epoch||row.generation>child.generation||row.createdAt>child.createdAt||row.supervisorMemberId!==child.supervisorMemberId||row.epoch===child.epoch&&(row.protocolToken!==child.protocolToken||row.generation!==child.generation)||!['pending','changes_requested','superseded'].includes(row.status)))return invalid();
+  result.ancestors.add(key);if(child&&row.status==='pending')result.obsolete.add(key);
+  if(row.previousDeliveryId==null){if(row.revision!==1)return invalid();break;}
+  if(typeof row.previousDeliveryId!=='string'||!row.previousDeliveryId)return invalid();
+  child=row;row=byId.get(prefix+row.previousDeliveryId)?.value;if(!row)return invalid();
+ }
+ if(rows.length!==result.ancestors.size)return invalid();
+ return result;
+}
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
  function plan(ids){
@@ -76,10 +99,13 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);
    const settledHistory=new Set(),workUncertainty=settledRecipientIntents(work,byId,settledHistory);
    for(const id of settledHistory)graph.set(id,byId.get(id).json);
+   const deliveryHistory=supersededDeliveryHistory(work,byId);
+   for(const id of deliveryHistory.ancestors)graph.set(id,byId.get(id).json);
+   if(deliveryHistory.invalid)reason='Delivery revision history is incomplete or unverified.';
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
     const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId||k==='stop-recovery'&&v.previous?.target?.teamId===work.teamId;
-    const uncertainty=k==='work'&&v.id===work.id?workUncertainty:k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
+    const uncertainty=k==='work'&&v.id===work.id?workUncertainty:k==='delivery'&&!deliveryHistory.invalid&&deliveryHistory.obsolete.has(r.id)?{...v,status:undefined}:k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
     if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
     if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(uncertainty))))reason='Unknown, pending or unprocessed evidence remains in this work.';
     if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
