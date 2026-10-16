@@ -48,3 +48,59 @@ test('an arbitrary expired staffing label cannot bypass missing original proposa
  const f=await closed(t);f.store.writeReceipt('staffing-proposal:unproven',{workId:f.workId,teamId:f.team.id,status:'expired',expiry:{kind:'accepted-work-closure',workId:f.workId,deliveryId:'delivery',decisionRequestId:'accept',recordedAt:f.store.readWork(f.workId).closedAt}});
  assert.equal(f.store.previewHistoryCleanup({selectedWorkIds:[f.workId]}).eligibleWorkIds.length,0);
 });
+import {fixture as dispatchFixture} from './dispatch-fixture.mjs';
+import {createWakeService} from '../src/local/wake.mjs';
+import {createStaffingService} from '../src/local/staffing.mjs';
+async function closedAfterReplacement(t,{replacements=1}={}){
+ const f=await dispatchFixture(t,{prestarted:true,preparedKind:'terminal',childKind:'terminal',allPrepared:true}),s=f.store;
+ const dispatch=createDispatchService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});await dispatch.check(f.work.id);
+ const terminals=new Map(),rpc=async(method,params,envelope)=>method==='terminal.show'&&terminals.has(params.terminal)?{terminal:terminals.get(params.terminal)}:f.rpc(method,params,envelope);
+ const wake=createWakeService({store:s,rpc,userData:f.profile,works:f.works,consent:async()=>{}});let fresh;
+ for(let index=1;index<=replacements;index++){
+  const old=s.readMemberOperation(f.member.id),request={requestId:'idle-child-replacement-'+index,teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId,expectedRevision:s.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Checked idle member and existing results',evidenceRefs:['idle-child']};
+  await wake.requestReplacement(request);fresh=await wake.prepareFresh(request.requestId);const patch={status:'created',kind:'terminal',handle:'replacement-child-'+index,paneKey:'replacement-tab:replacement-leaf-'+index,briefAccepted:true,observation:{ptyId:'replacement-pty-'+index,incarnationId:'replacement-instance-'+index,processIncarnation:'replacement-pty-'+index+':replacement-instance-'+index}};
+  terminals.set(patch.handle,{handle:patch.handle,tabId:'replacement-tab',leafId:'replacement-leaf-'+index,worktreeId:s.readScope(f.team.id).workspaceId,executionHostId:'local',connected:true,writable:true,ptyId:patch.observation.ptyId,incarnationId:patch.observation.incarnationId,agentIdentity:'claude'});
+  s.settleOperation(fresh.operation.requestId,fresh.operation.nativeRequest.operationId,{...patch,public:publicOperation({...fresh.operation,...patch})});assert.equal((await wake.bind(request.requestId)).state,'bound');
+ }
+
+ f.onInput(text=>{if(!text.startsWith('TEAM_ROSTER_DELTA\n'))return;const delta=JSON.parse(text.slice(text.indexOf('\n')+1)),id='replacement-roster-ack-'+delta.configVersion,spec=JSON.stringify({protocol:'team-questions/v1',kind:'roster-ack',workId:f.work.id,token:delta.token,generation:delta.generation,appQuestionId:id,deltaId:delta.deltaId,configVersion:delta.configVersion}),task={id,run_id:'run-head',spec,status:'ready'};
+  f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);f.receipt('create-'+id,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});
+ });
+ const staffing=createStaffingService({store:s,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});await staffing.check(f.work.id);await staffing.check(f.work.id);assert.deepEqual(s.staffingClosureBlockers(f.work.id),[]);
+ s.recordDelivery(f.work.id,{id:'replacement-delivery',summary:'Accepted replacement work',evidenceRefs:['idle-handoff'],attemptIds:[],generation:1,proof:{requestId:'replacement-delivery-proof',payloadHash:'a'.repeat(64)}});
+ s.decideWork({requestId:'accept-replacement-work',workId:f.work.id,deliveryId:'replacement-delivery',expectedWorkVersion:s.readWork(f.work.id).version,decision:'accept'});
+ return {...f,replacementId:fresh.operation.requestId};
+}
+test('accepted closure can clean a settled replacement while preserving its frozen original intent snapshot',async t=>{
+ const f=await closedAfterReplacement(t),s=f.store,before=s.readWork(f.work.id).currentRecipientBindings,recipient=before.find(r=>r.requestId===f.replacementId);
+ assert.equal(recipient.status,'unknown');assert.equal(recipient.public.status,'unknown');assert.equal(s.readOperation(f.replacementId).status,'created');assert.equal(s.readMemberOperation(f.member.id),null);
+ const operation=s.readOperation(f.replacementId),wakes=s.listWakes(),calls=f.calls.length,preview=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
+ s.applyHistoryCleanup({requestId:'clean-replacement-history',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(s.readWork(f.work.id).currentRecipientBindings,before);assert.deepEqual(s.readOperation(f.replacementId),operation);assert.deepEqual(s.listWakes(),wakes);assert.equal(f.calls.length,calls);
+});
+
+test('accepted closure also retains and settles the exact chain of two idle replacements',async t=>{
+ const f=await closedAfterReplacement(t,{replacements:2}),preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
+ assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.listWakes().length,2);
+});
+
+test('unresolved or mismatched replacement evidence cannot release frozen recipient uncertainty',async t=>{
+ for(const kind of ['missing-operation','unknown-operation','generation','native-request','version','unbound-wake','closure-time','unrelated-unknown','ancestor-operation'])await t.test(kind,async t=>{
+  const f=await closedAfterReplacement(t,{replacements:kind==='ancestor-operation'?2:1}),s=f.store,work=s.readWork(f.work.id),op=s.readOperation(f.replacementId),key='operation:'+op.requestId;
+  if(kind==='missing-operation'){
+   const db=new DatabaseSync(join(f.profile,'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite'));db.prepare('DELETE FROM receipts WHERE id=?').run(key);db.close();
+  }else if(kind==='unknown-operation')s.writeReceipt(key,{...op,status:'unknown'});
+  else if(kind==='generation')s.writeReceipt(key,{...op,instanceGeneration:op.instanceGeneration+1});
+  else if(kind==='native-request')s.writeReceipt(key,{...op,nativeRequest:{...op.nativeRequest,operationId:'different-native-operation'}});
+  else if(kind==='version')s.writeReceipt(key,{...op,version:1});
+  else if(kind==='unbound-wake'){const wake=s.readWake(op.wakeRequestId);s.writeReceipt('wake:'+wake.requestId,{...wake,state:'replacing'});}
+  else if(kind==='closure-time')s.writeReceipt('work:'+work.id,{...work,closedAt:'2000-01-01T00:00:00.000Z'});
+  else if(kind==='unrelated-unknown')s.writeReceipt('work:'+work.id,{...work,future:{status:'unknown'}});
+  else {const ancestor=s.readOperation(op.replaces);s.writeReceipt('operation:'+ancestor.requestId,{...ancestor,nativeRequest:{...ancestor.nativeRequest,operationId:'changed-ancestor'}});}
+  assert.equal(s.previewHistoryCleanup({selectedWorkIds:[work.id]}).eligibleWorkIds.length,0);
+ });
+});
+test('cleanup preview fences every corroborated replacement ancestor receipt',async t=>{
+ const f=await closedAfterReplacement(t,{replacements:3}),s=f.store,p=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ const middle=s.readOperation(s.readOperation(f.replacementId).replaces);s.writeReceipt('operation:'+middle.requestId,{...middle,version:middle.version+1});
+ assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Accepted replacement work');
+});

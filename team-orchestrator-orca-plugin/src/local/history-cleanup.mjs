@@ -21,6 +21,33 @@ function settledStaffingNotification(row,byId){
  const proposal=byId.get(`staffing-proposal:${event.workId}:${event.id.slice('staffing-'.length)}`)?.value;
  return proposal?.status==='expired'&&event.data?.body===proposal.rationale&&!!staffingExpiryProof(proposal,key=>byId.get(key)?.value);
 }
+// A frozen replacement intent stays immutable. Only its two launch-status fields
+// become nonblocking after that exact operation and accepted Work are corroborated.
+function settledRecipientIntents(work,byId,settledHistory){
+ if(work.status!=='completed'||!work.closedAt||!Array.isArray(work.currentRecipientBindings))return work;
+ const delivery=byId.get(`delivery:${work.id}:${work.handoff?.deliveryId}`)?.value;
+ const accepted=delivery?.status==='accepted'&&delivery.workId===work.id&&[...byId.values()].some(r=>family(r.id)==='work-decision'&&r.value.workId===work.id&&r.value.deliveryId===delivery.id&&r.value.decision==='accept'&&r.value.recordedAt===work.closedAt&&r.value.input?.state==='none'&&r.value.fingerprint);
+ if(!accepted)return work;
+ const keys=['requestId','memberId','teamId','instanceGeneration','configVersion','roleVersion','nativeRequest','scope','replaces','wakeRequestId','createdAt','runtimeId','executionHostId','hostGeneration'];
+ function prove(recipient,seen=new Set()){
+  if(seen.has(recipient.requestId))return null;seen.add(recipient.requestId);
+  const op=byId.get(`operation:${recipient.requestId}`)?.value,wake=byId.get(`wake:${recipient.wakeRequestId}`)?.value;
+  if(!Number.isSafeInteger(recipient.version)||!Number.isSafeInteger(recipient.instanceGeneration)||recipient.instanceGeneration<2||!recipient.nativeRequest?.operationId||recipient.teamId!==work.teamId||!op||op.status!=='created'||op.public?.status!=='created'||!Number.isSafeInteger(op.version)||op.version<recipient.version||hash(keys.map(k=>recipient[k]))!==hash(keys.map(k=>op[k])))return null;
+  if(recipient.status==='unknown'&&(recipient.version!==1||recipient.effectState!=='intent'||recipient.public?.status!=='unknown'||op.version<=recipient.version)||!['unknown','created'].includes(recipient.status))return null;
+  if(!wake||wake.requestId!==recipient.wakeRequestId||wake.state!=='bound'||uncertain(wake)||wake.teamId!==work.teamId||wake.memberId!==recipient.memberId||wake.handoff?.decision!=='replace'||wake.newInstance?.requestId!==recipient.requestId||wake.newInstance.instanceGeneration!==recipient.instanceGeneration||wake.oldBinding?.requestId!==recipient.replaces||(wake.oldBinding.instanceGeneration??1)+1!==recipient.instanceGeneration)return null;
+  if(['requestId','memberId','teamId','instanceGeneration','configVersion','roleVersion'].some(k=>recipient.public?.[k]!==recipient[k]))return null;
+  if(!op.handle||!(op.kind==='terminal'&&op.paneKey||op.kind==='structured'&&op.sessionId))return null;
+  for(const id of [wake.oldBinding.sourceWorkId,wake.newInstance.workId].filter(Boolean)){const context=byId.get(`work:${id}`)?.value??byId.get(`native-run-binding:${id}`)?.value;if(!context||(context.teamWorkId??context.id)!==work.id)return null;}
+  const prior=wake.oldBinding.wakeRequestId?prove(wake.oldBinding,seen):[];if(!prior)return null;
+  return [...prior,`wake:${recipient.wakeRequestId}`,`operation:${recipient.requestId}`];
+ }
+ const currentRecipientBindings=work.currentRecipientBindings.map(recipient=>{
+  if(recipient.status!=='unknown'||recipient.public?.status!=='unknown')return recipient;
+  const history=prove(recipient);if(!history)return recipient;for(const id of history)settledHistory.add(id);
+  return {...recipient,status:undefined,public:{...recipient.public,status:undefined}};
+ });
+ return {...work,currentRecipientBindings};
+}
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
  function plan(ids){
@@ -40,10 +67,12 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    const members=rows.filter(own),identities=new Set([...contexts,...members.flatMap(r=>[r.value.id,r.value.attemptId,r.value.dispatchId,r.value.nativeTaskId,r.value.evidenceId,r.value.binding?.requestId,r.value.currentSupervisor?.binding?.requestId,...(r.value.recipientBindings??[]).map(b=>b.requestId),...(r.value.currentRecipientBindings??[]).map(b=>b.requestId)]).filter(v=>typeof v==='string')]);
    let reason=unknownSchema?'An unknown storage table or column may reference this history; use a compatible cleanup implementation.':undefined;
    for(const r of rows)if(own(r)||contains(r.value,identities))graph.set(r.id,r.json);
+   const settledHistory=new Set(),workUncertainty=settledRecipientIntents(work,byId,settledHistory);
+   for(const id of settledHistory)graph.set(id,byId.get(id).json);
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
     const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId||k==='stop-recovery'&&v.previous?.target?.teamId===work.teamId;
-    const uncertainty=k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
+    const uncertainty=k==='work'&&v.id===work.id?workUncertainty:k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
     if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
     if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(uncertainty))))reason='Unknown, pending or unprocessed evidence remains in this work.';
     if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
@@ -58,7 +87,7 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
     if(sameTeam&&k==='operation'&&v.status!=='created')reason='An original native operation remains unknown.';
     if(k==='active-work'&&contexts.has(v.workId))reason='This work is still actively reserved.';
     // Replay indexes intentionally retain references; other surviving graphs must keep their evidence intact.
-    if(!related&&contains(v,identities)&&!(k==='operation'&&identities.has(v.requestId)&&v.status==='created')&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
+    if(!related&&!settledHistory.has(r.id)&&contains(v,identities)&&!(k==='operation'&&identities.has(v.requestId)&&v.status==='created')&&!['work-request','session-work','goal-request','question-answer','dispatch-intent','dispatch-review','staffing-request'].includes(k))reason='A surviving record depends on this history (including later goals or another Work).';
    }
    if(reason){retained.push({workId:id,reason});continue;}
    eligibleWorkIds.push(id);
