@@ -6,7 +6,7 @@ const fields=['protocol','workId','token','generation','supervisorMemberId','nat
 const caller=owner=>owner.kind==='structured'?`orca_session_id:${owner.sessionId}`:owner.handle;
 
 // This discharges only a never-admitted typo. It never supplies an executable intent.
-export function readIntentWithdrawals({db,tasks,work,protocol,team,owner,admitted,identity,receipts,verifyIntent,history=[]}) {
+export function readIntentWithdrawals({db,tasks,work,protocol,team,owner,admitted,identity,receipts,verifyIntent,history=[],historyContexts=[]}) {
  const withdrawn=[],rejected=[];
  if(!history.length&&!tasks.some(task=>parse(task.result)?.protocol==='team-intent-withdrawal/v1'))return {withdrawn,rejected};
  const byId=new Map(tasks.map(task=>[task.id,task]));
@@ -16,7 +16,18 @@ export function readIntentWithdrawals({db,tasks,work,protocol,team,owner,admitte
   if(result?.protocol!=='team-intent-withdrawal/v1'&&!saved)continue;
   try{
    const original=parse(task.spec);
-   if(!result||Object.keys(result).length!==fields.length||fields.some(key=>!Object.hasOwn(result,key))||result.protocol!=='team-intent-withdrawal/v1'||result.reason!=='missing-worker-rules'||result.workId!==work.id||result.token!==protocol.token||result.generation!==protocol.generation||result.supervisorMemberId!==work.supervisorMemberId||result.nativeTaskId!==task.id||result.taskKey!==original?.taskKey||result.memberId!==original?.memberId||typeof result.replacementNativeTaskId!=='string'||result.replacementNativeTaskId.length>120||result.replacementNativeTaskId===task.id||task.status!=='failed'||task.result.length>8000)throw Error('Withdrawal does not match the current supervisor and failed original intent.');
+   let proofProtocol=protocol,proofTeam=team,proofOwner=owner,proofEpoch=work.epoch??0;
+   if(saved){
+    const contexts=historyContexts.filter(context=>context.nativeTaskId===task.id&&context.epoch===saved.epoch),context=contexts[0];
+    if(contexts.length!==1||!context.team||context.team.id!==work.teamId)throw Error('Recorded withdrawal frozen configuration is unavailable.');
+    proofTeam=context.team;
+    if(saved.epoch!==proofEpoch){
+     if(!Number.isSafeInteger(saved.epoch)||saved.epoch<0||saved.epoch>=proofEpoch||context.authorities.length!==1)throw Error('Recorded withdrawal archived authority is unavailable.');
+     const authority=context.authorities[0];proofProtocol=authority.protocol;proofOwner=authority.owner;proofEpoch=authority.epoch;
+    }
+   }
+
+   if(!result||Object.keys(result).length!==fields.length||fields.some(key=>!Object.hasOwn(result,key))||result.protocol!=='team-intent-withdrawal/v1'||result.reason!=='missing-worker-rules'||result.workId!==work.id||result.token!==proofProtocol.token||result.generation!==proofProtocol.generation||result.supervisorMemberId!==work.supervisorMemberId||result.nativeTaskId!==task.id||result.taskKey!==original?.taskKey||result.memberId!==original?.memberId||typeof result.replacementNativeTaskId!=='string'||result.replacementNativeTaskId.length>120||result.replacementNativeTaskId===task.id||task.status!=='failed'||task.result.length>8000)throw Error('Withdrawal does not match the current supervisor and failed original intent.');
    if(!original||Object.hasOwn(original,'workerRules')||admitted.some(row=>row.nativeTaskId===task.id)||db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id))throw Error('Only a missing-rules intent with no admission or past Dispatch can be withdrawn.');
    for(const start of starts){
     const value=parse(start.receipt),taskId=value?.taskId??value?.task?.id;
@@ -26,16 +37,16 @@ export function readIntentWithdrawals({db,tasks,work,protocol,team,owner,admitte
    }
    const created=receipts('orchestration.taskCreate',task.id);
    if(created.length!==1)throw Error('Original Task creation proof is missing or ambiguous.');
-   verifyIntent(task,{...original,workerRules:WORKER_RULES},work,protocol,team,owner,created[0]);
+   verifyIntent(task,{...original,workerRules:WORKER_RULES},work,proofProtocol,proofTeam,proofOwner,created[0]);
    const replacement=byId.get(result.replacementNativeTaskId),replacementSpec=parse(replacement?.spec);
    if(!replacement||replacement.run_id!==task.run_id||!same({...original,workerRules:WORKER_RULES},replacementSpec))throw Error('Replacement must preserve the exact business intent and add the approved workerRules.');
    const replacementCreated=receipts('orchestration.taskCreate',replacement.id);
    if(replacementCreated.length!==1)throw Error('Replacement Task creation proof is missing or ambiguous.');
-   verifyIntent(replacement,replacementSpec,work,protocol,team,owner,replacementCreated[0]);
+   verifyIntent(replacement,replacementSpec,work,proofProtocol,proofTeam,proofOwner,replacementCreated[0]);
    const updates=receipts('orchestration.taskUpdate',task.id),update=updates[0];
-   const expected=nativeMutationFingerprint('orchestration.taskUpdate',{id:task.id,status:'failed',result:task.result,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
+   const expected=nativeMutationFingerprint('orchestration.taskUpdate',{id:task.id,status:'failed',result:task.result,run:work.run.id,callerTerminalHandle:caller(proofOwner)},proofOwner);
    if(updates.length!==1||update.payload_hash!==expected||update.value?.task?.id!==task.id||update.value.task.run_id!==work.run.id||update.value.task.status!=='failed'||update.value.task.spec!==task.spec||update.value.task.result!==task.result)throw Error('Withdrawal needs the exact authenticated owning supervisor Task update.');
-   const record={workId:work.id,nativeTaskId:task.id,replacementNativeTaskId:replacement.id,taskKey:original.taskKey,memberId:original.memberId,reason:result.reason,generation:protocol.generation,epoch:work.epoch??0,originalSpec:task.spec,replacementSpec:replacement.spec,result:task.result,createProof:{requestId:created[0].request_id,payloadHash:created[0].payload_hash},replacementProof:{requestId:replacementCreated[0].request_id,payloadHash:replacementCreated[0].payload_hash},updateProof:{requestId:update.request_id,payloadHash:update.payload_hash}};
+   const record={workId:work.id,nativeTaskId:task.id,replacementNativeTaskId:replacement.id,taskKey:original.taskKey,memberId:original.memberId,reason:result.reason,generation:proofProtocol.generation,epoch:proofEpoch,originalSpec:task.spec,replacementSpec:replacement.spec,result:task.result,createProof:{requestId:created[0].request_id,payloadHash:created[0].payload_hash},replacementProof:{requestId:replacementCreated[0].request_id,payloadHash:replacementCreated[0].payload_hash},updateProof:{requestId:update.request_id,payloadHash:update.payload_hash}};
    if(saved&&!same(saved,record))throw Error('Recorded withdrawal evidence changed.');
    withdrawn.push(record);
   }catch(error){rejected.push({nativeTaskId:task.id,detail:error.message});}
