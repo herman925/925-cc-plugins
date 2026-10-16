@@ -5,7 +5,7 @@ import {notifyQuestionEvent} from './questions.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {readNativeRunEvidence} from './native-run.mjs';
 import {nativeLaunchIntent} from './native-launch.mjs';
-import {resumedOwner} from './wake-evidence.mjs';
+import {resumedOwner,readNativeWorkerExit} from './wake-evidence.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
 import {publicWake} from './wake-store.mjs';
 import {readSessionDeath} from './recovery.mjs';
@@ -29,9 +29,15 @@ export function createWakeService({store,rpc,userData,consent,works,notify}) {
  async function stopped(row){
   const op=row.oldBinding;
   if(op.kind==='structured'){const stop=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});return readSessionDeath(userData,op.sessionId,row.proof.death?.ownerFence??op.observation?.ownerFence??stop?.death?.ownerFence,op.scope);}
-  const proof=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});
+  let observedGeneration;let proof=store.readStopProof?.({memberId:op.memberId,requestId:op.sourceAttemptId?undefined:op.requestId,instanceGeneration:op.sourceAttemptId?undefined:op.instanceGeneration,attemptId:op.sourceAttemptId});
+  if(!proof&&op.sourceAttemptId){
+   const generation=observedGeneration=await hostGeneration(op.scope,row.proof.hostGeneration??op.hostGeneration);
+   proof=await readNativeWorkerExit({store,rpc,userData,operation:op});
+   if(!proof||await hostGeneration(op.scope,generation)!==generation)return null;
+  }
   if(!proof||!(['native-exact-stop','native-pty-exit','native-worker-exit'].includes(proof.kind)))return null;
   try{const shown=(await rpc('terminal.show',{terminal:op.handle}))?.terminal;if(shown?.connected===true)return null;}catch(error){if(!error.native&&!/not found|missing|not_found/i.test(error.message))return null;}
+  if(proof.source==='native-worker-show'&&(await hostGeneration(op.scope,observedGeneration)!==observedGeneration||(await rpc('status.get'))?.runtimeId!==op.runtimeId))return null;
   return proof;
  }
  async function requestDecision(row){

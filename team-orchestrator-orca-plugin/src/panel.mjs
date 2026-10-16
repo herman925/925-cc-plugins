@@ -151,7 +151,7 @@ function admissionControls(team,member) {
  return `<p>${member?'Member':'Team'} new assignments: ${paused?'Paused':'Allowed'}${member&&team.admission?.paused?' · Team is paused':''}</p>${button(paused?'Resume new assignments':'Pause new assignments','admission',`data-team="${team.id}" ${member?`data-member="${member.id}"`:''} data-paused="${!paused}"`,'small')}`;
 }
 function stopControls(team,member){
- const tasks=(state.works||[]).filter(w=>w.teamId===team.id).flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
+ const tasks=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
  const stops=(state.stops||[]).filter(s=>s.teamId===team.id&&s.memberId===member.id),stop=stops.at(-1);
  const action=task?.dispatchId?`data-work="${task.workId}" data-attempt="${task.attemptId}"`:!tasks.length&&launch?.requestId?`data-operation="${launch.requestId}"`:null;
  return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
