@@ -193,8 +193,8 @@ async function fixture(id, mode) {
     };
     executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
     return { profile, store, executor, nativeDb, journal, async mediate(op, input) {
-      if(op==='stopMember'){
-        const row=await executor.execute({op:'_stopPrepare',params:input,internalKey}),plan=await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
+      if(op==='stopMember'||op==='recoverStop'){
+        const row=await executor.execute({op:op==='recoverStop'?'_stopRecover':'_stopPrepare',params:input,internalKey}),plan=op==='recoverStop'?row.plan:await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
         if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
         return executor.execute({op:'load'});
       }
@@ -240,7 +240,7 @@ http.createServer(async (req, res) => {
       if(op==='storageRecovery')return reply(await inspectTeamStorage({userData:f.profile}));
       if(mode==='goal-lifecycle-observe'&&op==='decideWork')for(let n=0;n<2;n++)await f.executor.execute({op:'checkWork',params:{workId:params.workId}}); // Background checks after the UI captured its decision version.
 
-      if (['saveStaffing','stopMember','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
+      if (['saveStaffing','stopMember','recoverStop','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
       return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {

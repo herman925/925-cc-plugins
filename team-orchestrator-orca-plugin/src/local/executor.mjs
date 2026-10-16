@@ -118,6 +118,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
         }
         if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
+        if (op === '_stopRecover') return stops.recover(params);
         if (op === '_stopValidate') return stops.validate(params.requestId);
         if (op === '_stopSettle') return stops.settle(params.requestId,params.receipt,params.error);
         if(op==='_decideWork'){

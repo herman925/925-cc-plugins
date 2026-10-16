@@ -28,7 +28,7 @@ export function createNativeRpc({userData,parentPid,consent,timeoutMs=15000,maxB
    const finish=(error,result)=>{if(finished)return;finished=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(result);};
    const timer=setTimeout(()=>finish(Error('Native runtime timed out; any submitted objective remains unconfirmed.')),timeoutMs);
    socket.setEncoding('utf8');
-   socket.on('connect',async()=>{try{await consent();await verifyMetadata();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope})+'\n');}catch(error){finish(error);}});
+   socket.on('connect',async()=>{try{await consent();await verifyMetadata();if(!finished)socket.write(JSON.stringify({id,authToken:metadata.authToken,method,...(params===undefined?{}:{params}),...envelope,...(method.startsWith('orchestration.')?{orchestrationContractVersion:1}:{})})+'\n');}catch(error){finish(error);}});
    socket.on('error',()=>finish(Error('Native runtime connection failed; delivery is unconfirmed.')));
    socket.on('close',()=>{if(!validating)finish(Error('Native runtime closed before a receipt; delivery is unconfirmed.'));});
    const publicError = value => [metadata.authToken,transport.endpoint,profile,userData].reduce((message,secret)=>secret?message.split(secret).join('[private runtime data]'):message,String(value||'Native operation refused')).slice(0,1500);

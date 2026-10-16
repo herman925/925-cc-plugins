@@ -50,3 +50,15 @@ test('a runtime rotation after native response bytes prevents accepting an old c
  await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});await metadata('old-epoch');
  const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});await assert.rejects(rpc.withRuntime('old-epoch',()=>rpc('status.get')),/epoch changed/);
 });
+test('native stop uses the current orchestration contract with its saved idempotency identity and no caller override',async t=>{
+ const profile=await mkdtemp(join(tmpdir(),'native-contract-')),endpoint=join(profile,'runtime.sock'),requests=[];
+ const server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());requests.push(request);const current=request.orchestrationContractVersion===1;socket.end(JSON.stringify({id:request.id,ok:current,...(current?{result:{state:'stop_unknown',dispatchId:'dispatch-one'}}:{error:{code:'orchestration_migration_required',message:'No effects were applied',data:{reason:'client_contract_missing',effectsApplied:false,requiredContractVersion:1}}}),_meta:{runtimeId:'runtime-one'}})+'\n');}));
+ await new Promise(resolve=>server.listen(endpoint,resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(profile,{recursive:true,force:true});});
+ await writeFile(join(profile,'orca-runtime.json'),JSON.stringify({runtimeId:'runtime-one',pid:process.pid,transports:[{kind:'unix',endpoint}],authToken:'private-token'}));
+ const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}}),params={dispatch:'dispatch-one'},envelope={orchestrationRequestId:'550e8400-e29b-41d4-a716-446655440000'};
+ assert.equal((await rpc('orchestration.workerStop',params,envelope)).state,'stop_unknown');
+ assert.equal(requests[0].orchestrationContractVersion,1);assert.equal(requests[0].orchestrationRequestId,envelope.orchestrationRequestId);assert.deepEqual(requests[0].params,params);
+ assert.equal(requests[0].orchestrationCompatibilityEvidence,undefined);assert.equal(requests[0].from,undefined);
+ await assert.rejects(rpc('orchestration.workerStop',params,{...envelope,orchestrationContractVersion:2}),/overrides/);
+ assert.equal(requests.length,1);
+});
