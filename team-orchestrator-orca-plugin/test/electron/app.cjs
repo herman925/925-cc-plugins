@@ -324,6 +324,8 @@ app.whenReady().then(async () => {
     const ping = await ipc('plugins:panelAction', envelope());
     assert.equal(ping.value.nonce, 'panel-nonce'); assert.equal(ping.value.workerPid, child.pid);
     assert.equal(ping.value.cliPaths, undefined); assert.equal(ping.value.liveProviderVerified, false);
+    assert.equal(ping.value.appVersion, app.getVersion());
+    assert.equal(ping.value.electron, process.versions.electron); assert.equal(ping.value.node, process.versions.node);
     const control = async (op, params) => {
       const request = envelope('team.control', op); request.params.teamWorker.args.params = params;
       const result = await ipc('plugins:panelAction', request);
@@ -336,7 +338,7 @@ app.whenReady().then(async () => {
     const saved = (await control('createTeam', create)).value;
     assert.equal(saved.teams.length, 1); assert.equal(saved.teams[0].launch, undefined);
     assert.equal(JSON.stringify(saved).includes('/remote/project'), false);
-    assert.equal(readFileSync(__dirname + '/cli-calls.jsonl','utf8').trim().split('\n').map(JSON.parse).every(args => args[0] === 'worktree'), true, 'save must not launch');
+    assert.equal(readFileSync(__dirname + '/cli-calls.jsonl','utf8').trim().split('\n').map(JSON.parse).every(args => ['worktree', 'repo'].includes(args[0]) && args[1] === 'show'), true, 'save must not launch');
     let edited = (await control('updateRole', { requestId: 'electron-role', expectedRevision: 1, teamId: saved.teams[0].id, memberId: saved.teams[0].members[0].id, brief: 'Review evidence', habits: 'Read results first', collaboration: 'Escalate blockers' })).value;
     assert.equal(edited.teams[0].members[0].roleVersion, 2);
     const capabilities = await control('capabilities', { teamId: saved.teams[0].id });
@@ -551,6 +553,7 @@ app.whenReady().then(async () => {
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
+    console.log(`Observed fixture runtime: Electron ${process.versions.electron}, Node ${process.versions.node}, synthetic Orca ${app.getVersion()}`);
     console.log('REAL_ELECTRON_WORKER_PASS: schema2 recovery diagnostics and protected history preview/apply rejection through real IPC; idle provider replacement without native death and deferred organization applied with acceptance/next-goal reservation; native-authored staffing proposal, atomic approval across panel requests, no on-demand prelaunch, one full-mode addition via genuine renderer IPC and versioned real-user roster delivery; native UUID stop, unknown, deduplication, admission pause/resume; overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }

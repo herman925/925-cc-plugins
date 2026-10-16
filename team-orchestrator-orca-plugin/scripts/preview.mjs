@@ -19,7 +19,8 @@ async function fixture(id, mode) {
     const store = await openTeamStore({ userData: profile });
     let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('idle-replacement') || mode === 'goal-lifecycle' || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
-      if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
+      if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
+      if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
       throw Error('CLI launch fallback is forbidden');
     };
     const internalKey = `fixture-${id}`;

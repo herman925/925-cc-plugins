@@ -205,3 +205,27 @@ test('public worker aliases remain available while private broker operations are
   assert.equal(invoked,0);
  }finally{globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore();}
 });
+
+test('serialized runtime gate accepts the exact additional 1.4.223 tuple without claiming live provider verification', async () => {
+  const { validateRuntime } = await import('../src/local/runtime-contract.mjs');
+  const isolatedGate = (0, eval)(`(${validateRuntime.toString()})`);
+  const runtime = { appName: 'Orca', appVersion: '1.4.223', platform: 'darwin', arch: 'arm64', electron: '43.7.5', node: '24.21.0', sqlite: true, build: { version: '1.4.223', commit: 'ff4a51c872e723d87ab141044814301ea5a78634', buildId: '1.4.223-ff4a51c872e723d87ab141044814301ea5a78634-arm64', platform: 'darwin', architecture: 'arm64' } };
+  assert.deepEqual(isolatedGate(runtime), { verification: 'pinned-contract', buildId: runtime.build.buildId, electron: '43.7.5', node: '24.21.0', sqlite: true, liveProviderVerified: false });
+});
+
+for (const [version, commit] of [['1.4.222', '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43'], ['1.4.223', 'ff4a51c872e723d87ab141044814301ea5a78634']]) {
+  test(`${version} runtime rejects mixed or unknown tuples, unsupported platforms and missing SQLite`, async () => {
+    const { validateRuntime } = await import('../src/local/runtime-contract.mjs');
+    const gate = (0, eval)(`(${validateRuntime.toString()})`);
+    const runtime = { appName: 'Orca', appVersion: version, platform: 'darwin', arch: 'arm64', electron: '43.7.5', node: '24.21.0', sqlite: true, build: { version, commit, buildId: `${version}-${commit}-arm64`, platform: 'darwin', architecture: 'arm64' } };
+    assert.equal(gate(runtime).verification, 'pinned-contract');
+    for (const patch of [{ appVersion: '1.4.224' }, { appName: 'Other' }, { platform: 'linux' }, { arch: 'x64' }, { electron: '43.7.6' }, { node: '24.21.1' }, { build: null }]) {
+      assert.throws(() => gate({ ...runtime, ...patch }), { code: 'unsupported_build' });
+    }
+    for (const patch of [{ version: version === '1.4.223' ? '1.4.222' : '1.4.223' }, { commit: commit === '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43' ? 'ff4a51c872e723d87ab141044814301ea5a78634' : '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43' }, { buildId: version === '1.4.223' ? '1.4.222-9fdd90ffa7721e145f1353ad9fb9df2f70c31f43-arm64' : '1.4.223-ff4a51c872e723d87ab141044814301ea5a78634-arm64' }, { buildId: '1.4.224-future-arm64' }, { platform: 'linux' }, { architecture: 'x64' }]) {
+      assert.throws(() => gate({ ...runtime, build: { ...runtime.build, ...patch } }), { code: 'unsupported_build' });
+    }
+    assert.throws(() => gate({ ...runtime, platform: 'win32' }), { code: 'platform_unverified' });
+    assert.throws(() => gate({ ...runtime, sqlite: false }), { code: 'node_capability_missing' });
+  });
+}
