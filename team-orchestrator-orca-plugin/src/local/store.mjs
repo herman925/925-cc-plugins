@@ -166,6 +166,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const staffing=staffingStore({db,readPrivate,putPrivate,readWork:readCurrentWork,listRunWorks,readSnapshot,write,archive,atomic:atomicDispatch});
     runtimeReconnect=runtimeReconnectStore({db,readPrivate,putPrivate,readWork,persistWork,readSnapshot,readOperation,readDispatchProtocol,atomic:atomicDispatch});
     readSnapshot();
+    staffing.reconcileExpiredStaffingProposals();
 
     let closed = false;
     return {
