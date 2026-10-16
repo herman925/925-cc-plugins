@@ -420,7 +420,7 @@
       ]
     }
   ],
-  "remaining": "All five TeamWorks completed. Whole Orca restart, physical sleep/wake, distinct permission revocation, provider-specific launch failure and active-task interruption remain unverified; #125 remains OPEN/ready-for-human. Formal0.1.08 metadata/artifacts are a separate single release step after source and live reruns.",
+  "remaining": "Original fiveWorks completed. Actual restart and45-secondphysical sleep preserved exact identities and no duplicate effects. Sixth recovery Work needs_attention pending explicit same-instance runtime reauthentication fix/rerun. Distinct permission revocation, provider-specific launch failure and active-Task interruption remain unverified. #125 remains OPEN/ready-for-human.",
   "controls": {
     "preparedIdleStop": {
       "requestId": "063e1984-8d43-4e7e-b42e-e6ae72ff9a9d",
@@ -522,6 +522,37 @@
       "processing": "confirmed",
       "acknowledgementNativeTaskId": "task_89ef0d876a63",
       "oldBlockedAnswerUnchanged": true
+    },
+    "desktopRestart": {
+      "version": "0.1.08",
+      "workId": "8fed3b77-24fd-4b7f-9c62-72bf0385546d",
+      "runId": "run_bcdbde078954",
+      "beforePid": 92042,
+      "afterPid": 81356,
+      "runtimeChanged": true,
+      "memberCount": 4,
+      "originalHandlePtyIncarnationPreserved": true,
+      "originalPanesRestoredAfterOpenSavedSession": true,
+      "operationCount": 4,
+      "newOperationCount": 0,
+      "nativeTaskCount": 0,
+      "runConsumerGeneration": 1,
+      "workStatus": "needs_attention",
+      "runState": "unverified",
+      "continuation": "unverified; explicit same-instance runtime reauthentication is missing"
+    },
+    "physicalSleep": {
+      "version": "0.1.08",
+      "sleptAt": "2026-10-16T15:33:56+08:00",
+      "wokeAt": "2026-10-16T15:34:41+08:00",
+      "seconds": 45,
+      "source": "actual macOS pmset power log Sleep / Wake from Deep Idle events",
+      "runtimeUnchanged": true,
+      "exactTerminalIdentitiesPreserved": true,
+      "totalTerminals": 5,
+      "memberLaunchOperationCount": 4,
+      "nativeTaskCount": 0,
+      "continuation": "still unverified due preceding restart runtime authorization gap"
     }
   }
 }
