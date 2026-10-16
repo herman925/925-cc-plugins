@@ -1,3 +1,4 @@
+import {controlRuntime,memberControlRuntime} from './runtime-control.mjs';
 import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
@@ -24,7 +25,7 @@ export function accepted(receipt,send,instance){
 }
 export function createDispatchService({store,rpc,userData,consent,works,beforeAdmission,onNativeWait,onClosedMember}) {
  const serialize=createKeyedSerializer();
- const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,controlRuntime(store.readCurrentWork(id)),fn));
  const project=id=>store.dispatchProjection(id);
  const teamFor=work=>store.effectiveTeamForWork?.(work.id)??store.readTeamVersion(work.teamId,work.configVersion);
  async function evidence(work,protocol,team,verified){return readNativeDispatchEvidence(userData,{work,protocol,team,owner:verified.instance,admitted:store.listDispatches(work.id),nativeHistory:store.readNativeHistory(work.id)});}
@@ -36,7 +37,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
   catch(error){return store.updateDispatchProtocol(work.id,protocol.version,{state:'unknown',detail:String(error.message).slice(0,1200)});}
  }
  async function preparedSession(work,member,saved){
-  if(!saved||!store.isActiveOperation(saved)||saved.status!=='created'||saved.teamId!==work.teamId||saved.memberId!==member.id||saved.scope?.workspaceKey!==work.scope.workspaceKey||saved.roleVersion!==member.roleVersion||saved.runtimeId!==work.binding.runtimeId)throw Error('Prepared member is unknown, stale or belongs to another scope; no replacement was launched.');
+  if(!saved||!store.isActiveOperation(saved)||saved.status!=='created'||saved.teamId!==work.teamId||saved.memberId!==member.id||saved.scope?.workspaceKey!==work.scope.workspaceKey||saved.roleVersion!==member.roleVersion||memberControlRuntime(work,saved)!==controlRuntime(work))throw Error('Prepared member is unknown, stale or belongs to another scope; no replacement was launched.');
   const preferences={agent:saved.nativeRequest.agent,model:saved.nativeRequest.sessionOptions?.model??'default',effort:saved.nativeRequest.sessionOptions?.effort??'default'};
   if(Object.keys(preferences).some(key=>preferences[key]!==member[key]))throw Error('Prepared session preferences differ; reuse cannot override model or effort.');
   let terminal,binding,sessionFence;

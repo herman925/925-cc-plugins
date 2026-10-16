@@ -1,3 +1,4 @@
+import {controlRuntime} from './runtime-control.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {latestBusinessAttempts} from './acceptance.mjs';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
@@ -7,7 +8,7 @@ import { userMessage,accepted } from './dispatch.mjs';
 import { notifyQuestionEvent } from './questions.mjs';
 export function createLifecycleService({store,rpc,userData,consent,works,notify}){
  const serialize=createKeyedSerializer();
- const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,store.readCurrentWork(id)?.binding.runtimeId,fn));
+ const serial=(id,fn)=>serialize(id,()=>withNativeRuntime(rpc,controlRuntime(store.readCurrentWork(id)),fn));
  async function evidence(id){
   const work=store.readCurrentWork(id);if(!work||work.status==='completed')return null;
   const verified=await works.verifyWork(id,true,{allowSettledParent:true}),protocol=store.readDispatchProtocol(id);

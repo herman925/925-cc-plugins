@@ -224,6 +224,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         }
         throw Error('Unknown internal observation phase.');
       }
+      if(op==='reconnectWork'){const work=await works.reconnect(params);stopped=false;scheduleWork();return {value:store.readSnapshot(),work};}
       if (op === 'submitWork' || op === 'checkWork' || op === 'retryObjective') {
         if(op!=='checkWork')await reconcileExisting();
         if (op !== 'submitWork' && (!params || Object.keys(params).some(key => key !== 'workId') || typeof params.workId !== 'string')) throw Error('Choose a saved TeamWork.');

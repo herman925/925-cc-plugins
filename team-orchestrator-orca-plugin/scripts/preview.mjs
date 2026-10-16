@@ -17,7 +17,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
@@ -132,7 +132,7 @@ async function fixture(id, mode) {
         assert.match(envelope.orchestrationRequestId,/^[a-f0-9-]{36}$/);assert.deepEqual(Object.keys(params),['dispatch']);
         return {dispatchId:params.dispatch,state:mode==='dispatch-stop-unknown'?'stop_unknown':'stopped',processAction:'closed_agent_terminal',close:{ptyKilled:mode!=='dispatch-stop-unknown'}};
       }
-      if (method === 'status.get') return { runtimeId: 'fixture-runtime', capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
+      if (method === 'status.get') return { runtimeId: runtimeEpoch, capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
       if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
@@ -153,10 +153,11 @@ async function fixture(id, mode) {
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
       }
-      const launch = [...launches.values()].find(row => row.outcome.handle === params?.terminal || row.outcome.sessionId === params?.sessionId);
+      const launch = [...launches.values()].find(row => params?.terminal !== undefined && row.outcome.handle === params.terminal || params?.sessionId !== undefined && row.outcome.sessionId === params.sessionId);
       if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, ptyId: 'pty-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
       if (method === 'terminal.rename') { title = params.title; return { rename: { handle: params.terminal, title, tabId: 'tab-1' } }; }
-      if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'permission' ? 'permission' : 'idle' } };
+      if(method==='terminal.wait')return {wait:{handle:params.terminal,condition:params.for,satisfied:true,status:'running',exitCode:null}};
+      if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'runtime-reconnect-busy'&&runtimeEpoch!=='fixture-runtime' ? 'working' : mode === 'permission' ? 'permission' : 'idle' } };
       if (method === 'terminal.focus') return { focus: { handle: params.terminal } };
       if (method === 'orchestration.sessionAddress') return { orcaSessionId: `orca_session_id:${params.sessionId}` };
       if (method === 'orchestration.partyLocation') { const sessionId = params.address.slice('orca_session_id:'.length), row = [...launches.values()].find(row => row.outcome.sessionId === sessionId); return { location: row ? { kind: 'chat', sessionId, worktreeId: row.worktreeId } : null }; }
@@ -192,7 +193,7 @@ async function fixture(id, mode) {
       throw Error('Unknown fixture read');
     };
     executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
-    return { profile, store, executor, nativeDb, journal, async mediate(op, input) {
+    return { profile, store, executor, nativeDb, journal, restartDesktop(){runtimeEpoch='fixture-runtime-after-restart';}, async mediate(op, input) {
       if(op==='stopMember'){
         const row=await executor.execute({op:'_stopPrepare',params:input,internalKey}),plan=await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
         if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
@@ -237,6 +238,7 @@ http.createServer(async (req, res) => {
       if (mode === 'write-error' && ['createTeam', 'updateRole', 'updateSettings', 'importTemplate'].includes(op)) throw Error('Disk full');
       if (op === 'context' && mode === 'no-workspace') return reply(null);
       const f = await fixture(fixtureId, mode);
+      if(mode?.startsWith('runtime-reconnect')&&op==='checkWork')f.restartDesktop();
       if(op==='storageRecovery')return reply(await inspectTeamStorage({userData:f.profile}));
       if(mode==='goal-lifecycle-observe'&&op==='decideWork')for(let n=0;n<2;n++)await f.executor.execute({op:'checkWork',params:{workId:params.workId}}); // Background checks after the UI captured its decision version.
 
