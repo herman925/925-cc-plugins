@@ -4,6 +4,10 @@ import { terminalIdentity } from './terminal-identity.mjs';
 import { controlRuntime } from './runtime-control.mjs';
 import { canonical } from './native-mutation.mjs';
 const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+const terminalControlIdentity = terminal => [
+  'handle', 'worktreeId', 'executionHostId', 'connected', 'writable',
+  'agentIdentity', 'tabId', 'leafId', 'ptyId', 'incarnationId',
+].map(key => terminal[key]);
 async function nativeRun(userData, work, operations, settle = (value) => value) {
   return withOrchestrationSnapshot(
     userData,
@@ -156,32 +160,7 @@ export async function reconnectRuntime({ store, rpc, userData, consent }, input)
           afterActivity = (await rpc('terminal.agentStatus', { terminal: op.handle }))?.agentStatus;
         if (
           !after ||
-          !same(
-            [
-              'handle',
-              'worktreeId',
-              'executionHostId',
-              'connected',
-              'writable',
-              'agentIdentity',
-              'tabId',
-              'leafId',
-              'ptyId',
-              'incarnationId',
-            ].map((k) => shown[k]),
-            [
-              'handle',
-              'worktreeId',
-              'executionHostId',
-              'connected',
-              'writable',
-              'agentIdentity',
-              'tabId',
-              'leafId',
-              'ptyId',
-              'incarnationId',
-            ].map((k) => after[k]),
-          ) ||
+          !same(terminalControlIdentity(shown), terminalControlIdentity(after)) ||
           afterActivity?.handle !== op.handle ||
           afterActivity.isRunningAgent !== true ||
           !['idle', null].includes(afterActivity.status)

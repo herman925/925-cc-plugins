@@ -97,3 +97,24 @@ test('two different recovery actions cannot claim the same stop version and an e
  const observed=createStopService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}),input={requestId:'recover-exited',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version};
  assert.equal((await observed.recover(input)).plan,null);assert.equal(f.store.readStop(row.requestId).state,'stopped');assert.equal(f.store.readStop(row.requestId).proof.kind,'native-worker-exit');assert.equal(f.store.readReceipt('stop-recovery:recover-exited').previous.state,'unknown');
 });
+async function closedRecoveredStop(t){
+ const f=await activeStopFixture(t),service=f.make(),row=await service.prepare(f.input);await service.validate(row.requestId);await service.settle(row.requestId,null,{message:'lost native receipt'});await service.recover({requestId:'history-recovery',stopRequestId:row.requestId,version:f.store.readStop(row.requestId).version});await service.settle(row.requestId,{dispatchId:f.attempt.dispatchId,state:'stopped',close:{ptyKilled:true}});
+ const dispatches=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});f.complete(f.attempt);await dispatches.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatches.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'accepted');
+ f.store.recordDelivery(f.work.id,{id:'delivery',summary:'Accepted test result',evidenceRefs:[attempt.evidenceId],attemptIds:[attempt.id],generation:1,proof:{requestId:'native-delivery',payloadHash:'b'.repeat(64)}});f.store.decideWork({requestId:'accept-work',workId:f.work.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(f.work.id).version,decision:'accept'});
+ return f;
+}
+test('accepted Work cleanup retains recovered stop audit and its historical uncertainty after positive current stop proof',async t=>{
+ const f=await closedRecoveredStop(t),before=f.store.readReceipt('stop-recovery:history-recovery'),stop=f.store.readStop(f.input.requestId),p=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.equal(before.previous.state,'unknown');assert.deepEqual(p.eligibleWorkIds,[f.work.id],JSON.stringify(p.retained));
+ f.store.applyHistoryCleanup({requestId:'clean-recovered-work',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision});assert.deepEqual(f.store.readReceipt('stop-recovery:history-recovery'),before);assert.deepEqual(f.store.readStop(f.input.requestId),stop);assert.equal(f.store.readWork(f.work.id).handoff.summary,'[History manually cleared]');
+});
+for(const fault of ['current-unknown','no-exit-proof','different-native-request','different-target','different-plan','missing-linked-stop','new-pending-audit-field'])test(`cleanup keeps stop recovery evidence when ${fault}`,async t=>{
+ const f=await closedRecoveredStop(t),key='stop:'+f.input.requestId,stop=f.store.readStop(f.input.requestId),auditKey='stop-recovery:history-recovery',audit=f.store.readReceipt(auditKey);
+ if(fault==='current-unknown')f.store.writeReceipt(key,{...stop,state:'unknown'});
+ if(fault==='no-exit-proof')f.store.writeReceipt(key,{...stop,proof:undefined});
+ if(fault==='different-native-request')f.store.writeReceipt(key,{...stop,nativeRequestId:'different-native-request'});
+ if(fault==='different-target')f.store.writeReceipt(key,{...stop,target:{...stop.target,dispatchId:'different-dispatch'}});
+ if(fault==='different-plan')f.store.writeReceipt(key,{...stop,plan:{...stop.plan,params:{dispatch:'different-dispatch'}}});
+ if(fault==='missing-linked-stop')f.store.writeReceipt(auditKey,{...audit,stopRequestId:'missing-stop'});
+ if(fault==='new-pending-audit-field')f.store.writeReceipt(auditKey,{...audit,future:{state:'pending'}});
+ const before=f.store.readReceipt(auditKey),p=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(p.eligibleWorkIds,[]);assert.throws(()=>f.store.applyHistoryCleanup({requestId:'refuse-uncertain-cleanup',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/No selected history/);assert.deepEqual(f.store.readReceipt(auditKey),before);assert.equal(f.store.readWork(f.work.id).handoff.summary,'Accepted test result');
+});
