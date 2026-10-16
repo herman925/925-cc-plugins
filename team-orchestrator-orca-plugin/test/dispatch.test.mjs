@@ -521,3 +521,74 @@ test('terminal total delivery uses exact PTY-qualified creator evidence before u
  await lifecycle.decide({requestId:'accept-terminal',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
  assert.equal(f.store.readCurrentWork(work.id).status,'completed');
 });
+
+test('recovery winning the version race during dispatch observation is not overwritten by a stale failure patch',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createRecoveryService}=await import('../src/local/recovery.mjs');const f=await fixture(t);
+ let hold=false,entered,release;const waiting=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+ const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);if(hold&&method==='orchestration.workerShow'){hold=false;entered();await barrier;}return result;};
+ const dispatch=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ const first=f.store.listDispatches(f.work.id)[0];assert.equal(first.status,'running');
+ hold=true;const checking=dispatch.check(f.work.id);await waiting;
+ await createRecoveryService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}}).checkWork(f.work.id);
+ const reconciled=f.store.listDispatches(f.work.id)[0];assert.ok(reconciled.version>first.version);
+ release();await checking;assert.equal(f.store.listDispatches(f.work.id)[0].status,'running');
+ assert.equal(f.store.listDispatches(f.work.id)[0].version,reconciled.version);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,1);
+});
+
+test('a clean accepted native reconciliation replaces stale protocol diagnostics while current author refusals remain visible',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ const current=f.store.readDispatchProtocol(f.work.id);f.store.updateDispatchProtocol(f.work.id,current.version,{detail:'Dispatch attempt changed while observing evidence.'});
+ await dispatch.check(f.work.id);assert.equal(f.store.readDispatchProtocol(f.work.id).detail,'Native supervisor protocol and current Dispatch evidence verified.');
+ f.createIntent(protocol,{taskId:'wrong-author',taskKey:'blocked',memberId:f.team.members[2].id,forged:true});
+ await dispatch.check(f.work.id);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/author proof/);
+ await dispatch.check(f.work.id);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/author proof/);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,1);
+});
+
+test('completed work projects a superseded concurrency diagnostic without rewriting sealed protocol history',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');const f=await fixture(t,{kind:'terminal'});
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Complete',evidenceRefs:['artifact:report'],attemptIds:[]}),task={id:'done',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,'term-head','tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','head-pty:head-instance',1);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','done-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await lifecycle.check(f.work.id);
+ const protocol=f.store.readDispatchProtocol(f.work.id);f.store.updateDispatchProtocol(f.work.id,protocol.version,{detail:'Dispatch attempt changed while observing evidence.'});
+ const work=f.store.readCurrentWork(f.work.id);await lifecycle.decide({requestId:'close',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readSnapshot().works[0].dispatchProtocol.detail,undefined);
+ assert.equal(f.store.readSnapshot().works[0].nativeRuns[0].dispatchProtocol.detail,undefined);
+ assert.equal(f.store.readDispatchProtocol(work.id).detail,'Dispatch attempt changed while observing evidence.');
+});
+
+test('supervisor protocol maps permitted attempt IDs and native worker_done message IDs directly to delivery references',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const protocol=JSON.parse(f.messages.find(text=>text.startsWith('TEAM_DISPATCH_PROTOCOL')).split('\n').slice(1).join('\n'));
+ assert.match(protocol.instructions,/attemptId delivered in each latest TEAM_DISPATCH_PERMIT/);
+ assert.match(protocol.instructions,/evidenceId.*exactly worker_report:MESSAGE_ID/);
+ assert.match(protocol.instructions,/actual native worker_done message/);
+ assert.match(protocol.instructions,/same reference.*native acceptance review/);
+ assert.match(protocol.instructions,/Do not wait for a separate plugin acceptance notification/);
+ assert.match(protocol.instructions,/proposing a delivery does not assert plugin or user acceptance/);
+});
+
+test('native review and delivery proposal may arrive before plugin review observation while user closure remains gated',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');const f=await fixture(t),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);const p=f.store.readDispatchProtocol(f.work.id);f.createIntent(p);f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];f.review(attempt);
+ assert.equal(attempt.evidenceId,'worker_report:report-task-one');assert.equal(attempt.status,'pending_acceptance');
+ const spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Verified review done',evidenceRefs:['worker_report:report-task-one','artifact:tests'],attemptIds:[attempt.id]}),task={id:'early-delivery',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,null,null,null,null);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','early-delivery-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:'codex_head'}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await lifecycle.check(f.work.id);
+ let work=f.store.readCurrentWork(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery.id,task.id);
+ await assert.rejects(lifecycle.decide({requestId:'too-soon',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'}),/accepted|acceptance|review|pending/i);
+ await dispatch.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');work=f.store.readCurrentWork(f.work.id);
+ await lifecycle.decide({requestId:'after-review',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readCurrentWork(work.id).status,'completed');
+});

@@ -11,7 +11,7 @@ import { lifecycleStore } from './lifecycle-store.mjs';
 import { questionStore } from './questions-store.mjs';
 import { declaredWriteScope, scopeBlocker } from '../scheduling.mjs';
 import { initialMembers } from '../launch.mjs';
-import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol } from '../dispatch.mjs';
+import { validateDispatch, validateDispatchProtocol, publicDispatch, publicDispatchProtocol, DISPATCH_OBSERVATION_CHANGED } from '../dispatch.mjs';
 import { mkdir, realpath, stat, open } from 'node:fs/promises';
 import { join, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -94,7 +94,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
     const listRunWorks = id => { const root=readCurrentWork(id);if(!root)return [];const teamWorkId=root.teamWorkId??root.id;return [readCurrentWork(teamWorkId),...db.prepare("SELECT json FROM receipts WHERE id LIKE 'native-run-binding:%' ORDER BY rowid").all().map(r=>readCurrentWork(JSON.parse(r.json).id)).filter(w=>w.teamWorkId===teamWorkId)]; };
     const listTeamDispatches = id => {const ids=new Set(listRunWorks(id).map(w=>w.id));return listDispatches().filter(a=>ids.has(a.workId));};
     const queuedTasks = workId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'dispatch-queue:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>row.workId===workId);
-    const dispatchProjection = workId => ({queuedTasks:listRunWorks(workId).flatMap(w=>queuedTasks(w.id)),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId)),tasks:listTeamDispatches(workId).map(publicDispatch),nativeRuns:listRunWorks(workId).map(w=>({id:w.id,teamWorkId:w.teamWorkId??w.id,supervisorMemberId:w.supervisorMemberId,run:w.run,parent:w.parent,input:{state:w.input.state},error:w.error,questions:questions.listQuestions(w.id).map(q=>({id:q.id,summary:q.summary,status:q.status,to:q.to,relay:q.relay})),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(w.id))}))});
+    const dispatchProjection = workId => ({queuedTasks:listRunWorks(workId).flatMap(w=>queuedTasks(w.id)),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(workId),readCurrentWork(workId)?.status==='completed'),tasks:listTeamDispatches(workId).map(publicDispatch),nativeRuns:listRunWorks(workId).map(w=>({id:w.id,teamWorkId:w.teamWorkId??w.id,supervisorMemberId:w.supervisorMemberId,run:w.run,parent:w.parent,input:{state:w.input.state},error:w.error,questions:questions.listQuestions(w.id).map(q=>({id:q.id,summary:q.summary,status:q.status,to:q.to,relay:q.relay})),dispatchProtocol:publicDispatchProtocol(readDispatchProtocol(w.id),w.status==='completed')}))});
     const atomicDispatch = action => { db.exec('BEGIN IMMEDIATE'); try { const value=action(); db.exec('COMMIT'); return value; } catch(error) { db.exec('ROLLBACK'); throw error; } };
     const stops = stopStore({db,readPrivate,putPrivate,atomic:atomicDispatch});
     const listGoals = teamId => db.prepare("SELECT json FROM receipts WHERE id LIKE 'goal:%' ORDER BY rowid").all().map(row=>JSON.parse(row.json)).filter(row=>!teamId||row.teamId===teamId);
@@ -290,7 +290,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         validateDispatch(row);putPrivate(`dispatch-review:${row.id}`,event);putPrivate(`dispatch:${row.id}`,row);return row;
       }); },
       updateDispatch(id,version,patch,expectedWorkVersion) { return atomicDispatch(()=>{
-        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(readWork(row.workId)?.status==='completed')fail('Completed TeamWork is sealed.');if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail('Dispatch attempt changed while observing evidence.');
+        const row=validateDispatch(readPrivate(`dispatch:${id}`));if(readWork(row.workId)?.status==='completed')fail('Completed TeamWork is sealed.');if(expectedWorkVersion!==undefined&&readWork(row.workId)?.version!==expectedWorkVersion)fail('TeamWork changed during recovery.');if(row.version!==version)fail(DISPATCH_OBSERVATION_CHANGED);
         if(Object.keys(patch).some(key=>!['admission','status','permit','dispatchId','creatorDispatchId','depth','binding','nativeState','startRequestId','startPayloadHash','outcome','result','evidenceId','detail','recovery'].includes(key)))fail('Immutable Dispatch identity cannot change.');
         if(patch.admission!==undefined&&(patch.admission!=='unadmitted'||row.permit.state!=='not_sent'))fail('Admission cannot be rewritten after a permit attempt.');
         if(row.dispatchId&&patch.dispatchId&&row.dispatchId!==patch.dispatchId)fail('Late native evidence belongs to a different Dispatch.');
