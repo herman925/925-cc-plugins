@@ -1,4 +1,5 @@
 import {controlRuntime,memberControlRuntime} from './runtime-control.mjs';
+import {nameDispatchedMember} from './member-names.mjs';
 import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {WORKER_RULES} from '../dispatch.mjs';
@@ -136,7 +137,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
    for(const observed of native.observations){
     let attempt=store.listDispatches(workId).find(row=>row.id===observed.id);
     try {
-    if(attempt.evidenceId)continue;
+    if(attempt.evidenceId){await nameDispatchedMember({store,rpc,consent,work,attempt,team});continue;}
     if(observed.state!=='verified'){if(attempt.permit.state==='sending')attempt=store.updateDispatch(attempt.id,attempt.version,{status:'unknown',permit:{...attempt.permit,state:'unknown'},detail:'Permit delivery interrupted; reconciliation never resends.'});else if(observed.state==='unverified')store.updateDispatch(attempt.id,attempt.version,{status:'unknown',detail:observed.detail});continue;}
     const shown=await rpc('orchestration.workerShow',{dispatch:observed.dispatchId});
     if(shown?.dispatch?.id!==observed.dispatchId||shown.dispatch.runId!==work.run.id||shown.dispatch.taskId!==attempt.nativeTaskId||shown.dispatch.assigneeHandle!==observed.binding.handle||shown.worker?.worktreeId!==work.scope.workspaceId)throw Error('Native worker projection does not match admitted member identity.');
@@ -147,6 +148,7 @@ export function createDispatchService({store,rpc,userData,consent,works,beforeAd
     // Discard superseded evidence; never retry an old patch against a newer version.
     if(store.listDispatches(workId).find(row=>row.id===attempt.id)?.version!==attempt.version){checkIssue=true;continue;}
     store.updateDispatch(attempt.id,attempt.version,{dispatchId:settled.dispatchId,creatorDispatchId:settled.creatorDispatchId,...(settled.depth?{depth:settled.depth}:{}),binding:settled.binding,permit:{...attempt.permit,state:'accepted',source:'native-worker-start'},nativeState:settled.nativeState,startRequestId:settled.startRequestId,startPayloadHash:settled.startPayloadHash,...(settled.completion?{status:'pending_acceptance',...settled.completion,detail:'Native execution report recorded. Direct supervisor acceptance is still required.'}:{status:settled.nativeState==='ready'&&shown.observation?.exactWorker===true&&shown.observation.status==='live'&&!shown.observation.agentWait?'running':'unknown',detail:shown.observation?.agentWait?'Native session is waiting for input or authorization. Resolve its native tab; no replacement was started.':shown.observation?.exactWorker===true&&shown.observation.status==='live'?'Native assignment observed; execution result is not yet proven.':'Native worker observation is unverified; its saved identity remains reserved.'})});
+    await nameDispatchedMember({store,rpc,consent,work,attempt:store.readMemberDispatch(attempt.memberId),team});
     }catch(error){checkIssue=true;const failed=store.listDispatches(workId).find(row=>row.id===observed.id);if(failed&&!failed.evidenceId&&failed.version===attempt.version)store.updateDispatch(failed.id,failed.version,{status:'unknown',detail:String(error.message).slice(0,1200)});}
    }
    const reviewEvidence=await evidence(store.readCurrentWork(workId),protocol,team,await works.verifyWork(workId));
