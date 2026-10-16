@@ -193,3 +193,26 @@ test('all-at-start prepares four saved members and keeps independent successes a
  expect(await page.evaluate(()=>bridgeCalls.filter(row=>row.params?.teamWorker?.args?.op==='launchSupervisor').length)).toBe(4);
  await page.reload();await expect(panel(page).locator('.team-card')).toContainText('3 actual session receipt');
 });
+
+test('repo-backed composite folder is presented and saved as a folder', async ({ page }) => {
+  await page.goto('/?mode=composite-folder');
+  const ui = panel(page);
+  await ui.getByRole('button', { name: /Squad/ }).click();
+  await expect(ui.getByRole('heading', { name: 'Project and execution host' }).locator('..')).toContainText('folder');
+  await saveTeam(ui);
+  await expect(ui.locator('.team-card')).toContainText('folder');
+  await page.reload();
+  await expect(panel(page).locator('.team-card')).toContainText('folder');
+});
+
+test('successful launch removes an in-flight ledger warning from the panel and survives reload',async({page})=>{
+ await page.goto('/?mode=launch-reconciled');const ui=panel(page);
+ await ui.getByRole('button',{name:/Squad/}).click();await createAndLaunch(ui);
+ await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false');
+ await ui.getByRole('button',{name:'Head',exact:true}).click();
+ await expect(ui.getByRole('region',{name:'Member details'})).toContainText('Created');
+ await expect(ui.locator('#app')).not.toContainText('Original native launch ledger row is absent');
+ await page.reload();await panel(page).getByRole('button',{name:'Head',exact:true}).click();
+ await expect(panel(page).getByRole('region',{name:'Member details'})).toContainText('Created');
+ await expect(panel(page).locator('#app')).not.toContainText('Original native launch ledger row is absent');
+});

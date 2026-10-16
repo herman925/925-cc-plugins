@@ -33,8 +33,10 @@ export function wakeStore({db,readPrivate,putPrivate,atomic,readOperation,persis
    if(!row||row.version!==version||!['resumed','replacing'].includes(row.state)||!binding||binding.status!=='created'||work?.supervisorMemberId!==row.memberId||work.binding.requestId!==row.oldBinding.requestId||work.status==='completed'||run.state!=='verified'||(work.run.id&&run.id!==work.run.id))throw Error('Recovery does not match this ongoing supervisor epoch.');
    raw.supervisorHistory??=[];raw.supervisorHistory.push({binding:work.binding,instance:work.instance,run:work.run,recoveryRequestId:id,endedAt:new Date().toISOString()});
    for(const saved of db.prepare("SELECT id,json FROM receipts WHERE id LIKE 'dispatch:%'").all()){
-    const attempt=JSON.parse(saved.json);if(attempt.workId!==workId||attempt.supervisorMemberId!==row.memberId||attempt.review)continue;
-    attempt.originalSupervisorInstance??=work.instance;attempt.reviewAuthority={recoveryRequestId:id,reviewerMemberId:row.memberId,generation:run.consumerGeneration,reviewToken:randomUUID(),previousGeneration:attempt.generation,handoff:row.handoff??{decision:'native-resume',death:row.proof.death}};attempt.version++;putPrivate(saved.id,attempt);
+    const attempt=JSON.parse(saved.json);if(attempt.workId!==workId||attempt.supervisorMemberId!==row.memberId)continue;
+    if(attempt.review&&attempt.originalSupervisorInstance)continue;
+    attempt.originalSupervisorInstance??=work.instance;
+    if(!attempt.review)attempt.reviewAuthority={recoveryRequestId:id,reviewerMemberId:row.memberId,generation:run.consumerGeneration,reviewToken:randomUUID(),previousGeneration:attempt.generation,handoff:row.handoff??{decision:'native-resume',death:row.proof.death}};attempt.version++;putPrivate(saved.id,attempt);
    }
    raw.currentSupervisor={binding,instance,run,status:'active',input:{state:'not_sent'},processing:{state:'unknown'},nativeSend:undefined,error:undefined,recoveryRequestId:id,epoch:(work.epoch??0)+1};raw.version++;persistWork(raw);
    for(const saved of db.prepare("SELECT id,json FROM receipts WHERE id LIKE 'delivery:%'").all()){const delivery=JSON.parse(saved.json);if(delivery.workId===workId&&delivery.status==='pending'){delivery.status='superseded';delivery.recoveryRequestId=id;putPrivate(saved.id,delivery);}}

@@ -1,0 +1,527 @@
+{
+  "observedAt": "2026-10-16T06:44:34.928644+00:00",
+  "environment": {
+    "orcaVersion": "1.4.223",
+    "orcaCommit": "ff4a51c872e723d87ab141044814301ea5a78634",
+    "platform": "darwin-arm64",
+    "electron": "43.7.5",
+    "node": "24.21.0",
+    "pluginDisplayVersion": "0.1.07",
+    "candidateSource": "e039e2480ec0fa2e72960a66f9e63540be06ea51",
+    "releasedBuild": false
+  },
+  "providerObservations": {
+    "codex": {
+      "cliVersion": "0.162.1",
+      "model": "GPT-6-Astra",
+      "effort": "high",
+      "selection": "inherited defaults",
+      "statusSource": "actual native terminal screen",
+      "laterRequested": {
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "observed": "GPT-6.1-Sol medium",
+        "evidence": "Actual partial-preparation Head and Worker-2 screens; Worker-2 native succeeded report msg_e58f42e5494d"
+      }
+    },
+    "claude": {
+      "provider": "Claude Code",
+      "observedModel": "deepseek-flash",
+      "observedCliVersions": [
+        "2.1.296",
+        "2.1.301"
+      ],
+      "selection": "inherited existing configuration",
+      "source": "Metadata of eight QA-owned Claude Code session JSONL files; message contents excluded",
+      "laterRequested": {
+        "model": "default",
+        "effort": "default",
+        "mixedTeamsPreserved": true
+      }
+    }
+  },
+  "teams": [
+    {
+      "id": "6341f936-3dd4-4db4-a8eb-10fcbf1e647b",
+      "name": "QA125-Git-mixed",
+      "configVersion": 5,
+      "workspaceKind": "git",
+      "host": "local",
+      "workspaceIdentityHash": "58231098e5d75b20991b5612d4dfbf470ea5cd372e09c6c3ab3404631d759d7b",
+      "members": [
+        {
+          "id": "2eb1617c-0e44-44e4-adbc-3cb4989654bf",
+          "name": "Head",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "id": "71cc5117-bbd5-4789-85f1-72785763ac45",
+          "name": "Worker-1",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        },
+        {
+          "id": "7e39a9d7-2a9e-44bd-8ace-576ed13a1fbf",
+          "name": "Worker-2",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "id": "6f0db708-e3f5-4918-925c-f6d20daeafbe",
+          "name": "Worker-3",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        }
+      ]
+    },
+    {
+      "id": "6ef6df91-8e85-4de1-a97a-faecb4a07ca0",
+      "name": "QA125-Folder-mixed",
+      "configVersion": 4,
+      "workspaceKind": "folder",
+      "host": "local",
+      "workspaceIdentityHash": "f0b1d641313d8e2a207adea4d478ea804ea08767568580c3150a57b97e202065",
+      "members": [
+        {
+          "id": "bd01c44a-6fe0-4211-aef8-ae835d4beaec",
+          "name": "Head",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        },
+        {
+          "id": "94c71f4e-6733-4d67-8a58-778970c94d09",
+          "name": "Worker-1",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "id": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+          "name": "Worker-2",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        },
+        {
+          "id": "db681e10-f36f-443f-903d-416a74b6035d",
+          "name": "Worker-3",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        }
+      ]
+    },
+    {
+      "id": "231d20ca-d1ce-43e3-a461-85660aa09946",
+      "name": "QA125-Partial-Git",
+      "configVersion": 2,
+      "workspaceKind": "git",
+      "host": "local",
+      "workspaceIdentityHash": "58231098e5d75b20991b5612d4dfbf470ea5cd372e09c6c3ab3404631d759d7b",
+      "members": [
+        {
+          "id": "34cb746f-a9f5-44b1-925c-db8ef9be4897",
+          "name": "Head",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "id": "b22d08de-96ff-4cb2-88da-0ec0617031d2",
+          "name": "Worker-1",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        },
+        {
+          "id": "9886ab4f-9de6-4952-a2fd-9820baaf48c3",
+          "name": "Worker-2",
+          "agent": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        {
+          "id": "738f5314-5808-4177-8999-8c75d0c20149",
+          "name": "Worker-3",
+          "agent": "claude",
+          "model": "default",
+          "effort": "default"
+        }
+      ]
+    }
+  ],
+  "work": [
+    {
+      "id": "d56a9c0e-e3de-484a-a79d-3a765826564e",
+      "teamId": "6341f936-3dd4-4db4-a8eb-10fcbf1e647b",
+      "status": "completed",
+      "closedAt": "2026-10-16T04:51:59.322Z",
+      "run": {
+        "state": "verified",
+        "id": "run_bdf7b10a1566",
+        "consumerGeneration": 1
+      },
+      "supervisorHandle": "term_5f4d5d7d-edcf-4a81-92d2-97fd84fcb9aa",
+      "inputState": "accepted",
+      "processingState": "observed",
+      "attempts": [
+        {
+          "id": "23f7e045-90c8-41dc-91c3-649b3c024307",
+          "taskKey": "implement-reading",
+          "memberId": "71cc5117-bbd5-4789-85f1-72785763ac45",
+          "nativeTaskId": "task_f50a827a961e",
+          "dispatchId": "ctx_8384683225d8",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_ea354db75b09",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:49:12.899Z"
+        },
+        {
+          "id": "71222fb3-0206-405d-8b10-333684fcd7e2",
+          "taskKey": "implement-summary",
+          "memberId": "7e39a9d7-2a9e-44bd-8ace-576ed13a1fbf",
+          "nativeTaskId": "task_9efcf2d66c35",
+          "dispatchId": "ctx_ceeefa7acf4b",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_09b5c7cf03f3",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:49:38.857Z"
+        },
+        {
+          "id": "2536e71b-a054-45e9-a808-779a7d1be229",
+          "taskKey": "implement-report",
+          "memberId": "6f0db708-e3f5-4918-925c-f6d20daeafbe",
+          "nativeTaskId": "task_1a7fde5f7a1f",
+          "dispatchId": "ctx_01315f77c604",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_431cf5858916",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:49:38.857Z"
+        }
+      ]
+    },
+    {
+      "id": "9341da88-026b-4008-86db-caf4ee72c9f7",
+      "teamId": "6ef6df91-8e85-4de1-a97a-faecb4a07ca0",
+      "status": "completed",
+      "closedAt": "2026-10-16T04:57:28.508Z",
+      "run": {
+        "state": "verified",
+        "id": "run_8b19e1f0bb7b",
+        "consumerGeneration": 1
+      },
+      "supervisorHandle": "term_25881924-da6a-4c3a-ad92-372723cae234",
+      "inputState": "accepted",
+      "processingState": "observed",
+      "attempts": [
+        {
+          "id": "9472f17f-b5f4-4c3e-8a52-2a8d32c39058",
+          "taskKey": "w1-reading-module",
+          "memberId": "94c71f4e-6733-4d67-8a58-778970c94d09",
+          "nativeTaskId": "task_2cf9ddc91843",
+          "dispatchId": "ctx_7cb017d42116",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_1069e8ca32c7",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:53:19.487Z"
+        },
+        {
+          "id": "af72e3de-d369-460d-baa2-7cb8e28db239",
+          "taskKey": "w2-summary-module",
+          "memberId": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+          "nativeTaskId": "task_ecabee736802",
+          "dispatchId": "ctx_45c1d9e79e14",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_05f7d5239733",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:53:19.488Z"
+        },
+        {
+          "id": "07a1dd82-fa70-45cd-8eaf-f0a88c513e1b",
+          "taskKey": "w3-report-module",
+          "memberId": "db681e10-f36f-443f-903d-416a74b6035d",
+          "nativeTaskId": "task_007cb5ff68c6",
+          "dispatchId": "ctx_f41fbae2a4d8",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_e49219c2b5e5",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:53:40.755Z"
+        }
+      ]
+    },
+    {
+      "id": "ac254406-c543-4aa7-9115-92925f3cda1a",
+      "teamId": "6341f936-3dd4-4db4-a8eb-10fcbf1e647b",
+      "status": "completed",
+      "closedAt": "2026-10-16T05:00:25.286Z",
+      "run": {
+        "state": "verified",
+        "id": "run_01e293401b7a",
+        "consumerGeneration": 1
+      },
+      "supervisorHandle": "term_2ca1f322-5d25-40ab-af20-521dc636c393",
+      "inputState": "accepted",
+      "processingState": "observed",
+      "attempts": [
+        {
+          "id": "d5cd0556-7ecf-4c01-9917-21b4ab684f7b",
+          "taskKey": "A-median",
+          "memberId": "71cc5117-bbd5-4789-85f1-72785763ac45",
+          "nativeTaskId": "task_9904a132bdd5",
+          "dispatchId": "ctx_9b7e65a59ba7",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_276431f1b6a8",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:55:10.977Z"
+        },
+        {
+          "id": "ce8a7adb-271b-4dad-b388-82a637a4395f",
+          "taskKey": "C-pretty-report",
+          "memberId": "6f0db708-e3f5-4918-925c-f6d20daeafbe",
+          "nativeTaskId": "task_68f847c3e38f",
+          "dispatchId": "ctx_d0d326ad2351",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_c66bcd962e06",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:54:12.624Z"
+        },
+        {
+          "id": "09171061-2b8a-462a-b5de-61be4b44ecd2",
+          "taskKey": "B-docstrings",
+          "memberId": "7e39a9d7-2a9e-44bd-8ace-576ed13a1fbf",
+          "nativeTaskId": "task_e590395274b3",
+          "dispatchId": "ctx_645c0ab8d50d",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_aaf9f6a3adc6",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T04:56:43.684Z"
+        }
+      ]
+    },
+    {
+      "id": "dfb5018c-db5c-4005-8990-b2e5fad6e88a",
+      "teamId": "6ef6df91-8e85-4de1-a97a-faecb4a07ca0",
+      "status": "completed",
+      "closedAt": "2026-10-16T06:44:06.289Z",
+      "run": {
+        "state": "verified",
+        "id": "run_a2796e27d913",
+        "consumerGeneration": 1
+      },
+      "supervisorHandle": "term_e18a4460-86f3-41b2-9acb-0573345a576f",
+      "inputState": "accepted",
+      "processingState": "observed",
+      "attempts": [
+        {
+          "id": "1622e38e-c7af-412d-9830-70ef3ba9cda9",
+          "taskKey": "qa-independent",
+          "memberId": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+          "nativeTaskId": "task_edb759fc64c9",
+          "dispatchId": "ctx_f935adc951ab",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_dc2e1bd7676a",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T05:06:03.986Z"
+        },
+        {
+          "id": "e4ed0fde-9248-4d7e-8cfc-46439d3c6e24",
+          "taskKey": "qa-missing-input",
+          "memberId": "94c71f4e-6733-4d67-8a58-778970c94d09",
+          "nativeTaskId": "task_a16c75a4b8f5",
+          "dispatchId": "ctx_3163f8b94bdd",
+          "status": "rework",
+          "outcome": "failed",
+          "evidenceId": "worker_report:msg_faa677b77c21",
+          "previousAttemptId": null,
+          "reviewDecision": "rework",
+          "reviewedAt": "2026-10-16T05:07:35.361Z"
+        },
+        {
+          "id": "1d949590-19ef-4b49-b5a3-cbaa72ff9156",
+          "taskKey": "qa-missing-input",
+          "memberId": "94c71f4e-6733-4d67-8a58-778970c94d09",
+          "nativeTaskId": "task_c71433ae0ae6",
+          "dispatchId": "ctx_9bc6b1b7e90b",
+          "status": "accepted",
+          "outcome": "failed",
+          "evidenceId": "worker_report:msg_2cce5094822f",
+          "previousAttemptId": "e4ed0fde-9248-4d7e-8cfc-46439d3c6e24",
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T05:08:34.717Z"
+        },
+        {
+          "id": "8423b3fc-f2c1-43fd-88c3-380f974fc110",
+          "taskKey": "qa-independent",
+          "memberId": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+          "nativeTaskId": "task_175951ebbe07",
+          "dispatchId": "ctx_180ca0b150e5",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_778796b05de4",
+          "previousAttemptId": "1622e38e-c7af-412d-9830-70ef3ba9cda9",
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T05:42:39.458Z"
+        }
+      ]
+    },
+    {
+      "id": "b87e55f7-5274-42f6-b3f5-f728d7591e8b",
+      "teamId": "231d20ca-d1ce-43e3-a461-85660aa09946",
+      "status": "completed",
+      "closedAt": "2026-10-16T06:42:11.753Z",
+      "run": {
+        "state": "verified",
+        "id": "run_734694af0a52",
+        "consumerGeneration": 1
+      },
+      "supervisorHandle": "term_e1f1c00b-ef8d-44a3-a6e1-772ba3b4347f",
+      "inputState": "accepted",
+      "processingState": "observed",
+      "attempts": [
+        {
+          "id": "d22c60ee-c509-4a42-a47f-9c9b7ef03ab4",
+          "taskKey": "verify-resumed-preparation",
+          "memberId": "9886ab4f-9de6-4952-a2fd-9820baaf48c3",
+          "nativeTaskId": "task_bc3aa60b98e1",
+          "dispatchId": "ctx_ebab72843766",
+          "status": "accepted",
+          "outcome": "succeeded",
+          "evidenceId": "worker_report:msg_e58f42e5494d",
+          "previousAttemptId": null,
+          "reviewDecision": "accept",
+          "reviewedAt": "2026-10-16T06:11:24.864Z"
+        }
+      ]
+    }
+  ],
+  "remaining": "All five TeamWorks completed. Whole Orca restart, physical sleep/wake, distinct permission revocation, provider-specific launch failure and active-task interruption remain unverified; #125 remains OPEN/ready-for-human. Formal0.1.08 metadata/artifacts are a separate single release step after source and live reruns.",
+  "controls": {
+    "preparedIdleStop": {
+      "requestId": "063e1984-8d43-4e7e-b42e-e6ae72ff9a9d",
+      "unchangedRecordAfterRepeatedStopAndChecks": true,
+      "beforeVersion": 4,
+      "afterVersion": 4,
+      "state": "stopped",
+      "proof": {
+        "kind": "native-exact-stop",
+        "postStopVerified": true,
+        "ptyIdentityHash": "e4420bf1a6d36b421fb71c05012a974cf44b7a027800e8cbf723ef504e78f323"
+      },
+      "testedScope": "Prepared idle Codex member process; not an active Task interruption"
+    },
+    "partialPreparation": {
+      "teamId": "231d20ca-d1ce-43e3-a461-85660aa09946",
+      "operationCount": 4,
+      "originalTwoHandlesPreserved": true,
+      "members": [
+        {
+          "requestId": "231d20ca-d1ce-43e3-a461-85660aa09946-34cb746f-a9f5-44b1-925c-db8ef9be4897",
+          "memberId": "34cb746f-a9f5-44b1-925c-db8ef9be4897",
+          "handle": "term_e1f1c00b-ef8d-44a3-a6e1-772ba3b4347f",
+          "status": "created",
+          "instanceGeneration": 1,
+          "error": null
+        },
+        {
+          "requestId": "231d20ca-d1ce-43e3-a461-85660aa09946-b22d08de-96ff-4cb2-88da-0ec0617031d2",
+          "memberId": "b22d08de-96ff-4cb2-88da-0ec0617031d2",
+          "handle": "term_2e7dfe34-163d-43e2-abe8-769c0c81a5b7",
+          "status": "created",
+          "instanceGeneration": 1,
+          "error": null
+        },
+        {
+          "requestId": "231d20ca-d1ce-43e3-a461-85660aa09946-9886ab4f-9de6-4952-a2fd-9820baaf48c3",
+          "memberId": "9886ab4f-9de6-4952-a2fd-9820baaf48c3",
+          "handle": "term_a8201a45-6184-46c6-b49d-1a6a1c39bfbc",
+          "status": "created",
+          "instanceGeneration": 1,
+          "error": null
+        },
+        {
+          "requestId": "231d20ca-d1ce-43e3-a461-85660aa09946-738f5314-5808-4177-8999-8c75d0c20149",
+          "memberId": "738f5314-5808-4177-8999-8c75d0c20149",
+          "handle": "term_5f9c9e37-2648-496e-a818-fc7362385320",
+          "status": "created",
+          "instanceGeneration": 1,
+          "error": null
+        }
+      ],
+      "limit": "Partial sequence interruption; both in-flight launches settled before disable. No provider-specific launch failure is claimed."
+    },
+    "correctedIntents": [
+      {
+        "workId": "dfb5018c-db5c-4005-8990-b2e5fad6e88a",
+        "nativeTaskId": "task_4db5356b0845",
+        "replacementNativeTaskId": "task_a16c75a4b8f5",
+        "taskKey": "qa-missing-input",
+        "memberId": "94c71f4e-6733-4d67-8a58-778970c94d09",
+        "reason": "missing-worker-rules",
+        "epoch": 0,
+        "generation": 1,
+        "recordedAt": null
+      },
+      {
+        "workId": "dfb5018c-db5c-4005-8990-b2e5fad6e88a",
+        "nativeTaskId": "task_377e97a74ac1",
+        "replacementNativeTaskId": "task_edb759fc64c9",
+        "taskKey": "qa-independent",
+        "memberId": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+        "reason": "missing-worker-rules",
+        "epoch": 0,
+        "generation": 1,
+        "recordedAt": null
+      }
+    ],
+    "workerRecovery": {
+      "requestId": "7d8b82ea-f5ea-422d-aa22-7301608ebd05",
+      "teamId": "6ef6df91-8e85-4de1-a97a-faecb4a07ca0",
+      "memberId": "7461b881-ab81-4acc-9e34-df19be5e28d6",
+      "state": "bound",
+      "oldHandle": "term_af2cad37-bc76-4660-a06e-0845c2607be9",
+      "newHandle": "term_8c0a97a4-aa3e-49c6-8e14-6a3e42582e1c",
+      "instanceGeneration": 3,
+      "revalidationAttemptId": "8423b3fc-f2c1-43fd-88c3-380f974fc110",
+      "revalidationDispatchId": "ctx_180ca0b150e5"
+    },
+    "blockedQuestion": {
+      "id": "5658f585-8c38-42f3-aedf-a8291b712fec",
+      "nativeTaskId": "task_a67eea3846e6",
+      "blockedUnsentAnswerId": "7384ee70-7272-405e-9b63-ab3d1ca5173f",
+      "oldAnswerSha256": "618041b6bc20b348fbf3544f81dd027f27cb03c35283900fddc12b833753f40a",
+      "supplementRecheck": "passed",
+      "status": "answered",
+      "newAnswerId": "f571f588-30fe-46dc-8003-2de47e2f2f05",
+      "newAnswerState": "accepted",
+      "processing": "confirmed",
+      "acknowledgementNativeTaskId": "task_89ef0d876a63",
+      "oldBlockedAnswerUnchanged": true
+    }
+  }
+}

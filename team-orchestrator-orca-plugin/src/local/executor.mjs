@@ -50,12 +50,18 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     const result = await cli(['worktree', 'show', '--worktree', selector]);
     const workspace = result?.worktree;
     if (!workspace?.id || workspace.id !== workspaceId) throw new Error('Open the intended workspace first; Orca returned no active workspace identity.');
-    return workspace;
+    if (workspace.id.startsWith('folder:')) return { ...workspace, kind: 'folder' };
+    if (typeof workspace.repoId !== 'string' || !workspace.repoId || workspace.repoId.length > 4096) throw new Error('Orca did not verify the workspace repository identity.');
+    const { repo } = await cli(['repo', 'show', '--repo', `id:${workspace.repoId}`]) ?? {};
+    if (!repo || repo.id !== workspace.repoId) throw new Error('Orca returned a mismatching workspace repository identity.');
+    if (repo.kind !== undefined && repo.kind !== 'git' && repo.kind !== 'folder') throw new Error('Orca returned an unsupported repository kind.');
+    // Both pinned hosts normalize legacy records without kind to Git (shared/repo-kind.ts).
+    return { ...workspace, kind: repo.kind ?? 'git' };
   }
   function verifiedScope(workspace) {
     const executionHostId = workspace.hostId ?? workspace.identity?.executionHostId;
     if (typeof executionHostId !== 'string' || !/^(local|ssh:[^\s|]+)$/.test(executionHostId)) throw new Error('Orca did not verify a supported local or SSH execution host for this workspace.');
-    return { workspaceId: workspace.id, executionHostId, kind: workspace.id.startsWith('folder:') ? 'folder' : 'git', displayName: workspace.displayName || workspace.branch || 'Workspace', branch: workspace.branch || '', workspaceKey: hash(JSON.stringify([workspace.id, executionHostId])) };
+    return { workspaceId: workspace.id, executionHostId, kind: workspace.kind, displayName: workspace.displayName || workspace.branch || 'Workspace', branch: workspace.branch || '', workspaceKey: hash(JSON.stringify([workspace.id, executionHostId])) };
   }
   const publicScope = ({ workspaceId, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
   async function context(workspaceId, teamId) {
@@ -176,7 +182,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           if (op === '_launchSettle') {
             launchPlans.delete(params.phaseId);
             let patch;
-            try { if (params.error) throw Error(params.error); patch = launchReceipt(params.result, operation); }
+            try {
+              if (params.error) throw Error(params.error);
+              patch = { ...launchReceipt(params.result, operation), error: undefined };
+              // A matching creation receipt supersedes a pre-receipt absence observation.
+              // Current consent/identity/liveness failures remain separate recovery evidence.
+              if (['intent', 'unknown'].includes(operation.recovery?.state) && !operation.recovery.incomplete) patch.recovery = undefined;
+            }
             catch (error) { patch = { status: 'unknown', error: error.message.slice(0, 1200) }; }
             const saved = settled(operation, patch);
             return saved.status === 'created' && store.isActiveOperation(saved) ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };

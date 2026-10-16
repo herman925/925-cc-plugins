@@ -1,8 +1,9 @@
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import {createKeyedSerializer} from './keyed-serializer.mjs';
 import {realpath} from 'node:fs/promises';
 import {join,relative,isAbsolute,sep} from 'node:path';
 import {withNativeRuntime} from './native-runtime.mjs';
-import {readNativeLaunchLedger} from './native-launch-ledger.mjs';
+import {readNativeLaunchLedger,LAUNCH_LEDGER_ABSENT} from './native-launch-ledger.mjs';
 import {launchReceipt,publicOperation} from './native-launch.mjs';
 import {readNativeDispatchEvidence} from './native-dispatch.mjs';
 const stamp=()=>new Date().toISOString();
@@ -37,15 +38,17 @@ export function createRecoveryService({store,rpc,userData,consent}){
   let patch={},recovery={state:operation.status==='created'?'confirmed_effect':'unknown',liveness:'unknown',source:'saved-operation',observedAt:stamp(),detail:'Persisted intent retained. Missing evidence never authorizes a second launch.'};
   try{
    await consent();
-   if(operation.status==='unknown'){
+   if(operation.status==='unknown'&&operation.effectState==='intent'){
+    recovery={...recovery,state:'intent',detail:'Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it.'};
+   }else if(operation.status==='unknown'){
     const ledger=await readNativeLaunchLedger(userData,operation.nativeRequest);
     if(ledger.state==='succeeded'){patch={...launchReceipt(ledger.result,operation),error:undefined};recovery={...recovery,state:'confirmed_effect',source:'native-launch-ledger',detail:'Original native launch receipt recovered; current execution is separate.'};}
-    else {recovery.detail=ledger.detail;patch.error=ledger.detail;if(operation.effectState==='intent')recovery={...recovery,state:'intent',detail:'Launch intent is durable but has not passed the native submission boundary. Its member remains reserved; checking does not launch it.'};}
+    else {recovery.detail=ledger.detail;patch.error=ledger.detail;}
    }
    const saved={...operation,...patch};
    if(saved.status==='created'){
     recovery.detail='Native session creation is confirmed; current execution remains unverified.';
-    const status=await rpc('status.get');
+    const status=await rpc('status.get');let terminalObservation;
     await withNativeRuntime(rpc,status?.runtimeId,async()=>{
      const generation=await host(saved.scope);
      if(generation!==null&&saved.hostGeneration!=null&&generation!==saved.hostGeneration)throw Error('Saved SSH connection generation changed; observations remain incomplete.');
@@ -57,14 +60,21 @@ export function createRecoveryService({store,rpc,userData,consent}){
       if(death)recovery={...recovery,state:'stopped',liveness:'stopped',source:'native-owner-death',death,detail:'Native death evidence names the exact saved owner fence. The member reservation remains until an authorized lifecycle action.'};
      }else{
       const instance=store.listCurrentWorks().find(work=>work.binding.requestId===requestId)?.instance;
-      const expected=instance?.incarnationId??saved.observation?.incarnationId;
+      const expected=instance??saved.observation;
       const shown=(await rpc('terminal.show',{terminal:saved.handle}))?.terminal;
-      if(!expected||shown?.incarnationId!==expected||shown.handle!==saved.handle||shown.worktreeId!==saved.scope.workspaceId||shown.executionHostId!==saved.scope.executionHostId||`${shown.tabId}:${shown.leafId}`!==saved.paneKey)throw Error('Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.');
+      if(!matchesTerminalObservation(shown,expected)||(saved.observation?.incarnationId||saved.observation?.processIncarnation)&&!matchesTerminalObservation(shown,saved.observation)||shown.handle!==saved.handle||shown.worktreeId!==saved.scope.workspaceId||shown.executionHostId!==saved.scope.executionHostId||`${shown.tabId}:${shown.leafId}`!==saved.paneKey)throw Error('Exact saved terminal incarnation is unverified. Inspect its native session; absence does not prove stopped.');
+      terminalObservation={...saved.observation,...terminalIdentity(shown)};
       if(shown.connected===true){recovery={...recovery,liveness:'live',source:'native-terminal',detail:'Exact terminal instance is connected. Provider readiness and task acceptance are separate.'};}
      }
      if(await host(saved.scope)!==generation)throw Error('SSH generation changed during observation; output is incomplete.');
      const final=await rpc('status.get');if(final?.runtimeId!==status.runtimeId)throw Error('Native runtime changed during reconciliation.');
     });
+    if(terminalObservation){
+     patch.observation=terminalObservation;
+     // Repair the known pre-settlement diagnostic on already-created legacy rows.
+     // A connected terminal does not clear arbitrary launch/provider errors.
+     if(recovery.liveness==='live'&&operation.error===LAUNCH_LEDGER_ABSENT)patch.error=undefined;
+    }
    }
   }catch(error){recovery={...recovery,state:(patch.status??operation.status)==='created'?'confirmed_effect':'unknown',liveness:'unknown',incomplete:true,detail:detail(error)};}
   patch.recovery=recovery;patch.public=publicOperation({...operation,...patch});

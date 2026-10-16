@@ -126,6 +126,13 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
 }
 var withNativeRuntime = (rpc, runtimeId, action) => rpc.withRuntime ? rpc.withRuntime(runtimeId, action) : action();
 
+// src/local/terminal-identity.mjs
+function terminalIdentity(terminal) {
+  const { ptyId, incarnationId } = terminal ?? {};
+  if (typeof ptyId !== "string" || !ptyId || typeof incarnationId !== "string" || !incarnationId) throw Error("Exact native terminal PTY and incarnation are unverified.");
+  return { ptyId, incarnationId, processIncarnation: `${ptyId}:${incarnationId}` };
+}
+
 // src/capabilities.mjs
 var AGENTS = ["codex", "claude"];
 
@@ -298,7 +305,7 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
       if (shown?.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || saved.paneKey && `${shown.tabId}:${shown.leafId}` !== saved.paneKey) throw Error("Created terminal could not be corroborated in its saved project.");
       await rpc("terminal.rename", { terminal: saved.handle, title: saved.title });
       const status = (await rpc("terminal.agentStatus", { terminal: saved.handle }))?.agentStatus;
-      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ["working", "permission", "idle"].includes(status.status) ? status.status : "unknown", detail: "Native terminal agent observation; task readiness is separate.", ...shown.incarnationId ? { incarnationId: shown.incarnationId } : {} };
+      if (status?.handle === saved.handle && status.isRunningAgent === true) observation = { state: ["working", "permission", "idle"].includes(status.status) ? status.status : "unknown", detail: "Native terminal agent observation; task readiness is separate.", ...shown.incarnationId ? { incarnationId: shown.incarnationId, ...shown.ptyId ? terminalIdentity(shown) : {} } : {} };
     } else {
       const history = await rpc("agentSession.history", { sessionId: saved.sessionId, direction: "tail", limit: 1 });
       if (history?.ok === true && history.page?.sessionId === saved.sessionId && Number.isSafeInteger(history.page.fence) && history.page.fence > 0) observation = { ...observation, ownerFence: history.page.fence };

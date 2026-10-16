@@ -1,3 +1,4 @@
+import {questionOriginKind,verifiedReportOrigin} from './native-question-origin.mjs';
 import {createHash} from 'node:crypto';
 import {canonical,nativeMutationFingerprint} from './native-mutation.mjs';
 const parse=value=>{try{return JSON.parse(value);}catch{return null;}};
@@ -25,13 +26,14 @@ function savedControl(entry,spec,task,receipt){
 }
 // Historical records can discharge closure evidence only. They never enter the
 // current intent/review stream, so an old token cannot authorize a new effect.
-export function isHistoricalControl(db,work,task,history){
+export function isHistoricalControl(db,work,task,history,attempts=[]){
  const spec=parse(task.spec);
  if(!spec||spec.workId!==work.id||task.run_id!==work.run.id||!['team-questions/v1','team-delivery/v1'].includes(spec.protocol)||db.prepare('SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1').get(task.id))return false;
  const identity=db.prepare("SELECT caller_fingerprint FROM mutation_caller_identities WHERE transport='local_authenticated_transport'").get();if(!identity?.caller_fingerprint)return false;
  const receipts=db.prepare("SELECT request_id,payload_hash,receipt FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint,task.id),receipt=receipts[0],value=parse(receipt?.receipt);
  if(receipts.length!==1||value?.task?.spec!==task.spec||value.task.run_id!==task.run_id)return false;
- return history.controls.some(entry=>savedControl(entry,spec,task,receipt)&&authority(history,spec,entry.epoch).some(({owner,protocol})=>receipt.payload_hash===nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner)&&(owner.kind==='structured'||owner.kind==='terminal'&&task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.incarnationId&&task.created_by_run_generation===protocol.generation)));
+ const reportValid=entry=>{if(entry.kind!=='question'||!entry.record.sourceReport&&questionOriginKind(spec.origin)!=='report')return true;const report=verifiedReportOrigin(db,{work,attempts,spec});return Boolean(report&&(!entry.record.sourceReport||same(entry.record.sourceReport,report)));};
+ return history.controls.some(entry=>savedControl(entry,spec,task,receipt)&&reportValid(entry)&&authority(history,spec,entry.epoch).some(({owner,protocol})=>receipt.payload_hash===nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner)&&(owner.kind==='structured'||owner.kind==='terminal'&&task.created_by_terminal_handle===owner.handle&&task.created_by_pane_key===owner.paneKey&&task.created_by_process_incarnation===owner.processIncarnation&&task.created_by_run_generation===protocol.generation)));
 }
 export function isHistoricalReview(work,attempt,proof,task,review,history){
  const saved=attempt.review,status=attempt.outcome==='succeeded'?'completed':'failed';

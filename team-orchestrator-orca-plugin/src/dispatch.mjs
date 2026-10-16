@@ -1,3 +1,4 @@
+export const DISPATCH_OBSERVATION_CHANGED='Dispatch attempt changed while observing evidence.';
 export const WORKER_RULES='Use only approved roster members through admitted native Orca dispatch. Do not self-create provider-native subagents. Report results and questions to your original direct manager; assigned collaboration does not transfer acceptance. These are cooperative role instructions, not global provider tool interception.';
 import { declaredWriteScope } from './scheduling.mjs';
 export const DISPATCH_STATUSES = ['admitted','awaiting_start','running','unknown','pending_acceptance','accepted','rework','rejected'];
@@ -22,4 +23,8 @@ export function publicDispatch(row) {
  const keys=['workId','teamWorkId','runId','creatorDispatchId','depth','id','nativeTaskId','taskKey','memberId','memberName','supervisorMemberId','configVersion','roleVersion','attemptId','instanceGeneration','status','admission','instruction','dispatchId','outcome','result','evidenceId','detail','createdAt','review','dependencies','writeScope','previousAttemptId','recovery'];
  return Object.fromEntries(keys.filter(key=>row[key]!==undefined).map(key=>[key,row[key]]));
 }
-export function publicDispatchProtocol(row) { return row ? {state:row.state,generation:row.generation,...(row.detail?{detail:row.detail}:{})} : undefined; }
+export function publicDispatchProtocol(row,completed=false) {
+ // Completed Work is sealed; only the known superseded CAS diagnostic is omitted.
+ const superseded=completed&&row?.state==='accepted'&&row.detail===DISPATCH_OBSERVATION_CHANGED;
+ return row ? {state:row.state,generation:row.generation,...(row.detail&&!superseded?{detail:row.detail}:{})} : undefined;
+}

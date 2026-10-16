@@ -1,112 +1,10 @@
-import {WORKER_RULES} from '../src/dispatch.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { openTeamStore } from '../src/local/store.mjs';
-import { DEFAULT_FORM } from '../src/team.mjs';
-import { nativeLaunchIntent, publicOperation } from '../src/local/native-launch.mjs';
+import { nativeLaunchIntent } from '../src/local/native-launch.mjs';
 import { createWorkService } from '../src/local/teamwork.mjs';
-const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
-// Scripted native-host boundary, separate from the product's proof reader.
-const nativeHash=(method,params)=>createHash('sha256').update(JSON.stringify(canonical({method,params}))).digest('hex');
-async function fixture(t,{headAgent='codex',workerAgent='claude',kind='structured',childKind='structured',prestarted=false,preparedKind='structured',queuedPermits=false}={}) {
- const profile=await mkdtemp(join(tmpdir(),'dispatch-'));let store=await openTeamStore({userData:profile});
- const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
- const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,launchMode:prestarted?'all':'on-demand',agents:[headAgent,workerAgent,workerAgent]}},scope).teams[0];
- const head=team.members[0], member=team.members[1], launch={teamId:team.id,memberId:head.id,configVersion:1,requestId:'launch'};
- const op=store.prepareOperation(launch,{scope,nativeRequest:nativeLaunchIntent(team,head,scope),roleVersion:1,title:'Head',executionHostId:'local',runtimeId:'runtime-one'}).operation;
- const binding={status:'created',kind,handle:kind==='structured'?'chat-head':'term-head',...(kind==='structured'?{sessionId:'codex_head'}:{paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),briefAccepted:true};
- store.settleOperation('launch',op.nativeRequest.operationId,{...binding,public:publicOperation({...op,...binding})});
- if(prestarted){
-  const input={teamId:team.id,memberId:member.id,configVersion:1,requestId:'prepared-child'},op=store.prepareOperation(input,{scope,nativeRequest:nativeLaunchIntent(team,member,scope),roleVersion:1,title:member.name,executionHostId:'local',runtimeId:'runtime-one'}).operation;
-  const value={status:'created',kind:preparedKind,handle:preparedKind==='structured'?'prepared-child-handle':'structworker_child',...(preparedKind==='structured'?{sessionId:'claude_child'}:{paneKey:'child-tab:child-leaf',observation:{incarnationId:'child-instance'}}),briefAccepted:true};
-  store.settleOperation(input.requestId,op.nativeRequest.operationId,{...value,public:publicOperation({...op,...value})});
- }
- const db=new DatabaseSync(join(profile,'orchestration.db'));
- db.exec(`PRAGMA user_version=43;
- CREATE TABLE runs(id TEXT PRIMARY KEY,objective TEXT,home_database TEXT,coordinator_handle TEXT,coordinator_pane_key TEXT,coordinator_orca_session_id TEXT,coordinator_orca_session_id_generation INTEGER,consumer_generation INTEGER,legacy INTEGER);
- CREATE TABLE tasks(id TEXT PRIMARY KEY,run_id TEXT,spec TEXT,status TEXT,result TEXT,created_by_terminal_handle TEXT,created_by_pane_key TEXT,created_by_process_incarnation TEXT,created_by_run_generation INTEGER);
- CREATE TABLE mutation_caller_identities(transport TEXT PRIMARY KEY,caller_fingerprint TEXT);
- INSERT INTO mutation_caller_identities VALUES('local_authenticated_transport','local-fingerprint');
- CREATE TABLE mutation_receipts(caller_fingerprint TEXT,request_id TEXT,method TEXT,payload_hash TEXT,state TEXT,receipt TEXT,PRIMARY KEY(caller_fingerprint,request_id));
- CREATE TABLE dispatch_contexts(id TEXT PRIMARY KEY,run_id TEXT,task_id TEXT,creator_handle TEXT,creator_pane_key TEXT,creator_orca_session_id TEXT,creator_dispatch_id TEXT,assignee_handle TEXT,assignee_pane_key TEXT,assignee_orca_session_id TEXT,process_incarnation TEXT,host_scope TEXT,status TEXT,consumer_generation INTEGER);
- CREATE TABLE worker_dispatches(dispatch_id TEXT PRIMARY KEY,worktree_id TEXT,agent_terminal_handle TEXT,state TEXT,runtime_epoch TEXT,start_options TEXT);
- CREATE TABLE attempt_observation_facts(id TEXT PRIMARY KEY,dispatch_id TEXT,task_id TEXT,authority_id TEXT,facet TEXT,payload TEXT);
- CREATE TABLE messages(id TEXT PRIMARY KEY,run_id TEXT,from_handle TEXT,sender_pane_key TEXT,type TEXT,body TEXT,payload TEXT);
- `);
- const messages=[],calls=[];let onInput=()=>{};
- const rpc=async(method,params,envelope)=>{
-  calls.push(method);
-  if(method==='status.get')return {runtimeId:'runtime-one',capabilities:[...(queuedPermits?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1','agent-session.structured.v1','terminal.prompt-delivery.v1','agent.launch.v2','agent.launch.replay-required.v1']};
-  if(method==='worktree.show')return {worktree:{id:scope.workspaceId,hostId:'local'}};
-  if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:'+params.sessionId};
-  if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:params.address.slice('orca_session_id:'.length),worktreeId:scope.workspaceId}};
-  if(method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,submissions:[],items:[]}};
-  if(method==='terminal.show'&&params.terminal==='structworker_child')return {terminal:{handle:'structworker_child',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'child-instance',agentIdentity:workerAgent,tabId:'child-tab',leafId:'child-leaf'}};
-  if(method==='terminal.show')return {terminal:{handle:'term-head',worktreeId:scope.workspaceId,executionHostId:'local',connected:true,writable:true,incarnationId:'head-instance',agentIdentity:headAgent,tabId:'tab',leafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}};
-  if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:true,status:'idle'}};
-  if(method==='orchestration.runShow')return {run:{id:'run-head',objective:store.listWorks()[0].nativeObjective,consumer_generation:1}};
-  if(method==='orchestration.taskList')return {tasks:db.prepare('SELECT id,run_id,status FROM tasks').all()};
-  if(method==='settings.get')return {settings:{}};
-  if(method==='preflight.detectAgents')return ['codex','claude'];
-  if(method==='agentSession.createSupport')return {supported:true};
-  if(method==='agentSession.modelCatalog')return {origin:'unknown'};
-  if(method==='agentSession.send'||method==='terminal.send'){
-   const text=params.body?.blocks[0].text??params.text;messages.push(text);
-   const work=store.listWorks()[0];
-   if(!db.prepare('SELECT id FROM runs').get())db.prepare('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)').run('run-head',work.nativeObjective,'this_database',kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,kind==='structured'?1:null,1,0);
-   await onInput(text);
-   if(queuedPermits&&text.startsWith('TEAM_DISPATCH_PERMIT')){assert.equal(params.delivery,'queue-if-active');return {ok:true,value:{clientMessageId:params.envelope.clientOperationId,queued:{messageId:'queued-'+params.envelope.clientOperationId,state:'waiting',position:1}}};}
-   return method==='agentSession.send'?{ok:true,fence:7,value:{clientMessageId:params.envelope.clientOperationId,submission:{clientMessageId:params.envelope.clientOperationId,dispatchState:'accepted'}}}:{send:{handle:'term-head',accepted:true,prompt:{requestId:envelope.orchestrationRequestId,processIncarnation:'head-instance',stages:['input_accepted'],observation:'supported'}}};
-  }
-  if(method==='orchestration.workerShow'){
-   const d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(params.dispatch),w=db.prepare('SELECT * FROM worker_dispatches WHERE dispatch_id=?').get(params.dispatch);
-   return {dispatch:{id:d.id,runId:d.run_id,taskId:d.task_id,assigneeHandle:d.assignee_handle,assigneePaneKey:d.assignee_pane_key,processIncarnation:d.process_incarnation,hostScope:JSON.parse(d.host_scope),status:d.status},worker:{dispatchId:d.id,worktreeId:w.worktree_id,agentTerminalHandle:w.agent_terminal_handle,state:w.state,runtimeEpoch:w.runtime_epoch,startOptions:JSON.parse(w.start_options)},observation:{status:'live',exactWorker:true},projection:{}};
-  }
-  throw Error('Forbidden/unexpected native method '+method);
- };
- let works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});
- const work=await works.submit({teamId:team.id,requestId:'goal',expectedRevision:store.readSnapshot().revision,objective:'Audit'});
- const actor=params=>kind==='structured'?{...params,__orcaCallerOrcaSessionId:'codex_head'}:Object.fromEntries(Object.entries(params).map(([k,v])=>[['from','callerTerminalHandle','terminal'].includes(k)?k:k,['from','callerTerminalHandle'].includes(k)?{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}:v]));
- const from=kind==='structured'?'orca_session_id:codex_head':'term-head';
- const receipt=(requestId,method,params,result,forged=false)=>db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint',requestId,method,nativeHash(method,forged?params:actor(params.terminal==='structworker_child'?{...params,terminal:{paneKey:'child-tab:child-leaf'}}:params)),'completed',JSON.stringify(result));
- const createIntent=(protocol,{taskId='task-one',taskKey='task-key-one',memberId=member.id,forged=false,dependencies=[],previousAttemptId,writeScope=[]}={})=>{
-  const role={brief:member.brief,habits:member.habits,collaboration:member.collaboration};
-  const spec=JSON.stringify({protocol:'team-dispatch/v1',workerRules:WORKER_RULES,workId:work.id,token:protocol.token,generation:1,taskKey,memberId,configVersion:1,roleVersion:1,role,instruction:'Inspect the checkout and report evidence.',dependencies,writeScope,...(previousAttemptId?{previousAttemptId}:{})});
-  const row={id:taskId,run_id:'run-head',spec,status:'ready',result:null};
-  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(taskId,'run-head',spec,'ready',null,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='terminal'?'head-instance':null,kind==='terminal'?1:null);
-  receipt('create-'+taskId,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:from},{task:row},forged);
- };
- const start=permit=>{
-  const id='dispatch-'+permit.nativeTaskId,chat=Boolean(permit.startParams.terminal?.startsWith('orca_session_id:')),handle=chat?permit.startParams.terminal:'structworker_child',pane=chat?null:'child-tab:child-leaf';
-  const hostScope={kind:'local',hostId:'local'};
-  db.prepare('INSERT INTO dispatch_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'run-head',permit.nativeTaskId,kind==='terminal'?'term-head':null,kind==='terminal'?binding.paneKey:null,kind==='structured'?'codex_head':null,null,handle,pane,childKind==='structured'?'claude_child':null,chat?null:'child-instance',JSON.stringify(hostScope),'dispatched',1);
-  db.prepare('INSERT INTO worker_dispatches VALUES(?,?,?,?,?,?)').run(id,scope.workspaceId,handle,'ready','runtime-one',JSON.stringify({resolvedWorktreeId:scope.workspaceId,agent:workerAgent,worktree:scope.workspaceId}));
-  db.prepare("UPDATE tasks SET status='dispatched' WHERE id=?").run(permit.nativeTaskId);
-  receipt('start-'+permit.nativeTaskId,'orchestration.workerStart',{...permit.startParams,from,devMode:false},{runId:'run-head',taskId:permit.nativeTaskId,dispatchId:id,state:'ready'});
-  return id;
- };
- t.after(async()=>{db.close();store.close();await rm(profile,{recursive:true,force:true});});
- const complete=attempt=>{
-  const reportId='report-'+attempt.nativeTaskId,d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(attempt.dispatchId);
-  db.prepare("UPDATE dispatch_contexts SET status='completed' WHERE id=?").run(attempt.dispatchId);
-  db.prepare("UPDATE worker_dispatches SET state='succeeded' WHERE dispatch_id=?").run(attempt.dispatchId);
-  db.prepare("UPDATE tasks SET status='completed',result='Original execution result' WHERE id=?").run(attempt.nativeTaskId);
-  db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?)').run(reportId,'run-head',d.assignee_handle,d.assignee_pane_key,'worker_done','Original execution result',JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome:'succeeded'}));
-  db.prepare('INSERT INTO attempt_observation_facts VALUES(?,?,?,?,?,?)').run('worker_report:'+reportId,attempt.dispatchId,attempt.nativeTaskId,'run_home:run-head','worker_report',JSON.stringify({status:'accepted',outcome:'succeeded',reportId:'worker_report:'+reportId}));
- };
- const review=(attempt,{decision='accept',forged=false,patch={},requestId='review-'+attempt.id}={})=>{
-  const value={protocol:'team-review/v1',workId:work.id,token:attempt.token,generation:attempt.generation,taskKey:attempt.taskKey,attemptId:attempt.id,nativeTaskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,reviewToken:attempt.reviewToken,reviewerMemberId:head.id,decision,evidenceRefs:[attempt.evidenceId],summary:'Checked result and validation.',...patch};
-  const result=JSON.stringify(value),task={...db.prepare('SELECT * FROM tasks WHERE id=?').get(attempt.nativeTaskId),result};
-  db.prepare('UPDATE tasks SET result=? WHERE id=?').run(result,attempt.nativeTaskId);
-  receipt(requestId,'orchestration.taskUpdate',{id:task.id,status:'completed',result,run:'run-head',callerTerminalHandle:from},{task},forged);
- };
- return {complete,review,profile,get store(){return store;},team,member,work,get works(){return works;},rpc,messages,calls,db,createIntent,start,onInput:fn=>{onInput=fn;},async restart(){store.close();store=await openTeamStore({userData:profile});works=createWorkService({store,rpc,userData:profile,consent:async()=>{}});}};
-}
+import { fixture, nativeHash } from './dispatch-fixture.mjs';
 test('genuine supervisor intent commits admission before native member start and records execution pending acceptance',async t=>{
  const {createDispatchService}=await import('../src/local/dispatch.mjs');
  const f=await fixture(t);const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
@@ -330,7 +228,7 @@ test('rework retains exact terminal process and normalizes the native target ind
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await service.check(f.work.id);
  f.complete(f.store.listDispatches(f.work.id)[0]);await service.check(f.work.id);const first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await service.check(f.work.id);
  f.createIntent(protocol,{taskId:'redo',previousAttemptId:first.id});await service.check(f.work.id);
- const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-instance');
+ const next=f.store.listDispatches(f.work.id)[1];assert.equal(next.status,'running');assert.equal(next.startParams.terminal,'structworker_child');assert.equal(next.startParams.agent,undefined);assert.equal(next.binding.incarnationId,'child-pty:child-instance');
 });
 test('overall delivery requires native Head author proof and user decision; rework keeps queued goals and stale acceptance conflicts',async t=>{
  const {createLifecycleService}=await import('../src/local/lifecycle.mjs');
@@ -416,7 +314,7 @@ test('prepared PTY preserves native process identity and reuses without model ov
  const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{prestarted:true,preparedKind:'terminal',childKind:'terminal'}),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
  f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});
- await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
+ await service.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];assert.equal(attempt.status,'running');assert.equal(attempt.startParams.terminal,'structworker_child');assert.equal(attempt.binding.incarnationId,'child-pty:child-instance');assert.equal(Object.hasOwn(attempt.startParams,'agent'),false);
 });
 
 test('one confirmed failed member task holds its dependents but permits independent nonconflicting work',async t=>{
@@ -467,4 +365,196 @@ test('stop refuses an unverified native worker observation and exact exit later 
  assert.equal((await stops.check(row.requestId)).state,'unknown');
  observation={exactWorker:true,status:'live'};
  const other=await fixture(t),otherDispatch=createDispatchService({store:other.store,rpc:other.rpc,userData:other.profile,consent:async()=>{},works:other.works});await otherDispatch.check(other.work.id);other.createIntent(other.store.readDispatchProtocol(other.work.id));other.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))other.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await otherDispatch.check(other.work.id);const active=other.store.listDispatches(other.work.id)[0],read=async(method,params)=>{const value=await other.rpc(method,params);return method==='orchestration.workerShow'?{...value,observation}:value;},service=createStopService({store:other.store,rpc:read,userData:other.profile,consent:async()=>{}}),intent=await service.prepare({requestId:'lost-stop',teamId:other.team.id,memberId:other.member.id,workId:other.work.id,attemptId:active.id});await service.validate(intent.requestId);await service.settle(intent.requestId,null,'response lost');observation={exactWorker:true,status:'exited'};assert.equal((await service.check(intent.requestId)).state,'stopped');assert.equal(other.store.readStopProof({memberId:other.member.id,attemptId:active.id,binding:active.binding}).kind,'native-worker-exit');assert.equal(await service.validate(intent.requestId),null);
+});
+
+test('native PTY-qualified terminal Task creator reconciles saved work after reload without recreating objective or Tasks',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');
+ const f=await fixture(t,{kind:'terminal',childKind:'terminal'});
+ const service=()=>createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service().check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=?').run('head-pty:head-instance');
+ const old=f.store.readCurrentWork(f.work.id);
+ f.store.updateWork(old.id,old.version,{instance:{kind:'terminal',handle:'term-head',paneKey:'tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',incarnationId:'head-instance'}});
+ await f.restart();
+ await f.works.check(f.work.id);
+ await service().check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);
+ assert.equal(f.store.readCurrentWork(f.work.id).instance.processIncarnation,'head-pty:head-instance');
+ assert.equal(f.messages.filter(text=>text.startsWith('Team Orchestrator work protocol')).length,1);
+ assert.equal(f.calls.some(method=>/workerStart|runCreate|taskCreate/.test(method)),false);
+});
+
+for(const processIdentity of ['other-pty:head-instance','head-pty:other-instance','head-instance'])test(`terminal Task creator ${processIdentity} cannot substitute for the exact native process`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t,{kind:'terminal'});
+ const service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=?').run(processIdentity);
+ await service.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id).length,0);
+ assert.match(f.store.readDispatchProtocol(f.work.id).detail,/creator instance/);
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,0);
+});
+
+for(const patch of [{ptyId:'swapped-pty'},{incarnationId:'swapped-instance'},{ptyId:null}])test(`saved terminal observation refuses changed or missing exact identity ${JSON.stringify(patch)}`,async t=>{
+ const f=await fixture(t,{kind:'terminal'});
+ const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);return method==='terminal.show'?{terminal:{...result.terminal,...patch}}:result;};
+ const works=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}});
+ await assert.rejects(works.verifyWork(f.work.id),/incarnation|PTY/);
+ const sends=f.messages.length;await works.check(f.work.id);assert.equal(f.messages.length,sends);
+ assert.equal(f.store.readCurrentWork(f.work.id).run.state,'unverified');
+});
+
+test('terminal total delivery uses exact PTY-qualified creator evidence before user acceptance',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');
+ const f=await fixture(t,{kind:'terminal'});
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Exact terminal result',evidenceRefs:['artifact:report'],attemptIds:[]});
+ const task={id:'terminal-delivery',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,'term-head','tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','wrong-pty:head-instance',1);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','terminal-delivery-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await lifecycle.check(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery,undefined);
+ f.db.prepare('UPDATE tasks SET created_by_process_incarnation=? WHERE id=?').run('head-pty:head-instance',task.id);
+ await lifecycle.check(f.work.id);const work=f.store.readSnapshot().works[0];assert.equal(work.delivery.id,task.id);
+ await lifecycle.decide({requestId:'accept-terminal',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readCurrentWork(work.id).status,'completed');
+});
+
+test('recovery winning the version race during dispatch observation is not overwritten by a stale failure patch',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createRecoveryService}=await import('../src/local/recovery.mjs');const f=await fixture(t);
+ let hold=false,entered,release;const waiting=new Promise(resolve=>{entered=resolve;}),barrier=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+ const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);if(hold&&method==='orchestration.workerShow'){hold=false;entered();await barrier;}return result;};
+ const dispatch=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ const first=f.store.listDispatches(f.work.id)[0];assert.equal(first.status,'running');
+ hold=true;const checking=dispatch.check(f.work.id);await waiting;
+ await createRecoveryService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{}}).checkWork(f.work.id);
+ const reconciled=f.store.listDispatches(f.work.id)[0];assert.ok(reconciled.version>first.version);
+ release();await checking;assert.equal(f.store.listDispatches(f.work.id)[0].status,'running');
+ assert.equal(f.store.listDispatches(f.work.id)[0].version,reconciled.version);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,1);
+});
+
+test('a clean accepted native reconciliation replaces stale protocol diagnostics while current author refusals remain visible',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);const protocol=f.store.readDispatchProtocol(f.work.id);f.createIntent(protocol);f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);
+ const current=f.store.readDispatchProtocol(f.work.id);f.store.updateDispatchProtocol(f.work.id,current.version,{detail:'Dispatch attempt changed while observing evidence.'});
+ await dispatch.check(f.work.id);assert.equal(f.store.readDispatchProtocol(f.work.id).detail,'Native supervisor protocol and current Dispatch evidence verified.');
+ f.createIntent(protocol,{taskId:'wrong-author',taskKey:'blocked',memberId:f.team.members[2].id,forged:true});
+ await dispatch.check(f.work.id);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/author proof/);
+ await dispatch.check(f.work.id);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/author proof/);
+ assert.equal(f.store.listDispatches(f.work.id).length,1);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');
+ assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT')).length,1);
+});
+
+test('completed work projects a superseded concurrency diagnostic without rewriting sealed protocol history',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');const f=await fixture(t,{kind:'terminal'});
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const p=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Complete',evidenceRefs:['artifact:report'],attemptIds:[]}),task={id:'done',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,'term-head','tab:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','head-pty:head-instance',1);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','done-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:{paneLeafId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await lifecycle.check(f.work.id);
+ const protocol=f.store.readDispatchProtocol(f.work.id);f.store.updateDispatchProtocol(f.work.id,protocol.version,{detail:'Dispatch attempt changed while observing evidence.'});
+ const work=f.store.readCurrentWork(f.work.id);await lifecycle.decide({requestId:'close',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readSnapshot().works[0].dispatchProtocol.detail,undefined);
+ assert.equal(f.store.readSnapshot().works[0].nativeRuns[0].dispatchProtocol.detail,undefined);
+ assert.equal(f.store.readDispatchProtocol(work.id).detail,'Dispatch attempt changed while observing evidence.');
+});
+
+test('supervisor protocol maps permitted attempt IDs and native worker_done message IDs directly to delivery references',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);
+ await createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works}).check(f.work.id);
+ const protocol=JSON.parse(f.messages.find(text=>text.startsWith('TEAM_DISPATCH_PROTOCOL')).split('\n').slice(1).join('\n'));
+ assert.match(protocol.instructions,/attemptId delivered in each latest TEAM_DISPATCH_PERMIT/);
+ assert.match(protocol.instructions,/evidenceId.*exactly worker_report:MESSAGE_ID/);
+ assert.match(protocol.instructions,/actual native worker_done message/);
+ assert.match(protocol.instructions,/same reference.*native acceptance review/);
+ assert.match(protocol.instructions,/Do not wait for a separate plugin acceptance notification/);
+ assert.match(protocol.instructions,/proposing a delivery does not assert plugin or user acceptance/);
+});
+
+test('native review and delivery proposal may arrive before plugin review observation while user closure remains gated',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createLifecycleService}=await import('../src/local/lifecycle.mjs');const f=await fixture(t),dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await dispatch.check(f.work.id);const p=f.store.readDispatchProtocol(f.work.id);f.createIntent(p);f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];f.review(attempt);
+ assert.equal(attempt.evidenceId,'worker_report:report-task-one');assert.equal(attempt.status,'pending_acceptance');
+ const spec=JSON.stringify({protocol:'team-delivery/v1',workId:f.work.id,token:p.token,generation:1,supervisorMemberId:f.work.supervisorMemberId,previousDeliveryId:null,summary:'Verified review done',evidenceRefs:['worker_report:report-task-one','artifact:tests'],attemptIds:[attempt.id]}),task={id:'early-delivery',run_id:'run-head',spec,status:'ready'};
+ f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,null,null,null,null);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','early-delivery-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:'codex_head'}),'completed',JSON.stringify({task}));
+ const lifecycle=createLifecycleService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await lifecycle.check(f.work.id);
+ let work=f.store.readCurrentWork(f.work.id);assert.equal(f.store.readSnapshot().works[0].delivery.id,task.id);
+ await assert.rejects(lifecycle.decide({requestId:'too-soon',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'}),/accepted|acceptance|review|pending/i);
+ await dispatch.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');work=f.store.readCurrentWork(f.work.id);
+ await lifecycle.decide({requestId:'after-review',workId:work.id,deliveryId:task.id,expectedWorkVersion:work.version,decision:'accept'});
+ assert.equal(f.store.readCurrentWork(work.id).status,'completed');
+});
+
+test('manually closed exact native worker can enter checked wake handoff without a plugin Stop row',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createWakeService}=await import('../src/local/wake.mjs');const f=await fixture(t,{childKind:'terminal'});
+ const dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];
+ let exited=true;const rpc=async(method,...args)=>{const result=await f.rpc(method,...args);if(method==='orchestration.workerShow')return {...result,observation:{status:exited?'exited':'live',exactWorker:true},projection:{liveness:{verdict:'unverifiable'}}};if(method==='terminal.show'&&args[0].terminal===attempt.binding.handle)return {terminal:{...result.terminal,connected:false}};return result;};
+ const wake=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works}),input={teamId:f.team.id,memberId:attempt.memberId,requestId:'manual-close',bindingRequestId:attempt.id};
+ const before=f.calls.length;assert.deepEqual(f.store.listStops(),[]);
+ const result=await wake.wake(input);assert.equal(result.state,'needs_decision');assert.equal(f.store.readWake(input.requestId).proof.death.kind,'native-worker-exit');
+ assert.equal(f.store.readWake(input.requestId).proof.death.dispatchId,attempt.dispatchId);assert.equal(f.store.readWake(input.requestId).proof.death.binding.incarnationId,'child-pty:child-instance');
+ assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');assert.deepEqual(f.store.listStops(),[]);
+ assert.equal(f.calls.slice(before).some(method=>/workerStop|stopExact|launchReplay|restartContinue|taskCreate|workerStart/.test(method)),false);
+ await wake.wake(input);assert.equal(f.store.listWakes().length,1);
+ const protocol=f.store.readDispatchProtocol(f.work.id),spec=JSON.stringify({protocol:'team-questions/v1',kind:'recovery-handoff',workId:f.work.id,token:protocol.token,generation:1,appQuestionId:input.requestId,memberId:attempt.memberId,oldRequestId:attempt.id,decision:'replace',summary:'Manager checked the exact exited worker and prior accepted result.',evidence:['worker_report:report-task-one']});
+ const task={id:'manual-close-handoff',run_id:'run-head',spec};f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(task.id,task.run_id,spec,'ready',null,null,null,null,null);
+ f.db.prepare('INSERT INTO mutation_receipts VALUES(?,?,?,?,?,?)').run('local-fingerprint','manual-close-handoff-receipt','orchestration.taskCreate',nativeHash('orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:'orca_session_id:codex_head',__orcaCallerOrcaSessionId:'codex_head'}),'completed',JSON.stringify({task}));
+ assert.equal((await wake.handoff(input.requestId)).state,'approved');
+ exited=false;await assert.rejects(wake.prepareFresh(input.requestId),/not proven stopped/);assert.equal(f.store.readWake(input.requestId).newInstance,undefined);
+ exited=true;await wake.prepareFresh(input.requestId);exited=false;await assert.rejects(wake.validateFresh(input.requestId),/execution proof changed/);
+
+});
+
+test('manual-close wake refuses unknown, missing, changed or cross-scope worker observations even after Task acceptance',async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),{createWakeService}=await import('../src/local/wake.mjs');const f=await fixture(t,{childKind:'terminal'});
+ const dispatch=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});await dispatch.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await dispatch.check(f.work.id);
+ f.complete(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);f.review(f.store.listDispatches(f.work.id)[0]);await dispatch.check(f.work.id);const attempt=f.store.listDispatches(f.work.id)[0];
+ let scenario,changed=false;
+ const rpc=async(method,...args)=>{
+  if(method==='status.get'&&(scenario==='runtime'||changed))return {runtimeId:'other-runtime'};
+  if(method==='orchestration.workerShow'&&scenario==='missing')throw Error('Native observation unavailable');
+  const result=await f.rpc(method,...args);
+  if(method==='terminal.show'&&args[0].terminal===attempt.binding.handle)return {terminal:{...result.terminal,connected:scenario==='connected'}};
+  if(method!=='orchestration.workerShow')return result;
+  const value=structuredClone({...result,observation:{status:'exited',exactWorker:true}});
+  if(['live','unverifiable','identity_changed'].includes(scenario))value.observation.status=scenario;
+  if(scenario==='inexact')value.observation.exactWorker=false;
+  if(scenario==='dispatch')value.dispatch.id='other-dispatch';
+  if(scenario==='task')value.dispatch.taskId='other-task';
+  if(scenario==='run')value.dispatch.runId='other-run';
+  if(scenario==='handle')value.dispatch.assigneeHandle='other-handle';
+  if(scenario==='pane')value.dispatch.assigneePaneKey='other:pane';
+  if(scenario==='pty')value.dispatch.processIncarnation='other-pty:child-instance';
+  if(scenario==='incarnation')value.dispatch.processIncarnation='child-pty:other-instance';
+  if(scenario==='host')value.dispatch.hostScope={kind:'ssh',targetId:'other-host'};
+  if(scenario==='workspace')value.worker.worktreeId='other-workspace';
+  if(scenario==='worker-handle')value.worker.agentTerminalHandle='other-handle';
+  if(scenario==='epoch')value.worker.runtimeEpoch='other-runtime';
+  if(scenario==='parent')value.dispatch.creatorDispatchId='other-parent';
+  if(scenario==='runtime-race')changed=true;
+  return value;
+ };
+ const wake=createWakeService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});const before=f.calls.length;
+ for(scenario of ['live','unverifiable','identity_changed','inexact','missing','connected','dispatch','task','run','handle','pane','pty','incarnation','host','workspace','worker-handle','epoch','parent','runtime','runtime-race']){
+  changed=false;const row=await wake.wake({teamId:f.team.id,memberId:attempt.memberId,requestId:'negative-'+scenario.replaceAll('_','-'),bindingRequestId:attempt.id});assert.equal(row.state,'blocked',scenario);
+ }
+ assert.equal(f.store.listWakes().length,0);assert.equal(f.store.listStops().length,0);assert.equal(f.store.listDispatches(f.work.id)[0].status,'accepted');
+ assert.equal(f.calls.slice(before).some(method=>/send|Stop|stopExact|launchReplay|restartContinue/.test(method)),false);
+});
+for(const fault of ['fact-authority','message-sender','message-pane','message-outcome'])test(`native completion admission refuses ${fault} independently of report-question classification`,async t=>{
+ const {createDispatchService}=await import('../src/local/dispatch.mjs'),f=await fixture(t),service=createDispatchService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
+ await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.split('\n').slice(1).join('\n')));});await service.check(f.work.id);
+ const attempt=f.store.listDispatches(f.work.id)[0];f.complete(attempt);
+ if(fault==='fact-authority')f.db.prepare("UPDATE attempt_observation_facts SET authority_id='run_home:other'").run();
+ if(fault==='message-sender')f.db.prepare("UPDATE messages SET from_handle='other'").run();
+ if(fault==='message-pane')f.db.prepare("UPDATE messages SET sender_pane_key='other:leaf'").run();
+ if(fault==='message-outcome')f.db.prepare('UPDATE messages SET payload=?').run(JSON.stringify({taskId:attempt.nativeTaskId,dispatchId:attempt.dispatchId,outcome:'failed'}));
+ await service.check(f.work.id);const saved=f.store.listDispatches(f.work.id)[0];assert.equal(saved.outcome,undefined);assert.equal(saved.evidenceId,undefined);assert.notEqual(saved.status,'pending_acceptance');
 });
