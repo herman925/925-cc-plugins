@@ -55,7 +55,13 @@ async function fixture(id, mode) {
         const id='delivery-'+work.id+'-'+(previous?previous.revision+1:1),spec=JSON.stringify({protocol:'team-delivery/v1',workId:work.id,token:p.token,generation:p.generation,supervisorMemberId:work.supervisorMemberId,previousDeliveryId:previous?.id??null,summary:previous?'Corrected audit <script>':'Audit delivered <script>',evidenceRefs:['report.md','tests:passed'],attemptIds:[]}),task={id,run_id:work.run.id,spec,status:'ready'};
         const owner=work.instance,from=owner.kind==='structured'?'orca_session_id:'+owner.sessionId:owner.handle;
         nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(id,work.run.id,spec,'ready',null,owner.kind==='terminal'?owner.handle:null,owner.kind==='terminal'?owner.paneKey:null,owner.kind==='terminal'?owner.processIncarnation:null,owner.kind==='terminal'?p.generation:null);
-        receipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});return;
+        receipt(work,'create-'+id,'orchestration.taskCreate',{spec,run:work.run.id,callerTerminalHandle:from},{task});
+        if(mode==='goal-lifecycle-staffing'&&!previous){
+          const proposalId='optional-reviewer',proposalSpec=JSON.stringify({protocol:'team-questions/v1',kind:'staffing-proposal',workId:work.id,token:p.token,generation:p.generation,appQuestionId:proposalId,configVersion:work.configVersion,roleVersion:1,proposingManagerId:work.supervisorMemberId,member:{name:'Optional reviewer <script>',boss:work.supervisorMemberId,brief:'Review sources.',habits:'',collaboration:'Report directly.',agent:'claude',model:'default',effort:'default'},rationale:'Optional review before delivery.',affectedTaskKeys:[]}),proposalTask={id:proposalId,run_id:work.run.id,spec:proposalSpec,status:'ready'};
+          nativeDb.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)').run(proposalId,work.run.id,proposalSpec,'ready',null,null,null,null,null);
+          receipt(work,'create-'+proposalId,'orchestration.taskCreate',{spec:proposalSpec,run:work.run.id,callerTerminalHandle:from},{task:proposalTask});
+        }
+        return;
       }
       if (!mode?.startsWith('dispatch-')) return;
       const owner = work.instance, from = owner.kind === 'structured' ? 'orca_session_id:' + owner.sessionId : owner.handle;

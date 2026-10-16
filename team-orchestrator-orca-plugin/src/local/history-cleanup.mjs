@@ -1,3 +1,4 @@
+import {staffingExpiryProof} from './staffing-expiry.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {sameStopIdentity} from './stop-store.mjs';
 const CLEARED='[History manually cleared]';
@@ -14,6 +15,11 @@ function settledStopRecovery(row,byId){
  if(typeof previous.nativeRequestId!=='string'||!previous.nativeRequestId||typeof previous.target?.dispatchId!=='string'||!previous.target.dispatchId||previous.plan.params?.dispatch!==previous.target.dispatchId||previous.plan.envelope?.orchestrationRequestId!==previous.nativeRequestId||typeof current.confirmedAt!=='string'||!current.confirmedAt||!Number.isSafeInteger(previous.version)||!Number.isSafeInteger(current.version)||current.version<=previous.version)return false;
  if(current.nativeRequestId!==previous.nativeRequestId||!sameStopIdentity(current.target,previous.target)||!sameStopIdentity(current.plan,previous.plan))return false;
  return current.proof?.kind==='native-pty-exit'&&current.proof.ptyKilled===true||current.proof?.kind==='native-worker-exit'&&current.proof.dispatchId===current.target.dispatchId;
+}
+function settledStaffingNotification(row,byId){
+ const event=row.value;if(event.kind!=='decision'||event.state!=='unconfirmed'||event.nativeSend||typeof event.id!=='string'||!event.id.startsWith('staffing-'))return false;
+ const proposal=byId.get(`staffing-proposal:${event.workId}:${event.id.slice('staffing-'.length)}`)?.value;
+ return proposal?.status==='expired'&&event.data?.body===proposal.rationale&&!!staffingExpiryProof(proposal,key=>byId.get(key)?.value);
 }
 export function historyCleanup({db,readSnapshot,write,atomic}){
  const previews=new Map();
@@ -37,14 +43,14 @@ export function historyCleanup({db,readSnapshot,write,atomic}){
    if(!members.some(r=>family(r.id)==='work-decision'&&r.value.workId===id&&r.value.decision==='accept'&&r.value.deliveryId===work.handoff?.deliveryId))reason='User acceptance provenance is missing.';
    for(const r of rows){
     const k=family(r.id),v=r.value,related=own(r),sameTeam=v.teamId===work.teamId||v.target?.teamId===work.teamId||k==='stop-recovery'&&v.previous?.target?.teamId===work.teamId;
-    const uncertainty=k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:v;
+    const uncertainty=k==='stop-recovery'&&settledStopRecovery(r,byId)?{...v,previous:undefined}:k==='question-event'&&settledStaffingNotification(r,byId)?{...v,state:undefined}:v;
     if(!known.has(k)&&(contains(v,identities)||sameTeam))reason='An unknown record references this history; preserve it for a compatible plugin.';
     if(related&&((v.format&&/-(v[0-9]+)$/.test(v.format)&&!v.format.endsWith('-v1'))||(!(k==='question-event'&&v.kind==='goal-delivery'&&!v.nativeSend)&&uncertain(uncertainty))))reason='Unknown, pending or unprocessed evidence remains in this work.';
     if(related&&k==='native-run-binding'&&(v.status!=='completed'||v.currentSupervisor&&v.currentSupervisor.status!=='completed'))reason='A descendant manager context remains active.';
     if(related&&k==='dispatch'&&!['accepted','rework','rejected'].includes(v.status))reason='A task is running or still requires supervisor acceptance.';
     if(sameTeam&&k==='goal'&&['queued','reserved'].includes(v.status))reason='A later goal awaits its Work transition.';
     if(related&&k==='dispatch-queue')reason='Queued task admission remains.';
-    if(related&&k==='staffing-proposal'&&!['approved','rejected'].includes(v.status))reason='A staffing proposal needs a decision.';
+    if(related&&k==='staffing-proposal'&&!(['approved','rejected'].includes(v.status)||v.status==='expired'&&staffingExpiryProof(v,key=>byId.get(key)?.value)))reason='A staffing proposal needs a decision.';
     if(related&&k==='roster-delta'&&!(v.state==='queued'&&!v.nativeSend||v.processed==='confirmed'))reason='A roster update awaits confirmed processing.';
     if(sameTeam&&k==='organization'&&v.state==='pending')reason='An organization change awaits its Work boundary.';
     if(sameTeam&&k==='wake'&&!['bound','resumed'].includes(v.state))reason='Member recovery or replacement remains unresolved.';

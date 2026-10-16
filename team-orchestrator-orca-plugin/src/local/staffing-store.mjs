@@ -1,3 +1,4 @@
+import {staffingExpiryProof} from './staffing-expiry.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {validatePersistentState} from '../team.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,canonical(v[k])])):v;
@@ -25,6 +26,20 @@ export function staffingStore({db,readPrivate,putPrivate,readWork,listRunWorks,r
  };
  const publicDelta=({nativeSend,...row})=>row;
  const api={effectiveTeamForWork,listRosterDeltas,listStaffingProposals,recordConfigurationAmendment,
+  expireStaffingProposals(decision){
+   if(!db.isTransaction)throw Error('Staffing expiry must share the accepted Work transaction.');
+   let expired=0;
+   for(const proposal of listStaffingProposals(decision.workId).filter(p=>p.status==='pending')){
+    const expiry={kind:'accepted-work-closure',workId:decision.workId,deliveryId:decision.deliveryId,decisionRequestId:decision.requestId,recordedAt:decision.recordedAt};
+    if(!staffingExpiryProof({...proposal,expiry},readPrivate))continue;
+    putPrivate(`staffing-proposal:${proposal.workId}:${proposal.id}`,{...proposal,status:'expired',expiry});expired++;
+   }
+   return expired;
+  },
+  reconcileExpiredStaffingProposals(){return atomic(()=>{
+   let expired=0;for(const decision of rows('work-decision:').filter(d=>d.decision==='accept'))expired+=api.expireStaffingProposals(decision);
+   if(expired){const state=readSnapshot();state.revision++;write(state);}return expired;
+  });},
   staffingRecipientBindings(workId){const root=rootWork(workId),ids=new Set(rows('configuration-amendment:').filter(a=>a.workId===root?.id&&a.kind==='add-member').flatMap(a=>a.memberIds));return rows('operation:').filter(o=>ids.has(o.memberId)&&readPrivate(`binding:${o.memberId}`)?.requestId===o.requestId).map(o=>({memberId:o.memberId,requestId:o.requestId,instanceGeneration:o.instanceGeneration??1}));},
   staffingClosureBlockers(workId){const root=rootWork(workId),reasons=[];for(const d of listRosterDeltas(workId))if(d.processed!=='confirmed'&&(d.state!=='queued'||(listRunWorks?.(workId)??[root]).some(w=>w.supervisorMemberId===d.supervisorMemberId&&(!w.parent||readPrivate(`dispatch:${w.parent.attemptId}`)?.status==='running'))))reasons.push(`Roster configuration ${d.configVersion} awaits manager processing`);for(const r of rows('staffing-request:'))if(r.result?.workId===root?.id&&r.result.launch&&readPrivate(`operation:${r.result.launch.requestId}`)?.status!=='created')reasons.push('Approved staffing preparation remains pending or unknown');return [...new Set(reasons)];},
   assertStaffingPreparation(memberId,requestId){const request=rows('staffing-request:').find(r=>r.result?.memberId===memberId&&r.result.launch?.requestId===requestId);if(request)active(request.result.workId);},
