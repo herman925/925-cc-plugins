@@ -4,9 +4,11 @@ An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://gi
 
 It is separate from that Claude Code mod (0.5.37), which runs inside each Claude Code session. The current source keeps new teams in its own SQLite database under the verified Orca profile. It neither imports nor overwrites the mod's `.claude/team-orchestrator/` files or the prototype's `team-definitions-v1` KV data. The source includes native roster preparation, admitted task dispatch, declared scope coordination and evidence reconciliation; the Claude mod remains a separate product.
 
-Release **0.1.19** (strict SemVer `0.1.19`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+Release **0.1.20** (strict SemVer `0.1.20`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
 Accepted Roster/New team decisions are recorded in [ADR-001](docs/ADR-001-roster-new-team.md), with the final choices, superseded alternatives, original-mod rationale and verification limits. Consult it before changing these views; the release paragraphs below include intermediate designs. See also the [documentation index](docs/README.md).
+
+Release **0.1.20** names each worker after its named lead: `UI-Worker-1`, `UI-Worker-2`, and so on, restarting numbering under each lead. The preview, saved roster and launch names agree. A named single supervisor uses the same rule; existing saved teams retain their names.
 
 Release **0.1.19** adds optional comma-separated **Lead name** below Team name. The number of names must match Leads; valid names appear in the preview and actual roster. With one lead, the name belongs to the sole Head. Model catalogs stay fixed while configuring a team: no periodic clearing or refresh, and changing the model or lead name does not restart discovery. Project changes and explicit Refresh models can request a new catalog; fresh launch admission stays separate from the displayed choices. See the [0.1.19 validation receipt](docs/validation/lead-names-and-stable-models.json).
 

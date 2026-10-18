@@ -76,6 +76,8 @@ Team name 与 Function 保留；Function 描述团队用途，不是要求用户
 
 2026-10-18 / 0.1.19 补充：Team name 下增加可选的 Lead name，支持英文或中文逗号分隔。填写时名字数量必须与 Leads 一致，去除首尾空白，拒绝重复名和与自动生成成员重名；数量不符时提示并阻止创建。`UI, Dev, Review` 配合 Leads = 3 会直接用于三个 Lead 的预览、实际名册和启动命名。Leads = 1 时名字用于唯一的 Head。留空仍使用原默认名。名字用于标识成员，不自动改写其岗位职责。
 
+0.1.20 补充：填写 Lead name 后，直属 Worker 按 `Lead名字-Worker-序号` 命名，每位 Lead 下从 1 开始。例如 UI 下为 `UI-Worker-1`、`UI-Worker-2`、`UI-Worker-3`；单主管填写名字时也使用同一规则。预览、实际名册、启动 brief 和原生终端标题使用一致的成员名。未填写 Lead name 时沿用自动编号；已有保存的团队不自动改名。
+
 ### 项目和执行主机自动识别
 
 移除 Project and execution host 设置区、Confirm project and host、Refresh workspace。仅保留一行只读项目名称提示。

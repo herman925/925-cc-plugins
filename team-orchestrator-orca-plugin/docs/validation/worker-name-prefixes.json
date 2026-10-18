@@ -1,0 +1,52 @@
+{
+  "schema": "team-worker-names-validation/v1",
+  "version": "0.1.20",
+  "observedAt": "2026-10-18T12:57:28.663213+00:00",
+  "host": "Orca 1.4.229 / macOS arm64",
+  "livePanel": {
+    "groups": [
+      {
+        "lead": "UI",
+        "workers": [
+          "UI-Worker-1",
+          "UI-Worker-2",
+          "UI-Worker-3"
+        ]
+      },
+      {
+        "lead": "Dev",
+        "workers": [
+          "Dev-Worker-1",
+          "Dev-Worker-2",
+          "Dev-Worker-3"
+        ]
+      },
+      {
+        "lead": "Review",
+        "workers": [
+          "Review-Worker-1",
+          "Review-Worker-2",
+          "Review-Worker-3"
+        ]
+      }
+    ],
+    "restored": true,
+    "single": [
+      "UI-Worker-1",
+      "UI-Worker-2",
+      "UI-Worker-3"
+    ],
+    "version": "v0.1.20"
+  },
+  "actualTeamsCreated": 0,
+  "checks": {
+    "domain": 576,
+    "affectedBrowser": 3,
+    "pinnedHostContracts": 3
+  },
+  "artifacts": {
+    "main.mjs": "47a635c44a2671caa2bd77ca09995a578c027fa5aa40d0ea06717728d0476338",
+    "runtime-adapter.cjs": "c1d06006498ad20466a5b351a0351211da631a9a818829e1b453e677c607e895",
+    "panel.html": "19e589b3af711cc8e55365fbb99891a445fe063637a7be73608a7308bf6b5f6f"
+  }
+}

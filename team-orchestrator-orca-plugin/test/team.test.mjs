@@ -55,15 +55,16 @@ test('comma-separated lead names become the actual managers and survive saved co
  const plan=planTeam(form({levels:3,leadCount:3,workersPerLead:2,leadNames:' UI, Dev, Review '}));
  const leads=plan.members.filter(m=>m.role==='lead');
  assert.deepEqual(leads.map(m=>m.name),['UI','Dev','Review']);
- for(const lead of leads){const workers=plan.members.filter(m=>m.boss===lead.id);assert.equal(workers.length,2);assert.ok(workers.every(m=>m.brief.includes(`from ${lead.name}`)));}
+ for(const lead of leads){const workers=plan.members.filter(m=>m.boss===lead.id);assert.deepEqual(workers.map(m=>m.name),[`${lead.name}-Worker-1`,`${lead.name}-Worker-2`]);assert.ok(workers.every(m=>m.brief.includes(`from ${lead.name}`)));}
  assert.deepEqual(validateState({version:1,teams:[plan]}).teams[0],plan);
  const single=planTeam(form({levels:2,leadCount:1,leadNames:'设计主管'}));
  assert.equal(single.members[0].name,'设计主管');assert.equal(single.members.filter(m=>m.role==='lead').length,0);
+ assert.deepEqual(single.members.slice(1).map(m=>m.name),['设计主管-Worker-1','设计主管-Worker-2','设计主管-Worker-3']);
  assert.deepEqual(planTeam(form({levels:3,leadCount:2,leadNames:'UI，Dev'})).members.filter(m=>m.role==='lead').map(m=>m.name),['UI','Dev']);
 });
 
 test('lead naming refuses mismatched, empty, duplicate and colliding names while blank keeps legacy names',()=>{
- for(const leadNames of ['UI,Dev','UI,,Review','UI,ui,Review','Head,Dev,Review','Worker-1-1,Dev,Review',null])assert.throws(()=>planTeam(form({levels:3,leadCount:3,leadNames})));
+ for(const leadNames of ['UI,Dev','UI,,Review','UI,ui,Review','Head,Dev,Review','UI,UI-Worker-1,Review',null])assert.throws(()=>planTeam(form({levels:3,leadCount:3,leadNames})));
  assert.throws(()=>planTeam(form({levels:2,leadCount:1,leadNames:'UI,Dev'})),/match Leads/);
  assert.deepEqual(planTeam(form({levels:3,leadCount:2,leadNames:''})).members.filter(m=>m.role==='lead').map(m=>m.name),['Lead-1-1','Lead-1-2']);
 });

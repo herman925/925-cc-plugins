@@ -67,7 +67,8 @@ export function planTeam(form) {
         for (let i = 1; i <= (level === form.levels ? form.workersPerLead ?? form.fan : form.leadCount ?? form.fan); i++) {
           const role = level === form.levels ? 'worker' : 'lead';
           const suffix = form.levels === 2 ? `${i}` : `${index + 1}-${i}`;
-          next.push(add(role === 'lead' && leadNames.length ? leadNames[i - 1] : `${role === 'worker' ? 'Worker' : 'Lead'}-${suffix}`, name, role, level, boss));
+          const memberName = leadNames.length ? role === 'lead' ? leadNames[i - 1] : `${boss.name}-Worker-${i}` : `${role === 'worker' ? 'Worker' : 'Lead'}-${suffix}`;
+          next.push(add(memberName, name, role, level, boss));
         }
       });
       tier = next;

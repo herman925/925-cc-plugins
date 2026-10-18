@@ -156,6 +156,7 @@ test('more than one lead saves and launches a three-level team with exactly one 
  await ui.getByLabel('Leads',{exact:true}).selectOption('2');await ui.getByLabel('Lead name',{exact:true}).fill('UI, Dev');await ui.getByLabel('Workers per lead',{exact:true}).selectOption('1');await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(5,{timeout:55000});
  const team=(await snapshot(page)).teams[0];expect(team.configuration).toMatchObject({levels:3,leadCount:2,workersPerLead:1});expect(team.members.filter(m=>m.role==='head')).toHaveLength(1);const leads=team.members.filter(m=>m.role==='lead');expect(leads).toHaveLength(2);for(const lead of leads)expect(team.members.filter(m=>m.boss===lead.id)).toHaveLength(1);expect(Object.keys(team.launch.members)).toHaveLength(5);
  expect(leads.map(m=>m.name)).toEqual(['UI','Dev']);expect(team.configuration.leadNames).toBe('UI, Dev');
+ expect(team.members.filter(m=>m.role==='worker').map(m=>m.name)).toEqual(['UI-Worker-1','Dev-Worker-1']);
 });
 
 test('lead names validate against the selected count and update the preview without moving input focus',async({page})=>{
@@ -163,8 +164,10 @@ test('lead names validate against the selected count and update the preview with
  const names=ui.getByLabel('Lead name',{exact:true});await names.fill('UI, Dev, Review');await expect(names).toBeFocused();
  await expect(ui.locator('#lead-names-validation')).toContainText('match Leads; found 3');await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
  await ui.getByLabel('Leads',{exact:true}).selectOption('3');await expect(ui.locator('#preview .org-node.lead > span:nth-child(2)')).toHaveText(['UI','Dev','Review']);await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+ await expect(ui.locator('#preview .org-node.worker > span:nth-child(2)')).toHaveText(['UI-Worker-1','UI-Worker-2','UI-Worker-3','Dev-Worker-1','Dev-Worker-2','Dev-Worker-3','Review-Worker-1','Review-Worker-2','Review-Worker-3']);
  await names.fill('UI, UI, Review');await expect(ui.locator('#lead-names-validation')).toHaveText('Lead names must be unique.');await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
  await names.fill('');await ui.getByLabel('Leads',{exact:true}).selectOption('1');await names.fill('Design');await expect(ui.locator('#preview .org-node.head > span:nth-child(2)')).toHaveText('Design');
+ await expect(ui.locator('#preview .org-node.worker > span:nth-child(2)')).toHaveText(['Design-Worker-1','Design-Worker-2','Design-Worker-3']);
 });
 
 test('chosen models remain stable past discovery expiry and unchanged-project polling preserves the form DOM',async({page})=>{
