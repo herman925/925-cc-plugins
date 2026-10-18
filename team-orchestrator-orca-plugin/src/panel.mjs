@@ -12,6 +12,7 @@ let connection = 'Panel loaded · worker activation unknown · compatibility lay
 let connectionReady = false;
 let state = emptyTeamState();
 let form = {...structuredClone(DEFAULT_FORM),name:'Team',sessionMode:true,launchMode:'all',leadCount:1,workersPerLead:3};
+let leadPreferences = {agent:'codex',model:'default',effort:'default'};
 let telemetry={members:{},observedAt:null};
 let rosterRefreshRunning=false;
 let view = 'roster';
@@ -38,9 +39,6 @@ const mutation = params => ({ ...params, expectedRevision: state.revision, reque
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const label = role => ({ ceo: 'CEO', head: 'Head', lead: 'Lead', worker: 'Worker' })[role];
 function button(text, action, attrs = '', className = '') { return `<button type="button" data-action="${action}" class="${className}" ${busy ? 'disabled' : ''} ${attrs}>${text}</button>`; }
-function segment(field, choices, value) {
-  return `<div class="segments" role="group" aria-label="Structure">${choices.map(([id, text]) => button(escape(text), 'pick', `data-field="${field}" data-value="${id}" aria-pressed="${String(id) === String(value)}"`)).join('')}</div>`;
-}
 function empty() { return `<section class="welcome"><h1>${workspace?'No teams in this project':'Select a project'}</h1><p>${workspace?'Create and launch a team for this project.':'Select a project in Orca to view its teams.'}</p>${button('Add team','new','','primary small')}</section>`; }
 const STATUS_LABELS={working:'Working',idle:'Idle',asking:'Needs input',starting:'Starting',closed:'Closed','not-started':'Not started',offline:'Offline',unknown:'Unknown'};
 function memberObservation(member){return telemetry.members[member.id]??{state:'unknown',model:null,effort:null,context:null,requestedModel:member.model,requestedEffort:member.effort};}
@@ -96,8 +94,8 @@ function preview() {
 }
 function formView() {
   return `<div class="flow"><h1>New team</h1><p class="steps">① Setup <span>→</span> ② Models <span>→</span> ③ Preview <span>→</span> Launch</p></div>
-    <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Structure</span>${segment('levels', [[2, 'Head → Workers'], [3, 'Head → Leads → Workers']], form.levels)}</div>
-    <div class="staffing-counts">${form.levels === 3 ? `<label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.leadCount===n?'selected':''}>${n}</option>`).join('')}</select></label>` : '<label class="field">Head<select aria-label="Head" disabled><option>1</option></select></label>'}<label class="field">${form.levels === 3 ? 'Workers per lead' : 'Workers'}<select aria-label="${form.levels === 3 ? 'Workers per lead' : 'Workers'}" data-count="workersPerLead">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.workersPerLead===n?'selected':''}>${n}</option>`).join('')}</select></label></div></section>
+    <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
+    <div class="staffing-counts"><label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.leadCount===n?'selected':''}>${n}</option>`).join('')}</select></label><label class="field">Workers per lead<select aria-label="Workers per lead" data-count="workersPerLead">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.workersPerLead===n?'selected':''}>${n}</option>`).join('')}</select></label></div></section>
     <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(workspace)}${button('Refresh models', 'refresh-capabilities', capabilitiesLoading || !workspace?.selectionToken ? 'disabled' : '', 'small')}</section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
     ${state.teams.some(t=>!t.launch)?`<details><summary>Unstarted teams</summary>${state.teams.filter(t=>!t.launch).map(t=>button('Launch @'+escape(t.name),'launch-existing',`data-team="${state.teams.indexOf(t)}"`,'small')).join('')}</details>`:''}${projectSummary()}${launchControls()}<div class="actions">${button('Launch team', 'create', busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
@@ -200,7 +198,7 @@ async function refreshNewTeamContext() {
   } finally { newContextRefreshing = false; }
 }
 async function createCurrentTeam() {
-  const draft = {...structuredClone(form),structure:'team',sessionMode:true,launchMode:'all'};
+  const draft = {...structuredClone(form),levels:form.leadCount > 1 ? 3 : 2,structure:'team',sessionMode:true,launchMode:'all'};
   for (let i = draft.levels; i < 3; i++) { draft.models[i] = 'default'; draft.efforts[i] = 'default'; }
   busy = true; problem = ''; message = ''; clearTimeout(capabilityRetryTimer); render();
   try {
@@ -267,10 +265,7 @@ app.addEventListener('click', async event => {
     }catch(error){problem=error.message;}finally{busy=false;render();}
   }
   else if(action==='cancel-cleanup'){cleanupPreview=null;cleanupRequest=null;render();}
-  else if (action === 'pick') {
-    if (target.dataset.field === 'levels') form.levels = Number(target.dataset.value);
-    render();
-  } else if (action === 'create') { await createCurrentTeam(); }
+  else if (action === 'create') { await createCurrentTeam(); }
   else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
   else if (action === 'refresh-capabilities') {
     if (view === 'new') { const scope = workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
@@ -295,10 +290,29 @@ app.addEventListener('input', event => {
   const target = event.target;
   if (target.dataset.form) { form[target.dataset.form] = target.value; updatePreview(); }
 });
+function setLeadCount(count) {
+  const levels = count > 1 ? 3 : 2;
+  if (levels !== form.levels) {
+    for (const [field, key] of [['agents','agent'],['models','model'],['efforts','effort']]) {
+      if (levels === 3) {
+        form[field][2] = form[field][1];
+        form[field][1] = leadPreferences[key];
+      } else {
+        leadPreferences[key] = form[field][1];
+        form[field][1] = form[field][2];
+        form[field][2] = key === 'agent' ? 'codex' : 'default';
+      }
+    }
+  }
+  form.leadCount = count;
+  form.levels = levels;
+  render();
+}
 app.addEventListener('change', async event => {
   const target = event.target;
   if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
-  else if (target.dataset.count) { form[target.dataset.count] = Number(target.value); updatePreview(); }
+  else if (target.dataset.count === 'leadCount') { setLeadCount(Number(target.value)); }
+  else if (target.dataset.count === 'workersPerLead') { form.workersPerLead = Number(target.value); updatePreview(); }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);

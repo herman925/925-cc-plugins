@@ -200,20 +200,6 @@ nav button.active {
 .field textarea {
   resize:vertical;
 }
-.segments {
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-}
-.segments button {
-  font-size:11px;
-  font-weight:400;
-}
-.segments button[aria-pressed=true] {
-  border-color:var(--cyan);
-  color:var(--cyan);
-  background:color-mix(in srgb,var(--cyan) 8%,var(--surface));
-}
 .subtle {
   font-size:11px;
   margin-top:-7px;
@@ -837,6 +823,7 @@ footer {
   var connectionReady = false;
   var state = emptyTeamState();
   var form = { ...structuredClone(DEFAULT_FORM), name: "Team", sessionMode: true, launchMode: "all", leadCount: 1, workersPerLead: 3 };
+  var leadPreferences = { agent: "codex", model: "default", effort: "default" };
   var telemetry = { members: {}, observedAt: null };
   var rosterRefreshRunning = false;
   var view = "roster";
@@ -864,9 +851,6 @@ footer {
   var label = (role) => ({ ceo: "CEO", head: "Head", lead: "Lead", worker: "Worker" })[role];
   function button(text, action, attrs = "", className = "") {
     return `<button type="button" data-action="${action}" class="${className}" ${busy ? "disabled" : ""} ${attrs}>${text}</button>`;
-  }
-  function segment(field, choices, value) {
-    return `<div class="segments" role="group" aria-label="Structure">${choices.map(([id, text]) => button(escape(text), "pick", `data-field="${field}" data-value="${id}" aria-pressed="${String(id) === String(value)}"`)).join("")}</div>`;
   }
   function empty() {
     return `<section class="welcome"><h1>${workspace ? "No teams in this project" : "Select a project"}</h1><p>${workspace ? "Create and launch a team for this project." : "Select a project in Orca to view its teams."}</p>${button("Add team", "new", "", "primary small")}</section>`;
@@ -940,8 +924,8 @@ footer {
   }
   function formView() {
     return `<div class="flow"><h1>New team</h1><p class="steps">\u2460 Setup <span>\u2192</span> \u2461 Models <span>\u2192</span> \u2462 Preview <span>\u2192</span> Launch</p></div>
-    <section class="section"><h2><span>\u2460</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label><div class="field"><span>Structure</span>${segment("levels", [[2, "Head \u2192 Workers"], [3, "Head \u2192 Leads \u2192 Workers"]], form.levels)}</div>
-    <div class="staffing-counts">${form.levels === 3 ? `<label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.leadCount === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>` : '<label class="field">Head<select aria-label="Head" disabled><option>1</option></select></label>'}<label class="field">${form.levels === 3 ? "Workers per lead" : "Workers"}<select aria-label="${form.levels === 3 ? "Workers per lead" : "Workers"}" data-count="workersPerLead">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.workersPerLead === n ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></section>
+    <section class="section"><h2><span>\u2460</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
+    <div class="staffing-counts"><label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.leadCount === n ? "selected" : ""}>${n}</option>`).join("")}</select></label><label class="field">Workers per lead<select aria-label="Workers per lead" data-count="workersPerLead">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.workersPerLead === n ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></section>
     <section class="section"><h2><span>\u2461</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(workspace)}${button("Refresh models", "refresh-capabilities", capabilitiesLoading || !workspace?.selectionToken ? "disabled" : "", "small")}</section>
     <section class="section"><h2><span>\u2462</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
     ${state.teams.some((t) => !t.launch) ? `<details><summary>Unstarted teams</summary>${state.teams.filter((t) => !t.launch).map((t) => button("Launch @" + escape(t.name), "launch-existing", `data-team="${state.teams.indexOf(t)}"`, "small")).join("")}</details>` : ""}${projectSummary()}${launchControls()}<div class="actions">${button("Launch team", "create", busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) ? "disabled" : "", "primary")}${button("Cancel", "roster", "", "secondary")}</div>`;
@@ -973,7 +957,7 @@ footer {
   function render() {
     app.setAttribute("aria-busy", String(busy));
     const usable = connectionReady && loaded && storageAvailable;
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.16")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.17")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
     ${view === "new" ? formView() : view === "settings" ? settingsView() : roster()}`}
@@ -1100,7 +1084,7 @@ footer {
     }
   }
   async function createCurrentTeam() {
-    const draft = { ...structuredClone(form), structure: "team", sessionMode: true, launchMode: "all" };
+    const draft = { ...structuredClone(form), levels: form.leadCount > 1 ? 3 : 2, structure: "team", sessionMode: true, launchMode: "all" };
     for (let i = draft.levels; i < 3; i++) {
       draft.models[i] = "default";
       draft.efforts[i] = "default";
@@ -1243,9 +1227,6 @@ footer {
       cleanupPreview = null;
       cleanupRequest = null;
       render();
-    } else if (action === "pick") {
-      if (target.dataset.field === "levels") form.levels = Number(target.dataset.value);
-      render();
     } else if (action === "create") {
       await createCurrentTeam();
     } else if (action === "retry" || action === "test-connection") {
@@ -1290,6 +1271,24 @@ footer {
       updatePreview();
     }
   });
+  function setLeadCount(count) {
+    const levels = count > 1 ? 3 : 2;
+    if (levels !== form.levels) {
+      for (const [field, key] of [["agents", "agent"], ["models", "model"], ["efforts", "effort"]]) {
+        if (levels === 3) {
+          form[field][2] = form[field][1];
+          form[field][1] = leadPreferences[key];
+        } else {
+          leadPreferences[key] = form[field][1];
+          form[field][1] = form[field][2];
+          form[field][2] = key === "agent" ? "codex" : "default";
+        }
+      }
+    }
+    form.leadCount = count;
+    form.levels = levels;
+    render();
+  }
   app.addEventListener("change", async (event) => {
     const target = event.target;
     if (target.dataset.cleanupWork) {
@@ -1298,8 +1297,10 @@ footer {
       cleanupPreview = null;
       cleanupRequest = null;
       render();
-    } else if (target.dataset.count) {
-      form[target.dataset.count] = Number(target.value);
+    } else if (target.dataset.count === "leadCount") {
+      setLeadCount(Number(target.value));
+    } else if (target.dataset.count === "workersPerLead") {
+      form.workersPerLead = Number(target.value);
       updatePreview();
     } else if (target.dataset.agent !== void 0) {
       const i = Number(target.dataset.agent);
