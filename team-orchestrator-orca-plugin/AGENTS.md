@@ -4,6 +4,7 @@
 - Use the user's padded release labels: `0.1.01`, `0.1.02`, and so on, one increment at a time. Set `package.json`'s `displayVersion` accordingly. Orca's strict SemVer manifest and package version use `0.1.1`, `0.1.2`, respectively; the build checks consistency.
 - Git commits must use `herman925` and the repository's configured GitHub identity.
 - The shipped surface is an Orca plugin panel, not a CLI UI or external dashboard. Preserve the original Claude mod's hierarchy and selection flow.
+- Before changing Roster or New team, read `docs/ADR-001-roster-new-team.md` for the accepted user decisions and intentional departures from the original mod and older specification.
 - Never present accepted launch input as proof of live/ready child sessions. Unknown delivery must not trigger automatic duplicate launches.
 - Run the build after source edits and commit the self-contained `panel.html`. Run domain/bridge tests, browser tests and host contract checks for changed behavior.
 

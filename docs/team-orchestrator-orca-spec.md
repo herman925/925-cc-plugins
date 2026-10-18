@@ -2,6 +2,8 @@
 
 規格日期：2026-10-16。發起者：Lin。目標程式目錄：`team-orchestrator-orca-plugin/`。
 
+> 2026-10-18 更新：本文件保留原始規格與當時狀態。Roster／New team 的最終介面、模板、主管會話交互、初始啟動方式及專案綁定，以已接受的 [ADR-001](../team-orchestrator-orca-plugin/docs/ADR-001-roster-new-team.md) 為準；相關衝突條款已被替代。下文「功能尚未實作／驗收」是 2026-10-16 的歷史狀態，不代表目前插件整體狀態；現況與驗證邊界見插件 README 及 ADR。
+
 本文件是已確認決策的開發閱讀版，對應 [Orca 原生 Team Orchestrator 開發 spec 地圖](https://github.com/herman925/925-cc-plugins/issues/95)。各決策 ticket 的 resolution 保存決議與來源，本文件將其整理成實作與驗收契約。共用名詞見 [GLOSSARY.md](../GLOSSARY.md)。
 
 **狀態：開發規格定稿，功能尚未實作／驗收。** 本次交付文件、詞彙與 GitHub 決策同步，不改動插件功能、不提升插件版本、不發布插件。下列「必須」是後續開發要求，不代表現有 `0.1.06` 已具備。
