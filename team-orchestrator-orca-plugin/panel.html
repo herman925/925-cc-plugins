@@ -648,8 +648,8 @@ footer {
   }
   function planTeam(form2) {
     if (form2.launchMode !== void 0 && !["on-demand", "all"].includes(form2.launchMode)) throw Error("Choose a supported launch mode.");
-    const name2 = cleanName(form2.name);
-    if (!nameValid(name2)) throw new Error("Use a team name of 1\u201364 letters, numbers, underscores or dashes, starting with a letter or number.");
+    const name = cleanName(form2.name);
+    if (!nameValid(name)) throw new Error("Use a team name of 1\u201364 letters, numbers, underscores or dashes, starting with a letter or number.");
     if (!["team", "organisation"].includes(form2.structure)) throw new Error("Choose a team structure.");
     if (![1, 2, 3].includes(form2.levels) || ![1, 2, 3, 4, 5].includes(form2.fan)) throw new Error("Choose 1\u20133 levels and 1\u20135 reports per manager.");
     if (typeof form2.purpose !== "string" || form2.purpose.length > 500) throw new Error("Keep the team function under 500 characters.");
@@ -672,31 +672,31 @@ footer {
       const groups = form2.groups.split(",").map(cleanName);
       if (!groups.length || groups.length > 8 || groups.some((group) => !nameValid(group))) throw new Error("Enter 1\u20138 team names separated by commas.");
       if (new Set(groups.map((group) => group.toLowerCase())).size !== groups.length) throw new Error("Team names must be unique.");
-      if (groups.some((group) => group.toLowerCase() === name2.toLowerCase())) throw new Error("Give the organisation and its teams different names.");
-      const ceo = add("CEO", name2, "ceo", 1, null);
+      if (groups.some((group) => group.toLowerCase() === name.toLowerCase())) throw new Error("Give the organisation and its teams different names.");
+      const ceo = add("CEO", name, "ceo", 1, null);
       for (const group of groups) {
         const head = add(`${group}-Head`, group, "head", 2, ceo);
         for (let i = 1; i <= form2.fan; i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
       }
     } else {
-      let tier = [add("Head", name2, "head", 1, null)];
+      let tier = [add("Head", name, "head", 1, null)];
       for (let level = 2; level <= form2.levels; level++) {
         const next = [];
         tier.forEach((boss, index) => {
           for (let i = 1; i <= form2.fan; i++) {
             const role = level === form2.levels ? "worker" : "lead";
             const suffix = form2.levels === 2 ? `${i}` : `${index + 1}-${i}`;
-            next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name2, role, level, boss));
+            next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
           }
         });
         tier = next;
       }
     }
-    return { name: name2, purpose: form2.purpose.trim(), structure: form2.structure, members, configuration: { ...form2, agents } };
+    return { name, purpose: form2.purpose.trim(), structure: form2.structure, members, configuration: { ...form2, agents } };
   }
   function addTeam(state2, team) {
-    const incoming = new Set([team.name, ...team.members.map((member) => member.team)].map((name2) => name2.toLowerCase()));
-    if (state2.teams.some((existing) => [existing.name, ...existing.members.map((member) => member.team)].some((name2) => incoming.has(name2.toLowerCase())))) throw new Error("A team with this name already exists. Choose a different name; existing teams are never replaced.");
+    const incoming = new Set([team.name, ...team.members.map((member) => member.team)].map((name) => name.toLowerCase()));
+    if (state2.teams.some((existing) => [existing.name, ...existing.members.map((member) => member.team)].some((name) => incoming.has(name.toLowerCase())))) throw new Error("A team with this name already exists. Choose a different name; existing teams are never replaced.");
     return { ...state2, teams: [...state2.teams, team] };
   }
   function validateState(value) {
@@ -745,7 +745,7 @@ footer {
       const { configuration, scope, ...roster2 } = team;
       validateState({ version: 1, teams: [roster2] });
       for (const member of team.members) {
-        if (member.preferenceOverride !== void 0 && typeof member.preferenceOverride !== "boolean" || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some((text2) => typeof text2 !== "string" || text2.length > 1500)) throw new Error("Saved role identity/version is invalid. It has been left untouched.");
+        if (member.preferenceOverride !== void 0 && typeof member.preferenceOverride !== "boolean" || !uuid(member.id) || memberIds.has(member.id) || !Number.isInteger(member.roleVersion) || member.roleVersion < 1 || [member.habits, member.collaboration].some((text) => typeof text !== "string" || text.length > 1500)) throw new Error("Saved role identity/version is invalid. It has been left untouched.");
         memberIds.add(member.id);
       }
       teamIds.add(team.id);
@@ -771,19 +771,19 @@ footer {
         request.reject(error);
       }
     });
-    return (action, params, options = {}) => new Promise((resolve, reject2) => {
+    return (action, params, options = {}) => new Promise((resolve, reject) => {
       const requestId = `team-${++sequence}`;
       const timer = setTimeout(() => {
         pending.delete(requestId);
-        reject2(new Error("Orca did not answer. The outcome is unconfirmed."));
+        reject(new Error("Orca did not answer. The outcome is unconfirmed."));
       }, options.timeoutMs ?? timeoutMs);
-      pending.set(requestId, { resolve, reject: reject2, timer });
+      pending.set(requestId, { resolve, reject, timer });
       parentWindow.postMessage({ type: "orca-panel-action", requestId, action, params }, "*");
     });
   }
 
   // src/public-operations.mjs
-  var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences", "exportTemplate", "previewTemplate", "importTemplate"]);
+  var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
   var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
   var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
@@ -841,76 +841,6 @@ footer {
     return team.members.filter((member) => mode === "all" || !member.boss || team.members.some((child) => child.boss === member.id));
   }
 
-  // src/templates.mjs
-  var TEMPLATE_FORMAT = "orca-team-template";
-  var TEMPLATE_VERSION = 1;
-  var MAX_TEMPLATE_BYTES = 1024 * 1024;
-  var formFields = ["name", "purpose", "structure", "levels", "fan", "groups", "agents", "models", "efforts", "launchMode"];
-  var memberFields = ["name", "team", "role", "level", "agent", "model", "effort", "brief", "habits", "collaboration"];
-  var pick = (value, keys) => Object.fromEntries(keys.map((key) => [key, value[key]]));
-  var reject = (detail) => {
-    throw new Error(`Invalid team template: ${detail}`);
-  };
-  var text = (value, max, empty2 = false) => typeof value === "string" && value.length <= max && (empty2 || value.trim().length > 0);
-  var name = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
-  var only = (value, keys) => {
-    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key)) || keys.some((key) => !Object.hasOwn(value, key))) reject("fields are missing or unsupported. Runtime/session/account fields cannot be imported.");
-  };
-  function parseTeamTemplate(value) {
-    let bytes;
-    try {
-      bytes = new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value)).length;
-    } catch {
-      reject("the document must be serializable JSON.");
-    }
-    if (bytes > MAX_TEMPLATE_BYTES) reject("the document exceeds the 1 MiB exchange limit.");
-    if (typeof value === "string") {
-      try {
-        value = JSON.parse(value);
-      } catch {
-        throw new Error("Template is not valid JSON. Export a new-format team template and try again.");
-      }
-    }
-    if (!value || value.format !== TEMPLATE_FORMAT || value.version !== TEMPLATE_VERSION) throw new Error("Unsupported team template format or version. Legacy mod and prototype data cannot be imported.");
-    only(value, ["format", "version", "team"]);
-    const team = value.team;
-    only(team, ["name", "purpose", "structure", "configuration", "members"]);
-    if (!name(team.name) || !text(team.purpose, 500, true) || !["team", "organisation"].includes(team.structure) || !Array.isArray(team.members) || !team.members.length || team.members.length > 49) reject("choose a supported team name, structure and roster of 1\u201349 members.");
-    const config = { ...team.configuration, launchMode: team.configuration?.launchMode ?? "on-demand" };
-    only(config, formFields);
-    if (!text(config.name, 64) || !text(config.purpose, 500, true) || config.structure !== team.structure || ![1, 2, 3].includes(config.levels) || ![1, 2, 3, 4, 5].includes(config.fan) || !text(config.groups, 520, true)) reject("the saved setup configuration is invalid.");
-    if (config.launchMode !== void 0 && !["on-demand", "all"].includes(config.launchMode)) reject("unsupported launch mode.");
-    for (const key of ["agents", "models", "efforts"]) {
-      if (!Array.isArray(config[key]) || config[key].length !== 3 || config[key].some((value2) => !text(value2, 120))) reject("three level preferences are required.");
-    }
-    if (config.agents.some((agent) => !["codex", "claude"].includes(agent))) reject("only Codex and Claude Code agent identities are supported.");
-    const byRef = /* @__PURE__ */ new Map(), names = /* @__PURE__ */ new Set();
-    for (const member of team.members) {
-      only(member, ["ref", "boss", ...memberFields, "preferenceOverride"]);
-      if (!text(member.ref, 120) || byRef.has(member.ref) || !text(member.name, 120) || names.has(member.name.toLowerCase()) || !name(member.team) || !["ceo", "head", "lead", "worker"].includes(member.role) || ![1, 2, 3].includes(member.level) || !["codex", "claude"].includes(member.agent) || !text(member.model, 120) || !text(member.effort, 120) || typeof member.preferenceOverride !== "boolean" || !text(member.brief, 1500) || !text(member.habits, 1500, true) || !text(member.collaboration, 1500, true) || member.boss !== null && !text(member.boss, 120)) reject("member identities, roles or requested preferences are invalid.");
-      byRef.set(member.ref, member);
-      names.add(member.name.toLowerCase());
-    }
-    const roots = team.members.filter((member) => member.boss === null);
-    if (roots.length !== 1 || roots[0].level !== 1 || roots[0].role !== (team.structure === "organisation" ? "ceo" : "head")) reject("the reporting tree must have exactly one Head or CEO root.");
-    const visiting = /* @__PURE__ */ new Set(), visited = /* @__PURE__ */ new Set(), ordered = [];
-    const visit = (member) => {
-      if (visiting.has(member.ref)) reject("the reporting tree contains a cycle.");
-      if (visited.has(member.ref)) return;
-      visiting.add(member.ref);
-      if (member.boss !== null) {
-        const boss = byRef.get(member.boss);
-        if (!boss || boss.role === "worker" || boss.level !== member.level - 1) reject("a reporting relationship is missing or has an invalid level.");
-        visit(boss);
-      }
-      visiting.delete(member.ref);
-      visited.add(member.ref);
-      ordered.push(member);
-    };
-    team.members.forEach(visit);
-    return { format: TEMPLATE_FORMAT, version: TEMPLATE_VERSION, team: { name: team.name, purpose: team.purpose, structure: team.structure, configuration: structuredClone(pick(config, formFields)), members: ordered.map((member) => ({ ref: member.ref, boss: member.boss, ...pick(member, memberFields), preferenceOverride: member.preferenceOverride })) } };
-  }
-
   // src/panel.mjs
   var app = document.getElementById("app");
   var rawCall = createBridge(window.parent);
@@ -938,9 +868,6 @@ footer {
   var capabilityViews = /* @__PURE__ */ new Map();
   var memberPreferences = null;
   var preferenceTarget = "member";
-  var templateText = "";
-  var templatePreview = null;
-  var templateRequest = null;
   var replacementDrafts = /* @__PURE__ */ new Map();
   var staffingDrafts = /* @__PURE__ */ new Map();
   var staffingRequests = /* @__PURE__ */ new Map();
@@ -958,11 +885,11 @@ footer {
   var mutation = (params) => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
   var escape = (value) => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   var label = (role) => ({ ceo: "CEO", head: "Head", lead: "Lead", worker: "Worker" })[role];
-  function button(text2, action, attrs = "", className = "") {
-    return `<button type="button" data-action="${action}" class="${className}" ${attrs}>${text2}</button>`;
+  function button(text, action, attrs = "", className = "") {
+    return `<button type="button" data-action="${action}" class="${className}" ${attrs}>${text}</button>`;
   }
   function segment(field, choices, value) {
-    return `<div class="segments" role="group" aria-label="${field === "fan" ? "Reports per manager" : field === "levels" ? "Hierarchy levels" : "Structure"}">${choices.map(([id, text2]) => button(escape(text2), "pick", `data-field="${field}" data-value="${id}" aria-pressed="${String(id) === String(value)}"`)).join("")}</div>`;
+    return `<div class="segments" role="group" aria-label="${field === "fan" ? "Reports per manager" : field === "levels" ? "Hierarchy levels" : "Structure"}">${choices.map(([id, text]) => button(escape(text), "pick", `data-field="${field}" data-value="${id}" aria-pressed="${String(id) === String(value)}"`)).join("")}</div>`;
   }
   function presets() {
     return `<div class="presets">${PRESETS.map((preset, i) => button(`<span><strong>${preset.label}</strong><code>${preset.sketch}</code></span><small>${preset.hint}</small>`, "preset", `data-index="${i}"`, "preset")).join("")}</div>`;
@@ -979,14 +906,14 @@ footer {
       return `<li><${clickable ? 'button type="button"' : "span"} class="org-node ${escape(member.role)}" ${clickable ? `data-action="member" data-team="${teamIndex}" data-member="${escape(member.id)}" aria-label="${escape(member.name)}" title="${escape(member.name)}"` : ""}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></${clickable ? "button" : "span"}>${members.some((child) => child.boss === member.id) ? tree(members, member.id, clickable, teamIndex, compact) : ""}</li>`;
     }).join("")}</ul>`;
   }
-  function preferenceControls(name2, preference, caps, suffix, member = false) {
+  function preferenceControls(name, preference, caps, suffix, member = false) {
     const agent = caps?.agents?.[preference.agent];
     const models = agent?.models ?? [];
     const listed = models.find((row) => row.id === preference.model);
     const efforts = [.../* @__PURE__ */ new Set(["default", ...(listed?.efforts ?? []).map((row) => row.value), ...preference.effort === "default" ? [] : [preference.effort]])];
     const attr = (field) => member ? `data-preference="${field}"` : `data-${field}="${suffix}"`;
     const issue = preferenceIssue(preference, caps);
-    return `<td><select aria-label="${name2} ${member ? "agent" : "CLI"}" ${attr("agent")}>${[["codex", "Codex"], ["claude", "Claude Code"]].map(([value, text2]) => `<option value="${value}" ${preference.agent === value ? "selected" : ""}>${text2}${caps?.agents?.[value]?.tuiPickerDisabled ? " \xB7 hidden in TUI picker" : ""}</option>`).join("")}</select></td><td><input aria-label="${name2} model" ${attr("model")} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map((row) => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join("")}</datalist></td><td><select aria-label="${name2} effort" ${attr("effort")} ${preference.model === "default" ? "disabled" : ""}>${efforts.map((value) => `<option value="${escape(value)}" ${preference.effort === value ? "selected" : ""}>${escape(value === "default" ? "Default" : value)}</option>`).join("")}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ""}</td>`;
+    return `<td><select aria-label="${name} ${member ? "agent" : "CLI"}" ${attr("agent")}>${[["codex", "Codex"], ["claude", "Claude Code"]].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? "selected" : ""}>${text}${caps?.agents?.[value]?.tuiPickerDisabled ? " \xB7 hidden in TUI picker" : ""}</option>`).join("")}</select></td><td><input aria-label="${name} model" ${attr("model")} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map((row) => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join("")}</datalist></td><td><select aria-label="${name} effort" ${attr("effort")} ${preference.model === "default" ? "disabled" : ""}>${efforts.map((value) => `<option value="${escape(value)}" ${preference.effort === value ? "selected" : ""}>${escape(value === "default" ? "Default" : value)}</option>`).join("")}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ""}</td>`;
   }
   function capabilityNotice(scope) {
     const caps = capabilityViews.get(scope?.workspaceKey);
@@ -996,8 +923,8 @@ footer {
     const count = form.structure === "organisation" ? 3 : form.levels;
     const caps = capabilityViews.get((confirmedWorkspace || workspace)?.workspaceKey);
     return Array.from({ length: count }, (_, i) => {
-      const name2 = form.structure === "organisation" ? ["CEO", "Heads", "Workers"][i] : i === 0 ? "Head" : i === count - 1 ? "Workers" : "Leads";
-      return `<tr><th scope="row">${name2}</th>${preferenceControls(name2, { agent: form.agents[i], model: form.models[i], effort: form.efforts[i] }, caps, i)}</tr>`;
+      const name = form.structure === "organisation" ? ["CEO", "Heads", "Workers"][i] : i === 0 ? "Head" : i === count - 1 ? "Workers" : "Leads";
+      return `<tr><th scope="row">${name}</th>${preferenceControls(name, { agent: form.agents[i], model: form.models[i], effort: form.efforts[i] }, caps, i)}</tr>`;
     }).join("");
   }
   function preview() {
@@ -1123,12 +1050,7 @@ footer {
   function roster() {
     if (!state.teams.length) return empty();
     const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join("")}</section>` : "";
-    return `<div class="section-heading"><h1>Team roster</h1>${button("+ New team", "new", "", "primary small")}</div>${charts}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><p class="bound-project">${escape(team.scope.displayName)} \xB7 ${escape(team.scope.kind)} \xB7 ${escape(team.scope.executionHostId)}</p>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ""}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map((member) => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, "member", `data-team="${i}" data-member="${escape(member.id)}"`, "name-button")}</td><td>${label(member.role)}</td><td>${member.agent === "claude" ? "Claude" : "Codex"}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join("")}</tbody></table></div>${admissionControls(team)}<div class="actions">${button("Export template", "export-template", `data-team="${i}" ${!storageAvailable ? "disabled" : ""}`, "secondary small")}${button("Copy team", "copy-team", `data-team="${i}" ${!storageAvailable ? "disabled" : ""}`, "secondary small")}</div>${!team.launch ? button("Launch this team", "launch-existing", `data-team="${i}" ${!storageAvailable ? "disabled" : ""}`, "primary small") : launchReceipt(team) + (initialMembers(team).some((member) => !team.launch.members?.[member.id]) ? button("Continue roster preparation", "launch-existing", `data-team="${i}"`, "small") : "")}${workSection(team)}</section>`).join("")}</div>${state.teams.some((team) => !team.launch) ? launchControls() : ""}${details()}`;
-  }
-  function templatesView() {
-    const preview2 = templatePreview?.template.team;
-    return `<h1>Team templates</h1><p>Exchange configuration and roles as JSON. Imported teams have new identities and no sessions or work history. Legacy mod/prototype formats are not supported.</p><label class="field">Template JSON<textarea data-template rows="10" spellcheck="false" ${templatePreview ? "readonly" : ""}>${escape(templateText)}</textarea></label><div class="actions">${button("Select JSON to copy", "select-template", !templateText ? "disabled" : "", "secondary small")}${button(templatePreview ? "Edit template JSON" : "Preview template", templatePreview ? "edit-template" : "preview-template", !loaded || !storageAvailable ? "disabled" : "", "primary small")}</div><label class="field">Open template file<input type="file" data-template-file accept="application/json,.json"></label>
-  ${preview2 ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview2.name)}</h2><p>${preview2.members.length} members \xB7 ${escape(preview2.structure)}</p><p>${escape(preview2.purpose)}</p><div class="tree-scroll">${tree(preview2.members.map((member) => ({ ...member, id: member.ref })))}</div>${preview2.members.map((member) => `<details><summary>${escape(member.name)} \xB7 ${escape(member.agent)} \xB7 ${escape(member.model)} \xB7 ${escape(member.effort)} \xB7 ${member.preferenceOverride ? "Member override" : "Level preference"}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || "None specified")}</p><p>Collaboration rules: ${escape(member.collaboration || "None specified")}</p></details>`).join("")}</section>${projectControls()}<div class="actions">${button("Import as new team", "import-template", !confirmedWorkspace || !loaded || !storageAvailable ? "disabled" : "", "primary")}</div>` : ""}`;
+    return `<div class="section-heading"><h1>Team roster</h1>${button("+ New team", "new", "", "primary small")}</div>${charts}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><p class="bound-project">${escape(team.scope.displayName)} \xB7 ${escape(team.scope.kind)} \xB7 ${escape(team.scope.executionHostId)}</p>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ""}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map((member) => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, "member", `data-team="${i}" data-member="${escape(member.id)}"`, "name-button")}</td><td>${label(member.role)}</td><td>${member.agent === "claude" ? "Claude" : "Codex"}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join("")}</tbody></table></div>${admissionControls(team)}${!team.launch ? button("Launch this team", "launch-existing", `data-team="${i}" ${!storageAvailable ? "disabled" : ""}`, "primary small") : launchReceipt(team) + (initialMembers(team).some((member) => !team.launch.members?.[member.id]) ? button("Continue roster preparation", "launch-existing", `data-team="${i}"`, "small") : "")}${workSection(team)}</section>`).join("")}</div>${state.teams.some((team) => !team.launch) ? launchControls() : ""}${details()}`;
   }
   function attentionCount() {
     return (state.recoveries || []).filter((r) => !["bound", "resumed"].includes(r.state)).length + (state.works || []).reduce((count, w) => count + (w.questions || []).filter((q) => q.status === "pending").length + (w.staffingProposals || []).filter((p) => p.status === "pending" && w.status !== "completed").length, 0);
@@ -1161,13 +1083,13 @@ footer {
   }
   function render() {
     app.setAttribute("aria-busy", String(busy));
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.11")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["templates", "Templates"], ["attention", `Needs your attention (${attentionCount()})`], ["settings", "Settings"]].map(([id, text2]) => button(text2, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.11")}</small></div><nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["attention", `Needs your attention (${attentionCount()})`], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav></header><main>
     ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map((team) => `${escape(team.name)} \xB7 ${escape(team.scope.displayName)} \xB7 ${escape(team.scope.executionHostId)}`).join(" | ")}</div>` : ""}
     <div class="notice" role="status">${escape(connection)} ${button("Test connection", "test-connection", busy ? "disabled" : "", "small")}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams\u2026</p>' : view === "new" ? formView() : view === "templates" ? templatesView() : view === "settings" ? settingsView() : view === "attention" ? attentionView() : connectionReady && !storageAvailable && !busy ? storageRecoveryView() : roster()}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams\u2026</p>' : view === "new" ? formView() : view === "settings" ? settingsView() : view === "attention" ? attentionView() : connectionReady && !storageAvailable && !busy ? storageRecoveryView() : roster()}
     </main><footer>${storageAvailable ? "Saved in Orca" : loaded ? "Session only" : "Connecting to Orca"}<span>Orca \xB7 Agent teams</span></footer>`;
     if (busy) for (const control of app.querySelectorAll("button,input,select,textarea")) control.disabled = true;
   }
@@ -1243,7 +1165,6 @@ footer {
       return true;
     } catch (error) {
       problem = `Could not save: ${error.message}`;
-      if (/Another panel changed/.test(error.message)) templateRequest = null;
       canRetry = true;
       return false;
     } finally {
@@ -1293,7 +1214,7 @@ footer {
     const target = event.target.closest("[data-action]");
     if (!target || target.disabled || busy) return;
     const action = target.dataset.action;
-    if (["roster", "new", "templates", "settings", "attention"].includes(action)) {
+    if (["roster", "new", "settings", "attention"].includes(action)) {
       view = action;
       message = "";
       render();
@@ -1380,12 +1301,10 @@ footer {
       await load(action === "test-connection");
     } else if (action === "refresh-tabs") {
       confirmedWorkspace = null;
-      templateRequest = null;
       await refreshTargets();
       render();
     } else if (action === "confirm-project") {
       confirmedWorkspace = workspace;
-      templateRequest = null;
       await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace);
       render();
     } else if (action === "refresh-capabilities") {
@@ -1439,65 +1358,6 @@ footer {
       const fields = Object.fromEntries([...app.querySelectorAll("[data-role]")].map((node) => [node.dataset.role, node.value]));
       if (await submit("updateRole", { teamId: team.id, memberId: selection.member, ...fields })) {
         message = "Role saved as a new version.";
-        render();
-      }
-    } else if (action === "export-template" || action === "copy-team") {
-      busy = true;
-      problem = "";
-      message = "";
-      render();
-      try {
-        const result = await call("exportTemplate", { teamId: state.teams[Number(target.dataset.team)].id });
-        templateText = JSON.stringify(result.template, null, 2);
-        templatePreview = null;
-        templateRequest = null;
-        confirmedWorkspace = null;
-        if (action === "copy-team") templatePreview = await call("previewTemplate", { template: result.template });
-        view = "templates";
-        await refreshTargets();
-        message = action === "copy-team" ? "Review this independent copy, then confirm its target project." : "Template ready. Select the JSON and copy it with your usual keyboard shortcut to save or share it.";
-      } catch (error) {
-        problem = error.message;
-      } finally {
-        busy = false;
-        render();
-      }
-    } else if (action === "select-template") {
-      const field = app.querySelector("[data-template]");
-      field?.focus();
-      field?.select();
-    } else if (action === "edit-template") {
-      templatePreview = null;
-      templateRequest = null;
-      confirmedWorkspace = null;
-      render();
-    } else if (action === "preview-template") {
-      busy = true;
-      problem = "";
-      message = "";
-      render();
-      try {
-        templatePreview = await call("previewTemplate", { template: parseTeamTemplate(templateText) });
-        templateRequest = null;
-        confirmedWorkspace = null;
-        await refreshTargets();
-      } catch (error) {
-        templatePreview = null;
-        problem = error.message;
-      } finally {
-        busy = false;
-        render();
-      }
-    } else if (action === "import-template") {
-      if (!templatePreview || !confirmedWorkspace) return;
-      templateRequest ??= mutation({ template: templatePreview.template, previewToken: templatePreview.previewToken, selectionToken: confirmedWorkspace.selectionToken });
-      if (await submit("importTemplate", {}, templateRequest)) {
-        templatePreview = null;
-        templateRequest = null;
-        templateText = "";
-        view = "roster";
-        selection = null;
-        message = "Imported as an independent team. No members were launched and no work history was copied.";
         render();
       }
     } else if (["wake-member", "check-wake", "decide-wake", "handoff-wake", "replace-wake"].includes(action)) {
@@ -1746,8 +1606,6 @@ footer {
     } else if (target.dataset.objective) {
       objectives.set(target.dataset.objective, target.value);
       workRequests.delete(target.dataset.objective);
-    } else if (target.hasAttribute("data-template")) {
-      templateText = target.value;
     } else if (target.dataset.form) {
       form[target.dataset.form] = target.value;
       updatePreview();
@@ -1760,22 +1618,7 @@ footer {
       staffingRequests.delete(target.dataset.work + ":direct");
       return;
     }
-    if (target.hasAttribute("data-template-file")) {
-      const file = target.files?.[0];
-      if (!file) return;
-      templatePreview = null;
-      templateRequest = null;
-      confirmedWorkspace = null;
-      problem = "";
-      message = "";
-      try {
-        if (file.size > MAX_TEMPLATE_BYTES) throw new Error("Template file exceeds the 1 MiB exchange limit.");
-        templateText = await file.text();
-      } catch (error) {
-        problem = error.message;
-      }
-      render();
-    } else if (target.dataset.cleanupWork) {
+    if (target.dataset.cleanupWork) {
       if (target.checked) cleanupSelection.add(target.dataset.cleanupWork);
       else cleanupSelection.delete(target.dataset.cleanupWork);
       cleanupPreview = null;

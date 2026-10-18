@@ -24,7 +24,7 @@ __export(adapter_exports, {
 module.exports = __toCommonJS(adapter_exports);
 
 // src/public-operations.mjs
-var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences", "exportTemplate", "previewTemplate", "importTemplate"]);
+var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
 var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
 var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
@@ -317,9 +317,6 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
   return { ok: true, value: await invoke({ op: "_launchFollowup", params: { phaseId: settled.phaseId, warning, observation } }) };
 }
 
-// src/templates.mjs
-var MAX_TEMPLATE_BYTES = 1024 * 1024;
-
 // src/local/adapter.mjs
 var SLOT = /* @__PURE__ */ Symbol.for("herman925.team-orchestrator.adapter");
 var KEY = "herman925.team-orchestrator";
@@ -368,8 +365,7 @@ async function installAdapter(electron, { version, identity, internalKey }) {
     if (!gate.ok) return gate;
     try {
       const message = call.params.teamWorker;
-      const envelopeLimit = ["previewTemplate", "importTemplate"].includes(message.args?.op) ? MAX_TEMPLATE_BYTES + 8192 : 6e4;
-      if (message.protocol !== 1 || typeof message.nonce !== "string" || !message.nonce || message.nonce.length > 128 || !["team.control", "team.initialise"].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > envelopeLimit) return { ok: false, code: "invalid_params", error: "Invalid worker command envelope." };
+      if (message.protocol !== 1 || typeof message.nonce !== "string" || !message.nonce || message.nonce.length > 128 || !["team.control", "team.initialise"].includes(message.commandId) || Buffer.byteLength(JSON.stringify(message)) > 6e4) return { ok: false, code: "invalid_params", error: "Invalid worker command envelope." };
       if (message.commandId === "team.control" && !PUBLIC_OPERATIONS.includes(message.args?.op)) return { ok: false, code: "invalid_params", error: "Unknown worker operation." };
       if (Object.keys(message.args ?? {}).some((key) => !["op", "params", "workspaceId"].includes(key))) throw Error("Invalid public worker arguments.");
       if (message.commandId === "team.control" && BROKERED_PUBLIC_OPERATIONS.includes(message.args?.op)) {

@@ -351,15 +351,12 @@ app.whenReady().then(async () => {
     assert.equal((await ipc('plugins:panelAction', envelope('team.control', '_capabilityResult'))).code, 'invalid_params');
     await assert.rejects(ipc('plugins:invokeCommand', { pluginKey: KEY, commandId: 'team.control', args: { op: '_capabilityResult', internalKey: 'forged', params: {} } }), /authority/);
 
-    const exported = await control('exportTemplate', { teamId: saved.teams[0].id });
-    assert.equal(JSON.stringify(exported.template).includes(saved.teams[0].id), false);
-    const preview = await control('previewTemplate', { template: exported.template });
-    const importRequest = { requestId: 'electron-import', expectedRevision: edited.revision, template: preview.template, previewToken: preview.previewToken, selectionToken: selection.selectionToken };
-    edited = (await control('importTemplate', importRequest)).value;
+    const secondCreate = { requestId: 'electron-create-second', expectedRevision: edited.revision, selectionToken: selection.selectionToken, form: { ...form, name: 'Second-Team' } };
+    edited = (await control('createTeam', secondCreate)).value;
     assert.equal(edited.teams.length, 2); assert.notEqual(edited.teams[0].id, edited.teams[1].id);
-    assert.equal(edited.teams[1].members[0].brief, 'Review evidence');
+    assert.equal(edited.teams[0].members[0].brief, 'Review evidence');
     assert.equal(edited.teams[1].members[0].roleVersion, 1); assert.equal(edited.teams[1].launch, undefined);
-    const imported = edited;
+    const secondSaved = edited;
     const launchInputs = edited.teams.map((team, index) => ({ requestId: `electron-launch-${index}`, teamId: team.id, memberId: team.members[0].id, configVersion: team.configVersion }));
     const first = await control('launchSupervisor', launchInputs[0]);
     assert.equal(first.kind, 'terminal'); assert.equal(first.observation.state, 'permission');
@@ -448,7 +445,7 @@ app.whenReady().then(async () => {
     start = undefined;
     assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited));
     assert.deepEqual((await control('createTeam', create)).value, saved, 'recover completed save after worker restart');
-    assert.deepEqual((await control('importTemplate', importRequest)).value, imported, 'recover completed import after worker restart');
+    assert.deepEqual((await control('createTeam', secondCreate)).value, secondSaved, 'recover second completed save after worker restart');
     assert.deepEqual(stableSnapshot((await control('load', {})).value), stableSnapshot(edited), 'replay never overwrites the latest snapshot');
     assert.equal((await control('launchSupervisor', launchInputs[0])).handle, first.handle);
     assert.equal(launched.size, 2, 'worker restart cannot relaunch a bound member');
@@ -554,7 +551,7 @@ app.whenReady().then(async () => {
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');
     console.log(`Observed fixture runtime: Electron ${process.versions.electron}, Node ${process.versions.node}, synthetic Orca ${app.getVersion()}`);
-    console.log('REAL_ELECTRON_WORKER_PASS: schema2 recovery diagnostics and protected history preview/apply rejection through real IPC; idle provider replacement without native death and deferred organization applied with acceptance/next-goal reservation; native-authored staffing proposal, atomic approval across panel requests, no on-demand prelaunch, one full-mode addition via genuine renderer IPC and versioned real-user roster delivery; native UUID stop, unknown, deduplication, admission pause/resume; overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/template-copy/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
+    console.log('REAL_ELECTRON_WORKER_PASS: schema2 recovery diagnostics and protected history preview/apply rejection through real IPC; idle provider replacement without native death and deferred organization applied with acceptance/next-goal reservation; native-authored staffing proposal, atomic approval across panel requests, no on-demand prelaunch, one full-mode addition via genuine renderer IPC and versioned real-user roster delivery; native UUID stop, unknown, deduplication, admission pause/resume; overall native Head delivery, socket rework, user acceptance and new queued supervisor/Run; genuine main-frame native launch/structured reveal/terminal focus; native local-user Unix RPC for terminal and structured objectives, schema43 owner binding, input/processing/Run separation, native Task author receipts, durable Head questions and answer-before-native-user-input across terminal/structured socket transports and restart, consent-bound notifications, independently committed admission before permit, scripted supervisor worker-start projections and member completion separated from authenticated supervisor accept/rework with immutable originals, panel-closed reconciliation, scoped incomplete archived worker output and restart input deduplication; durable intent-before-effect and identity-before-naming, two objective supervisors plus exactly four additional saved roster sessions with replay deduplication, authenticated runtime capability reads, SQLite save/role/restart/replay with confirmed SSH scope, lazy activation, nonce, exact fixture build, retry without duplicate wrappers, foreign command/token/subframe denial, live consent/admission gates, inspector cleanup and disable restoration. Fixture metadata mirrors the pinned build; this is not actual Orca/provider acceptance.');
     clearTimeout(watchdog); child.kill(); nativeSocket.close(); nativeDb.close(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(watchdog); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }
 });

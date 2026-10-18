@@ -3,7 +3,6 @@ import { PRESETS, DEFAULT_FORM, GLYPHS, planTeam, emptyTeamState, validatePersis
 import { createBridge } from './bridge.mjs';
 import { createWorkerBridge } from './worker-bridge.mjs';
 import { initialMembers } from './launch.mjs';
-import { parseTeamTemplate, MAX_TEMPLATE_BYTES } from './templates.mjs';
 
 const app = document.getElementById('app');
 const rawCall = createBridge(window.parent);
@@ -29,9 +28,6 @@ let confirmedWorkspace = null;
 const capabilityViews = new Map();
 let memberPreferences = null;
 let preferenceTarget = 'member';
-let templateText = '';
-let templatePreview = null;
-let templateRequest = null;
 const replacementDrafts=new Map();
 const staffingDrafts=new Map(),staffingRequests=new Map();
 
@@ -204,12 +200,7 @@ function activeWorkSection(team) {
 function roster() {
   if (!state.teams.length) return empty();
   const charts = state.settings.chart ? `<section class="organisation"><h2>Organisation</h2>${state.teams.map((team, i) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, i, true)}</div>`).join('')}</section>` : '';
-  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><p class="bound-project">${escape(team.scope.displayName)} · ${escape(team.scope.kind)} · ${escape(team.scope.executionHostId)}</p>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${admissionControls(team)}<div class="actions">${button('Export template', 'export-template', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'secondary small')}${button('Copy team', 'copy-team', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'secondary small')}</div>${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)+(initialMembers(team).some(member=>!team.launch.members?.[member.id])?button('Continue roster preparation','launch-existing',`data-team="${i}"`, 'small'):'')}${workSection(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
-}
-function templatesView() {
-  const preview = templatePreview?.template.team;
-  return `<h1>Team templates</h1><p>Exchange configuration and roles as JSON. Imported teams have new identities and no sessions or work history. Legacy mod/prototype formats are not supported.</p><label class="field">Template JSON<textarea data-template rows="10" spellcheck="false" ${templatePreview ? 'readonly' : ''}>${escape(templateText)}</textarea></label><div class="actions">${button('Select JSON to copy', 'select-template', !templateText ? 'disabled' : '', 'secondary small')}${button(templatePreview ? 'Edit template JSON' : 'Preview template', templatePreview ? 'edit-template' : 'preview-template', !loaded || !storageAvailable ? 'disabled' : '', 'primary small')}</div><label class="field">Open template file<input type="file" data-template-file accept="application/json,.json"></label>
-  ${preview ? `<section class="section" aria-label="Template preview"><h2>Preview @${escape(preview.name)}</h2><p>${preview.members.length} members · ${escape(preview.structure)}</p><p>${escape(preview.purpose)}</p><div class="tree-scroll">${tree(preview.members.map(member => ({ ...member, id: member.ref })))}</div>${preview.members.map(member => `<details><summary>${escape(member.name)} · ${escape(member.agent)} · ${escape(member.model)} · ${escape(member.effort)} · ${member.preferenceOverride ? 'Member override' : 'Level preference'}</summary><p>${escape(member.brief)}</p><p>Work habits: ${escape(member.habits || 'None specified')}</p><p>Collaboration rules: ${escape(member.collaboration || 'None specified')}</p></details>`).join('')}</section>${projectControls()}<div class="actions">${button('Import as new team', 'import-template', !confirmedWorkspace || !loaded || !storageAvailable ? 'disabled' : '', 'primary')}</div>` : ''}`;
+  return `<div class="section-heading"><h1>Team roster</h1>${button('+ New team', 'new', '', 'primary small')}</div>${charts}<div class="team-cards ${state.settings.layout === 'columns' ? 'columns' : ''}">${state.teams.map((team, i) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><p class="bound-project">${escape(team.scope.displayName)} · ${escape(team.scope.kind)} · ${escape(team.scope.executionHostId)}</p>${team.purpose ? `<p class="purpose">${escape(team.purpose)}</p>` : ''}<div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Model</th><th>Effort</th><th>Launch</th></tr></thead><tbody>${team.members.map(member => `<tr><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`, 'member', `data-team="${i}" data-member="${escape(member.id)}"`, 'name-button')}</td><td>${label(member.role)}</td><td>${member.agent === 'claude' ? 'Claude' : 'Codex'}</td><td>${escape(member.model)}</td><td>${escape(member.effort)}</td><td><span class="status-dot" aria-hidden="true"></span>${launchStatus(team, member)}</td></tr>`).join('')}</tbody></table></div>${admissionControls(team)}${!team.launch ? button('Launch this team', 'launch-existing', `data-team="${i}" ${!storageAvailable ? 'disabled' : ''}`, 'primary small') : launchReceipt(team)+(initialMembers(team).some(member=>!team.launch.members?.[member.id])?button('Continue roster preparation','launch-existing',`data-team="${i}"`, 'small'):'')}${workSection(team)}</section>`).join('')}</div>${state.teams.some(team => !team.launch) ? launchControls() : ''}${details()}`;
 }
 function attentionCount() { return (state.recoveries||[]).filter(r=>!['bound','resumed'].includes(r.state)).length+(state.works || []).reduce((count,w)=>count+(w.questions||[]).filter(q=>q.status==='pending').length+(w.staffingProposals||[]).filter(p=>p.status==='pending'&&w.status!=='completed').length,0); }
 function recoveryCards(){
@@ -240,13 +231,13 @@ function settingsView() {
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
-  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['templates', 'Templates'], ['attention', `Needs your attention (${attentionCount()})`], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
+  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['attention', `Needs your attention (${attentionCount()})`], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
     ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map(team => `${escape(team.name)} · ${escape(team.scope.displayName)} · ${escape(team.scope.executionHostId)}`).join(' | ')}</div>` : ''}
     <div class="notice" role="status">${escape(connection)} ${button('Test connection', 'test-connection', busy ? 'disabled' : '', 'small')}</div>
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
     ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'templates' ? templatesView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : connectionReady&&!storageAvailable&&!busy?storageRecoveryView():roster()}
+    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'settings' ? settingsView() : view === 'attention' ? attentionView() : connectionReady&&!storageAvailable&&!busy?storageRecoveryView():roster()}
     </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
@@ -286,7 +277,7 @@ async function submit(action, params, request) {
   try {
     const result = await call(action, request ?? mutation(params));
     state = validatePersistentState(result?.value); return true;
-  } catch (error) { problem = `Could not save: ${error.message}`; if (/Another panel changed/.test(error.message)) templateRequest = null; canRetry = true; return false; }
+  } catch (error) { problem = `Could not save: ${error.message}`; canRetry = true; return false; }
   finally { busy = false; render(); }
 }
 async function launchTeam(index) {
@@ -317,7 +308,7 @@ app.addEventListener('click', async event => {
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
-  if (['roster', 'new', 'templates', 'settings', 'attention'].includes(action)) { view = action; message = ''; render(); }
+  if (['roster', 'new', 'settings', 'attention'].includes(action)) { view = action; message = ''; render(); }
   else if(action==='storage-recovery') {busy=true;render();try{storageRecovery=await call('storageRecovery',{});}catch(error){problem=error.message;}finally{busy=false;render();}}
   else if(action==='preview-cleanup'||action==='apply-cleanup') {
     busy=true;problem='';render();try{
@@ -340,8 +331,8 @@ app.addEventListener('click', async event => {
   } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; const team = state.teams[selection.team]; memberPreferences = { ...team.members.find(row => row.id === selection.member) }; preferenceTarget = 'member'; await refreshCapabilities({ teamId: team.id }, team.scope); render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
   else if (action === 'close-details') { selection = null; render(); }
   else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
-  else if (action === 'refresh-tabs') { confirmedWorkspace = null; templateRequest = null; await refreshTargets(); render(); }
-  else if (action === 'confirm-project') { confirmedWorkspace = workspace; templateRequest = null; await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace); render(); }
+  else if (action === 'refresh-tabs') { confirmedWorkspace = null; await refreshTargets(); render(); }
+  else if (action === 'confirm-project') { confirmedWorkspace = workspace; await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace); render(); }
   else if (action === 'refresh-capabilities') {
     if (view === 'new') { const scope = confirmedWorkspace || workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
     else if (selection) { const team = state.teams[selection.team]; await refreshCapabilities({ teamId: team.id }, team.scope, true); }
@@ -363,35 +354,6 @@ app.addEventListener('click', async event => {
     const team = state.teams[selection.team];
     const fields = Object.fromEntries([...app.querySelectorAll('[data-role]')].map(node => [node.dataset.role, node.value]));
     if (await submit('updateRole', { teamId: team.id, memberId: selection.member, ...fields })) { message = 'Role saved as a new version.'; render(); }
-  }
-  else if (action === 'export-template' || action === 'copy-team') {
-    busy = true; problem = ''; message = ''; render();
-    try {
-      const result = await call('exportTemplate', { teamId: state.teams[Number(target.dataset.team)].id });
-      templateText = JSON.stringify(result.template, null, 2); templatePreview = null; templateRequest = null; confirmedWorkspace = null;
-      if (action === 'copy-team') templatePreview = await call('previewTemplate', { template: result.template });
-      view = 'templates'; await refreshTargets();
-      message = action === 'copy-team' ? 'Review this independent copy, then confirm its target project.' : 'Template ready. Select the JSON and copy it with your usual keyboard shortcut to save or share it.';
-    } catch (error) { problem = error.message; }
-    finally { busy = false; render(); }
-  }
-  else if (action === 'select-template') { const field = app.querySelector('[data-template]'); field?.focus(); field?.select(); }
-  else if (action === 'edit-template') { templatePreview = null; templateRequest = null; confirmedWorkspace = null; render(); }
-  else if (action === 'preview-template') {
-    busy = true; problem = ''; message = ''; render();
-    try {
-      templatePreview = await call('previewTemplate', { template: parseTeamTemplate(templateText) });
-      templateRequest = null; confirmedWorkspace = null; await refreshTargets();
-    } catch (error) { templatePreview = null; problem = error.message; }
-    finally { busy = false; render(); }
-  }
-  else if (action === 'import-template') {
-    if (!templatePreview || !confirmedWorkspace) return;
-    templateRequest ??= mutation({ template: templatePreview.template, previewToken: templatePreview.previewToken, selectionToken: confirmedWorkspace.selectionToken });
-    if (await submit('importTemplate', {}, templateRequest)) {
-      templatePreview = null; templateRequest = null; templateText = ''; view = 'roster'; selection = null;
-      message = 'Imported as an independent team. No members were launched and no work history was copied.'; render();
-    }
   }
   else if(['wake-member','check-wake','decide-wake','handoff-wake','replace-wake'].includes(action)){
     busy=true;problem='';render();
@@ -505,22 +467,12 @@ app.addEventListener('input', event => {
   if(target.dataset.rework){reworkDrafts.set(target.dataset.rework,target.value);return;}
   if (target.dataset.answer) { answerDrafts.set(target.dataset.answer,target.value); answerRequests.delete(target.dataset.answer); }
   else if (target.dataset.objective) { objectives.set(target.dataset.objective, target.value); workRequests.delete(target.dataset.objective); }
-  else if (target.hasAttribute('data-template')) { templateText = target.value; }
   else if (target.dataset.form) { form[target.dataset.form] = target.value; updatePreview(); }
 });
 app.addEventListener('change', async event => {
   const target = event.target;
   if(target.dataset.staffing){staffingDrafts.get(target.dataset.work)[target.dataset.staffing]=target.value;staffingRequests.delete(target.dataset.work+':direct');return;}
-  if (target.hasAttribute('data-template-file')) {
-    const file = target.files?.[0]; if (!file) return;
-    templatePreview = null; templateRequest = null; confirmedWorkspace = null; problem = ''; message = '';
-    try {
-      if (file.size > MAX_TEMPLATE_BYTES) throw new Error('Template file exceeds the 1 MiB exchange limit.');
-      templateText = await file.text();
-    } catch (error) { problem = error.message; }
-    render();
-  }
-  else if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
+  if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
   else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
   else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }
