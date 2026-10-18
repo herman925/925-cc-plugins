@@ -323,7 +323,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
         if(row.binding&&readPrivate(`dispatch-member:${row.memberId}`)?.id===row.id)putPrivate(`dispatch-binding:${row.memberId}`,{workId:row.workId,attemptId:row.id,dispatchId:row.dispatchId,...row.binding});
         return row;
       }); },
-      prepareWork(input) {
+      prepareWork(input, {sessionMode=false}={}) {
         workInput(input); const digest=fingerprint(input);
         db.exec('BEGIN IMMEDIATE');
         try {
@@ -343,7 +343,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if(db.prepare('SELECT id FROM receipts WHERE id=?').get(`session-work:${requestId}`)) fail('This preparation session has already accepted a total objective.');
           const scope=JSON.parse(db.prepare('SELECT json FROM scopes WHERE team_id=?').get(team.id).json);
           const id=randomUUID(),protocolToken=randomUUID();
-          const work={format:'team-work-v1',id,teamId:team.id,requestId:input.requestId,objective:input.objective,configVersion:team.configVersion,roleVersion:supervisor.roleVersion,supervisorMemberId:supervisor.id,scope,binding,recipientBindings:Object.values(team.launch?.members??{}).map(r=>readOperation(r.requestId)).filter(Boolean),protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${input.objective}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'}};
+          const work={format:'team-work-v1',...(sessionMode?{mode:'supervisor-session'}:{}),id,teamId:team.id,requestId:input.requestId,objective:input.objective,configVersion:team.configVersion,roleVersion:supervisor.roleVersion,supervisorMemberId:supervisor.id,scope,binding,recipientBindings:Object.values(team.launch?.members??{}).map(r=>readOperation(r.requestId)).filter(Boolean),protocolToken,nativeObjective:`TeamWork ${id} ${protocolToken}\n${input.objective}`,createdAt:new Date().toISOString(),version:1,status:'preparing',input:{state:'not_sent'},processing:{state:'unknown'},run:{state:'unverified'}};
           if(nextGoal){work.handoff=nextGoal.handoff;work.previousWorkId=nextGoal.previousWorkId;nextGoal.status='started';nextGoal.workId=work.id;putPrivate(`goal:${nextGoal.id}`,nextGoal);db.prepare('DELETE FROM receipts WHERE id=?').run(`next-goal:${team.id}`);}
           persistWork(work);
           for(const [key,value] of [[`work-request:${input.requestId}`,{workId:id,fingerprint:digest}],[`active-work:${team.id}`,{workId:id}],[`session-work:${requestId}`,{workId:id}]]) db.prepare('INSERT INTO receipts VALUES (?,?)').run(key,JSON.stringify(value));

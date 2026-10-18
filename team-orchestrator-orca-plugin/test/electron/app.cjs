@@ -76,6 +76,7 @@ function dispatchInput(text, params, envelope) {
     assert.notEqual(protocol.token, work.protocolToken, 'dispatch authority token is bound after Run generation');
     assert.deepEqual(protocol.nativeSend.params, params);
     assert.equal(protocolInputs.has(work.id), false, 'protocol is never sent twice'); protocolInputs.set(work.id, operationId);
+    if(work.mode==='supervisor-session')return {ok:true,fence:7,value:{clientMessageId:operationId,submission:{clientMessageId:operationId,dispatchState:'accepted'}}};
     const member = wire.children[0], taskId = 'native-task-' + work.id;
     const spec = JSON.stringify({ protocol: wire.protocol, workerRules: wire.workerRules, workId: work.id, token: wire.token, generation: wire.generation, taskKey: 'fixture-task', memberId: member.memberId, configVersion: wire.configVersion, roleVersion: member.roleVersion, role: member.role, writeScope: [], instruction: 'Inspect the checkout and return evidence.' });
     const terminal = work.instance.kind === 'terminal';
@@ -212,10 +213,12 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   else if(method==='agentSession.restartContinue'){
     assert.equal(transport,'socket');assert.equal(params.sessionIds.length,1);const pending=savedPrivate('wake').find(r=>r.oldBinding.sessionId===params.sessionIds[0]);assert.equal(pending.state,'submitted','recovery intent committed before continuation');result={continued:[{sessionId:params.sessionIds[0],outcome:'refused'}]};
   }
+  else if(method==='agentSession.handoffStatus')result={owner:'native',phase:'idle',stage:null};
+  else if(method==='agentSession.options')result={current:{model:'reported-model',effort:'high',confirmed:['model','effort']},contextUsage:{current:{used:{kind:'report',usedTokens:40000,windowTokens:100000,capturedAt:Date.now()}}}};
   else if (method === 'agentSession.history') result = { ok: true, page: { sessionId: params.sessionId, fence: 7, items: [], submissions: [], ...history.get(params.sessionId) } };
   else if (method === 'agentSession.send' || method === 'terminal.send') {
     const text = params.body?.blocks?.[0]?.text ?? params.text;
-    if(text?.startsWith('TEAM_SESSION_')||text?.startsWith('TEAM_STAFFING_PROPOSAL')){
+    if(text?.startsWith('TEAM_SESSION_')&&!text.startsWith('TEAM_SESSION_SETUP')||text?.startsWith('TEAM_STAFFING_PROPOSAL')){
       assert.equal(transport,'socket');assert.equal(params.from,undefined);
       const wire=JSON.parse(text.slice(text.indexOf('\n')+1)),event=savedPrivate('question-event').find(e=>e.workId===wire.workId&&e.nativeSend?.params&&(e.nativeSend.params.envelope?.clientOperationId??e.nativeSend.envelope?.orchestrationRequestId)===(params.envelope?.clientOperationId??envelope.orchestrationRequestId)),work=savedWorks().find(w=>w.id===wire.workId);
       assert.ok(event,'session notice is durable before input');assert.equal(event.state,'sending');assert.deepEqual(event.nativeSend.params,params);
@@ -277,7 +280,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
       assert.equal(params.text.includes(JSON.stringify(work.nativeObjective)), true, 'terminal supervisor receives the same versioned Run contract');
       result = { send: { handle: params.terminal, accepted: true, prompt: { requestId: operationId, processIncarnation: 'fixture-incarnation', stages: ['input_accepted'], observation: 'supported' } } };
     }
-    if(work.handoff)createSupervisorRun(work);
+    if(work.handoff||work.mode==='supervisor-session')createSupervisorRun(work);
   } else if (method === 'orchestration.runShow') result = { run: nativeDb.prepare('SELECT id,objective,consumer_generation FROM runs WHERE id=?').get(params.id) };
   else if (method === 'orchestration.workerRead') result = { dispatchId: params.dispatch, source: 'terminal', sourceIdentity: 'fixture-output', sourceExact: true, contentComplete: false, warnings: ['SSH fixture output is incomplete'], archived: true };
   else if (method === 'orchestration.workerShow') {
@@ -319,7 +322,7 @@ app.whenReady().then(async () => {
   let window = new BrowserWindow({ show: false, webPreferences: { preload: __dirname + '/preload.cjs', contextIsolation: true, sandbox: false, nodeIntegrationInSubFrames: true } });
   await window.loadFile(__dirname + '/index.html');
   const ipc = (channel, args, frame = window.webContents.mainFrame) => frame.executeJavaScript(`window.fixture.invoke(${JSON.stringify(channel)},${JSON.stringify(args)})`);
-  const watchdog = setTimeout(() => { console.error('Electron proof timed out'); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }, 40000);
+  const watchdog = setTimeout(() => { console.error('Electron proof timed out'); child?.kill(); nativeSocket?.close(); nativeDb?.close(); app.exit(1); }, 55000);
   try {
     let entry = await ipc('plugins:readPanelEntry', { pluginKey: KEY, panelId: 'team' });
     assert.equal(child, undefined, 'panel load must not imply worker activation');
@@ -340,7 +343,7 @@ app.whenReady().then(async () => {
     };
     const selection = await control('context', {});
     assert.equal(selection.executionHostId, 'ssh:fixture'); assert.equal(selection.kind, 'git');
-    const form = { name: 'Saved-Team', structure: 'team', levels: 2, fan: 3, groups: '', purpose: '', agents: ['codex','claude','claude'], models: ['default','default','default'], efforts: ['default','default','default'] };
+    const form = { sessionMode:false, name: 'Saved-Team', structure: 'team', levels: 2, fan: 3, groups: '', purpose: '', agents: ['codex','claude','claude'], models: ['default','default','default'], efforts: ['default','default','default'] };
     const create = { requestId: 'electron-create', expectedRevision: 0, selectionToken: selection.selectionToken, form };
     const saved = (await control('createTeam', create)).value;
     assert.equal(saved.teams.length, 1); assert.equal(saved.teams[0].launch, undefined);
@@ -562,6 +565,13 @@ app.whenReady().then(async () => {
     const cleanupProtected=await control('previewHistoryCleanup',{selectedWorkIds:[closing.id,fullWork.id]});assert.equal(cleanupProtected.eligibleWorkIds.length,0);assert.equal(cleanupProtected.retained.length,2);assert.match(cleanupProtected.notice,/native request\/proof bodies/);
     const effectsBeforeCleanup=launched.size;
     await assert.rejects(control('applyHistoryCleanup',{requestId:'fixture-protected-cleanup',previewToken:cleanupProtected.previewToken,expectedStorageRevision:cleanupProtected.storageRevision}),/No selected history|Storage changed/);assert.equal(launched.size,effectsBeforeCleanup);
+    const conversationContext=await control('context',{}),conversationBefore=await control('load',{});
+    const conversationTeam=(await control('createTeam',{requestId:'conversation-team',expectedRevision:conversationBefore.value.revision,selectionToken:conversationContext.selectionToken,form:{...form,name:'Conversation-Team',sessionMode:true}})).value.teams.at(-1);
+    await control('launchSupervisor',{requestId:'conversation-head',teamId:conversationTeam.id,memberId:conversationTeam.members[0].id,configVersion:1});
+    const setupDeadline=Date.now()+12000;
+    while(!savedWorks().some(w=>w.teamId===conversationTeam.id&&w.mode==='supervisor-session'&&w.run.state==='verified')&&Date.now()<setupDeadline)await new Promise(resolve=>setTimeout(resolve,100));
+    const conversationWork=savedWorks().find(w=>w.teamId===conversationTeam.id);assert.equal(conversationWork?.mode,'supervisor-session');assert.equal(conversationWork.run.state,'verified');assert.equal(savedPrivate('dispatch').filter(a=>a.workId===conversationWork.id).length,0,'automatic coordination setup does not assign project tasks');
+    const observed=await control('rosterStatus',{}),headStatus=observed.telemetry.members[conversationTeam.members[0].id];assert.equal(headStatus.model,'reported-model');assert.equal(headStatus.context.percent,40);
     await ipc('plugins:setEnabled', { pluginKey: KEY, enabled: false });
     assert.notEqual(ipcMain._invokeHandlers.get('plugins:panelAction'), firstHandler);
     assert.equal((await ipc('plugins:panelAction', envelope())).code, 'consent_required');

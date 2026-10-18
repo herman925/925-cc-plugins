@@ -17,7 +17,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
@@ -143,6 +143,7 @@ async function fixture(id, mode) {
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];
+      if(method==='agentSession.handoffStatus')return {owner:sessionIds.has(params.sessionId)?'native':'none',phase:'idle',stage:null};
       if (method === 'agentSession.agents') return { agents: [] };
       if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };
       if (method === 'agentSession.modelCatalog') return { origin: 'probe', fetchedAt: Date.now(), models: [{ id: params.agent === 'claude' ? 'claude-model' : 'my-model', label: 'Fixture host model', isDefault: false, efforts: (params.agent === 'claude' ? ['low', 'max'] : ['high', 'ultra']).map(value => ({ value, label: value })) }] };
@@ -155,7 +156,7 @@ async function fixture(id, mode) {
           assert.match(store.readOperation(pending.requestId).error,/ledger row is absent/);
         }
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
-        const structured = mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
+        const structured = mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
       }
@@ -170,10 +171,13 @@ async function fixture(id, mode) {
       if (method === 'agentSession.reveal' && launch) return { ok: true, sessionId: params.sessionId, workspaceId: launch.worktreeId, agent: agents.get(launch.outcome.handle), readable: true };
       if(method==='agentSession.restartResumable')return {sessions:[...launches.values()].filter(v=>v.outcome.sessionId).map(v=>({sessionId:v.outcome.sessionId,workspaceId:v.worktreeId,executionHostId:host,agent:agents.get(v.outcome.handle)}))};
       if(method==='agentSession.restartContinue'){assert.equal(params.sessionIds.length,1);return {continued:[{sessionId:params.sessionIds[0],outcome:'refused'}]};}
+      if(mode?.startsWith('roster-')&&method==='agentSession.options')return {current:{model:'reported-model',effort:'high',confirmed:['model','effort']},contextUsage:{current:{used:{kind:'report',usedTokens:40000,windowTokens:100000,capturedAt:Date.now()}}}};
+      if(mode?.startsWith('roster-')&&method==='agentSession.currentRequests')return {marker:{sessionId:params.sessionId,version:'00000000-0000-4000-8000-000000000001',owner:'fixture',epoch:'fixture',publisher:'fixture'},json:JSON.stringify(mode==='roster-asking'?[{body:{kind:'question',resolution:{state:'pending'}}}]:[]),nextCursor:null};
+      if(mode?.startsWith('roster-')&&method==='agentSession.history')return {ok:true,page:{sessionId:params.sessionId,fence:7,epoch:'fixture',submissions:[],items:[],latestTurn:{turn:{state:mode==='roster-idle'?'completed':'running'}},currentRequests:{sessionId:params.sessionId,version:'00000000-0000-4000-8000-000000000001',owner:'fixture',epoch:'fixture',publisher:'fixture'}}};
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...(mode?.startsWith('idle-replacement')?{latestTurn:{itemId:'turn-idle',turn:{state:mode==='idle-replacement-busy'?'running':mode==='idle-replacement-unknown'?'unverifiable':'completed'}},queuedMessages:[],backgroundTasks:null}:{}), ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
-        const dispatchInput = text?.startsWith('TEAM_SESSION_') || text?.startsWith('TEAM_STAFFING_PROPOSAL') || text?.startsWith('TEAM_ROSTER_DELTA\n') || text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
+        const dispatchInput = (text?.startsWith('TEAM_SESSION_')&&!text.startsWith('TEAM_SESSION_SETUP')) || text?.startsWith('TEAM_STAFFING_PROPOSAL') || text?.startsWith('TEAM_ROSTER_DELTA\n') || text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
         const work = store.listWorks().flatMap(w=>store.listRunWorks(w.id)).find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;

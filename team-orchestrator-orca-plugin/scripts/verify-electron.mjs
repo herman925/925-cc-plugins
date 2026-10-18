@@ -23,7 +23,7 @@ try {
   const linux = process.platform === 'linux';
   const command = linux ? 'xvfb-run' : binary;
   const args = [...(linux ? ['-a', binary, '--no-sandbox'] : []), root];
-  const { stdout, stderr } = await promisify(execFile)(command, args, { env: { ...process.env, ORCA_TEST_PLUGIN: project }, timeout: 45000, maxBuffer: 1024 * 1024 });
+  const { stdout, stderr } = await promisify(execFile)(command, args, { env: { ...process.env, ORCA_TEST_PLUGIN: project }, timeout: 60000, maxBuffer: 1024 * 1024 });
   if (!stdout.includes('REAL_ELECTRON_WORKER_PASS')) throw new Error('Missing native proof result: ' + stderr);
   console.log(`Synthetic Orca ${version} metadata; genuine Electron runtime and IPC fixture:\n${stdout.trim()}`);
 } finally { await rm(root, { recursive: true, force: true }); }

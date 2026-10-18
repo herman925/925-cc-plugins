@@ -1,3 +1,4 @@
+import {createRosterStatusService} from './roster-status.mjs';
 import {createStaffingService} from './staffing.mjs';
 import {createHierarchyService} from './hierarchy.mjs';
 import {createWakeService} from './wake.mjs';
@@ -17,6 +18,7 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc } = {}) {
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
+  const rosterStatus=createRosterStatusService({store,rpc,consent});
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing=createStaffingService({store,userData,consent,rpc,works,notify:params=>host.call('notifications.show',params)});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
@@ -34,7 +36,8 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     polling = true;
     try {
       await consent(); await recovery.reconcile(); await stops.reconcile();for(const row of store.listWakes()){await wake.check(row.requestId);await wake.bind(row.requestId);}
-      if (!store.listCurrentWorks().some(work => work.status!=='completed' && (work.recoveryRequestId||work.input.state !== 'not_sent') && work.run.state !== 'fenced')) return;
+      for(const team of store.readSnapshot().teams.filter(t=>t.launch&&t.configuration.sessionMode!==false))try{await works.ensureSession(team.id);}catch{}
+      if (!store.listCurrentWorks().some(work => work.status!=='completed' && (work.recoveryRequestId||work.input.state !== 'not_sent') && work.run.state !== 'fenced')) {if(store.readSnapshot().teams.some(t=>t.launch&&t.configuration.sessionMode!==false))scheduleWork();return;}
       await consent(); await works.reconcile(); await dispatches.reconcile(); await hierarchy.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
     } catch { stopped = true; }
     finally { polling = false; }
@@ -190,16 +193,20 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
             }
             catch (error) { patch = { status: 'unknown', error: error.message.slice(0, 1200) }; }
             const saved = settled(operation, patch);
+            if(saved.status==='created'){stopped=false;scheduleWork();}
             return saved.status === 'created' && store.isActiveOperation(saved) ? { ...plan(saved), receipt: publicOperation(saved) } : { receipt: publicOperation(saved) };
           }
           launchPlans.delete(params.phaseId);
           if (operation.status !== 'created') throw Error('A verified created identity is required.');
+          stopped=false;scheduleWork();
           return publicOperation(settled(operation, { ...(params.warning ? { warning: String(params.warning).slice(0, 1200) } : {}), ...(params.observation ? { observation: params.observation } : {}) }));
         }
         if (op === '_memberBinding') {
           if (Object.keys(params).some(key => !['teamId', 'memberId', 'requestId'].includes(key))) throw Error('Invalid member selection.');
-          const saved = store.readOperation(params.requestId);
-          if (!saved || !store.isActiveOperation(saved) || saved.teamId !== params.teamId || saved.memberId !== params.memberId || saved.status !== 'created') throw Error('A verified saved member binding is required.');
+          let saved = store.readOperation(params.requestId);
+          if(saved&&!store.isActiveOperation(saved))throw Error('A verified saved member binding is required.');
+          if(!saved){const attempt=store.readMemberDispatch(params.memberId),b=attempt?.binding;if(attempt?.id!==params.requestId||attempt.teamId!==params.teamId||!b)throw Error('A current member session is required.');saved={...b,requestId:attempt.id,teamId:attempt.teamId,memberId:attempt.memberId,status:'created',sessionId:b.liveSessionId??b.sessionId,scope:attempt.scope,executionHostId:attempt.scope.executionHostId,nativeRequest:{agent:attempt.reuse?.preferences?.agent??attempt.startParams?.agent??store.readTeamVersion(attempt.teamId,attempt.configVersion).members.find(m=>m.id===attempt.memberId)?.agent},observation:b.kind==='terminal'?{processIncarnation:b.incarnationId}:undefined};}
+          if(saved.teamId!==params.teamId||saved.memberId!==params.memberId||saved.status!=='created')throw Error('A verified saved member binding is required.');
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved member execution scope changed.');
           return saved;
         }
@@ -260,6 +267,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'context') return context(workspaceId, params.teamId);
       if(op==='previewHistoryCleanup')return store.previewHistoryCleanup(params);
       if(op==='applyHistoryCleanup')return {cleanup:store.applyHistoryCleanup(params),value:store.readSnapshot()};
+      if(op==='rosterStatus')return {value:store.readSnapshot(),telemetry:await rosterStatus.read()};
       if (op === 'load') { await recovery.reconcile(); await stops.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {
         const previous = store.replay('createTeam', params);

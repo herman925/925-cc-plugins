@@ -1,4 +1,4 @@
-import {terminalIdentity} from './terminal-identity.mjs';
+import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import { discoverCapabilities } from './capabilities.mjs';
 // Trusted adapter orchestration only; invoke/rpc retain its actual event and authority.
 export async function mediateOperation({ op, input, invoke, rpc, authority, admission }) {
@@ -44,6 +44,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority, admi
     } else {
       const shown = (await rpc('terminal.show', { terminal: saved.handle }))?.terminal;
       if (shown?.handle !== saved.handle || shown.worktreeId !== saved.scope.workspaceId || (shown.executionHostId && shown.executionHostId !== saved.scope.executionHostId) || (saved.paneKey && `${shown.tabId}:${shown.leafId}` !== saved.paneKey)) throw Error('The saved terminal identity is no longer verified.');
+      if((saved.observation?.processIncarnation||saved.observation?.incarnationId)&&!matchesTerminalObservation(shown,saved.observation))throw Error('Member terminal instance changed.');
       await rpc('terminal.focus', { terminal: saved.handle, navigation: 'host' });
     }
     return { ok: true, value: { opened: true } };

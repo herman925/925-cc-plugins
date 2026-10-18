@@ -25,7 +25,7 @@ __export(adapter_exports, {
 module.exports = __toCommonJS(adapter_exports);
 
 // src/public-operations.mjs
-var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
+var PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
 var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
 var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
@@ -35,7 +35,7 @@ var import_node_net = require("node:net");
 var import_node_crypto = require("node:crypto");
 var import_promises = require("node:fs/promises");
 var import_node_path = require("node:path");
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.handoffStatus", "agentSession.options", "agentSession.currentRequests", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
 function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
   const context = new import_node_async_hooks.AsyncLocalStorage();
   const rpc = async (method, params, envelope = {}) => {
@@ -132,6 +132,11 @@ function terminalIdentity(terminal) {
   const { ptyId, incarnationId } = terminal ?? {};
   if (typeof ptyId !== "string" || !ptyId || typeof incarnationId !== "string" || !incarnationId) throw Error("Exact native terminal PTY and incarnation are unverified.");
   return { ptyId, incarnationId, processIncarnation: `${ptyId}:${incarnationId}` };
+}
+function matchesTerminalObservation(terminal, saved) {
+  if (!saved || !saved.incarnationId && !saved.processIncarnation) return false;
+  const actual = terminalIdentity(terminal);
+  return (!saved.incarnationId || saved.incarnationId === actual.incarnationId) && (!saved.ptyId || saved.ptyId === actual.ptyId) && (!saved.processIncarnation || saved.processIncarnation === actual.processIncarnation);
 }
 
 // src/capabilities.mjs
@@ -263,6 +268,7 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
     } else {
       const shown = (await rpc("terminal.show", { terminal: saved2.handle }))?.terminal;
       if (shown?.handle !== saved2.handle || shown.worktreeId !== saved2.scope.workspaceId || shown.executionHostId && shown.executionHostId !== saved2.scope.executionHostId || saved2.paneKey && `${shown.tabId}:${shown.leafId}` !== saved2.paneKey) throw Error("The saved terminal identity is no longer verified.");
+      if ((saved2.observation?.processIncarnation || saved2.observation?.incarnationId) && !matchesTerminalObservation(shown, saved2.observation)) throw Error("Member terminal instance changed.");
       await rpc("terminal.focus", { terminal: saved2.handle, navigation: "host" });
     }
     return { ok: true, value: { opened: true } };

@@ -20,6 +20,7 @@ export function createLifecycleService({store,rpc,userData,consent,works,notify}
   return {work,verified,native,questionEvidence};
  }
  async function check(id){
+  if(store.readCurrentWork(id)?.mode==='supervisor-session')return;
   const row=await evidence(id);if(!row)return;
   if(store.readCurrentWork(id).version!==row.work.version)throw Error('Work changed during delivery observation.');
   for(const proposal of row.native.deliveries??[]){let d;try{d=store.recordDelivery(id,proposal);}catch{continue;}

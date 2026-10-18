@@ -1,48 +1,12 @@
-import { test, expect } from '@playwright/test';
-const panel = page => page.frameLocator('#panel');
-test('save a bound team without launching, edit roles, and restore its identities and role versions', async ({ page }) => {
- await page.goto('/'); const ui = panel(page);
- await ui.getByRole('button', { name: /Squad/ }).click();
- await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
- await ui.getByRole('button', { name: 'Confirm project and host' }).click();
- await ui.getByRole('button', { name: 'Save team', exact: true }).click();
- await expect(ui.getByRole('heading', { name: '@Squad' })).toBeVisible();
- expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'start').length)).toBe(0);
- await expect(ui.locator('.team-card')).toContainText('Demo workspace');
- await ui.getByRole('button', { name: 'Head', exact: true }).click();
- await ui.getByLabel('Role description').fill('Review every reported result');
- await ui.getByLabel('Work habits').fill('Summarize blockers first');
- await ui.getByLabel('Collaboration rules').fill('Ask before changing scope');
- await ui.getByRole('button', { name: 'Save role' }).click();
- await expect(ui.getByRole('region', { name: 'Member details' })).toContainText('Role version 2');
- await page.reload();
- await panel(page).getByRole('button', { name: 'Head', exact: true }).click();
- await expect(panel(page).getByLabel('Work habits')).toHaveValue('Summarize blockers first');
- await expect(panel(page).getByLabel('Role description')).toHaveValue('Review every reported result');
+import {test,expect} from '@playwright/test';
+import {panel,launchTeam} from './helpers.mjs';
+test('member role edits are optional, versioned and survive reopening',async({page})=>{
+ const ui=await launchTeam(page);await ui.locator('.roster [data-action="member"]').first().click();const details=ui.getByRole('region',{name:'Member details'});await details.getByText('Role and preferences',{exact:true}).click();await details.getByLabel('Role description').fill('Review every result');await details.getByLabel('Work habits').fill('Summarize blockers first');const count=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length);await expect.poll(()=>page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length),{timeout:10000}).toBeGreaterThan(count);await expect(details.getByLabel('Role description')).toHaveValue('Review every result');await details.getByRole('button',{name:'Save role'}).click();await expect(details).toContainText('Role version 2');
+ await page.reload();await panel(page).locator('.roster [data-action="member"]').first().click();await panel(page).getByText('Role and preferences',{exact:true}).click();await expect(panel(page).getByLabel('Role description')).toHaveValue('Review every result');
 });
-test('stale panels receive a conflict instead of overwriting saved roles', async ({ page }) => {
- await page.goto('/'); const first = panel(page);
- await first.getByRole('button', { name: /Squad/ }).click();
- await first.getByRole('button', { name: 'Confirm project and host' }).click();
- await first.getByRole('button', { name: 'Save team', exact: true }).click();
- await expect(first.getByRole('heading', { name: '@Squad' })).toBeVisible();
- const secondPage = await page.context().newPage(); await secondPage.goto('/'); const second = panel(secondPage);
- await second.getByRole('button', { name: 'Head', exact: true }).click();
- await first.getByRole('button', { name: 'Head', exact: true }).click();
- await first.getByLabel('Role description').fill('Keep this newer role'); await first.getByRole('button', { name: 'Save role' }).click();
- await expect(first.getByRole('region', { name: 'Member details' })).toContainText('Role version 2');
- await second.getByLabel('Role description').fill('Stale overwrite'); await second.getByRole('button', { name: 'Save role' }).click();
- await expect(second.getByRole('alert')).toContainText('Another panel changed');
- await secondPage.reload(); await panel(secondPage).getByRole('button', { name: 'Head', exact: true }).click();
- await expect(panel(secondPage).getByLabel('Role description')).toHaveValue('Keep this newer role');
+test('failed save keeps the new-team form and never launches a member',async({page})=>{
+ await page.goto('/?mode=write-error');const ui=panel(page);await ui.getByRole('button',{name:'New team',exact:true}).click();await ui.getByRole('button',{name:'Confirm project and host'}).click();await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.getByRole('alert')).toContainText('Disk full');await expect(ui.getByRole('heading',{name:'New team',exact:true})).toBeVisible();expect(await page.evaluate(()=>bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='launchSupervisor'))).toBe(false);
 });
-test('new folder teams leave legacy prototype data untouched and do not import it', async ({ page }) => {
- await page.goto('/?mode=folder');
- await page.evaluate(() => localStorage.setItem('team-definitions-v1', '{"version":1,"teams":[{"name":"Legacy"}]}'));
- await page.reload(); const ui = panel(page);
- await expect(ui.getByRole('heading', { name: 'No team yet' })).toBeVisible();
- await ui.getByRole('button', { name: /Squad/ }).click();
- await ui.getByRole('button', { name: 'Confirm project and host' }).click(); await ui.getByRole('button', { name: 'Save team', exact: true }).click();
- await expect(ui.locator('.team-card')).toContainText('Demo folder');
- expect(await page.evaluate(() => localStorage.getItem('team-definitions-v1'))).toBe('{"version":1,"teams":[{"name":"Legacy"}]}');
+test('storage recovery stays behind unavailable-state Details',async({page})=>{
+ await page.goto('/?mode=read-error');const ui=panel(page);await expect(ui.getByRole('alert')).toContainText('could not be loaded');await expect(ui.locator('.roster')).toHaveCount(0);await ui.getByRole('button',{name:'Details',exact:true}).click();await ui.getByRole('button',{name:'Inspect recovery details'}).click();await expect(ui.getByRole('region',{name:'Storage recovery'})).toContainText('Found / supported schema');
 });

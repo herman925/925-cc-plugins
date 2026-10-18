@@ -13,7 +13,7 @@ test('a bridge error shows one warning without navigation, false empty state or 
 
 test('failed reload hides cached teams; retry reveals them only after storage succeeds',async({page})=>{
  await page.goto('/');const ui=panel(page);
- await ui.getByRole('button',{name:/Squad/}).click();await ui.getByRole('button',{name:'Confirm project and host'}).click();await ui.getByRole('button',{name:'Save team',exact:true}).click();
+ await ui.getByRole('button',{name:'New team',exact:true}).click();await ui.getByRole('button',{name:/Squad/}).click();await ui.getByRole('button',{name:'Confirm project and host'}).click();await ui.getByRole('button',{name:'Launch team',exact:true}).click();
  await expect(ui.getByRole('heading',{name:'@Squad',exact:true})).toBeVisible();
  await page.route('**/rpc',route=>route.request().postDataJSON().message.args?.op==='load'?route.fulfill({json:{ok:false,error:'Storage temporarily unavailable'}}):route.continue());
  await ui.getByRole('button',{name:'Settings',exact:true}).click();await ui.getByRole('button',{name:'Test connection'}).click();
@@ -27,5 +27,5 @@ test('failed reload hides cached teams; retry reveals them only after storage su
  }finally{release();}
  await expect(ui.getByRole('heading',{name:'@Squad',exact:true})).toBeVisible();await expect(ui.locator('.notice,.unavailable')).toHaveCount(0);
  expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params.teamWorker.args?.op==='createTeam').length)).toBe(1);
- expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params.teamWorker.args?.op==='launchSupervisor').length)).toBe(0);
+ expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params.teamWorker.args?.op==='launchSupervisor').length)).toBe(1);
 });

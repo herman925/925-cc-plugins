@@ -635,3 +635,18 @@ footer {
 .task-card summary {
   cursor:pointer;
 }
+
+.member-status { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.member-status .status-dot { background:var(--dim); }
+.member-status[data-state="working"] .status-dot { background:var(--cyan); box-shadow:0 0 0 3px #51d5e31a; }
+.member-status[data-state="idle"] .status-dot { background:#81c995; }
+.member-status[data-state="asking"] .status-dot,.member-status[data-state="starting"] .status-dot { background:var(--yellow); }
+.org-node[data-state="working"] { border-color:var(--cyan); }
+.org-node[data-state="asking"] { border-color:var(--yellow); }
+.context-usage { display:inline-flex; flex-direction:column; gap:3px; min-width:48px; font-size:11px; }
+.context-track { height:3px; background:var(--line); border-radius:2px; overflow:hidden; }
+.context-track>span { display:block; height:100%; background:#81c995; }
+.context-usage.medium .context-track>span { background:var(--yellow); }
+.context-usage.high .context-track>span { background:var(--danger); }
+.inspector>details { margin-top:16px; border-top:1px solid var(--line); padding-top:12px; }
+.inspector summary { cursor:pointer; color:var(--dim); }
