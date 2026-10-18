@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { createConnection } from 'node:net';
 import { validateRuntime } from './runtime-contract.mjs';
 import { connectInspector } from './inspector.mjs';
+import {createNativeRpc} from './native-runtime.mjs';
+import {probeHostCompatibility} from './host-compatibility.mjs';
 const execute = promisify(execFile);
 const activateParent = pid => execute(process.execPath, ['-e', 'process._debugProcess(Number(process.argv[1]))', String(pid)], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 4000, windowsHide: true });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -43,10 +45,11 @@ async function targets(port) {
   } catch { return []; }
 }
 const failure = (code, message) => Object.assign(new Error(message), { code });
-export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.10', internalKey } = {}) {
+export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.12', internalKey, consent = async()=>{} } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client; let owned = false;
   try {
+    await consent();
     if (!Number.isInteger(parentPid) || parentPid < 2 || parentPid === process.pid) throw failure('invalid_parent_pid', 'Invalid Orca parent process.');
     let binary;
     try {
@@ -68,13 +71,16 @@ export async function bootstrap({ platform = process.platform, parentPid = proce
     const identity = await client.evaluate('({pid:process.pid,electron:process.versions.electron})');
     if (identity?.pid !== parentPid || !identity.electron) { owned = false; throw failure('parent_pid_mismatch', 'Inspector belongs to another process; nothing was injected.'); }
     const runtime = await client.evaluate(`(()=>{if(typeof process.getBuiltinModule!=='function')throw Error('Node getBuiltinModule is unavailable');const req=process.getBuiltinModule('module').createRequire(process.execPath);const {app}=req('electron');const fs=req('node:fs');const path=req('node:path');let build=null;try{build=JSON.parse(fs.readFileSync(path.join(app.isPackaged?process.resourcesPath:app.getAppPath(),'orca-local-build.json'),'utf8'))}catch{};let sqlite=false;try{sqlite=typeof req('node:sqlite').DatabaseSync==='function'}catch{};return {appName:app.getName(),appVersion:app.getVersion(),platform:process.platform,arch:process.arch,electron:process.versions.electron,node:process.versions.node,sqlite,build,cliPaths:{appData:app.getPath('appData'),userData:app.getPath('userData')}}})()`);
-    Object.assign(report, validateRuntime(runtime), { appVersion: runtime.appVersion });
+    Object.assign(report, { appVersion: runtime.appVersion }, validateRuntime(runtime));
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure('profile_missing', 'Orca did not resolve its actual runtime profile.');
+    const rpc=createNativeRpc({userData:runtime.cliPaths.userData,parentPid,consent});
+    Object.assign(report,await probeHostCompatibility({rpc,userData:runtime.cliPaths.userData,appVersion:runtime.appVersion}));
     const source = await readFile(adapterPath, 'utf8');
     const digest = createHash('sha256').update(source).digest('hex');
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)},internalKey:${JSON.stringify(internalKey)}});})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);const transport=m.exports.inspectAdapterContract(electron);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)},internalKey:${JSON.stringify(internalKey)}}),transport};})()`;
+    await consent();
     Object.assign(report, await client.evaluate(expression), { cliPaths: runtime.cliPaths });
-    report.detail = 'Local runtime adapter installed; panel-to-worker test is available.';
+    report.detail = 'Orca runtime capabilities, evidence formats and plugin transport verified. Panel connection is available.';
   } catch (error) { report.code = error.code ?? 'initialisation_failed'; report.detail = error.message; }
   finally {
     if (client && owned) {

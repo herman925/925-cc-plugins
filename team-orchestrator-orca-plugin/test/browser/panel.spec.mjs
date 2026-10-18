@@ -159,14 +159,14 @@ test('connection diagnostics separate panel, worker and adapter; retry uses the 
   expect(await page.evaluate(() => bridgeCalls.some(call => call.params?.teamWorker?.commandId === 'team.initialise'))).toBe(true);
 });
 
-test('unsupported build shows actionable diagnostics with worker active and launch disabled', async ({ page }) => {
-  await page.goto('/?mode=unsupported-build');
+test('missing runtime capability hides content and reports the failed interface', async ({ page }) => {
+  await page.goto('/?mode=incompatible-host');
   const ui = panel(page);
   await expect(ui.getByRole('alert')).toContainText('Plugin unavailable');
   await expect(ui.getByRole('navigation')).toHaveCount(0);
   await expect(ui.getByRole('heading', { name: 'No team yet' })).toHaveCount(0);
   await ui.getByRole('button', { name: 'Details', exact: true }).click();
-  await expect(ui.locator('#failure-details')).toContainText('Unsupported Orca build');
+  await expect(ui.locator('#failure-details')).toContainText('Orca is missing required interfaces');
 });
 test('host model choices and individual mixed-provider preferences persist with effective model unknown', async ({ page }) => {
  await page.goto('/?mode=capabilities-local'); const ui = panel(page);

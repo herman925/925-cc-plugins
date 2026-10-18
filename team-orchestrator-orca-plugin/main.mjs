@@ -589,7 +589,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.11" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.12" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -697,31 +697,33 @@ async function inspectTeamStorage({ userData, sqlite = () => import("node:sqlite
 import { randomBytes as randomBytes4 } from "node:crypto";
 
 // src/local/bootstrap.mjs
-import { readFile as readFile2, realpath as realpath2 } from "node:fs/promises";
-import { join as join2 } from "node:path";
+import { readFile as readFile3, realpath as realpath4 } from "node:fs/promises";
+import { join as join4 } from "node:path";
 import { createHash as createHash4 } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { createConnection } from "node:net";
+import { createConnection as createConnection2 } from "node:net";
 
 // src/local/runtime-contract.mjs
 function validateRuntime(runtime) {
-  const reject = (code, message) => {
+  const reject2 = (code, message) => {
     throw Object.assign(new Error(message), { code });
   };
-  if (runtime.platform === "win32") reject("platform_unverified", "Windows build is unverified. Capture its package/runtime contract before enabling this compatibility layer.");
+  if (runtime.platform === "win32") reject2("platform_unverified", "Windows build is unverified. Capture its package/runtime contract before enabling this compatibility layer.");
   const build = runtime.build;
   const commits = {
     "1.4.222": "9fdd90ffa7721e145f1353ad9fb9df2f70c31f43",
     "1.4.223": "ff4a51c872e723d87ab141044814301ea5a78634"
   };
-  const commit = Object.hasOwn(commits, runtime.appVersion) ? commits[runtime.appVersion] : void 0;
-  if (runtime.appName?.toLowerCase() !== "orca" || runtime.platform !== "darwin" || runtime.arch !== "arm64" || !commit || runtime.electron !== "43.7.5" || runtime.node !== "24.21.0" || build?.version !== runtime.appVersion || build?.commit !== commit || build?.buildId !== `${runtime.appVersion}-${commit}-arm64` || build?.platform !== runtime.platform || build?.architecture !== runtime.arch) {
-    reject("unsupported_build", "Unsupported Orca build. Only macOS arm64 1.4.222 / 9fdd90f and 1.4.223 / ff4a51c with Electron 43.7.5 / Node 24.21.0 have pinned contracts; revalidate before adding another build.");
-  }
-  if (!runtime.sqlite) reject("node_capability_missing", "The parent runtime does not provide Node SQLite DatabaseSync.");
-  return { verification: "pinned-contract", buildId: build.buildId, electron: runtime.electron, node: runtime.node, sqlite: true, liveProviderVerified: false };
+  commits["1.4.229"] = "37c314bcc96063c42c468e564df2c34bac8ef8a1";
+  if (runtime.appName?.toLowerCase() !== "orca") reject2("runtime_identity_mismatch", "The inspected process is not Orca.");
+  if (runtime.platform !== "darwin" || runtime.arch !== "arm64") reject2("platform_unverified", "This operating system or architecture has no verified adapter yet.");
+  if (!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(runtime.appVersion) || !runtime.electron || !runtime.node) reject2("runtime_identity_mismatch", "Orca runtime identity is incomplete.");
+  if (build && (build.version !== runtime.appVersion || build.platform !== runtime.platform || build.architecture !== runtime.arch))
+    reject2("runtime_identity_mismatch", "Application metadata does not match the running Orca process.");
+  if (!runtime.sqlite) reject2("node_capability_missing", "The parent runtime does not provide Node SQLite DatabaseSync.");
+  return { verification: "runtime-prerequisites", testedBuild: Object.hasOwn(commits, runtime.appVersion) && build?.commit === commits[runtime.appVersion], buildId: build?.buildId ?? null, electron: runtime.electron, node: runtime.node, sqlite: true, liveProviderVerified: false };
 }
 
 // src/local/inspector.mjs
@@ -729,10 +731,10 @@ async function connectInspector(url, timeoutMs = 4e3) {
   const address = new URL(url);
   if (address.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw new Error("Inspector must be loopback-only.");
   const socket = new WebSocket(url);
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve, reject2) => {
     const timer = setTimeout(() => {
       socket.close();
-      reject(new Error("Inspector connection timed out."));
+      reject2(new Error("Inspector connection timed out."));
     }, timeoutMs);
     socket.addEventListener("open", () => {
       clearTimeout(timer);
@@ -740,7 +742,7 @@ async function connectInspector(url, timeoutMs = 4e3) {
     }, { once: true });
     socket.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("Inspector connection failed."));
+      reject2(new Error("Inspector connection failed."));
     }, { once: true });
   });
   let sequence = 0;
@@ -771,12 +773,12 @@ async function connectInspector(url, timeoutMs = 4e3) {
   return {
     async evaluate(expression) {
       const id2 = ++sequence;
-      const result = await new Promise((resolve, reject) => {
+      const result = await new Promise((resolve, reject2) => {
         const timer = setTimeout(() => {
           pending.delete(id2);
-          reject(new Error("Inspector evaluation timed out."));
+          reject2(new Error("Inspector evaluation timed out."));
         }, timeoutMs);
-        pending.set(id2, { resolve, reject, timer });
+        pending.set(id2, { resolve, reject: reject2, timer });
         socket.send(JSON.stringify({ id: id2, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true } }));
       });
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
@@ -789,13 +791,198 @@ async function connectInspector(url, timeoutMs = 4e3) {
   };
 }
 
+// src/local/native-runtime.mjs
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createConnection } from "node:net";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { realpath as realpath2, readFile as readFile2 } from "node:fs/promises";
+import { join as join2, relative as relative2, isAbsolute as isAbsolute2, sep as sep2 } from "node:path";
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
+  const context = new AsyncLocalStorage();
+  const rpc = async (method, params, envelope = {}) => {
+    if (!METHODS.has(method)) throw Error("Native method is not allowed for team work.");
+    if (Object.keys(envelope).some((key) => !["orchestrationRequestId"].includes(key))) throw Error("Native caller overrides are not allowed.");
+    await consent();
+    let metadata, transport, profile;
+    try {
+      if (!isAbsolute2(userData || "")) throw Error();
+      profile = await realpath2(userData);
+      const path = await realpath2(join2(profile, "orca-runtime.json")), rel = relative2(profile, path);
+      if (rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel)) throw Error();
+      const content = await readFile2(path, "utf8");
+      if (Buffer.byteLength(content) > 65536) throw Error();
+      metadata = JSON.parse(content);
+      transport = (metadata.transports ?? [metadata.transport]).find((item) => ["unix", "named-pipe"].includes(item?.kind));
+      if (metadata.pid !== parentPid || typeof metadata.runtimeId !== "string" || !metadata.runtimeId || typeof metadata.authToken !== "string" || !metadata.authToken || !transport || typeof transport.endpoint !== "string" || (transport.kind === "unix" ? !isAbsolute2(transport.endpoint) : !transport.endpoint.startsWith("\\\\.\\pipe\\"))) throw Error();
+    } catch {
+      throw Error("Verified Orca runtime metadata is unavailable or belongs to another process. Reconnect the plugin.");
+    }
+    const expectedRuntimeId = context.getStore();
+    if (expectedRuntimeId && metadata.runtimeId !== expectedRuntimeId) throw Error("Native runtime epoch changed during observation; intent remains reserved.");
+    const verifyMetadata = async () => {
+      const current = JSON.parse(await readFile2(join2(profile, "orca-runtime.json"), "utf8"));
+      if (current.runtimeId !== metadata.runtimeId || current.pid !== parentPid || current.authToken !== metadata.authToken) throw Error("Native runtime epoch changed before effect or observation settlement.");
+    };
+    await consent();
+    return new Promise((resolve, reject2) => {
+      const id2 = randomUUID2(), socket = createConnection(transport.endpoint);
+      let buffer = "", finished = false, validating = false;
+      const finish = (error, result) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        socket.destroy();
+        error ? reject2(error) : resolve(result);
+      };
+      const timer = setTimeout(() => finish(Error("Native runtime timed out; any submitted objective remains unconfirmed.")), timeoutMs);
+      socket.setEncoding("utf8");
+      socket.on("connect", async () => {
+        try {
+          await consent();
+          await verifyMetadata();
+          if (!finished) socket.write(JSON.stringify({ id: id2, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope, ...method.startsWith("orchestration.") ? { orchestrationContractVersion: 1 } : {} }) + "\n");
+        } catch (error) {
+          finish(error);
+        }
+      });
+      socket.on("error", () => finish(Error("Native runtime connection failed; delivery is unconfirmed.")));
+      socket.on("close", () => {
+        if (!validating) finish(Error("Native runtime closed before a receipt; delivery is unconfirmed."));
+      });
+      const publicError = (value) => [metadata.authToken, transport.endpoint, profile, userData].reduce((message, secret) => secret ? message.split(secret).join("[private runtime data]") : message, String(value || "Native operation refused")).slice(0, 1500);
+      socket.on("data", async (chunk) => {
+        buffer += chunk;
+        if (Buffer.byteLength(buffer) > maxBytes) return finish(Error("Native runtime response exceeded its bounded limit."));
+        for (let index; (index = buffer.indexOf("\n")) >= 0; ) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (!line.trim()) continue;
+          let response;
+          try {
+            response = JSON.parse(line);
+          } catch {
+            return finish(Error("Native runtime returned malformed evidence."));
+          }
+          if (response?._keepalive === true) continue;
+          if (response?.id !== id2 || response?._meta?.runtimeId !== metadata.runtimeId) return finish(Error("Native response identity or runtime changed; evidence is unverified."));
+          if (response.ok !== true) return finish(Object.assign(Error(publicError(response.error?.message)), { code: response.error?.code, native: true }));
+          validating = true;
+          try {
+            await verifyMetadata();
+            finish(null, response.result);
+          } catch (error) {
+            finish(error);
+          }
+          return;
+        }
+      });
+    });
+  };
+  rpc.withRuntime = (runtimeId, action) => {
+    if (typeof runtimeId !== "string" || !runtimeId) throw Error("Expected native runtime identity is required.");
+    const prior = context.getStore();
+    if (prior && prior !== runtimeId) throw Error("Native runtime epoch changed inside observation.");
+    return context.run(runtimeId, action);
+  };
+  return rpc;
+}
+var withNativeRuntime = (rpc, runtimeId, action) => rpc.withRuntime ? rpc.withRuntime(runtimeId, action) : action();
+
+// src/local/host-compatibility.mjs
+import { realpath as realpath3, stat as stat2 } from "node:fs/promises";
+import { join as join3, relative as relative3, isAbsolute as isAbsolute3, sep as sep3 } from "node:path";
+var REQUIRED_HOST_CAPABILITIES = Object.freeze([
+  "orchestration.contract.v1",
+  "agent.launch.v2",
+  "agent.launch.replay-required.v1",
+  "agent-session.structured.v1",
+  "terminal.prompt-delivery.v1"
+]);
+var reject = (code, message) => {
+  throw Object.assign(Error(message), { code });
+};
+function validateHostCapabilities(status, settings, appVersion) {
+  if (!status || typeof status.runtimeId !== "string" || !status.runtimeId || !Array.isArray(status.capabilities) || status.capabilities.some((v) => typeof v !== "string"))
+    reject("runtime_contract_incompatible", "Orca returned an unsupported runtime status format.");
+  if (status.appVersion && status.appVersion !== appVersion) reject("runtime_identity_mismatch", "The native runtime belongs to a different Orca version.");
+  const missing = REQUIRED_HOST_CAPABILITIES.filter((capability) => !status.capabilities.includes(capability));
+  if (missing.length) reject("runtime_capability_missing", `Orca is missing required interfaces: ${missing.join(", ")}.`);
+  if (!settings?.settings || typeof settings.settings !== "object" || Array.isArray(settings.settings))
+    reject("runtime_contract_incompatible", "Orca returned an unsupported settings response.");
+  return { runtimeId: status.runtimeId, capabilities: [...REQUIRED_HOST_CAPABILITIES] };
+}
+var DATABASES = [
+  { file: "orchestration.db", version: 43, tables: {
+    runs: ["id", "objective", "home_database", "legacy", "consumer_generation", "coordinator_handle", "coordinator_pane_key", "coordinator_orca_session_id", "coordinator_orca_session_id_generation"],
+    tasks: ["id", "run_id", "spec", "status", "result", "created_by_terminal_handle", "created_by_pane_key", "created_by_process_incarnation", "created_by_run_generation"],
+    mutation_receipts: ["caller_fingerprint", "request_id", "method", "payload_hash", "state", "receipt"],
+    mutation_caller_identities: ["transport", "caller_fingerprint"],
+    dispatch_contexts: ["id", "run_id", "task_id", "assignee_handle", "assignee_pane_key", "process_incarnation", "host_scope"],
+    worker_dispatches: ["dispatch_id", "worktree_id", "agent_terminal_handle", "state", "runtime_epoch", "start_options"],
+    attempt_observation_facts: ["id", "dispatch_id", "task_id", "authority_id", "facet", "payload"],
+    messages: ["id", "run_id", "from_handle", "sender_pane_key", "type", "body", "payload"]
+  } },
+  { file: "agent-session-journal.db", version: 4, tables: { agent_session_operations: ["operation_key", "row_json"] } }
+];
+async function inspectEvidenceSchemas(userData) {
+  if (!isAbsolute3(userData || "")) reject("profile_missing", "Orca did not supply an absolute profile directory.");
+  const profile = await realpath3(userData), { DatabaseSync } = await import("node:sqlite"), results = [];
+  for (const spec of DATABASES) {
+    const requested = join3(profile, spec.file);
+    let path;
+    try {
+      await stat2(requested);
+      path = await realpath3(requested);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        results.push({ file: spec.file, state: "not-created", expectedVersion: spec.version });
+        continue;
+      }
+      reject("evidence_unavailable", `Cannot inspect ${spec.file}; existing data was preserved.`);
+    }
+    const rel = relative3(profile, path);
+    if (rel === ".." || rel.startsWith(`..${sep3}`) || isAbsolute3(rel)) reject("profile_mismatch", "Evidence database is outside the verified Orca profile.");
+    let db;
+    try {
+      db = new DatabaseSync(path, { readOnly: true });
+      db.exec("BEGIN");
+      const version = db.prepare("PRAGMA user_version").get().user_version;
+      if (version !== spec.version) reject("evidence_schema_incompatible", `${spec.file} uses schema ${version}; this plugin reads schema ${spec.version}. Update the plugin; do not reset the database.`);
+      for (const [table, required] of Object.entries(spec.tables)) {
+        const columns2 = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+        if (required.some((column) => !columns2.includes(column))) reject("evidence_schema_incompatible", `${spec.file} has an incompatible ${table} table. Existing data was preserved.`);
+      }
+      results.push({ file: spec.file, state: "verified", version });
+    } catch (error) {
+      if (error.code?.startsWith("evidence_")) throw error;
+      reject("evidence_unavailable", `Cannot read the ${spec.file} evidence format. Existing data was preserved.`);
+    } finally {
+      if (db) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+        }
+        db.close();
+      }
+    }
+  }
+  return results;
+}
+async function probeHostCompatibility({ rpc, userData, appVersion }) {
+  const status = await rpc("status.get"), settings = await rpc("settings.get");
+  const host = validateHostCapabilities(status, settings, appVersion);
+  const schemas = await inspectEvidenceSchemas(userData);
+  return { verification: "runtime-contract", ...host, schemas, liveProviderVerified: false };
+}
+
 // src/local/bootstrap.mjs
 var execute = promisify(execFile);
 var activateParent = (pid) => execute(process.execPath, ["-e", "process._debugProcess(Number(process.argv[1]))", String(pid)], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 4e3, windowsHide: true });
 var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var SENTINEL = Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX");
 var occupied = (port) => new Promise((resolve) => {
-  const socket = createConnection({ host: "127.0.0.1", port });
+  const socket = createConnection2({ host: "127.0.0.1", port });
   const finish = (value) => {
     socket.destroy();
     resolve(value);
@@ -833,16 +1020,18 @@ async function targets(port) {
   }
 }
 var failure = (code, message) => Object.assign(new Error(message), { code });
-async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.10", internalKey } = {}) {
+async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.12", internalKey, consent = async () => {
+} } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client;
   let owned = false;
   try {
+    await consent();
     if (!Number.isInteger(parentPid) || parentPid < 2 || parentPid === process.pid) throw failure("invalid_parent_pid", "Invalid Orca parent process.");
     let binary;
     try {
-      const path = platform === "darwin" && executable.includes(".app/Contents/") ? join2(executable.slice(0, executable.indexOf(".app/Contents/") + ".app/Contents/".length), "Frameworks/Electron Framework.framework/Electron Framework") : executable;
-      binary = await readFile2(await realpath2(path));
+      const path = platform === "darwin" && executable.includes(".app/Contents/") ? join4(executable.slice(0, executable.indexOf(".app/Contents/") + ".app/Contents/".length), "Frameworks/Electron Framework.framework/Electron Framework") : executable;
+      binary = await readFile3(await realpath4(path));
     } catch {
       throw failure("fuse_file_missing", "Cannot locate/read the Electron fuse binary in this application package. No injection attempted.");
     }
@@ -867,13 +1056,16 @@ async function bootstrap({ platform = process.platform, parentPid = process.ppid
       throw failure("parent_pid_mismatch", "Inspector belongs to another process; nothing was injected.");
     }
     const runtime = await client.evaluate(`(()=>{if(typeof process.getBuiltinModule!=='function')throw Error('Node getBuiltinModule is unavailable');const req=process.getBuiltinModule('module').createRequire(process.execPath);const {app}=req('electron');const fs=req('node:fs');const path=req('node:path');let build=null;try{build=JSON.parse(fs.readFileSync(path.join(app.isPackaged?process.resourcesPath:app.getAppPath(),'orca-local-build.json'),'utf8'))}catch{};let sqlite=false;try{sqlite=typeof req('node:sqlite').DatabaseSync==='function'}catch{};return {appName:app.getName(),appVersion:app.getVersion(),platform:process.platform,arch:process.arch,electron:process.versions.electron,node:process.versions.node,sqlite,build,cliPaths:{appData:app.getPath('appData'),userData:app.getPath('userData')}}})()`);
-    Object.assign(report, validateRuntime(runtime), { appVersion: runtime.appVersion });
+    Object.assign(report, { appVersion: runtime.appVersion }, validateRuntime(runtime));
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure("profile_missing", "Orca did not resolve its actual runtime profile.");
-    const source = await readFile2(adapterPath, "utf8");
+    const rpc = createNativeRpc({ userData: runtime.cliPaths.userData, parentPid, consent });
+    Object.assign(report, await probeHostCompatibility({ rpc, userData: runtime.cliPaths.userData, appVersion: runtime.appVersion }));
+    const source = await readFile3(adapterPath, "utf8");
     const digest5 = createHash4("sha256").update(source).digest("hex");
-    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest5)},internalKey:${JSON.stringify(internalKey)}});})()`;
+    const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);const transport=m.exports.inspectAdapterContract(electron);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest5)},internalKey:${JSON.stringify(internalKey)}}),transport};})()`;
+    await consent();
     Object.assign(report, await client.evaluate(expression), { cliPaths: runtime.cliPaths });
-    report.detail = "Local runtime adapter installed; panel-to-worker test is available.";
+    report.detail = "Orca runtime capabilities, evidence formats and plugin transport verified. Panel connection is available.";
   } catch (error) {
     report.code = error.code ?? "initialisation_failed";
     report.detail = error.message;
@@ -892,7 +1084,7 @@ async function bootstrap({ platform = process.platform, parentPid = process.ppid
 // src/local/cli.mjs
 import { execFile as execFile2 } from "node:child_process";
 import { access } from "node:fs/promises";
-import { dirname, join as join3 } from "node:path";
+import { dirname, join as join5 } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var execute2 = promisify2(execFile2);
 function cliEnvironment(paths, base = process.env, platform = process.platform) {
@@ -905,7 +1097,7 @@ function cliEnvironment(paths, base = process.env, platform = process.platform) 
 }
 async function locateCli(entry = process.argv[1], executable = process.execPath, paths) {
   if (entry) {
-    const candidate = join3(dirname(entry), "..", "cli", "index.js");
+    const candidate = join5(dirname(entry), "..", "cli", "index.js");
     try {
       await access(candidate);
     } catch {
@@ -1044,115 +1236,17 @@ function verifiedReportOrigin(db, { work, attempts, spec }) {
   return { kind: "worker-report", attemptId: a.id, dispatchId: d.id, nativeTaskId: a.nativeTaskId, messageId: message.id, evidenceId, runId: a.runId, memberId: a.memberId, supervisorMemberId: a.supervisorMemberId, outcome: a.outcome };
 }
 
-// src/local/native-runtime.mjs
-import { AsyncLocalStorage } from "node:async_hooks";
-import { createConnection as createConnection2 } from "node:net";
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { realpath as realpath3, readFile as readFile3 } from "node:fs/promises";
-import { join as join4, relative as relative2, isAbsolute as isAbsolute2, sep as sep2 } from "node:path";
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
-function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
-  const context = new AsyncLocalStorage();
-  const rpc = async (method, params, envelope = {}) => {
-    if (!METHODS.has(method)) throw Error("Native method is not allowed for team work.");
-    if (Object.keys(envelope).some((key) => !["orchestrationRequestId"].includes(key))) throw Error("Native caller overrides are not allowed.");
-    await consent();
-    let metadata, transport, profile;
-    try {
-      if (!isAbsolute2(userData || "")) throw Error();
-      profile = await realpath3(userData);
-      const path = await realpath3(join4(profile, "orca-runtime.json")), rel = relative2(profile, path);
-      if (rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel)) throw Error();
-      const content = await readFile3(path, "utf8");
-      if (Buffer.byteLength(content) > 65536) throw Error();
-      metadata = JSON.parse(content);
-      transport = (metadata.transports ?? [metadata.transport]).find((item) => ["unix", "named-pipe"].includes(item?.kind));
-      if (metadata.pid !== parentPid || typeof metadata.runtimeId !== "string" || !metadata.runtimeId || typeof metadata.authToken !== "string" || !metadata.authToken || !transport || typeof transport.endpoint !== "string" || (transport.kind === "unix" ? !isAbsolute2(transport.endpoint) : !transport.endpoint.startsWith("\\\\.\\pipe\\"))) throw Error();
-    } catch {
-      throw Error("Verified Orca runtime metadata is unavailable or belongs to another process. Reconnect the plugin.");
-    }
-    const expectedRuntimeId = context.getStore();
-    if (expectedRuntimeId && metadata.runtimeId !== expectedRuntimeId) throw Error("Native runtime epoch changed during observation; intent remains reserved.");
-    const verifyMetadata = async () => {
-      const current = JSON.parse(await readFile3(join4(profile, "orca-runtime.json"), "utf8"));
-      if (current.runtimeId !== metadata.runtimeId || current.pid !== parentPid || current.authToken !== metadata.authToken) throw Error("Native runtime epoch changed before effect or observation settlement.");
-    };
-    await consent();
-    return new Promise((resolve, reject) => {
-      const id2 = randomUUID2(), socket = createConnection2(transport.endpoint);
-      let buffer = "", finished = false, validating = false;
-      const finish = (error, result) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        socket.destroy();
-        error ? reject(error) : resolve(result);
-      };
-      const timer = setTimeout(() => finish(Error("Native runtime timed out; any submitted objective remains unconfirmed.")), timeoutMs);
-      socket.setEncoding("utf8");
-      socket.on("connect", async () => {
-        try {
-          await consent();
-          await verifyMetadata();
-          if (!finished) socket.write(JSON.stringify({ id: id2, authToken: metadata.authToken, method, ...params === void 0 ? {} : { params }, ...envelope, ...method.startsWith("orchestration.") ? { orchestrationContractVersion: 1 } : {} }) + "\n");
-        } catch (error) {
-          finish(error);
-        }
-      });
-      socket.on("error", () => finish(Error("Native runtime connection failed; delivery is unconfirmed.")));
-      socket.on("close", () => {
-        if (!validating) finish(Error("Native runtime closed before a receipt; delivery is unconfirmed."));
-      });
-      const publicError = (value) => [metadata.authToken, transport.endpoint, profile, userData].reduce((message, secret) => secret ? message.split(secret).join("[private runtime data]") : message, String(value || "Native operation refused")).slice(0, 1500);
-      socket.on("data", async (chunk) => {
-        buffer += chunk;
-        if (Buffer.byteLength(buffer) > maxBytes) return finish(Error("Native runtime response exceeded its bounded limit."));
-        for (let index; (index = buffer.indexOf("\n")) >= 0; ) {
-          const line = buffer.slice(0, index);
-          buffer = buffer.slice(index + 1);
-          if (!line.trim()) continue;
-          let response;
-          try {
-            response = JSON.parse(line);
-          } catch {
-            return finish(Error("Native runtime returned malformed evidence."));
-          }
-          if (response?._keepalive === true) continue;
-          if (response?.id !== id2 || response?._meta?.runtimeId !== metadata.runtimeId) return finish(Error("Native response identity or runtime changed; evidence is unverified."));
-          if (response.ok !== true) return finish(Object.assign(Error(publicError(response.error?.message)), { code: response.error?.code, native: true }));
-          validating = true;
-          try {
-            await verifyMetadata();
-            finish(null, response.result);
-          } catch (error) {
-            finish(error);
-          }
-          return;
-        }
-      });
-    });
-  };
-  rpc.withRuntime = (runtimeId, action) => {
-    if (typeof runtimeId !== "string" || !runtimeId) throw Error("Expected native runtime identity is required.");
-    const prior = context.getStore();
-    if (prior && prior !== runtimeId) throw Error("Native runtime epoch changed inside observation.");
-    return context.run(runtimeId, action);
-  };
-  return rpc;
-}
-var withNativeRuntime = (rpc, runtimeId, action) => rpc.withRuntime ? rpc.withRuntime(runtimeId, action) : action();
-
 // src/local/questions.mjs
 import { createHash as createHash9 } from "node:crypto";
 
 // src/local/orchestration-snapshot.mjs
-import { realpath as realpath4 } from "node:fs/promises";
-import { join as join5, relative as relative3, isAbsolute as isAbsolute3, sep as sep3 } from "node:path";
+import { realpath as realpath5 } from "node:fs/promises";
+import { join as join6, relative as relative4, isAbsolute as isAbsolute4, sep as sep4 } from "node:path";
 async function withOrchestrationSnapshot(userData, { pathError, schemaError }, read) {
   let db;
   try {
-    const root = await realpath4(userData), file = await realpath4(join5(root, "orchestration.db")), rel = relative3(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep3}`) || isAbsolute3(rel)) throw Error(pathError);
+    const root = await realpath5(userData), file = await realpath5(join6(root, "orchestration.db")), rel = relative4(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute4(rel)) throw Error(pathError);
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     db.exec("BEGIN");
@@ -1549,12 +1643,12 @@ async function readNativeParentEvidence(userData, { parentWork, attempt, active 
 import { createHash as createHash7, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/local/native-run.mjs
-import { isAbsolute as isAbsolute4 } from "node:path";
+import { isAbsolute as isAbsolute5 } from "node:path";
 var columns = ["id", "objective", "home_database", "coordinator_handle", "coordinator_pane_key", "coordinator_orca_session_id", "coordinator_orca_session_id_generation", "consumer_generation", "legacy"];
 async function readNativeRunEvidence(userData, { objective, owner, runId } = {}) {
   const unknown = (detail2) => ({ state: "unverified", detail: detail2 });
   try {
-    if (!isAbsolute4(userData || "") || typeof objective !== "string" || !owner) throw Error();
+    if (!isAbsolute5(userData || "") || typeof objective !== "string" || !owner) throw Error();
     return await withOrchestrationSnapshot(userData, { pathError: "", schemaError: "" }, (db) => {
       const names = new Set(db.prepare("PRAGMA table_info(runs)").all().map((row) => row.name));
       if (columns.some((name) => !names.has(name))) throw Error();
@@ -2710,13 +2804,13 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
 }
 
 // src/local/wake-evidence.mjs
-import { realpath as realpath5 } from "node:fs/promises";
-import { join as join6, relative as relative4, isAbsolute as isAbsolute5, sep as sep4 } from "node:path";
+import { realpath as realpath6 } from "node:fs/promises";
+import { join as join7, relative as relative5, isAbsolute as isAbsolute6, sep as sep5 } from "node:path";
 async function resumedOwner(userData, operation, oldFence) {
   let db;
   try {
-    const root = await realpath5(userData), path = await realpath5(join6(root, "agent-session-journal.db")), rel = relative4(root, path);
-    if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute5(rel)) return null;
+    const root = await realpath6(userData), path = await realpath6(join7(root, "agent-session-journal.db")), rel = relative5(root, path);
+    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute6(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3037,13 +3131,13 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
 }
 
 // src/local/recovery.mjs
-import { realpath as realpath7 } from "node:fs/promises";
-import { join as join8, relative as relative6, isAbsolute as isAbsolute7, sep as sep6 } from "node:path";
+import { realpath as realpath8 } from "node:fs/promises";
+import { join as join9, relative as relative7, isAbsolute as isAbsolute8, sep as sep7 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
 import { createHash as createHash12 } from "node:crypto";
-import { realpath as realpath6 } from "node:fs/promises";
-import { join as join7, relative as relative5, isAbsolute as isAbsolute6, sep as sep5 } from "node:path";
+import { realpath as realpath7 } from "node:fs/promises";
+import { join as join8, relative as relative6, isAbsolute as isAbsolute7, sep as sep6 } from "node:path";
 var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
 var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
@@ -3052,10 +3146,10 @@ function nativeLaunchFingerprint(input) {
 async function readNativeLaunchLedger(userData, request) {
   let db;
   try {
-    if (!isAbsolute6(userData || "")) throw Error();
-    const profile = await realpath6(userData), file = await realpath6(join7(profile, "agent-session-journal.db"));
-    const rel = relative5(profile, file);
-    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute6(rel)) throw Error();
+    if (!isAbsolute7(userData || "")) throw Error();
+    const profile = await realpath7(userData), file = await realpath7(join8(profile, "agent-session-journal.db"));
+    const rel = relative6(profile, file);
+    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute7(rel)) throw Error();
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) throw Error();
@@ -3081,9 +3175,9 @@ var detail = (error) => String(error?.message ?? error).slice(0, 1200);
 async function readSessionDeath(userData, sessionId, ownerFence, scope) {
   let db;
   try {
-    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute7(userData || "")) return null;
-    const profile = await realpath7(userData), path = await realpath7(join8(profile, "agent-session-journal.db")), rel = relative6(profile, path);
-    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute7(rel)) return null;
+    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute8(userData || "")) return null;
+    const profile = await realpath8(userData), path = await realpath8(join9(profile, "agent-session-journal.db")), rel = relative7(profile, path);
+    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute8(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3506,13 +3600,13 @@ Member ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id ?
 }
 
 // src/local/native-stop.mjs
-import { realpath as realpath8 } from "node:fs/promises";
-import { join as join9, relative as relative7, isAbsolute as isAbsolute8, sep as sep7 } from "node:path";
+import { realpath as realpath9 } from "node:fs/promises";
+import { join as join10, relative as relative8, isAbsolute as isAbsolute9, sep as sep8 } from "node:path";
 async function readStopReceipt(userData, row) {
   let db;
   try {
-    const root = await realpath8(userData), file = await realpath8(join9(root, "orchestration.db")), rel = relative7(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute8(rel)) return null;
+    const root = await realpath9(userData), file = await realpath9(join10(root, "orchestration.db")), rel = relative8(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute9(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 43) return null;
@@ -5028,8 +5122,8 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 }
 
 // src/local/store.mjs
-import { mkdir as mkdir2, realpath as realpath9, stat as stat2, open as open2 } from "node:fs/promises";
-import { join as join10, isAbsolute as isAbsolute9, relative as relative8, sep as sep8 } from "node:path";
+import { mkdir as mkdir2, realpath as realpath10, stat as stat3, open as open2 } from "node:fs/promises";
+import { join as join11, isAbsolute as isAbsolute10, relative as relative9, sep as sep9 } from "node:path";
 import { randomUUID as randomUUID11, createHash as createHash19 } from "node:crypto";
 var FORMAT = "orca-team-store";
 var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
@@ -5048,7 +5142,7 @@ async function openTeamStore(options) {
   }
 }
 async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}) {
-  if (typeof userData !== "string" || !isAbsolute9(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
+  if (typeof userData !== "string" || !isAbsolute10(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
   let DatabaseSync, backup;
   try {
     ({ DatabaseSync, backup } = await sqlite());
@@ -5056,27 +5150,27 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
   }
   if (typeof DatabaseSync !== "function") fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
-  const profile = await realpath9(userData);
-  const directory = join10(profile, "plugins-data", "herman925.team-orchestrator");
+  const profile = await realpath10(userData);
+  const directory = join11(profile, "plugins-data", "herman925.team-orchestrator");
   const inside = (path2) => {
-    const rel = relative8(profile, path2);
-    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute9(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
+    const rel = relative9(profile, path2);
+    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute10(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
   };
-  for (const target of [join10(profile, "plugins-data"), directory]) {
+  for (const target of [join11(profile, "plugins-data"), directory]) {
     try {
-      inside(await realpath9(target));
+      inside(await realpath10(target));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       await mkdir2(target, { mode: 448 });
-      inside(await realpath9(target));
+      inside(await realpath10(target));
     }
   }
-  const path = join10(directory, "team-orchestrator.sqlite");
+  const path = join11(directory, "team-orchestrator.sqlite");
   let exists = false;
   try {
-    await stat2(path);
+    await stat3(path);
     exists = true;
-    inside(await realpath9(path));
+    inside(await realpath10(path));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -5844,7 +5938,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.11", internalKey });
+      const report = await bootstrap({ version: "0.1.12", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

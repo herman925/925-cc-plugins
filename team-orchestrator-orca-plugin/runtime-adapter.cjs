@@ -19,6 +19,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/local/adapter.mjs
 var adapter_exports = {};
 __export(adapter_exports, {
+  inspectAdapterContract: () => inspectAdapterContract,
   installAdapter: () => installAdapter
 });
 module.exports = __toCommonJS(adapter_exports);
@@ -321,6 +322,15 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
 var SLOT = /* @__PURE__ */ Symbol.for("herman925.team-orchestrator.adapter");
 var KEY = "herman925.team-orchestrator";
 var CHANNEL = "workspace.readContext";
+function inspectAdapterContract(electron) {
+  const ipc = electron.ipcMain;
+  if (!(ipc?._invokeHandlers instanceof Map) || typeof ipc.handle !== "function" || typeof ipc.removeHandler !== "function")
+    throw Object.assign(Error("Orca no longer exposes the required Electron plugin transport."), { code: "plugin_transport_incompatible" });
+  const required = ["plugins:readPanelEntry", "plugins:panelAction", "plugins:invokeCommand", "plugins:setEnabled", "plugins:remove", "runtime:call", "session:get"];
+  const missing = required.filter((name) => typeof ipc._invokeHandlers.get(name) !== "function");
+  if (missing.length) throw Object.assign(Error(`Orca is missing required plugin interfaces: ${missing.join(", ")}.`), { code: "plugin_transport_incompatible" });
+  return { verification: "handler-contract", handlers: required };
+}
 async function installAdapter(electron, { version, identity, internalKey }) {
   const ipc = electron.ipcMain;
   const handlers = ipc?._invokeHandlers;
@@ -465,5 +475,6 @@ async function installAdapter(electron, { version, identity, internalKey }) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  inspectAdapterContract,
   installAdapter
 });

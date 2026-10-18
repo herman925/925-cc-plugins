@@ -237,7 +237,7 @@ http.createServer(async (req, res) => {
       const { fixtureId, mode, message } = JSON.parse(body);
       const reply = value => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, value })); };
       if (message.commandId === 'team.initialise') return reply({ ready: true });
-      if (mode === 'unsupported-build') return reply({ nonce: message.nonce, ready: false, platform: 'darwin', workerPid: 1234, code: 'unsupported_build', detail: 'Unsupported Orca build. Revalidate this package before enabling the compatibility layer.' });
+      if (mode === 'incompatible-host') return reply({ nonce: message.nonce, ready: false, platform: 'darwin', workerPid: 1234, code: 'runtime_capability_missing', detail: 'Orca is missing required interfaces: agent.launch.replay-required.v1.' });
       const { op, params = {} } = message.args;
       if (op === 'ping') return reply({ nonce: message.nonce, ready: true, platform: 'darwin', appVersion: '1.4.222', workerPid: 1234 });
       if (mode === 'read-error' && op === 'load') throw Error('Team database damaged. Original data has been preserved.');

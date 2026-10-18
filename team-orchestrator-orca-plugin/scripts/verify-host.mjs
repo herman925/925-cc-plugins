@@ -17,8 +17,9 @@ import { promisify } from 'node:util';
 import { terminalIdentity } from '../src/local/terminal-identity.mjs';
 import { verifyCallerScope } from './verify-host-caller-scope.mjs';
 import { verifyStopContract } from './verify-host-stop-contract.mjs';
-for (const revision of ['9fdd90ffa7721e145f1353ad9fb9df2f70c31f43', 'ff4a51c872e723d87ab141044814301ea5a78634']) {
-const scopedHost = revision.startsWith('ff4a51c');
+for (const revision of (process.env.ORCA_CONTRACT_REVISIONS?.split(',') ?? ['9fdd90ffa7721e145f1353ad9fb9df2f70c31f43', 'ff4a51c872e723d87ab141044814301ea5a78634', '37c314bcc96063c42c468e564df2c34bac8ef8a1'])) {
+const scopedHost = revision !== '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
+const pairedHost = revision === '37c314bcc96063c42c468e564df2c34bac8ef8a1';
 const root = await realpath(await mkdtemp(join(tmpdir(), 'orca-plugin-contract-')));
 const project = fileURLToPath(new URL('../', import.meta.url));
 const source = async path => {
@@ -47,8 +48,8 @@ export { getOrCreateLocalMutationCallerFingerprint, beginMutationReceipt, comple
   if (scopedHost) await writeFile(entry, (await readFile(entry, 'utf8')) + `
 export { RpcDispatcher } from './src/main/runtime/rpc/dispatcher';
 export { RuntimeRpcRequestAdmission } from './src/main/runtime/runtime-rpc/runtime-rpc-request-admission';
-export { OWNER_RPC_CALLER_SCOPE, denyRpcMethodForCaller, bindRpcCallToCallerScope } from './src/main/runtime/rpc/rpc-caller-scope';
-export { sshBridgeCredentials } from './src/main/runtime/rpc/ssh-bridge-credentials';
+export { OWNER_RPC_CALLER_SCOPE, denyRpcMethodForCaller${pairedHost?'':', bindRpcCallToCallerScope'} } from './src/main/runtime/rpc/rpc-caller-scope';
+${pairedHost?'':"export { sshBridgeCredentials } from './src/main/runtime/rpc/ssh-bridge-credentials';"}
 export { z } from 'zod';
 `);
   const outfile = join(root, `${name}.mjs`);
@@ -60,10 +61,12 @@ export { z } from 'zod';
       if (scopedHost) api.onResolve({ filter: /agent-launch-mode$/ }, () => ({ path: 'launch-mode', namespace: 'unexecuted-boundary' }));
       api.onResolve({ filter: /^\.\/methods$/ }, args => args.importer.endsWith('/rpc/dispatcher.ts') ? { path: 'methods', namespace: 'unexecuted-boundary' } : undefined);
       api.onResolve({ filter: /runtime-rpc-binary-routing$/ }, () => ({ path: 'transport', namespace: 'unexecuted-boundary' }));
-      api.onLoad({ filter: /.*/, namespace: 'unexecuted-boundary' }, args => ({ contents: args.path === 'transport'
+      api.onLoad({ filter: /.*/, namespace: 'unexecuted-boundary' }, args => ({ contents: args.path === 'account-parser' ? 'export const parse = () => { throw Error("Unexecuted account parser boundary reached"); };' : args.path === 'profile-lock' ? 'export const lock = () => { throw Error("Unexecuted profile lock boundary reached"); };' : args.path === 'transport'
         ? 'export class RuntimeRpcBinaryRouting {}'
-        : args.path === 'launch-mode' ? 'const unused = () => { throw Error("Unexecuted launch-mode/provider boundary reached"); }; export { unused as decideAgentLaunchMode, unused as downgradeAgentLaunchModeForHost, unused as readAgentLaunchModeSettings, unused as resolveAgentLaunchModeOnHost, unused as warnStructuredLaunchDowngrade };'
+        : args.path === 'launch-mode' ? 'const unused = () => { throw Error("Unexecuted launch-mode/provider boundary reached"); }; export { unused as DEFAULT_LAUNCH_VOCABULARY, unused as downgradeAgentLaunchModeForStructuredRefusal, unused as decideAgentLaunchMode, unused as downgradeAgentLaunchModeForHost, unused as readAgentLaunchModeSettings, unused as resolveAgentLaunchModeOnHost, unused as warnStructuredLaunchDowngrade };'
         : `export const ALL_RPC_METHODS = new Proxy([], { get() { throw Error('Unexecuted ${args.path} boundary reached'); } });`, loader: 'js' }));
+      api.onResolve({ filter: /^@orca\/process-host(?:\/(.+))?$/ }, args => ({ path: join(root, 'src/packages/process-host/src', (args.path.split('/')[2] || 'run-process') + '.ts') }));
+      api.onResolve({ filter: /^(proper-lockfile|smol-toml)$/ }, args => ({path:args.path==='smol-toml'?'account-parser':'profile-lock',namespace:'unexecuted-boundary'}));
       api.onResolve({ filter: /^electron$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onResolve({ filter: /safe-storage-availability$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onLoad({ filter: /.*/, namespace: 'contract-fake' }, () => ({ contents: 'export const guardedSafeStorage = { isEncryptionAvailable: () => false }; export const safeStorage = guardedSafeStorage;', loader: 'js' }));
@@ -88,7 +91,7 @@ try {
   assert.match(waitMethodSource,/name: 'terminal\.wait'[\s\S]*?wait: await runtime\.waitForTerminal\(params\.terminal, \{[\s\S]*?condition: params\.for,[\s\S]*?timeoutMs: params\.timeoutMs/);
   // Execute the exact pinned method bodies over a no-effect terminal inventory.
   // Their inheritance chains are irrelevant to these getters; no owner/auth logic is replaced.
-  const processSource = await source(join(root, 'src/main/runtime/orca-runtime-get-terminal-interactive-wait.ts'));
+  const processSource = await source(join(root, pairedHost?'src/main/runtime/terminal/wait/terminal-interactive-wait.ts':'src/main/runtime/orca-runtime-get-terminal-interactive-wait.ts'));
   const processBody = processSource.match(/getTerminalProcessIncarnation\(handle: string\): string \| null \{([\s\S]*?)\n  \}/)?.[1];
   const promptSource = await source(join(root, 'src/main/runtime/orca-runtime-agent-prompt-request-correlation.ts'));
   const promptBody = promptSource.match(/getTerminalPromptRequestBinding\(handle: string\): \{[\s\S]*?\n  \} \{([\s\S]*?)\n  \}/)?.[1];
@@ -104,7 +107,7 @@ try {
   assert.notEqual(terminalIdentity({ ptyId, incarnationId: 'different-incarnation' }).processIncarnation, nativeProcess.call(runtime, 'term_contract'));
   const taskSource = await source(join(root, 'src/main/runtime/rpc/methods/orchestration/messaging/message-methods.ts'));
   assert.match(taskSource, /createdByProcessIncarnation: creatorAuthority.processIncarnation/);
-  const authoritySource = await source(join(root, 'src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts'));
+  const authoritySource = await source(join(root, pairedHost?'src/main/runtime/terminal/output/terminal-orchestration-authority.ts':'src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts'));
   assert.match(authoritySource, /processIncarnation: this.getTerminalProcessIncarnation\(terminalHandle\)/);
   assert.deepEqual(before.workerReportObservation({ id: 'msg_actual-worker-done', run_id: 'run-owning-supervisor', created_at: '2026-10-16T00:00:00.000Z' }), { id: 'worker_report:msg_actual-worker-done', authorityId: 'run_home:run-owning-supervisor', homeReceivedAt: 1792108800000 });
   {
@@ -165,7 +168,7 @@ try {
   const restartSource=await source(join(root,'src/main/runtime/rpc/methods/structured-agent-session-restart-resume.ts'));
   assert.match(restartSource,/name: 'agentSession.restartResume'[\s\S]*return \{ results: \[\] \}/);
   assert.match(restartSource,/name: 'agentSession.restartContinue'[\s\S]*continueAfterRestart\(\s*params.sessionIds/);
-  const ensureSource=await source(join(root,'src/main/runtime/orca-runtime-get-agent-session-execution-namespace.ts'));
+  const ensureSource=await source(join(root,pairedHost?'src/main/runtime/session-construction/agent-session/get-agent-session-execution-namespace.ts':'src/main/runtime/orca-runtime-get-agent-session-execution-namespace.ts'));
   assert.match(ensureSource,/request.kind === 'automatic'[\s\S]*throw new Error\('agent_session_resume_not_authorized'\)/);
   const exactStop={worktree:'folder:/work',expectedPtyIds:['one-pty'],keepHistory:true,targetOnly:true};
   assert.deepEqual(before.TerminalStopExact.parse(exactStop),exactStop);

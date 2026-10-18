@@ -28,7 +28,7 @@ export default function activate(orca) {
     ready = Promise.resolve().then(async () => {
       // Check live worker authority before touching the parent process.
       await orca.host.call('storage.get', { key: 'team-definitions-v1' });
-      const report = await bootstrap({ version: __PLUGIN_DISPLAY_VERSION__, internalKey });
+      const report = await bootstrap({ version: __PLUGIN_DISPLAY_VERSION__, internalKey, consent:()=>orca.host.call('storage.get', {key:'team-work-consent-v1'}) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then(executor => executor.resumeWork()).catch(() => orca.log('Team storage or pending work is unavailable; inspect the panel recovery details.'));
       return report;

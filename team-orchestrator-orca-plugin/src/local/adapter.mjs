@@ -4,6 +4,15 @@ import { mediateOperation } from './native-broker.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
+export function inspectAdapterContract(electron) {
+  const ipc=electron.ipcMain;
+  if(!(ipc?._invokeHandlers instanceof Map)||typeof ipc.handle!=='function'||typeof ipc.removeHandler!=='function')
+    throw Object.assign(Error('Orca no longer exposes the required Electron plugin transport.'),{code:'plugin_transport_incompatible'});
+  const required=['plugins:readPanelEntry','plugins:panelAction','plugins:invokeCommand','plugins:setEnabled','plugins:remove','runtime:call','session:get'];
+  const missing=required.filter(name=>typeof ipc._invokeHandlers.get(name)!=='function');
+  if(missing.length)throw Object.assign(Error(`Orca is missing required plugin interfaces: ${missing.join(', ')}.`),{code:'plugin_transport_incompatible'});
+  return {verification:'handler-contract',handlers:required};
+}
 export async function installAdapter(electron, { version, identity, internalKey }) {
   const ipc = electron.ipcMain;
   const handlers = ipc?._invokeHandlers;
