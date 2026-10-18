@@ -4,9 +4,11 @@ An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://gi
 
 It is separate from that Claude Code mod (0.5.37), which runs inside each Claude Code session. The current source keeps new teams in its own SQLite database under the verified Orca profile. It neither imports nor overwrites the mod's `.claude/team-orchestrator/` files or the prototype's `team-definitions-v1` KV data. The source includes native roster preparation, admitted task dispatch, declared scope coordination and evidence reconciliation; the Claude mod remains a separate product.
 
-Release **0.1.22** (strict SemVer `0.1.22`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+Release **0.1.23** (strict SemVer `0.1.23`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
 
 Accepted Roster/New team decisions are recorded in [ADR-001](docs/ADR-001-roster-new-team.md), with the final choices, superseded alternatives, original-mod rationale and verification limits. Consult it before changing these views; the release paragraphs below include intermediate designs. See also the [documentation index](docs/README.md).
+
+Release **0.1.23** checks the saved team’s dispatch depth before preparing any member. Local Head → Leads → Workers teams automatically raise a lower native limit to 2 through the existing native settings handler, then read it back. Existing limits above 2 stay unchanged; flat teams need no change. A failed check stops before member reservation or creation. Existing teams can use the scoped `ensureTeamDepth` panel operation to check the limit without relaunching.
 
 Release **0.1.22** connects Claude Code’s statusline context data through **Settings → Claude context**. The bundled observer preserves the existing statusline command and its output, records only context measurements for verified team sessions, and displays the CLI’s declared window and percentage. Disconnect restores the original statusline configuration.
 
@@ -60,7 +62,7 @@ Terminal members receive a `team/member` title, for example `proposal/Worker-1`,
 
 1. Use this folder on the **PC running Orca**, as your existing development plugin path. A checkout on the server alone is not automatically a local PC path.
 2. Refresh **Settings → Plugins** and review/enable Team Orchestrator. Adding `main.mjs` changes Orca's consent to include **trusted Node worker code**. This worker has native process access, beyond the panel's declared host API capabilities.
-3. Open the Team Orchestrator panel and check **v0.1.22**.
+3. Open the Team Orchestrator panel and check **v0.1.23**.
 4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
 5. The panel opens the roster only after the worker connection and saved team data are verified. If either fails, it shows one **Plugin unavailable** warning with **Retry** and optional **Details**, hiding navigation, cached teams and the empty-team screen. Normal connection diagnostics and **Test connection** live under **Settings → Connection**; OS, Orca version and worker PID are collapsed under **Technical details**.
 6. In **New team**, choose Leads, optionally enter matching comma-separated Lead names, choose Workers per lead and model preferences, then click **Launch team**. Orca supplies the current project and execution host automatically. The roster appears after startup. Open the highest supervisor's session to give it work. Click the supervisor’s name in the roster or organisation chart to return to that conversation. Every member name opens its own saved session; there is no member detail form.

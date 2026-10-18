@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import { terminalIdentity } from '../src/local/terminal-identity.mjs';
 import { verifyCallerScope } from './verify-host-caller-scope.mjs';
 import { verifyStopContract } from './verify-host-stop-contract.mjs';
+import {verifyDepthSettingsContract} from './verify-host-dispatch-depth.mjs';
 for (const revision of (process.env.ORCA_CONTRACT_REVISIONS?.split(',') ?? ['9fdd90ffa7721e145f1353ad9fb9df2f70c31f43', 'ff4a51c872e723d87ab141044814301ea5a78634', '37c314bcc96063c42c468e564df2c34bac8ef8a1'])) {
 const scopedHost = revision !== '9fdd90ffa7721e145f1353ad9fb9df2f70c31f43';
 const pairedHost = revision === '37c314bcc96063c42c468e564df2c34bac8ef8a1';
@@ -320,6 +321,7 @@ try {
   assert.equal(before.ModelCatalogParams.safeParse({ worktree: 'folder:/fixture', agent: 'claude' }).success, true);
   assert.equal(before.ModelCatalogParams.safeParse({ agent: 'claude', executionHost: 'made-up' }).success, false);
   if (pairedHost) {
+    await verifyDepthSettingsContract(await source(join(root,'src/main/ipc/settings.ts')));
     const sessions = await source(join(root, 'src/shared/runtime-session-contracts.ts'));
     const tabs = await source(join(root, 'src/shared/runtime-mobile-session-tab-contracts.ts'));
     const provider = await source(join(root, 'src/shared/agent-session-resume.ts'));

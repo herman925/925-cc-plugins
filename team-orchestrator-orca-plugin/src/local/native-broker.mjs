@@ -1,7 +1,13 @@
 import {terminalIdentity,matchesTerminalObservation} from './terminal-identity.mjs';
 import { discoverCapabilities } from './capabilities.mjs';
 // Trusted adapter orchestration only; invoke/rpc retain its actual event and authority.
-export async function mediateOperation({ op, input, invoke, rpc, authority, admission }) {
+export async function mediateOperation({ op, input, invoke, rpc, authority, admission, ensureDepth }) {
+  if(op==='ensureTeamDepth'){
+    if(!input||Object.keys(input).some(key=>!['teamId','configVersion'].includes(key)))throw Error('Invalid team depth selection.');
+    const plan=await invoke({op:'_teamDepth',params:input});
+    if(typeof ensureDepth!=='function')throw Error('The native dispatch depth controller is unavailable.');
+    return {ok:true,value:await ensureDepth(plan)};
+  }
   if(op==='saveStaffing'){
     await authority();const target=await invoke({op:'_staffingTarget',params:input});
     if(!target.staffing&&input.decision!=='reject'){
@@ -10,7 +16,7 @@ export async function mediateOperation({ op, input, invoke, rpc, authority, admi
     }
     await authority();const saved=await invoke({op:'_saveStaffing',params:input});
     if(saved.staffing.launch){
-      try{const launched=await mediateOperation({op:'launchSupervisor',input:saved.staffing.launch,invoke,rpc,authority,admission});saved.preparation=launched.value;}
+      try{const launched=await mediateOperation({op:'launchSupervisor',input:saved.staffing.launch,invoke,rpc,authority,admission,ensureDepth});saved.preparation=launched.value;}
       catch(error){saved.preparation={status:'pending',detail:String(error.message).slice(0,1200)};}
       await authority();saved.value=(await invoke({op:'load',params:{}})).value;
     }
@@ -19,13 +25,13 @@ export async function mediateOperation({ op, input, invoke, rpc, authority, admi
   if(op==='decideWork'){
     await authority();const result=await invoke({op:'_decideWork',params:input});
     if(input.decision!=='accept'||!result.decision.nextGoalId)return {ok:true,value:result};
-    return mediateOperation({op:'startNextGoal',input:{teamId:result.teamId,goalId:result.decision.nextGoalId},invoke,rpc,authority});
+    return mediateOperation({op:'startNextGoal',input:{teamId:result.teamId,goalId:result.decision.nextGoalId},invoke,rpc,authority,ensureDepth});
   }
   if(op==='startNextGoal'){
     await authority();const plan=await invoke({op:'_nextGoal',params:input});
     if(!plan.goalId)return {ok:true,value:{value:plan.value}};
     if(plan.launch){
-      const launched=await mediateOperation({op:'launchSupervisor',input:plan.launch,invoke,rpc,authority});
+      const launched=await mediateOperation({op:'launchSupervisor',input:plan.launch,invoke,rpc,authority,ensureDepth});
       if(launched.value?.status!=='created')return {ok:true,value:{pending:true,detail:'Fresh launch outcome is unknown. Check saved launch evidence before continuing.'}};
       const remaining=await invoke({op:'_nextGoal',params:input});
       if(remaining.launch)return {ok:true,value:{pending:true,continue:true,goalId:plan.goalId}};
@@ -59,6 +65,15 @@ export async function mediateOperation({ op, input, invoke, rpc, authority, admi
   let observed=admission?.observed;
   if(!observed){const value=await discoverCapabilities(rpc,prepared.scope);await authority();observed=await invoke({op:'_capabilityResult',params:{observationId:prepared.observationId,value}});}
   if (op === 'capabilities') return { ok: true, value: observed };
+  if(op==='launchSupervisor'){
+    const plan=await invoke({op:'_teamDepth',params:{teamId:input.teamId,configVersion:input.configVersion,memberId:input.memberId,observationId:prepared.observationId}});
+    if(plan.requiredDepth>1){
+      try{
+        if(typeof ensureDepth!=='function')throw Error('The native dispatch depth controller is unavailable.');
+        await ensureDepth(plan);
+      }catch(error){throw Object.assign(Error(`Could not prepare native dispatch depth: ${error.message}`),{code:'dispatch_depth_unavailable'});}
+    }
+  }
   const launch = recovery ?? await invoke({ op: op==='replaceMember'?'_wakeFreshPrepare':'_launchPrepare', params: { input, observationId: prepared.observationId } });
   if (launch.receipt) return { ok: true, value: launch.receipt };
   let result, error;

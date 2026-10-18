@@ -25,9 +25,9 @@ __export(adapter_exports, {
 module.exports = __toCommonJS(adapter_exports);
 
 // src/public-operations.mjs
-var PUBLIC_OPERATIONS = Object.freeze(["claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
+var PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
 var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
-var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
+var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
 // src/local/native-runtime.mjs
 var import_node_async_hooks = require("node:async_hooks");
@@ -250,7 +250,13 @@ async function discoverCapabilities(rpc, scope) {
 }
 
 // src/local/native-broker.mjs
-async function mediateOperation({ op, input, invoke, rpc, authority, admission }) {
+async function mediateOperation({ op, input, invoke, rpc, authority, admission, ensureDepth }) {
+  if (op === "ensureTeamDepth") {
+    if (!input || Object.keys(input).some((key) => !["teamId", "configVersion"].includes(key))) throw Error("Invalid team depth selection.");
+    const plan = await invoke({ op: "_teamDepth", params: input });
+    if (typeof ensureDepth !== "function") throw Error("The native dispatch depth controller is unavailable.");
+    return { ok: true, value: await ensureDepth(plan) };
+  }
   if (op === "saveStaffing") {
     await authority();
     const target = await invoke({ op: "_staffingTarget", params: input });
@@ -264,7 +270,7 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
     const saved2 = await invoke({ op: "_saveStaffing", params: input });
     if (saved2.staffing.launch) {
       try {
-        const launched = await mediateOperation({ op: "launchSupervisor", input: saved2.staffing.launch, invoke, rpc, authority, admission });
+        const launched = await mediateOperation({ op: "launchSupervisor", input: saved2.staffing.launch, invoke, rpc, authority, admission, ensureDepth });
         saved2.preparation = launched.value;
       } catch (error2) {
         saved2.preparation = { status: "pending", detail: String(error2.message).slice(0, 1200) };
@@ -278,14 +284,14 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
     await authority();
     const result2 = await invoke({ op: "_decideWork", params: input });
     if (input.decision !== "accept" || !result2.decision.nextGoalId) return { ok: true, value: result2 };
-    return mediateOperation({ op: "startNextGoal", input: { teamId: result2.teamId, goalId: result2.decision.nextGoalId }, invoke, rpc, authority });
+    return mediateOperation({ op: "startNextGoal", input: { teamId: result2.teamId, goalId: result2.decision.nextGoalId }, invoke, rpc, authority, ensureDepth });
   }
   if (op === "startNextGoal") {
     await authority();
     const plan = await invoke({ op: "_nextGoal", params: input });
     if (!plan.goalId) return { ok: true, value: { value: plan.value } };
     if (plan.launch) {
-      const launched = await mediateOperation({ op: "launchSupervisor", input: plan.launch, invoke, rpc, authority });
+      const launched = await mediateOperation({ op: "launchSupervisor", input: plan.launch, invoke, rpc, authority, ensureDepth });
       if (launched.value?.status !== "created") return { ok: true, value: { pending: true, detail: "Fresh launch outcome is unknown. Check saved launch evidence before continuing." } };
       const remaining = await invoke({ op: "_nextGoal", params: input });
       if (remaining.launch) return { ok: true, value: { pending: true, continue: true, goalId: plan.goalId } };
@@ -324,6 +330,17 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
     observed = await invoke({ op: "_capabilityResult", params: { observationId: prepared.observationId, value } });
   }
   if (op === "capabilities") return { ok: true, value: observed };
+  if (op === "launchSupervisor") {
+    const plan = await invoke({ op: "_teamDepth", params: { teamId: input.teamId, configVersion: input.configVersion, memberId: input.memberId, observationId: prepared.observationId } });
+    if (plan.requiredDepth > 1) {
+      try {
+        if (typeof ensureDepth !== "function") throw Error("The native dispatch depth controller is unavailable.");
+        await ensureDepth(plan);
+      } catch (error2) {
+        throw Object.assign(Error(`Could not prepare native dispatch depth: ${error2.message}`), { code: "dispatch_depth_unavailable" });
+      }
+    }
+  }
   const launch = recovery ?? await invoke({ op: op === "replaceMember" ? "_wakeFreshPrepare" : "_launchPrepare", params: { input, observationId: prepared.observationId } });
   if (launch.receipt) return { ok: true, value: launch.receipt };
   let result, error;
@@ -359,6 +376,29 @@ async function mediateOperation({ op, input, invoke, rpc, authority, admission }
     warning = [warning, failure.message].filter(Boolean).join(" ").slice(0, 1200);
   }
   return { ok: true, value: await invoke({ op: "_launchFollowup", params: { phaseId: settled.phaseId, warning, observation } }) };
+}
+
+// src/local/dispatch-depth.mjs
+function nativeDispatchDepth(settings) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings) || typeof settings.then === "function") throw Error("The native dispatch settings format is unavailable.");
+  const value = settings.nestedWorkerMaxDepth;
+  return Number.isSafeInteger(value) && value >= 1 ? value : 1;
+}
+async function ensureDispatchDepth(plan, { authority, getSettings, setSettings }) {
+  const required = plan.requiredDepth;
+  if (!Number.isSafeInteger(required) || required < 1) throw Error("The saved dispatch depth is invalid.");
+  if (required === 1) return { requiredDepth: 1, adjusted: false, status: "not-needed" };
+  if (plan.scope.executionHostId !== "local") return { requiredDepth: required, adjusted: false, status: "remote-not-verified" };
+  await authority();
+  if (typeof getSettings !== "function" || typeof setSettings !== "function") throw Error("Orca cannot configure dispatch depth automatically. Set Nested worker depth in its native Settings.");
+  const before = nativeDispatchDepth(getSettings());
+  if (before >= required) return { requiredDepth: required, previousDepth: before, observedDepth: before, adjusted: false, status: "verified" };
+  if (required > 2) throw Error("This legacy roster needs a depth above 2. Configure its native dispatch limit explicitly.");
+  await setSettings({ nestedWorkerMaxDepth: 2 });
+  await authority();
+  const after = nativeDispatchDepth(getSettings());
+  if (after < required) throw Error("Orca did not confirm the required dispatch depth. No member was launched.");
+  return { requiredDepth: required, previousDepth: before, observedDepth: after, adjusted: true, status: "verified" };
 }
 
 // src/local/adapter.mjs
@@ -480,7 +520,30 @@ async function installAdapter(electron, { version, identity, internalKey }) {
           await authority();
           return { ok: true, value: await command("load", {}) };
         }
-        return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority });
+        const ensureDepth = async (plan) => {
+          const get = handlers.get("settings:get"), set = handlers.get("settings:set");
+          const currentSettings = () => {
+            current();
+            if (handlers.get("settings:get") !== get || handlers.get("settings:set") !== set) throw Error("Native settings authority changed.");
+          };
+          const result = await ensureDispatchDepth(plan, { authority, getSettings: typeof get === "function" ? () => {
+            currentSettings();
+            return get(event);
+          } : void 0, setSettings: typeof set === "function" ? (params) => {
+            currentSettings();
+            return set(event, params);
+          } : void 0 });
+          if (result.adjusted) {
+            await authority();
+            currentSettings();
+            const observed = nativeDispatchDepth(get(event));
+            if (observed < plan.requiredDepth) throw Error("Native dispatch depth changed before launch.");
+            event.sender.send?.("settings:changed", { nestedWorkerMaxDepth: observed });
+            result.observedDepth = observed;
+          }
+          return result;
+        };
+        return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority, ensureDepth });
       }
       let workspaceId;
       if (message.args?.op === "context" && !message.args?.params?.teamId) {

@@ -1,3 +1,4 @@
+import {ensureDispatchDepth,requiredDispatchDepth} from '../src/local/dispatch-depth.mjs';
 import {inspectTeamStorage} from '../src/local/storage-maintenance.mjs';
 import { mediateOperation } from '../src/local/native-broker.mjs';
 // Development/test host only: real plugin persistence/service, fake Orca boundary.
@@ -18,7 +19,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'terminal-context' || mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let nestedDepth=1;let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = ['terminal-context','depth-local','depth-denied'].includes(mode) || mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
@@ -151,6 +152,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };
       if (method === 'agentSession.modelCatalog') return { origin: 'probe', fetchedAt: Date.now(), models: [{ id: params.agent === 'claude' ? 'claude-model' : 'my-model', label: 'Fixture host model', isDefault: false, efforts: (params.agent === 'claude' ? ['low', 'max'] : ['high', 'ultra']).map(value => ({ value, label: value })) }] };
       if (method === 'agent.launchReplay') {
+        if(mode==='depth-local'){const operation=store.listOperations().find(o=>o.nativeRequest.operationId===params.operationId),team=store.readSnapshot().teams.find(t=>t.id===operation?.teamId);assert.ok(nestedDepth>=requiredDispatchDepth(team.members),'native dispatch depth must be ready before any member launch');}
         if (launches.has(params.operationId)) return launches.get(params.operationId);
         creates++;
         if(mode==='launch-reconciled'){
@@ -226,7 +228,7 @@ async function fixture(id, mode) {
         if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
         return executor.execute({op:'load'});
       }
-      const result = await mediateOperation({ op, input, invoke: args => executor.execute({ ...args, internalKey }), rpc: runtime, authority: async () => {} });
+      const result = await mediateOperation({ op, input, invoke: args => executor.execute({ ...args, internalKey }), rpc: runtime, authority: async () => {},ensureDepth:plan=>ensureDispatchDepth(plan,{authority:async()=>{},getSettings:()=>({nestedWorkerMaxDepth:nestedDepth}),setSettings:value=>{assert.deepEqual(value,{nestedWorkerMaxDepth:2});if(mode==='depth-denied')throw Error('Native dispatch depth setting refused');nestedDepth=value.nestedWorkerMaxDepth;return {nestedWorkerMaxDepth:nestedDepth};}}) });
       return result.value;
     } };
   })());
@@ -273,7 +275,7 @@ http.createServer(async (req, res) => {
       const result=await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' });
       if(op==='claudeContext'&&params.enabled===true)await f.statuslineUpdate();
       return reply(result);
-    } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
+    } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: error.code??'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {
     try { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(await readFile(new URL('../panel.html', import.meta.url))); }
     catch { res.writeHead(500); res.end('Run npm run build first.'); }

@@ -1,4 +1,5 @@
 import {createRosterStatusService} from './roster-status.mjs';
+import {requiredDispatchDepth} from './dispatch-depth.mjs';
 import {createClaudeStatuslineSettings} from './claude-statusline-settings.mjs';
 import {createStaffingService} from './staffing.mjs';
 import {createHierarchyService} from './hierarchy.mjs';
@@ -99,6 +100,22 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith('_')) {
         if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
+        if(op==='_teamDepth'){
+          if(Object.keys(params).some(key=>!['teamId','configVersion','memberId','observationId'].includes(key)))throw Error('Invalid team depth selection.');
+          const team=store.readSnapshot().teams.find(row=>row.id===params.teamId);
+          if(!team||team.configVersion!==params.configVersion)throw Error('The saved team configuration changed. Refresh before checking dispatch depth.');
+          if(params.memberId&&!initialMembers(team).some(member=>member.id===params.memberId))throw Error('Dispatch depth requires a saved roster preparation member.');
+          const scope=store.readScope(team.id);
+          if(params.memberId){
+            const observed=capabilities.get(scope.workspaceKey),member=team.members.find(row=>row.id===params.memberId);
+            if(!params.observationId||latestObservation.get(scope.workspaceKey)!==params.observationId||!observed||Date.now()-observed.observedAt>30000)throw Error('Fresh launch admission is required before configuring dispatch depth.');
+            if(team.configuration.sessionMode===true){const issue=sessionIssue(observed);if(issue)throw Error(issue);}
+            const issue=preferenceIssue(member,observed,{requireCore:true});if(issue)throw Error(issue);
+          }
+          await consent();
+          if(verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey!==scope.workspaceKey)throw Error('The saved team execution host changed.');
+          return {teamId:team.id,configVersion:team.configVersion,scope,requiredDepth:requiredDispatchDepth(team.members)};
+        }
         if(op==='_staffingTarget'){
           const prior=store.readStaffingRequest(params);if(prior)return {staffing:prior};
           const work=store.readWork(params.workId);if(!work||work.status==='completed')throw Error('TeamWork is closed or unavailable.');

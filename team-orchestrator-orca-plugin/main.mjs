@@ -606,7 +606,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.22" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.23" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -1474,6 +1474,24 @@ function createRosterStatusService({ store, rpc, consent, userData, claudeContex
     });
     return inFlight;
   } };
+}
+
+// src/local/dispatch-depth.mjs
+function requiredDispatchDepth(members) {
+  if (!Array.isArray(members) || !members.length) throw Error("A saved roster is required to check dispatch depth.");
+  const byId = new Map(members.map((member) => [member.id, member]));
+  if (byId.size !== members.length || members.filter((member) => member.boss === null).length !== 1) throw Error("The saved roster hierarchy is invalid.");
+  const depths = /* @__PURE__ */ new Map();
+  const visit = (member, ancestors = /* @__PURE__ */ new Set()) => {
+    if (depths.has(member.id)) return depths.get(member.id);
+    if (ancestors.has(member.id)) throw Error("The saved roster hierarchy contains a cycle.");
+    const next = new Set(ancestors).add(member.id), parent = member.boss === null ? null : byId.get(member.boss);
+    if (member.boss !== null && !parent) throw Error("The saved roster hierarchy has an unavailable supervisor.");
+    const depth = parent ? visit(parent, next) + 1 : 0;
+    depths.set(member.id, depth);
+    return depth;
+  };
+  return Math.max(1, ...members.map((member) => visit(member)));
 }
 
 // src/local/claude-statusline-settings.mjs
@@ -4446,6 +4464,26 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
       if (op?.startsWith("_")) {
         if (typeof internalKey !== "string" || typeof suppliedKey !== "string" || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error("Internal host observation authority is required.");
+        if (op === "_teamDepth") {
+          if (Object.keys(params).some((key) => !["teamId", "configVersion", "memberId", "observationId"].includes(key))) throw Error("Invalid team depth selection.");
+          const team = store.readSnapshot().teams.find((row) => row.id === params.teamId);
+          if (!team || team.configVersion !== params.configVersion) throw Error("The saved team configuration changed. Refresh before checking dispatch depth.");
+          if (params.memberId && !initialMembers(team).some((member) => member.id === params.memberId)) throw Error("Dispatch depth requires a saved roster preparation member.");
+          const scope = store.readScope(team.id);
+          if (params.memberId) {
+            const observed = capabilities.get(scope.workspaceKey), member = team.members.find((row) => row.id === params.memberId);
+            if (!params.observationId || latestObservation.get(scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 3e4) throw Error("Fresh launch admission is required before configuring dispatch depth.");
+            if (team.configuration.sessionMode === true) {
+              const issue2 = sessionIssue(observed);
+              if (issue2) throw Error(issue2);
+            }
+            const issue = preferenceIssue(member, observed, { requireCore: true });
+            if (issue) throw Error(issue);
+          }
+          await consent();
+          if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error("The saved team execution host changed.");
+          return { teamId: team.id, configVersion: team.configVersion, scope, requiredDepth: requiredDispatchDepth(team.members) };
+        }
         if (op === "_staffingTarget") {
           const prior = store.readStaffingRequest(params);
           if (prior) return { staffing: prior };
@@ -6451,7 +6489,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.22", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.23", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

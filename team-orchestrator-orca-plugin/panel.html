@@ -786,9 +786,9 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   }
 
   // src/public-operations.mjs
-  var PUBLIC_OPERATIONS = Object.freeze(["claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
+  var PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
   var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
-  var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
+  var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
   // src/worker-bridge.mjs
   var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1006,7 +1006,7 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   function render() {
     app.setAttribute("aria-busy", String(busy));
     const usable = connectionReady && loaded && storageAvailable;
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.22")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.23")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
     ${view === "new" ? formView() : view === "settings" ? settingsView() : roster()}`}
@@ -1216,6 +1216,10 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
           else failures.push(member.name);
         } catch (error) {
           failures.push(`${member.name}: ${error.message}`);
+          if (error.code === "dispatch_depth_unavailable") {
+            problem = error.message;
+            break;
+          }
         }
       }
       message = "";

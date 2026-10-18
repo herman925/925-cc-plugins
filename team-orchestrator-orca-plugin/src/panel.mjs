@@ -276,7 +276,7 @@ async function launchTeam(index) {
       try {
         const receipt=await call('launchSupervisor',{teamId:team.id,memberId:member.id,requestId:`${team.id}-${member.id}`,configVersion:team.configVersion});
         if(receipt.status==='created')created++;else failures.push(member.name);
-      }catch(error){failures.push(`${member.name}: ${error.message}`);}
+      }catch(error){failures.push(`${member.name}: ${error.message}`);if(error.code==='dispatch_depth_unavailable'){problem=error.message;break;}}
     }
     message='';
   } catch (error) { problem = `${error.message} Saved launch intents remain reserved; no automatic retry occurs.`; }
