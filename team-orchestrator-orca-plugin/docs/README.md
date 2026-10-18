@@ -10,6 +10,8 @@
 
 ## 使用、历史规格与验证
 
+- [2026-10-18 最新交接：0.1.20 与下一轮实机测试](handoff/2026-10-18-v0.1.20-next-session.md)：从 Mac 本机“1 个主管＋3 个 Worker”的真实工作开始，补 #125／#137 剩余证据。
+- [2026-10-18 前一交接：0.1.17 模型目录调查背景](handoff/2026-10-18-model-catalog-and-remaining-issues.md)：历史记录；其中尚未实现、下一版本及优先调查目录的描述已由最新交接替代。
 - [插件 README](../README.md)：使用入口、运行原理及当前限制。
 - [#137 模型目录验证](validation/model-catalog-137.md)：0.1.18 的真实 CLI 目录、插件下拉框与剩余验证边界。
 - [Lead 名称与稳定模型回执](validation/lead-names-and-stable-models.json)：0.1.19 的名称校验、预览和模型显示稳定性。
