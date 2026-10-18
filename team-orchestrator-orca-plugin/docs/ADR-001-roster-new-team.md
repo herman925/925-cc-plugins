@@ -1,9 +1,10 @@
 # ADR-001：Roster 与 New team 的职责及最终交互
 
-- 状态：已接受，本轮设计定稿。
+- 状态：已接受，已合并截至 `0.1.20` 的用户决策。
 - 决策日期：2026-10-18。
 - 决策人：Lin；依据为本轮连续产品讨论及最终确认。
-- 实现基线：插件 `0.1.17`，提交 `26bc866`。
+- 当前实现基线：插件 `0.1.20`，提交 `8feb269`；模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地。
+- 初始设计基线：插件 `0.1.17`，提交 `26bc866`；其后修订以本文当前条款为准。
 - 范围：Roster、New team，以及两页依赖的主管交互、可用性与宿主能力边界。Settings 的整体设计不在本次定稿范围内。
 - 关联历史：[2026-10-16 开发规格](../../docs/team-orchestrator-orca-spec.md)、[原版 Claude Code mod](../../team-orchestrator/README.md)。
 
@@ -20,7 +21,7 @@
 | 位置 | 最终职责 |
 | --- | --- |
 | Roster | 查看当前项目中已启动团队的全员状态；进入最高主管会话；通过 Add team 进入 New team |
-| New team | 配置名称、Function、人数、CLI、模型、effort；预览组织关系并 Launch team |
+| New team | 配置 Team name、Lead name、Function、人数、CLI、模型、effort；预览组织关系并 Launch team |
 | 最高主管会话 | 交办业务目标、沟通进展与结果、回答问题、讨论并决定增员 |
 | Settings | 保留连接检查等现有设置；本 ADR 不重新设计整个 Settings 页 |
 
@@ -61,22 +62,32 @@ Context 无观测时显示 `—`，不能显示成 0%。估计值需标记为估
 
 最终表单没有 Structure 或 Levels 选择器，也没有 Quick start、Squad/Tech Team 等预设列表、Head only、独立 CEO/部门名称创建流程。
 
-人员配置仅有两个字段，默认 Leads = 1、Workers per lead = 3，当前各支持 1–5：
+人数由两个字段决定，默认 Leads = 1、Workers per lead = 3，当前各支持 1–5：
 
 | 输入 | 实际名册 | 总人数 |
 | --- | --- | --- |
 | Leads = 1，Workers per lead = W | 一个最高主管 Head，直接管理 W 个 Worker；不额外增加中间 Lead | `1 + W` |
 | Leads = L > 1，Workers per lead = W | 一个 Head，管理 L 个 Lead；每个 Lead 管理 W 个 Worker | `1 + L + L × W` |
 
-例如 Leads = 2、Workers per lead = 3，生成 1 Head + 2 Leads + 6 Workers，共 9 人。Workers per lead 是每位主管所带的 Worker 数量，不是全队 Worker 总数。单主管模式的那位负责人在内部和名册中仍叫 Head，这是用户所述“1 个 Lead 相当于 Head → Workers”的映射。
+例如 Leads = 2、Workers per lead = 3，生成 1 Head + 2 Leads + 6 Workers，共 9 人。Workers per lead 是每位主管所带的 Worker 数量，不是全队 Worker 总数。单主管模式的负责人角色仍为 Head，其显示名称可以由 Lead name 指定，这是用户所述“1 个 Lead 相当于 Head → Workers”的映射。
 
 预览、模型配置行与保存时的层级使用同一规则。更改 Lead 数量时，Head 和 Worker 的 CLI/模型/effort 继续属于原角色；中间 Lead 的配置在当前表单内暂存，切回多 Lead 时恢复。不得把原 Worker 的模型意外当成新增 Lead 的模型。
 
 Team name 与 Function 保留；Function 描述团队用途，不是要求用户另行提交的面板总目标。业务任务在最高主管会话中交办。
 
-2026-10-18 / 0.1.19 补充：Team name 下增加可选的 Lead name，支持英文或中文逗号分隔。填写时名字数量必须与 Leads 一致，去除首尾空白，拒绝重复名和与自动生成成员重名；数量不符时提示并阻止创建。`UI, Dev, Review` 配合 Leads = 3 会直接用于三个 Lead 的预览、实际名册和启动命名。Leads = 1 时名字用于唯一的 Head。留空仍使用原默认名。名字用于标识成员，不自动改写其岗位职责。
+### Lead name 与 Worker 命名
 
-0.1.20 补充：填写 Lead name 后，直属 Worker 按 `Lead名字-Worker-序号` 命名，每位 Lead 下从 1 开始。例如 UI 下为 `UI-Worker-1`、`UI-Worker-2`、`UI-Worker-3`；单主管填写名字时也使用同一规则。预览、实际名册、启动 brief 和原生终端标题使用一致的成员名。未填写 Lead name 时沿用自动编号；已有保存的团队不自动改名。
+Team name 下提供可选的 Lead name，支持英文或中文逗号分隔，去除每个名字的首尾空白。填写时名字数量必须与用户选择的 Leads 一致；名称输入不自动改写 Leads 数字。数量不符、空项、重复名或与其他成员重名时阻止创建，并显示校验信息。合法名字立即更新组织预览，且进入实际名册和启动信息。名字用于标识成员，不自动改写其岗位职责。
+
+填写 Lead name 后，直属 Worker 按 `Lead名字-Worker-序号` 命名，每位主管下从 1 开始。以下示例的 Workers per lead 为 3：
+
+| Leads | Lead name | 主管与直属 Worker |
+| --- | --- | --- |
+| 3 | `UI, Dev, Review` | Head 下有 UI、Dev、Review 三位 Lead；UI 下为 `UI-Worker-1`、`UI-Worker-2`、`UI-Worker-3`，其余分支以自身 Lead 名称分别编号 |
+| 1 | `UI` | 唯一主管的名称为 UI、角色为 Head；其 Worker 同样命名为 `UI-Worker-1`、`UI-Worker-2`、`UI-Worker-3` |
+| 任意有效人数 | 留空 | 沿用默认 Head／Lead／Worker 自动编号 |
+
+预览、实际名册、启动 brief 和原生终端标题使用一致的成员名。既有已保存团队保留其身份和名称，不因升级自动改名。该规则分别由 `0.1.19` 的 Lead name 和 `0.1.20` 的 Worker 前缀命名实现。
 
 ### 项目和执行主机自动识别
 
@@ -100,7 +111,11 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 
 普通终端场景下，目录服务未初始化的拒绝可通过既有只读 `agentSession.restartResumable` 初始化，再重读目录；不调用 continue／dismiss／create，不改 Chat UI 设置，不新增临时对话。为新团队读取时不传旧 Chat 的 sessionId，确保 Orca 以当前启动账户分别解析各 CLI，而不是借用旧会话固定账户。CLI 原生列表负责型号、别名和 effort；不需要大模型生成名单或插件自带静态型号表。
 
-0.1.19 根据用户反馈取消模型目录的周期刷新。建队时取得目录后，在该项目的表单中保持模型名称、选项和已选值稳定；切换 CLI 使用已取得的对应目录。只为尚未取得的所选 CLI 目录做有限重试；切换项目或手动 Refresh models 才重新读取。项目本身仍自动跟随桌面选择，但项目不变时不重绘表单。Launch 所需的新鲜证据在后台单独检查，不清空或替换已经选定的模型显示。无 session 时连 Default 也不能绕过新队准备前置；有 session 但目录未知时保留 Default。已有团队数据和原生回执继续保留。真实本机列表及未测边界见 [#137 模型目录验证](validation/model-catalog-137.md)。
+建队时取得目录后，在该项目的表单中保持模型名称、选项和已选值稳定。切换 CLI 使用已取得的对应目录；用户仍可在 Launch 前主动修改模型和 effort。只为尚未取得的所选 CLI 目录做有限重试；切换项目或手动 Refresh models 才重新读取。项目本身仍自动跟随桌面选择，但项目不变时不重绘配置表单。
+
+这项决定替代 `0.1.18` 的周期刷新：当时页面每 5 秒检查状态，目录超过 30 秒便清空已有列表、重绘表单并重新读取，造成模型暂时退回 Default、下拉框闪烁。`0.1.19` 取消该刷新，并将显示目录与启动准入证据分开。Launch 所需的新鲜证据在后台单独检查，保留已经选定的模型显示；不因表单停留时间较长而自动清空选择。模型下拉的这一稳定策略与 Roster 的运行状态监控是两个不同流程。
+
+无 session 时连 Default 也不能绕过新队准备前置；有 session 但目录未知时保留 Default。已有团队数据和原生回执继续保留。真实本机列表及未测边界见 [#137 模型目录验证](validation/model-catalog-137.md)。
 
 ### Launch team 与会话命名
 
@@ -145,6 +160,10 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | 一个 Reports each 同时决定 Lead 和 Worker 数量 | 分开配置 Leads 与 Workers per lead |
 | 成员详情中修改角色、模型、控制会话与查看诊断 | Roster 只读监控，个人管理表单移除 |
 | 用户手动填写模型 ID | 从宿主目录选择，未知时 Default |
+| 模型名称后附加括号中的 ID | 选项仅显示宿主名称，内部保存并传递原始 model ID |
+| 每 30 秒清空并刷新模型目录 | 取得目录后保持配置显示稳定；仅在需要取得目录或启动准入时读取 |
+| Lead 只能采用自动编号 | 可填写逗号分隔的 Lead name，数量须匹配 Leads，立即更新预览与名册 |
+| 具名 Lead 下的 Worker 仍使用纯数字分支名 | 使用 `Lead名字-Worker-序号`，每位 Lead 下独立编号 |
 | 手动确认项目和执行主机 | 自动读取当前选择，Launch 时重读并绑定 |
 | Preparation mode 可选 On demand / All at start | 新团队固定 All at start，旧团队不改写 |
 | 调查原版默认按需启动的原因 | 仅记录依据与推断，没有新产品决策 |
@@ -160,8 +179,10 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | SSH 模型目录 | 当前集成不能将本机目录当作远端能力证明 |
 | 原生 Chat 命名 | 尚未支持标题重命名 |
 | 被删管理入口 | 后端历史和恢复校验仍保留；没有因此承诺主管可代行所有暂停、替换、恢复等操作 |
-| 实现验证 | `26bc866` 对应 561 项核心测试、26 项浏览器测试及 3 个固定 Orca 源码版本兼容检查通过；页面在 320px 宽度下检查通过 |
-| 实机连接 | 本轮本机 Orca 1.4.229 已载入插件 0.1.17，连接与已有团队读取成功；不等于本轮新建真实团队并完成业务任务 |
+| 初始验证 | `26bc866` 对应 561 项核心测试、26 项浏览器测试及 3 个固定 Orca 源码版本兼容检查通过；页面在 320px 宽度下检查通过 |
+| 当前实现验证 | 0.1.19 完整通过 576 项核心、29 项浏览器和 3 个固定宿主契约检查；0.1.20 再次通过 576 项核心、3 项受影响浏览器和 3 个固定宿主契约检查 |
+| 名称与稳定模型实机验证 | Orca 1.4.229 已载入 0.1.20；三位 Lead 及各自 Worker 前缀已在真实面板核对。0.1.19 实机连续观察 40.6 秒，模型与名称控件保持原 DOM 和选择；另有浏览器模拟超过 6 分钟的稳定性检查 |
+| 启动证据边界 | 具名成员保存、启动和名册一致性通过 fixtures；本轮实机只检查目录与表单／预览，没有新建真实团队完成业务任务 |
 | 跨平台及规模 | 本 ADR 不宣告 Windows、SSH 或 11/21 人真实协作验收完成；既有实机证据见 [validation](validation/) |
 
 本 ADR 是文档归档，不触发插件版本升级、重新启动团队、修改宿主设置或重跑真实 provider 工作。
@@ -172,6 +193,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 - [原生状态读取](../src/local/roster-status.mjs)、[模型能力读取](../src/local/capabilities.mjs)、[主管会话决定协议](../src/local/session-decisions.mjs)。
 - [项目绑定与创建](../src/local/executor.mjs)、[原生启动和命名](../src/local/native-broker.mjs)。
 - [面板回归测试](../test/browser/panel.spec.mjs)、[保存回归测试](../test/browser/storage.spec.mjs)。
+- [模型目录验证](validation/model-catalog-137.md)、[Lead 名称与稳定模型回执](validation/lead-names-and-stable-models.json)、[Worker 前缀命名回执](validation/worker-name-prefixes.json)。
 
 | 提交 | 本轮决策落地 |
 | --- | --- |
@@ -184,3 +206,5 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | `b727b9d` | Add team、精简创建、宿主模型选择、全部启动 |
 | `ed81af6` | 独立人数设置及自动项目识别 |
 | `26bc866` | 由 Lead 数量推导最终层级 |
+| `a7d2145` | 原生 CLI 模型目录、仅显示模型名称、Lead name、停止模型目录周期刷新；0.1.19 |
+| `8feb269` | 具名主管下的 Worker 使用对应主管名称作为前缀；0.1.20 |
