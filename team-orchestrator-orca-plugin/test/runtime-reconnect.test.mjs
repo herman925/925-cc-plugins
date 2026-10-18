@@ -649,3 +649,11 @@ test('a late changed launch receipt cannot redirect a prepared member after reco
   assert.equal(f.messages.filter((text) => text.startsWith('TEAM_DISPATCH_PERMIT\n')).length, 0);
   assert.equal(f.store.listDispatches(f.work.id).length, 0);
 });
+
+for (const state of ['accepted', 'unknown', 'sending']) test(`session guide ${state} respects quiet-runtime reconnect`, async t => {
+  const f = await setup(t);
+  f.store.ensureQuestionEvent(f.work.id, 'session-guide', 'TEAM_SESSION_DECISIONS', {workId: f.work.id});
+  f.store.updateQuestionEvent(f.work.id, 'session-guide', {state});
+  if (state === 'accepted') assert.equal((await f.works.reconnect(f.input)).run.state, 'verified');
+  else await assert.rejects(f.works.reconnect(f.input), /quiet Run/);
+});

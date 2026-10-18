@@ -1,7 +1,7 @@
 // src/local/storage-maintenance.mjs
 import { mkdir, realpath, open, rename, readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, isAbsolute, sep } from "node:path";
-import { randomUUID, createHash as createHash2 } from "node:crypto";
+import { randomUUID, createHash as createHash3 } from "node:crypto";
 
 // src/local/acceptance.mjs
 var latestBusinessAttempts = (attempts) => [...new Map(attempts.map((a) => [JSON.stringify([a.workId, a.taskKey]), a])).values()];
@@ -9,13 +9,63 @@ var isUnsentBlockedAnswer = (a) => a.state === "blocked" && a.processed === "unc
 function questionAnswerResolved(q, a) {
   if (a.processed === "confirmed") return true;
   const latest = q.answers.at(-1);
-  return q.sourceReport?.kind === "worker-report" && isUnsentBlockedAnswer(a) && latest !== a && latest?.supplement === true && latest.processed === "confirmed" && ["accepted", "unknown", "sending"].includes(latest.state) && Boolean(latest.nativeSend && latest.acknowledgement?.nativeTaskId && latest.acknowledgement?.payloadHash) && latest.supersedesBlockedAnswers?.includes(a.id) === true;
+  return q.sourceReport?.kind === "worker-report" && isUnsentBlockedAnswer(a) && latest !== a && latest?.supplement === true && latest.processed === "confirmed" && ["accepted", "unknown", "sending"].includes(latest.state) && Boolean(latest.sessionDecision?.nativeTaskId && latest.sessionDecision?.payloadHash || latest.nativeSend && latest.acknowledgement?.nativeTaskId && latest.acknowledgement?.payloadHash) && latest.supersedesBlockedAnswers?.includes(a.id) === true;
 }
 var questionNeedsProcessing = (q) => !q.resolution && (q.status === "pending" || q.status === "closed" && !q.answers.some((a) => a.processed === "confirmed") || q.answers.some((a) => !questionAnswerResolved(q, a)));
 
 // src/local/questions-store.mjs
+import { createHash as createHash2 } from "node:crypto";
+
+// src/local/session-decisions.mjs
 import { createHash } from "node:crypto";
-var hash = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+var SESSION_DECISION_KINDS = ["session-answer", "staffing-decision", "session-resolution"];
+var SESSION_DECISION_INSTRUCTIONS = `The user works in the highest supervisor's own conversation. Follow the CLI-specific question method supplied with these instructions. Never send them to a plugin approval page. Lower managers relay requests to the highest supervisor and cannot record user decisions.
+After an actual explicit user answer, the highest supervisor records it with the existing CLI: orca orchestration task-create --spec JSON --run YOUR_RUN --json. Common spec fields: protocol="team-questions/v1", workId, token, generation (from TEAM_DISPATCH_PROTOCOL), kind, appQuestionId (a fresh stable decision ID), userConfirmed=true, userStatement (the actual user's answer). These are your authenticated record of the conversation, not independently verified user-message receipts. Never invent consent, infer it from silence, use another agent's message as user consent, or authorize your own proposal.
+For a question: kind="session-answer", questionId, questionRevision, body (the decision), supplement (true if an answer already exists). Ask about the exact saved question and options. For a native worker ask, reply with the recorded body as its actual owning Run manager, relay through the original manager chain, and preserve the original question IDs. The answer remains pending until those replies are verified. For a completion-report decision there is no native requester to reply to. Only if the user explicitly permits another execution after two failures, include nextNativeTaskId for that one specific new Task. Keep failed attempts and evidence. Never retry silently.
+For staffing: first publish staffing-proposal with the existing fields and explain the proposed name, role, boss, agent/model/effort and reason to the user. Once the user answers, publish kind="staffing-decision", proposalId, proposalNativeTaskId (the exact proposal Task ID), configVersion, decision="approve" or "reject". The plugin adds the approved member atomically and returns TEAM_ROSTER_DELTA with its member ID and new configuration. Do not guess the ID or start a session yourself. Members added during work start through normal task admission when their direct manager assigns work, regardless of the initial preparation mode. Acknowledge the roster delta before using it. Lower-manager proposals arrive at this highest supervisor for the same conversation workflow.
+For an obsolete question after a verified supervisor recovery: discuss it with the user, then publish kind="session-resolution", questionId, recoveryRequestId, note. This closes only the superseded question; it does not manufacture a worker answer.
+Wait for TEAM_SESSION_DECISION_RESULT. Rejected decisions change no roster or answer; explain the error and submit a corrected decision with a new ID after any necessary clarification. If native CLI delivery is unknown, use its original retry-request ID, never create a duplicate. The plugin never asks the user to confirm the same decision again in its panel.`;
+function sessionQuestionMethod(work) {
+  const agent = work.binding?.nativeRequest?.agent;
+  const preferredTool = agent === "codex" ? "request_user_input" : agent === "claude" ? "AskUserQuestion" : null;
+  return { agent: agent ?? "unknown", preferredTool };
+}
+function sessionDecisionInstructions(work) {
+  const { agent, preferredTool } = sessionQuestionMethod(work);
+  const method = preferredTool ? `This bound session uses ${agent === "claude" ? "Claude Code" : "Codex"}. Its user-question tool is ${preferredTool} (use the exact case and the actual exposed tool schema).` : "The bound CLI is unknown. Do not guess another provider\u2019s question tool.";
+  return `${method} Use that tool only if it is exposed and permitted in this session's current mode. Codex tool availability can depend on collaboration mode and feature settings; do not assume it is always available in Default mode. Do not change modes, feature flags, permissions or global configuration just to ask a question. If the tool is unavailable or disallowed for this decision, ask plainly in this same conversation, end the turn and wait for an explicit user reply. An empty result, cancellation, timeout, preselected option or no response is never consent: do not submit a decision or add a member on that basis. These are native agent tools, not shell commands.
+${SESSION_DECISION_INSTRUCTIONS}`;
+}
+var sessionDecisionKey = (intent) => createHash("sha256").update(JSON.stringify([intent.spec.workId, intent.spec.appQuestionId])).digest("hex");
+function validateSessionDecision(work, protocol, spec) {
+  if (!work || work.parent || work.status === "completed" || !SESSION_DECISION_KINDS.includes(spec.kind) || spec.workId !== work.id || spec.token !== protocol?.token || spec.generation !== protocol.generation || spec.generation !== work.run.consumerGeneration)
+    throw Error("Only the current highest supervisor can record a session decision.");
+  if (spec.userConfirmed !== true || typeof spec.userStatement !== "string" || !spec.userStatement.trim() || spec.userStatement.length > 8e3)
+    throw Error("Record the explicit user answer from the highest supervisor conversation.");
+}
+async function sendSessionNotice({ store, works, rpc, consent, userMessage: userMessage2, accepted: accepted2, workId, id: id2, kind, body }) {
+  body = { ...body, workId };
+  const event = store.ensureQuestionEvent(workId, id2, kind, body);
+  if (event.state === "sending") return store.updateQuestionEvent(workId, id2, { state: "unknown", detail: "Notice delivery was interrupted; it is not sent again." });
+  if (event.state !== "queued") return event;
+  let sending = false;
+  try {
+    await consent();
+    const verified = await works.verifyWork(workId, true), work = store.readCurrentWork(workId);
+    if (work.parent || work.status === "completed") throw Error("The highest supervisor is unavailable.");
+    const nativeSend = userMessage2(work, verified.instance, kind + "\n" + JSON.stringify(body), verified.status);
+    await works.verifyHost(workId, verified.hostGeneration);
+    if (!store.claimQuestionEvent(workId, id2, "sending", nativeSend)) return;
+    sending = true;
+    const receipt = await rpc(nativeSend.method, nativeSend.params, nativeSend.envelope);
+    return store.updateQuestionEvent(workId, id2, { state: accepted2(receipt, nativeSend, verified.instance) ? "accepted" : "unknown" });
+  } catch (error) {
+    return store.updateQuestionEvent(workId, id2, { state: sending ? "unknown" : "queued", detail: String(error.message).slice(0, 1200) });
+  }
+}
+
+// src/local/questions-store.mjs
+var hash = (v) => createHash2("sha256").update(JSON.stringify(v)).digest("hex");
 var text = (v, n = 8e3) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, effectiveTeamForWork, atomic }) {
   const list = (workId) => db.prepare("SELECT json FROM receipts WHERE id LIKE 'question:%'").all().map((r) => {
@@ -25,6 +75,7 @@ function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, 
   }).filter((q) => q.workId === workId);
   const api = {
     listQuestions: list,
+    readQuestionEvent: (workId, id2) => readPrivate(`question-event:${workId}:${id2}`),
     claimQuestionAnswer(workId, id2, answerId, nativeSend, supersedesBlockedAnswers = []) {
       return atomic(() => {
         if (readWork(workId)?.status === "completed") throw Error("Completed TeamWork is sealed.");
@@ -113,7 +164,7 @@ function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, 
         return event;
       });
     },
-    questionProjection: (workId) => ({ messages: api.listTeamMessages(workId).map(({ payloadHash, controlProof: controlProof2, ...row }) => row), collaborations: api.listCollaborations(workId).map(({ fingerprint: fingerprint2, payloadHash, ...row }) => row), questions: list(workId).map(({ fingerprint: fingerprint2, proof, ...q }) => ({ ...q, supersedableBlockedAnswers: q.sourceReport ? q.answers.filter(isUnsentBlockedAnswer).map((a) => a.id) : [], origin: q.sourceReport ? null : q.origin ? Object.fromEntries(Object.entries(q.origin).filter(([k]) => k !== "askParams")) : null, answers: q.answers.map(({ nativeSend, fingerprint: fingerprint3, ...a }) => a) })), failureStreaks: api.failureStreaks(workId) }),
+    questionProjection: (workId) => ({ messages: api.listTeamMessages(workId).map(({ payloadHash, controlProof: controlProof2, ...row }) => row), collaborations: api.listCollaborations(workId).map(({ fingerprint: fingerprint2, payloadHash, ...row }) => row), questions: list(workId).map(({ fingerprint: fingerprint2, proof, ...q }) => ({ ...q, supersedableBlockedAnswers: q.sourceReport ? q.answers.filter(isUnsentBlockedAnswer).map((a) => a.id) : [], origin: q.sourceReport ? null : q.origin ? Object.fromEntries(Object.entries(q.origin).filter(([k]) => k !== "askParams")) : null, resolution: q.resolution ? (({ sessionDecision, ...r }) => r)(q.resolution) : void 0, answers: q.answers.map(({ nativeSend, fingerprint: fingerprint3, sessionDecision, ...a }) => a) })), failureStreaks: api.failureStreaks(workId) }),
     ingestQuestion(workId, intent) {
       return atomic(() => {
         const work = readWork(workId), s = intent.spec, key = `question:${workId}:${s.appQuestionId}`, fingerprint2 = hash(intent), prior = readPrivate(key);
@@ -153,6 +204,42 @@ function questionStore({ db, readPrivate, putPrivate, readWork, listDispatches, 
         putPrivate(`question:${q.workId}:${q.id}`, q);
         putPrivate(`question-answer:${a.id}`, { workId: q.workId, questionId: q.id, fingerprint: fingerprint2 });
         return a;
+      });
+    },
+    recordSessionAnswer(workId, intent) {
+      return atomic(() => {
+        const s = intent.spec, work = readWork(workId);
+        validateSessionDecision(work, readPrivate(`dispatch-protocol:${workId}`), s);
+        const q = readPrivate(`question:${workId}:${s.questionId}`);
+        if (s.kind !== "session-answer" || !q || q.to !== "user" || q.runId !== work.run.id || q.generation !== work.run.consumerGeneration || (q.epoch ?? 0) !== (work.epoch ?? 0) || q.revision !== s.questionRevision || q.status === "closed" || !text(s.body) || typeof s.supplement !== "boolean" || s.nextNativeTaskId !== void 0 && !text(s.nextNativeTaskId, 120)) throw Error("Choose the exact current question and record the user answer.");
+        const input = { workId, questionId: q.id, questionRevision: q.revision, answerId: s.appQuestionId, body: s.body, supplement: s.supplement }, fingerprint2 = hash({ input, intent }), global = readPrivate(`question-answer:${input.answerId}`);
+        if (global && global.fingerprint !== fingerprint2) throw Error("Session answer identity conflicts.");
+        const prior = q.answers.find((a2) => a2.id === input.answerId);
+        if (prior) return prior;
+        if (q.answers.length && !s.supplement) throw Error("An answer already exists; record an explicit user supplement.");
+        const supersedesBlockedAnswers = q.sourceReport && s.supplement ? q.answers.filter(isUnsentBlockedAnswer).map((a2) => a2.id) : [];
+        const a = { id: input.answerId, body: s.body, supplement: s.supplement, revision: q.revision, from: "user", toMemberId: q.fromMemberId, state: "accepted", processed: "unconfirmed", source: "supervisor-session", recordedBy: work.supervisorMemberId, sessionDecision: intent, fingerprint: fingerprint2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), ...supersedesBlockedAnswers.length ? { supersedesBlockedAnswers } : {}, ...s.nextNativeTaskId ? { nextNativeTaskId: s.nextNativeTaskId } : {} };
+        q.answers.push(a);
+        q.status = "pending";
+        putPrivate(`question:${workId}:${q.id}`, q);
+        putPrivate(`question-answer:${a.id}`, { workId, questionId: q.id, fingerprint: fingerprint2 });
+        return a;
+      });
+    },
+    resolveSessionQuestion(workId, intent) {
+      return atomic(() => {
+        const s = intent.spec, work = readWork(workId);
+        validateSessionDecision(work, readPrivate(`dispatch-protocol:${workId}`), s);
+        const q = readPrivate(`question:${workId}:${s.questionId}`), wake = readPrivate(`wake:${s.recoveryRequestId}`);
+        if (s.kind !== "session-resolution" || !q || q.to !== "user" || (q.epoch ?? 0) >= (work.epoch ?? 0) || wake?.state !== "bound" || wake.newInstance?.workId !== workId || work.recoveryRequestId !== wake.requestId || !text(s.note, 4e3)) throw Error("Only a reviewed superseded question can be resolved after verified recovery.");
+        if (q.resolution) {
+          if (hash(q.resolution.sessionDecision) !== hash(intent)) throw Error("Question resolution is immutable.");
+          return q.resolution;
+        }
+        q.status = "closed";
+        q.resolution = { kind: "superseded-by-recovery", by: "user", source: "supervisor-session", recordedBy: work.supervisorMemberId, recoveryRequestId: wake.requestId, note: s.note, sessionDecision: intent, recordedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        putPrivate(`question:${workId}:${q.id}`, q);
+        return q.resolution;
       });
     },
     updateQuestion(workId, id2, change) {
@@ -412,7 +499,7 @@ function publicDispatchProtocol(row, completed = false) {
 // src/local/storage-maintenance.mjs
 var STORAGE_SCHEMA = 2;
 var MAINTENANCE_DDL = "CREATE TABLE maintenance (id TEXT PRIMARY KEY, json TEXT NOT NULL)";
-var hash2 = (value) => createHash2("sha256").update(value).digest("hex");
+var hash2 = (value) => createHash3("sha256").update(value).digest("hex");
 var quote = (id2) => '"' + id2.replaceAll('"', '""') + '"';
 function storageDigest(db) {
   const tables = db.prepare("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
@@ -612,7 +699,7 @@ import { randomBytes as randomBytes4 } from "node:crypto";
 // src/local/bootstrap.mjs
 import { readFile as readFile2, realpath as realpath2 } from "node:fs/promises";
 import { join as join2 } from "node:path";
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -783,7 +870,7 @@ async function bootstrap({ platform = process.platform, parentPid = process.ppid
     Object.assign(report, validateRuntime(runtime), { appVersion: runtime.appVersion });
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure("profile_missing", "Orca did not resolve its actual runtime profile.");
     const source = await readFile2(adapterPath, "utf8");
-    const digest5 = createHash3("sha256").update(source).digest("hex");
+    const digest5 = createHash4("sha256").update(source).digest("hex");
     const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);return await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest5)},internalKey:${JSON.stringify(internalKey)}});})()`;
     Object.assign(report, await client.evaluate(expression), { cliPaths: runtime.cliPaths });
     report.detail = "Local runtime adapter installed; panel-to-worker test is available.";
@@ -907,7 +994,7 @@ function verifiedWorkerReport(fact, message, dispatch, worker) {
 }
 
 // src/local/native-mutation.mjs
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 var canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== void 0).map((key) => [key, canonical(value[key])])) : value;
 var nativeMutationFingerprint = (method, params, owner, target) => {
   const stable = { ...params };
@@ -921,7 +1008,7 @@ var nativeMutationFingerprint = (method, params, owner, target) => {
     const parts = owner.paneKey.split(":"), leaf = parts[1];
     stable[key] = parts.length === 2 && parts[0] && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(leaf) ? { paneLeafId: leaf } : { paneKey: owner.paneKey };
   }
-  return createHash4("sha256").update(JSON.stringify(canonical({ method, params: stable }))).digest("hex");
+  return createHash5("sha256").update(JSON.stringify(canonical({ method, params: stable }))).digest("hex");
 };
 
 // src/local/native-question-origin.mjs
@@ -1056,7 +1143,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
 var withNativeRuntime = (rpc, runtimeId, action) => rpc.withRuntime ? rpc.withRuntime(runtimeId, action) : action();
 
 // src/local/questions.mjs
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 
 // src/local/orchestration-snapshot.mjs
 import { realpath as realpath4 } from "node:fs/promises";
@@ -1083,7 +1170,7 @@ async function withOrchestrationSnapshot(userData, { pathError, schemaError }, r
 }
 
 // src/local/native-history.mjs
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 var parse3 = (value) => {
   try {
     return JSON.parse(value);
@@ -1092,7 +1179,7 @@ var parse3 = (value) => {
   }
 };
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-var digest = (value) => createHash5("sha256").update(JSON.stringify(value)).digest("hex");
+var digest = (value) => createHash6("sha256").update(JSON.stringify(value)).digest("hex");
 var caller = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
 var authority = (history, spec, epoch) => history.authorities.filter((h) => (epoch === void 0 || h.epoch === epoch) && h.protocol.token === spec.token && h.protocol.generation === spec.generation);
 function controlProof(entry) {
@@ -1105,6 +1192,10 @@ function savedControl(entry, spec, task, receipt) {
   const intent = { spec, nativeTaskId: task.id, requestId: receipt.request_id, payloadHash: receipt.payload_hash };
   if (proof.spec && !same(proof.spec, spec) || ["question", "staffing-proposal", "collaboration-directive"].includes(entry.kind) && r.fingerprint && r.fingerprint !== digest(entry.kind === "staffing-proposal" ? canonical(intent) : intent)) return false;
   switch (entry.kind) {
+    case "session-answer":
+    case "session-resolution":
+    case "staffing-decision":
+      return spec.kind === entry.kind && same(proof.spec, spec);
     case "question":
       return spec.kind === (r.to === "manager" ? "relay-question" : "user-question") && spec.appQuestionId === r.id && spec.generation === r.generation && r.runId === task.run_id;
     case "delivery":
@@ -1178,11 +1269,12 @@ async function readNativeQuestionEvidence(userData, { work, protocol, owner, att
         if (spec?.protocol !== "team-questions/v1" || spec.workId !== work.id) continue;
         if (isHistoricalControl(db, work, task, nativeHistory, attempts)) continue;
         try {
-          if (spec.token !== protocol.token || spec.generation !== protocol.generation || !text4(spec.appQuestionId, 120) || !/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId) || !["user-question", "relay-question", "answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack"].includes(spec.kind)) throw Error("Question intent identity invalid.");
+          if (spec.token !== protocol.token || spec.generation !== protocol.generation || !text4(spec.appQuestionId, 120) || !/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId) || !["user-question", "relay-question", "answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack", ...SESSION_DECISION_KINDS].includes(spec.kind)) throw Error("Question intent identity invalid.");
           const receipts = db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint, task.id);
           const receipt = receipts[0], value = parse4(receipt?.receipt), caller4 = owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
           if (receipts.length !== 1 || receipt.payload_hash !== nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller4 }, owner) || value?.task?.spec !== task.spec || value.task.run_id !== work.run.id) throw Error("Question author proof unavailable.");
           if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) throw Error("Question terminal creator unverified.");
+          if (SESSION_DECISION_KINDS.includes(spec.kind)) validateSessionDecision(work, protocol, spec);
           if (spec.kind === "user-question" && work.parent || spec.kind === "relay-question" && !work.parent) throw Error("Only the highest supervisor asks the user; lower managers relay.");
           if (["user-question", "relay-question"].includes(spec.kind) && (spec.evidence !== void 0 && (!Array.isArray(spec.evidence) || spec.evidence.length > 100 || spec.evidence.some((v) => !text4(v, 2e3))) || !text4(spec.summary) || !Array.isArray(spec.options) || spec.options.length > 20 || spec.options.some((v) => !text4(v, 2e3)) || !Array.isArray(spec.blockingTaskKeys) || spec.blockingTaskKeys.some((v) => !text4(v, 120)))) throw Error("Invalid question text or blocking scope.");
           if (["user-question", "relay-question"].includes(spec.kind)) {
@@ -1296,7 +1388,7 @@ async function nameDispatchedMember({ store, rpc, consent, work, attempt, team }
 }
 
 // src/local/dispatch.mjs
-import { createHash as createHash7, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash8, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 
 // src/local/runtime-reconnect.mjs
 var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
@@ -1454,7 +1546,7 @@ async function readNativeParentEvidence(userData, { parentWork, attempt, active 
 }
 
 // src/local/teamwork.mjs
-import { createHash as createHash6, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash7, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/local/native-run.mjs
 import { isAbsolute as isAbsolute4 } from "node:path";
@@ -1482,7 +1574,7 @@ async function readNativeRunEvidence(userData, { objective, owner, runId } = {})
 
 // src/local/teamwork.mjs
 var canonical2 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical2).join(",")}]` : `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical2(v)}`).join(",")}}`;
-var sendFingerprint = (sessionId, body, delivery) => createHash6("sha256").update(canonical2({ method: "agentSession.send", sessionId, fields: { body, ...delivery ? { delivery } : {} } })).digest("hex");
+var sendFingerprint = (sessionId, body, delivery) => createHash7("sha256").update(canonical2({ method: "agentSession.send", sessionId, fields: { body, ...delivery ? { delivery } : {} } })).digest("hex");
 function objectiveInstructions(work, team) {
   if (work.parent) return `TEAM_MANAGER_RUN
 ${JSON.stringify({ teamWorkId: work.teamWorkId, runBindingId: work.id, parent: work.parent, objective: work.nativeObjective, instruction: "You are the actual assigned manager of the original parent Dispatch. Keep that umbrella Dispatch active while delegating and reviewing. Using your own inherited native identity create exactly one Run with this exact objective. This message is JSON: decode its objective string, including escaped newlines, before passing it as one CLI argument; verify the actual stored objective string; do not fabricate --from. Never pass a parent Run Task as native --parent in this Run. Wait for the versioned child admission protocol. Native depth is inherited from your active parent Dispatch across Runs; if nested_worker_depth_exceeded, report that refusal and ask the highest supervisor to request Settings \u2192 Orchestration \u2192 Nested worker depth at least 2 (or the required deeper level). Never change the setting or launch a standalone replacement to bypass it. Accept only direct reports. When every descendant is accepted and questions resolved, send your own native worker_done for the ORIGINAL parent Dispatch/Task and original parent Run using the installed guide; do not stamp the child Run onto the upward report. Only the highest supervisor asks/delivers to the user. Relay questions through your real parent manager, preserving their original native question IDs. Do not self-create provider-native subagents; only approved roster members via admitted native Orca dispatch. This is a cooperative instruction and admission policy, not global provider tool interception." })}`;
@@ -1885,7 +1977,7 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
         if (withdrawnIds.has(task.id) || admitted.some((a) => a.nativeTaskId === task.id) || isHistoricalControl(db, work, task, nativeHistory, admitted)) continue;
         const spec = parse6(task.spec), proof = receipts("orchestration.taskCreate", task.id);
         const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
-        const control = (spec?.protocol === "team-delivery/v1" && !work.parent || spec?.protocol === "team-questions/v1" && ["answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack", work.parent ? "relay-question" : "user-question"].includes(spec.kind)) && spec.workId === work.id && spec.token === protocol.token && spec.generation === protocol.generation && proof.length === 1 && proof[0].payload_hash === expected && proof[0].value?.task?.spec === task.spec && proof[0].value.task.run_id === work.run.id && (owner.kind !== "terminal" || task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.processIncarnation && task.created_by_run_generation === protocol.generation) && !db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id);
+        const control = (spec?.protocol === "team-delivery/v1" && !work.parent || spec?.protocol === "team-questions/v1" && ["answer-ack", "collaboration-directive", "message-evidence", "recovery-handoff", "staffing-proposal", "roster-ack", ...!work.parent ? SESSION_DECISION_KINDS : [], work.parent ? "relay-question" : "user-question"].includes(spec.kind)) && spec.workId === work.id && spec.token === protocol.token && spec.generation === protocol.generation && proof.length === 1 && proof[0].payload_hash === expected && proof[0].value?.task?.spec === task.spec && proof[0].value.task.run_id === work.run.id && (owner.kind !== "terminal" || task.created_by_terminal_handle === owner.handle && task.created_by_pane_key === owner.paneKey && task.created_by_process_incarnation === owner.processIncarnation && task.created_by_run_generation === protocol.generation) && !db.prepare("SELECT id FROM dispatch_contexts WHERE task_id=? LIMIT 1").get(task.id);
         if (!control) unmanaged.push(task.id);
       }
       for (const d of db.prepare("SELECT id FROM dispatch_contexts WHERE run_id=?").all(work.run.id)) if (!admitted.some((a) => a.dispatchId === d.id)) unmanaged.push(d.id);
@@ -1988,7 +2080,7 @@ async function discoverCapabilities(rpc, scope) {
 // src/local/dispatch.mjs
 function dispatchInstructions(work, team, protocol, attempts = []) {
   const children = team.members.filter((row) => row.boss === work.supervisorMemberId).map((row) => ({ memberId: row.id, name: row.name, agent: row.agent, model: row.model, effort: row.effort, roleVersion: row.roleVersion, role: { brief: row.brief, habits: row.habits, collaboration: row.collaboration } }));
-  return "TEAM_DISPATCH_PROTOCOL\n" + JSON.stringify({ protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. For a highest-Head decision based on a native worker_done completion instead, origin may contain ONLY {attemptId,dispatchId,nativeTaskId,messageId} and evidence must include its exact worker_report:messageId. The plugin verifies this as sourceReport; it is not a native ask and requires no orchestration reply or requester resume. Ordinary message IDs are not completion proof. Keep every originating member and owning Run; never use ordinary message labels as proof. User answers arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. This only requests user approval; never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. If you omitted workerRules from a never-admitted, never-dispatched Task, preserve that original. Create one corrected Task whose parsed spec is identical except for adding the exact workerRules. You may then task-update the original --status failed --result JSON --run this Run --json, with no forged --from. The exact result fields are protocol=team-intent-withdrawal/v1, workId, token, generation, supervisorMemberId (your member ID), nativeTaskId (original), taskKey, memberId, replacementNativeTaskId (corrected), reason=missing-worker-rules. Never use withdrawal for a Task with any admission, permit, Dispatch or uncertain execution; it is not a worker failure or a retry. Wait for normal permits for the corrected Task.  Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:MESSAGE_ID, where MESSAGE_ID is the id of that attempt's actual native worker_done message, and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (use the attemptId delivered in each latest TEAM_DISPATCH_PERMIT). The execution evidenceId for an accepted attempt is exactly worker_report:MESSAGE_ID for its actual native worker_done message; use the same reference you included in its native acceptance review. Never invent a message ID or include a superseded attempt. After completing your genuine native acceptance reviews for every latest required attempt, publish the delivery proposal using those IDs and real validation references. Do not wait for a separate plugin acceptance notification. The plugin independently verifies reviews and gates user acceptance; proposing a delivery does not assert plugin or user acceptance. Never approve the overall delivery as the user." });
+  return "TEAM_DISPATCH_PROTOCOL\n" + JSON.stringify({ protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, sessionDecisions: sessionDecisionInstructions(work), workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. For a highest-Head decision based on a native worker_done completion instead, origin may contain ONLY {attemptId,dispatchId,nativeTaskId,messageId} and evidence must include its exact worker_report:messageId. The plugin verifies this as sourceReport; it is not a native ask and requires no orchestration reply or requester resume. Ordinary message IDs are not completion proof. Keep every originating member and owning Run; never use ordinary message labels as proof. Ask the user in your own highest-supervisor session and record their answer with session-answer as described in sessionDecisions. Legacy saved panel answers may still arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. Lower managers relay this proposal to the highest supervisor. The highest supervisor asks the user in its own session, then records staffing-decision as described in sessionDecisions. Never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. If you omitted workerRules from a never-admitted, never-dispatched Task, preserve that original. Create one corrected Task whose parsed spec is identical except for adding the exact workerRules. You may then task-update the original --status failed --result JSON --run this Run --json, with no forged --from. The exact result fields are protocol=team-intent-withdrawal/v1, workId, token, generation, supervisorMemberId (your member ID), nativeTaskId (original), taskKey, memberId, replacementNativeTaskId (corrected), reason=missing-worker-rules. Never use withdrawal for a Task with any admission, permit, Dispatch or uncertain execution; it is not a worker failure or a retry. Wait for normal permits for the corrected Task.  Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:MESSAGE_ID, where MESSAGE_ID is the id of that attempt's actual native worker_done message, and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (use the attemptId delivered in each latest TEAM_DISPATCH_PERMIT). The execution evidenceId for an accepted attempt is exactly worker_report:MESSAGE_ID for its actual native worker_done message; use the same reference you included in its native acceptance review. Never invent a message ID or include a superseded attempt. After completing your genuine native acceptance reviews for every latest required attempt, publish the delivery proposal using those IDs and real validation references. Do not wait for a separate plugin acceptance notification. The plugin independently verifies reviews and gates user acceptance; proposing a delivery does not assert plugin or user acceptance. Never approve the overall delivery as the user." });
 }
 function userMessage(work, instance, text8, status) {
   if (work.binding.kind === "structured") {
@@ -2136,7 +2228,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
             reuse = recovered ? await preparedSession(work, intent.member, prepared) : prior ? await retainedSession(work, intent.member, prior) : prepared ? await preparedSession(work, intent.member, prepared) : void 0;
           } catch (error) {
             const bindingRequestId = prior?.id ?? prepared?.requestId;
-            if (bindingRequestId && onClosedMember) await onClosedMember({ teamId: work.teamId, memberId: intent.member.id, bindingRequestId, requestId: "taskwake-" + createHash7("sha256").update(JSON.stringify([work.id, intent.member.id, bindingRequestId])).digest("hex").slice(0, 48) });
+            if (bindingRequestId && onClosedMember) await onClosedMember({ teamId: work.teamId, memberId: intent.member.id, bindingRequestId, requestId: "taskwake-" + createHash8("sha256").update(JSON.stringify([work.id, intent.member.id, bindingRequestId])).digest("hex").slice(0, 48) });
             throw error;
           }
           const startParams = { task: intent.nativeTaskId, worktree: work.scope.workspaceId.startsWith("folder:") ? work.scope.workspaceId : `id:${work.scope.workspaceId}`, agent: intent.member.agent, run: work.run.id, ...intent.member.model !== "default" ? { model: intent.member.model } : {}, ...intent.member.effort !== "default" ? { effort: intent.member.effort } : {} };
@@ -2308,10 +2400,12 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
     } catch {
       return;
     }
+    const notice = (id2, kind, body) => sendSessionNotice({ store, works, rpc, consent, userMessage, accepted, workId, id: id2, kind, body });
+    if (!work.parent) await notice(`session-guide-v2-${work.epoch ?? 0}-${protocol.generation}`, "TEAM_SESSION_DECISIONS", { instructions: sessionDecisionInstructions(work), questionMethod: sessionQuestionMethod(work), workId, runId: work.run.id, token: protocol.token, generation: protocol.generation });
     for (const streak of store.failureStreaks(workId).filter((s) => s.escalationNeeded)) {
       const evidenceIds = streak.evidence.slice(-2).map((e) => e.evidenceId);
       if (store.listQuestions(workId).some((q) => q.evidence?.length && evidenceIds.every((id3) => q.evidence.includes(id3)))) continue;
-      const id2 = "failure-" + createHash8("sha256").update(JSON.stringify([streak.taskKey, evidenceIds])).digest("hex");
+      const id2 = "failure-" + createHash9("sha256").update(JSON.stringify([streak.taskKey, evidenceIds])).digest("hex");
       const event = store.ensureQuestionEvent(workId, id2, "failure-summary", { taskKey: streak.taskKey, evidence: streak.evidence.slice(-2) });
       if (event.state === "sending") {
         store.updateQuestionEvent(workId, id2, { state: "unknown" });
@@ -2344,6 +2438,28 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
     for (const message of native.messages || []) try {
       store.ingestTeamMessage(workId, message);
     } catch {
+    }
+    for (const intent of native.intents.filter((i) => ["session-answer", "session-resolution"].includes(i.spec.kind))) {
+      const s = intent.spec;
+      if (store.readQuestionEvent(workId, "result-" + sessionDecisionKey(intent))?.data.status === "rejected") continue;
+      try {
+        if (s.kind === "session-resolution") store.resolveSessionQuestion(workId, intent);
+        else {
+          const q = store.listQuestions(workId).find((q2) => q2.id === s.questionId);
+          if (!q) throw Error("The saved question is unavailable.");
+          if ((questionOriginKind(q.origin) === "report" || q.sourceReport) && !reportFor(q, native)) throw Error("Original completion report evidence is unverified.");
+          const answer = store.recordSessionAnswer(workId, intent), thread = q.origin && native.threads.find((t) => t.messageId === q.origin.messageId);
+          if ((!q.origin || q.sourceReport || thread?.answer?.body === answer.body) && await relayResolved(q)) store.updateQuestion(workId, q.id, (saved) => {
+            const a = saved.answers.find((a2) => a2.id === answer.id);
+            a.processed = "confirmed";
+            if (thread?.answer) a.nativeAnswer = thread.answer;
+            if (saved.answers.at(-1).id === a.id) saved.status = "answered";
+          });
+        }
+        await notice("result-" + sessionDecisionKey(intent), "TEAM_SESSION_DECISION_RESULT", { decisionId: s.appQuestionId, kind: s.kind, status: "recorded", questionId: s.questionId, detail: s.kind === "session-answer" ? "Answer recorded in this conversation. Any native worker question still requires its owning manager reply; no panel confirmation is needed." : "Superseded question resolved." });
+      } catch (error) {
+        await notice("result-" + sessionDecisionKey(intent), "TEAM_SESSION_DECISION_RESULT", { decisionId: s.appQuestionId, kind: s.kind, status: "rejected", detail: error.message, proof: intent });
+      }
     }
     for (const intent of native.intents) if (intent.spec.kind === "answer-ack") {
       const s = intent.spec, q = store.listQuestions(workId).find((q2) => q2.id === s.appQuestionId), a = q?.answers.find((a2) => a2.id === s.answerId);
@@ -2381,6 +2497,7 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
         if (a.state === "sending") updateAnswer(workId, q.id, a.id, { state: "unknown", detail: "Worker restarted during answer submission; no automatic resend." });
         else if (a.state === "queued") await deliver(workId, q.id, a.id);
       }
+      if (q.to === "user" && (q.status === "pending" || (q.epoch ?? 0) < (work.epoch ?? 0) && !q.resolution)) await notice(`session-question-${q.id}-${work.epoch ?? 0}`, "TEAM_SESSION_QUESTION", { questionId: q.id, questionRevision: q.revision, summary: q.summary, options: q.options, blockingTaskKeys: q.blockingTaskKeys, origin: q.origin, relay: q.relay, sourceReport: q.sourceReport, previousAnswers: q.answers.map((a) => ({ id: a.id, body: a.body, state: a.state, processed: a.processed })), ...(q.epoch ?? 0) < (work.epoch ?? 0) ? { superseded: true, recoveryRequestId: work.recoveryRequestId } : {}, instruction: "Discuss this with the user here, in the highest supervisor conversation. Record their explicit answer using session-answer, or session-resolution for a superseded question. Do not ask for a second confirmation in the panel." });
       if (q.to === "user" && q.notification.state === "queued") {
         if (!store.claimQuestionNotification(workId, q.id)) continue;
         let state = "unavailable";
@@ -2416,6 +2533,7 @@ function createStaffingService({ store, rpc, userData, works, consent, notify })
   async function check(id2) {
     const root = current(id2);
     if (!root || root.status === "completed") return;
+    const notice = (noticeId, kind, body) => sendSessionNotice({ store, works, rpc, consent, userMessage, accepted, workId: root.id, id: noticeId, kind, body });
     for (const work of store.listRunWorks?.(id2) ?? [root]) {
       try {
         await consent();
@@ -2434,7 +2552,37 @@ function createStaffingService({ store, rpc, userData, works, consent, notify })
       } catch {
       }
     }
-    for (const proposal of store.listStaffingProposals(id2)) if (proposal.status === "pending") await notifyQuestionEvent(store, notify, { workId: proposal.workId, id: "staffing-" + proposal.id, kind: "decision", title: "Staffing proposal needs your decision", body: proposal.rationale });
+    if (!root.parent) {
+      const protocol = store.readDispatchProtocol(root.id);
+      if (protocol && root.run.state === "verified") {
+        const verified = await works.verifyWork(root.id, true);
+        const native = await readNativeQuestionEvidence(userData, { work: current(root.id), protocol, owner: verified.instance, attempts: store.listDispatches(root.id), nativeHistory: store.readNativeHistory(root.id) });
+        for (const intent of (native.intents ?? []).filter((i) => i.spec.kind === "staffing-decision")) {
+          if (store.readQuestionEvent(root.id, "result-" + sessionDecisionKey(intent))?.data.status === "rejected") continue;
+          try {
+            const proposal = store.listStaffingProposals(root.id).find((p) => p.id === intent.spec.proposalId);
+            if (proposal?.status === "pending") {
+              const context = current(proposal.contextId), author = await works.verifyWork(context.id, true), proof = await readNativeQuestionEvidence(userData, { work: context, protocol: store.readDispatchProtocol(context.id), owner: author.instance, attempts: store.listDispatches(context.id), nativeHistory: store.readNativeHistory(context.id) });
+              if (proof.state !== "verified" || !proof.intents.some((i) => i.nativeTaskId === proposal.proof.nativeTaskId && i.payloadHash === proposal.proof.payloadHash && JSON.stringify(i.spec) === JSON.stringify(proposal.proof.spec))) throw Error("The original staffing proposal evidence changed; request a fresh proposal.");
+            }
+            if (intent.spec.decision === "approve" && proposal?.status === "pending") {
+              const caps = await discoverCapabilities(rpc, root.scope), issue = preferenceIssue(proposal.member, caps, { requireCore: true });
+              if (issue) throw Error(issue);
+            }
+            await consent();
+            await works.verifyHost(root.id, verified.hostGeneration);
+            const latest = await works.verifyWork(root.id, true), fresh = await readNativeQuestionEvidence(userData, { work: current(root.id), protocol: store.readDispatchProtocol(root.id), owner: latest.instance, attempts: store.listDispatches(root.id), nativeHistory: store.readNativeHistory(root.id) });
+            if (fresh.state !== "verified" || !fresh.intents.some((i) => i.nativeTaskId === intent.nativeTaskId && i.payloadHash === intent.payloadHash)) throw Error("Supervisor decision changed before staffing was saved.");
+            const result = store.saveSessionStaffing(root.id, intent);
+            await notice("result-" + sessionDecisionKey(intent), "TEAM_SESSION_DECISION_RESULT", { decisionId: intent.spec.appQuestionId, kind: "staffing-decision", status: result.decision, ...result, instruction: "Use the forthcoming roster delta and normal direct-parent task admission. No panel approval is needed." });
+          } catch (error) {
+            await notice("result-" + sessionDecisionKey(intent), "TEAM_SESSION_DECISION_RESULT", { decisionId: intent.spec.appQuestionId, kind: "staffing-decision", status: "rejected", detail: error.message, proof: intent });
+          }
+        }
+      }
+    }
+    for (const proposal of store.listStaffingProposals(id2)) if (proposal.status === "pending") await notice(`session-staffing-${proposal.id}-${root.epoch ?? 0}`, "TEAM_STAFFING_PROPOSAL", { proposalId: proposal.id, proposalNativeTaskId: proposal.proof.nativeTaskId, configVersion: proposal.configVersion, proposingManagerId: proposal.proposingManagerId, member: proposal.member, rationale: proposal.rationale, affectedTaskKeys: proposal.affectedTaskKeys, instruction: "Explain this exact proposal to the user in your own conversation, wait for their explicit answer, then record staffing-decision. Lower-manager proposals require this same highest-supervisor process." });
+    for (const proposal of store.listStaffingProposals(id2)) if (proposal.status === "pending") await notifyQuestionEvent(store, notify, { workId: proposal.workId, id: "staffing-" + proposal.id, kind: "decision", title: "Staffing request in supervisor session", body: proposal.rationale });
     for (const delta of store.listRosterDeltas(id2)) {
       if (delta.state === "sending") {
         store.updateRosterDelta(delta.id, { state: "unknown", detail: "Delivery interrupted; preserve its native request identity. No automatic resend." });
@@ -2497,7 +2645,7 @@ function createHierarchyService({ store, userData, works }) {
 }
 
 // src/local/stop-store.mjs
-import { randomUUID as randomUUID5, createHash as createHash9 } from "node:crypto";
+import { randomUUID as randomUUID5, createHash as createHash10 } from "node:crypto";
 var canonical3 = (v) => Array.isArray(v) ? v.map(canonical3) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical3(v[k])])) : v;
 var sameStopIdentity = (a, b) => JSON.stringify(canonical3(a)) === JSON.stringify(canonical3(b));
 function stopStore({ db, readPrivate, putPrivate, atomic }) {
@@ -2505,7 +2653,7 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
   const readStop = (id2) => readPrivate(`stop:${id2}`);
   const recoveryInput = (input) => {
     if (!input || Object.keys(input).some((k) => !["requestId", "stopRequestId", "version"].includes(k)) || typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || typeof input.stopRequestId !== "string" || !Number.isSafeInteger(input.version) || input.version < 1) throw Error("Choose a saved unknown stop and its current version.");
-    return createHash9("sha256").update(JSON.stringify(canonical3(input))).digest("hex");
+    return createHash10("sha256").update(JSON.stringify(canonical3(input))).digest("hex");
   };
   const readStopRecovery = (input) => {
     const fingerprint2 = recoveryInput(input), prior = readPrivate(`stop-recovery:${input.requestId}`);
@@ -2532,7 +2680,7 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
     prepareStop(input, target) {
       return atomic(() => {
         if (typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId)) throw Error("A stable stop request identity is required.");
-        const fingerprint2 = createHash9("sha256").update(JSON.stringify(canonical3(input))).digest("hex"), prior = readStop(input.requestId);
+        const fingerprint2 = createHash10("sha256").update(JSON.stringify(canonical3(input))).digest("hex"), prior = readStop(input.requestId);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Stop identity conflicts with another input.");
           return prior;
@@ -2721,8 +2869,8 @@ function publicOperation(operation) {
 }
 
 // src/local/wake-store.mjs
-import { randomUUID as randomUUID6, createHash as createHash10 } from "node:crypto";
-var digest2 = (v) => createHash10("sha256").update(JSON.stringify(v)).digest("hex");
+import { randomUUID as randomUUID6, createHash as createHash11 } from "node:crypto";
+var digest2 = (v) => createHash11("sha256").update(JSON.stringify(v)).digest("hex");
 var publicWake = (row) => {
   if (!row) return null;
   const { oldBinding, nativeAction, fingerprint: fingerprint2, managerRequest, ...value } = row;
@@ -2893,13 +3041,13 @@ import { realpath as realpath7 } from "node:fs/promises";
 import { join as join8, relative as relative6, isAbsolute as isAbsolute7, sep as sep6 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 import { realpath as realpath6 } from "node:fs/promises";
 import { join as join7, relative as relative5, isAbsolute as isAbsolute6, sep as sep5 } from "node:path";
 var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
 var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
-  return createHash11("sha256").update(canonical4(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
+  return createHash12("sha256").update(canonical4(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
 }
 async function readNativeLaunchLedger(userData, request) {
   let db;
@@ -3602,8 +3750,8 @@ function createLifecycleService({ store, rpc, userData, consent, works, notify }
 
 // src/local/executor.mjs
 import { timingSafeEqual } from "node:crypto";
-import { createHash as createHash12, randomUUID as randomUUID7 } from "node:crypto";
-var hash3 = (value) => createHash12("sha256").update(value).digest("hex");
+import { createHash as createHash13, randomUUID as randomUUID7 } from "node:crypto";
+var hash3 = (value) => createHash13("sha256").update(value).digest("hex");
 function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc } = {}) {
   const consent = () => host.call("storage.get", { key: "team-work-consent-v1" });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
@@ -3976,8 +4124,8 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
 }
 
 // src/local/runtime-reconnect-store.mjs
-import { createHash as createHash13 } from "node:crypto";
-var digest3 = (value) => createHash13("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+import { createHash as createHash14 } from "node:crypto";
+var digest3 = (value) => createHash14("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 var fail = (message) => {
   throw Error(message);
 };
@@ -4037,7 +4185,8 @@ function runtimeReconnectStore({
     const members = new Set(team.members.map((m) => m.id)), records = all();
     for (const { key, value: r } of records) {
       const sameWork = r.workId === work.id || r.teamWorkId === work.id;
-      if (sameWork && /^(dispatch:|dispatch-queue:|question:|question-answer:|question-event:|collaboration:|staffing-proposal:|roster-delta:|configuration-amendment:|delivery:|native-run-binding:|intent-withdrawal:)/.test(
+      const deliveredSessionGuide = key.startsWith("question-event:") && r.kind === "TEAM_SESSION_DECISIONS" && r.state === "accepted" && r.data?.workId === work.id;
+      if (sameWork && !deliveredSessionGuide && /^(dispatch:|dispatch-queue:|question:|question-answer:|question-event:|collaboration:|staffing-proposal:|roster-delta:|configuration-amendment:|delivery:|native-run-binding:|intent-withdrawal:)/.test(
         key
       ))
         fail("Reconnect requires a quiet Run with no Task, question, staffing or delivery work.");
@@ -4150,10 +4299,14 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
       const resolved = q.status === "closed" && r?.kind === "superseded-by-recovery" && r.by === "user" && r.note?.trim() && Number.isSafeInteger(epoch) && epoch >= 0 && epoch < (work.epoch ?? 0) && recovered >= epoch && wake?.state === "bound" && wake.memberId === work.supervisorMemberId && wake.newInstance?.workId === workId;
       const answered = q.status === "answered" && (q.answers.length ? q.answers.every((a) => questionAnswerResolved(q, a)) : Boolean(q.nativeQuestion?.answer));
       if (resolved || answered) {
+        if (q.resolution?.sessionDecision) controls.push({ kind: "session-resolution", record: { proof: q.resolution.sessionDecision } });
+        for (const a of q.answers.filter((a2) => a2.processed === "confirmed" && a2.sessionDecision)) controls.push({ kind: "session-answer", record: { proof: a.sessionDecision } });
         controls.push({ kind: "question", record: q, epoch });
         for (const a of q.answers.filter((a2) => a2.processed === "confirmed" && a2.acknowledgement)) controls.push({ kind: "answer-ack", record: q, answer: a });
       }
     }
+    for (const r of rows("staffing-request:").filter((r2) => r2.result?.workId === workId && r2.sessionDecision)) controls.push({ kind: "staffing-decision", record: { proof: r.sessionDecision } });
+    for (const e of rows("question-event:").filter((e2) => e2.workId === workId && e2.kind === "TEAM_SESSION_DECISION_RESULT" && e2.data?.status === "rejected" && e2.data.proof)) controls.push({ kind: e.data.proof.spec.kind, record: { proof: e.data.proof } });
     for (const d of rows("delivery:").filter((d2) => d2.workId === workId && ["superseded", "changes_requested", "accepted"].includes(d2.status))) controls.push({ kind: "delivery", record: d, epoch: d.epoch ?? 0 });
     for (const p of rows("staffing-proposal:").filter((p2) => p2.contextId === workId && ["approved", "rejected"].includes(p2.status) && p2.decision?.from === "user")) controls.push({ kind: "staffing-proposal", record: p });
     for (const d of rows("roster-delta:").filter((d2) => d2.contextId === workId && d2.processed === "confirmed" && d2.acknowledgement)) controls.push({ kind: "roster-ack", record: d });
@@ -4177,9 +4330,9 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
 }
 
 // src/local/staffing-fingerprint.mjs
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
-var staffingFingerprint = (v) => createHash14("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
+var staffingFingerprint = (v) => createHash15("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
 
 // src/local/staffing-expiry.mjs
 function staffingExpiryProof(proposal, read) {
@@ -4196,9 +4349,9 @@ function staffingExpiryProof(proposal, read) {
 }
 
 // src/local/history-cleanup.mjs
-import { randomUUID as randomUUID8, createHash as createHash15 } from "node:crypto";
+import { randomUUID as randomUUID8, createHash as createHash16 } from "node:crypto";
 var CLEARED = "[History manually cleared]";
-var hash4 = (v) => createHash15("sha256").update(JSON.stringify(v)).digest("hex");
+var hash4 = (v) => createHash16("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
 var known = /* @__PURE__ */ new Set(["runtime-control", "runtime-reconnect", "work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "stop-recovery", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
 var contains = (value, ids) => typeof value === "string" ? ids.has(value) || [...ids].some((id2) => id2.length >= 32 && value.includes(id2)) : Array.isArray(value) ? value.some((v) => contains(v, ids)) : value && typeof value === "object" ? Object.values(value).some((v) => contains(v, ids)) : false;
@@ -4315,7 +4468,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
       if (!members.some((r) => family(r.id) === "work-decision" && r.value.workId === id2 && r.value.decision === "accept" && r.value.deliveryId === work.handoff?.deliveryId)) reason = "User acceptance provenance is missing.";
       for (const r of rows) {
         const k = family(r.id), v = r.value, related = own(r), sameTeam = v.teamId === work.teamId || v.target?.teamId === work.teamId || k === "stop-recovery" && v.previous?.target?.teamId === work.teamId;
-        const uncertainty = k === "work" && v.id === work.id ? workUncertainty : k === "delivery" && !deliveryHistory.invalid && deliveryHistory.obsolete.has(r.id) ? { ...v, status: void 0 } : k === "stop-recovery" && settledStopRecovery(r, byId) ? { ...v, previous: void 0 } : k === "question-event" && settledStaffingNotification(r, byId) ? { ...v, state: void 0 } : v;
+        const uncertainty = k === "work" && v.id === work.id ? workUncertainty : k === "delivery" && !deliveryHistory.invalid && deliveryHistory.obsolete.has(r.id) ? { ...v, status: void 0 } : k === "stop-recovery" && settledStopRecovery(r, byId) ? { ...v, previous: void 0 } : k === "question-event" && settledStaffingNotification(r, byId) ? { ...v, state: void 0 } : k === "question-event" && ["TEAM_SESSION_DECISIONS", "TEAM_SESSION_QUESTION", "TEAM_STAFFING_PROPOSAL", "TEAM_SESSION_DECISION_RESULT"].includes(v.kind) ? { state: v.state } : v;
         if (!known.has(k) && (contains(v, identities) || sameTeam)) reason = "An unknown record references this history; preserve it for a compatible plugin.";
         if (related && (v.format && /-(v[0-9]+)$/.test(v.format) && !v.format.endsWith("-v1") || !(k === "question-event" && v.kind === "goal-delivery" && !v.nativeSend) && uncertain(uncertainty))) reason = "Unknown, pending or unprocessed evidence remains in this work.";
         if (related && k === "native-run-binding" && (v.status !== "completed" || v.currentSupervisor && v.currentSupervisor.status !== "completed")) reason = "A descendant manager context remains active.";
@@ -4415,7 +4568,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
 }
 
 // src/local/organization-store.mjs
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 function reorganize(team, changes) {
   const members = structuredClone(team.members), ids = /* @__PURE__ */ new Set();
   if (!Array.isArray(changes) || !changes.length || changes.length > 49) throw Error("Choose at least one organization change.");
@@ -4456,7 +4609,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
     scheduleOrganization(input) {
       return atomic(() => {
         if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || Object.keys(input).some((k) => !["requestId", "teamId", "workId", "expectedRevision", "configVersion", "changes", "pause"].includes(k))) throw Error("Invalid organization request.");
-        const key = `organization:${input.requestId}`, fingerprint2 = createHash16("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
+        const key = `organization:${input.requestId}`, fingerprint2 = createHash17("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Organization request conflicts with saved input.");
           return prior;
@@ -4596,7 +4749,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
       if (prior && prior.fingerprint !== staffingFingerprint(input)) throw Error("Staffing request identity conflicts.");
       return prior?.result ?? null;
     },
-    staffingProjection: (workId) => ({ staffingProposals: listStaffingProposals(workId).map(({ proof, fingerprint: fingerprint2, ...p }) => p), rosterDeltas: listRosterDeltas(workId).map(publicDelta), effectiveConfigVersion: effectiveTeamForWork(workId)?.configVersion }),
+    staffingProjection: (workId) => ({ staffingProposals: listStaffingProposals(workId).map(({ proof, fingerprint: fingerprint2, ...p }) => ({ ...p, ...p.decision ? { decision: (({ sessionDecision, ...d }) => d)(p.decision) } : {} })), rosterDeltas: listRosterDeltas(workId).map(publicDelta), effectiveConfigVersion: effectiveTeamForWork(workId)?.configVersion }),
     claimRosterDelta(id2, { nativeSend, contextId, runId, generation, supervisorMemberId }) {
       return atomic(() => {
         const key = `roster-delta:${id2}`, row = readPrivate(key);
@@ -4642,7 +4795,19 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         return proposal;
       });
     },
-    saveStaffing(input) {
+    saveSessionStaffing(workId, intent) {
+      const s = intent.spec, work = readWork(workId), requestId = "session-" + sessionDecisionKey(intent), prior = readPrivate(`staffing-request:${requestId}`);
+      if (prior) {
+        if (staffingFingerprint(prior.sessionDecision) !== staffingFingerprint(intent)) throw Error("Session decision identity conflicts.");
+        return prior.result;
+      }
+      validateSessionDecision(work, readPrivate(`dispatch-protocol:${workId}`), s);
+      if (!work || work.parent || work.status === "completed" || s.kind !== "staffing-decision" || s.workId !== workId || s.generation !== work.run.consumerGeneration || s.userConfirmed !== true || !text7(s.userStatement, 8e3)) throw Error("Only the current highest supervisor records explicit user staffing decisions.");
+      const proposal = listStaffingProposals(workId).find((p) => p.id === s.proposalId);
+      if (!proposal || proposal.proof.nativeTaskId !== s.proposalNativeTaskId) throw Error("Review the exact saved staffing proposal before deciding.");
+      return api.saveStaffing({ requestId, workId, expectedRevision: readSnapshot().revision, configVersion: s.configVersion, proposalId: s.proposalId, decision: s.decision }, { sessionDecision: intent });
+    },
+    saveStaffing(input, { sessionDecision } = {}) {
       return atomic(() => {
         if (!input || !id(input.requestId) || !Number.isSafeInteger(input.expectedRevision) || !Number.isSafeInteger(input.configVersion) || Object.keys(input).some((k) => !["requestId", "workId", "expectedRevision", "configVersion", "member", "proposalId", "decision"].includes(k)) || !input.proposalId && input.decision !== void 0) throw Error("Invalid staffing request identity or revision.");
         const fingerprint2 = staffingFingerprint(input), key = `staffing-request:${input.requestId}`, prior = readPrivate(key);
@@ -4655,7 +4820,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         if (input.proposalId && (!proposal || !["approve", "reject"].includes(input.decision) || input.member)) throw Error("Choose a saved staffing proposal and user decision.");
         if (proposal?.status !== "pending" && proposal) {
           if (proposal.decision.choice !== input.decision || proposal.configVersion !== input.configVersion) throw Error("Proposal is already decided; its decision cannot be changed.");
-          putPrivate(key, { fingerprint: fingerprint2, result: proposal.decision.result });
+          putPrivate(key, { fingerprint: fingerprint2, result: proposal.decision.result, ...sessionDecision ? { sessionDecision } : {} });
           return proposal.decision.result;
         }
         if (proposal && input.decision === "approve" && (readWork(proposal.contextId)?.run.id !== proposal.runId || readWork(proposal.contextId)?.run.consumerGeneration !== proposal.generation)) throw Error("Proposal supervisor changed; review a fresh proposal.");
@@ -4663,10 +4828,10 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         const decide = (result2) => {
           if (proposal) {
             proposal.status = input.decision === "reject" ? "rejected" : "approved";
-            proposal.decision = { from: "user", choice: input.decision, requestId: input.requestId, recordedAt: (/* @__PURE__ */ new Date()).toISOString(), result: result2 };
+            proposal.decision = { from: "user", choice: input.decision, requestId: input.requestId, recordedAt: (/* @__PURE__ */ new Date()).toISOString(), result: result2, ...sessionDecision ? { source: "supervisor-session", recordedBy: work.supervisorMemberId, sessionDecision } : {} };
             putPrivate(`staffing-proposal:${work.id}:${proposal.id}`, proposal);
           }
-          putPrivate(key, { fingerprint: fingerprint2, result: result2 });
+          putPrivate(key, { fingerprint: fingerprint2, result: result2, ...sessionDecision ? { sessionDecision } : {} });
           return result2;
         };
         if (proposal && input.decision === "reject") {
@@ -4690,7 +4855,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         state.revision++;
         validatePersistentState(state);
         write(state);
-        const result = { requestId: input.requestId, workId: work.id, from: "user", source: proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID9() } } : {} };
+        const result = { requestId: input.requestId, workId: work.id, from: "user", source: sessionDecision ? "supervisor-session" : proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" && !sessionDecision ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID9() } } : {} };
         return decide(result);
       });
     }
@@ -4699,8 +4864,8 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
 }
 
 // src/local/lifecycle-store.mjs
-import { randomUUID as randomUUID10, createHash as createHash17 } from "node:crypto";
-var digest4 = (value) => createHash17("sha256").update(JSON.stringify(value)).digest("hex");
+import { randomUUID as randomUUID10, createHash as createHash18 } from "node:crypto";
+var digest4 = (value) => createHash18("sha256").update(JSON.stringify(value)).digest("hex");
 var fail2 = (message) => {
   throw Error(message);
 };
@@ -4865,10 +5030,10 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 // src/local/store.mjs
 import { mkdir as mkdir2, realpath as realpath9, stat as stat2, open as open2 } from "node:fs/promises";
 import { join as join10, isAbsolute as isAbsolute9, relative as relative8, sep as sep8 } from "node:path";
-import { randomUUID as randomUUID11, createHash as createHash18 } from "node:crypto";
+import { randomUUID as randomUUID11, createHash as createHash19 } from "node:crypto";
 var FORMAT = "orca-team-store";
 var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
-var fingerprint = (value) => createHash18("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
+var fingerprint = (value) => createHash19("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
 var publicScope = ({ workspaceId, ...scope }) => scope;
 var empty = () => ({ format: FORMAT, version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
 var fail3 = (message) => {

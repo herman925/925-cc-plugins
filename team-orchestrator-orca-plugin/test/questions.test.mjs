@@ -36,7 +36,7 @@ test('lost answer receipt remains unknown after restart and stale supervisor pre
  await q.answer({workId:f.work.id,questionId:'choice',questionRevision:1,answerId:'answer-two',body:'New evidence',supplement:true});
  assert.equal(f.store.listQuestions(f.work.id)[0].answers[1].state,'blocked');assert.equal(f.messages.filter(s=>s.startsWith('TEAM_USER_ANSWER\n')).length,1);
 });
-for(const resolution of ['reply','closed','answered-before-send','unknown-thread','missing-thread','wrong-generation','wrong-host'])test(`native ask relay preserves requester and verifies ${resolution} evidence`,async t=>{
+for(const resolution of ['reply','session','closed','answered-before-send','unknown-thread','missing-thread','wrong-generation','wrong-host'])test(`native ask relay preserves requester and verifies ${resolution} evidence`,async t=>{
  const f=await setup(t);f.createIntent(f.store.readDispatchProtocol(f.work.id));f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});await f.dispatch.check(f.work.id);
  const attempt=f.store.listDispatches(f.work.id)[0];
  f.db.exec(`ALTER TABLE messages ADD COLUMN to_handle TEXT; ALTER TABLE messages ADD COLUMN thread_id TEXT;
@@ -55,7 +55,7 @@ for(const resolution of ['reply','closed','answered-before-send','unknown-thread
  if(resolution==='missing-thread')f.db.prepare('DELETE FROM question_threads').run();
  if(resolution==='closed')f.db.prepare("UPDATE question_threads SET status='closed'").run();
  if(resolution==='wrong-host')f.db.prepare("UPDATE dispatch_contexts SET host_scope=? WHERE id=?").run(JSON.stringify({kind:'ssh',targetId:'elsewhere'}),attempt.dispatchId);
- await q.answer({workId:f.work.id,questionId:'scope',questionRevision:1,answerId:'answer-one',body:'Small',supplement:false});
+ if(resolution==='session'){headIntent(f,{kind:'session-answer',appQuestionId:'answer-one',questionId:'scope',questionRevision:1,body:'Small',supplement:false,userConfirmed:true,userStatement:'Choose Small.'});await q.check(f.work.id);assert.equal(f.store.listQuestions(f.work.id)[0].status,'pending','native worker still waits for its owning manager reply');assert.equal(f.messages.some(m=>m.startsWith('TEAM_USER_ANSWER\n')),false);}else await q.answer({workId:f.work.id,questionId:'scope',questionRevision:1,answerId:'answer-one',body:'Small',supplement:false});
  if(['closed','answered-before-send','unknown-thread','missing-thread','wrong-host'].includes(resolution)){assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'blocked');assert.equal(f.messages.some(m=>m.startsWith('TEAM_USER_ANSWER\n')),false);assert.equal(f.store.listQuestions(f.work.id)[0].sourceReport,undefined);return;}
  assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'accepted');assert.equal(f.store.listQuestions(f.work.id)[0].nativeQuestion.fromMemberId,f.member.id);
  f.db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)').run('native-answer','run-head','run:run-head',null,'message','Small',null,`dispatch:${attempt.dispatchId}`,'native-question');
@@ -83,7 +83,7 @@ test('two-failure policy counts distinct execution evidence, preserves unknown, 
  record('success','succeeded','2026-01-04');record('three','failed','2026-01-05');assert.equal(f.store.failureStreaks(f.work.id).find(s=>s.taskKey==='business-task').count,1);
  record('one','failed','2026-01-01');assert.equal(f.store.failureStreaks(f.work.id).find(s=>s.taskKey==='business-task').count,1);
 });
-test('third native execution is fenced before permit until a Head-authored decision acknowledges the specific next Task',async t=>{
+for(const answerPath of ['legacy-panel','supervisor-session'])test(`third native execution requires the specific user-authorized next Task through ${answerPath}`,async t=>{
  const f=await setup(t),protocol=f.store.readDispatchProtocol(f.work.id);f.onInput(text=>{if(text.startsWith('TEAM_DISPATCH_PERMIT\n'))f.start(JSON.parse(text.slice(text.indexOf('\n')+1)));});
  f.createIntent(protocol);await f.dispatch.check(f.work.id);f.complete(f.store.listDispatches(f.work.id)[0],{outcome:'failed'});await f.dispatch.check(f.work.id);
  let first=f.store.listDispatches(f.work.id)[0];f.review(first,{decision:'rework'});await f.dispatch.check(f.work.id);
@@ -95,8 +95,7 @@ test('third native execution is fenced before permit until a Head-authored decis
  assert.equal(f.store.listDispatches(f.work.id).length,2);assert.match(f.store.readDispatchProtocol(f.work.id).detail,/Two proven/);
  const {createQuestionService}=await import('../src/local/questions.mjs');const q=createQuestionService({store:f.store,rpc:f.rpc,userData:f.profile,consent:async()=>{},works:f.works});
  headIntent(f,{kind:'user-question',appQuestionId:'failed-twice',summary:'Two executions failed. Change approach?',options:['Use focused approach'],blockingTaskKeys:[first.taskKey],evidence:[first.evidenceId,second.evidenceId]});await q.check(f.work.id);
- await q.answer({workId:f.work.id,questionId:'failed-twice',questionRevision:1,answerId:'allow-third',body:'Use focused approach for third',supplement:false});await f.dispatch.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,2);
- headIntent(f,{kind:'answer-ack',appQuestionId:'failed-twice',answerId:'allow-third',nextNativeTaskId:'third'});await q.check(f.work.id);await f.dispatch.check(f.work.id);
+ if(answerPath==='legacy-panel'){await q.answer({workId:f.work.id,questionId:'failed-twice',questionRevision:1,answerId:'allow-third',body:'Use focused approach for third',supplement:false});await f.dispatch.check(f.work.id);assert.equal(f.store.listDispatches(f.work.id).length,2);headIntent(f,{kind:'answer-ack',appQuestionId:'failed-twice',answerId:'allow-third',nextNativeTaskId:'third'});}else headIntent(f,{kind:'session-answer',appQuestionId:'allow-third',questionId:'failed-twice',questionRevision:1,body:'Use focused approach for third',supplement:false,userConfirmed:true,userStatement:'Try the focused approach once.',nextNativeTaskId:'third'});await q.check(f.work.id);await f.dispatch.check(f.work.id);
  assert.equal(f.store.listDispatches(f.work.id).length,3);assert.equal(f.store.listDispatches(f.work.id)[2].nativeTaskId,'third');
  assert.equal(f.store.failureStreaks(f.work.id)[0].count,2);
 });

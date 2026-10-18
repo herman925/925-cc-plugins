@@ -1,3 +1,4 @@
+import {SESSION_DECISION_KINDS,validateSessionDecision} from './session-decisions.mjs';
 import {questionOriginKind,verifiedReportOrigin} from './native-question-origin.mjs';
 import {withOrchestrationSnapshot} from './orchestration-snapshot.mjs';
 import {nativeMutationFingerprint} from './native-mutation.mjs';
@@ -17,11 +18,12 @@ export async function readNativeQuestionEvidence(userData,{work,protocol,owner,a
    const spec=parse(task.spec);if(spec?.protocol!=='team-questions/v1'||spec.workId!==work.id)continue;
    if(isHistoricalControl(db,work,task,nativeHistory,attempts))continue;
    try {
-    if(spec.token!==protocol.token||spec.generation!==protocol.generation||!text(spec.appQuestionId,120)||!/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId)||!['user-question','relay-question','answer-ack','collaboration-directive','message-evidence','recovery-handoff','staffing-proposal','roster-ack'].includes(spec.kind))throw Error('Question intent identity invalid.');
+    if(spec.token!==protocol.token||spec.generation!==protocol.generation||!text(spec.appQuestionId,120)||!/^[a-zA-Z0-9-]+$/.test(spec.appQuestionId)||!['user-question','relay-question','answer-ack','collaboration-directive','message-evidence','recovery-handoff','staffing-proposal','roster-ack',...SESSION_DECISION_KINDS].includes(spec.kind))throw Error('Question intent identity invalid.');
     const receipts=db.prepare("SELECT * FROM mutation_receipts WHERE caller_fingerprint=? AND method='orchestration.taskCreate' AND state='completed' AND json_valid(receipt) AND json_extract(receipt,'$.task.id')=?").all(identity.caller_fingerprint,task.id);
     const receipt=receipts[0],value=parse(receipt?.receipt),caller=owner.kind==='structured'?`orca_session_id:${owner.sessionId}`:owner.handle;
     if(receipts.length!==1||receipt.payload_hash!==nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller},owner)||value?.task?.spec!==task.spec||value.task.run_id!==work.run.id)throw Error('Question author proof unavailable.');
     if(owner.kind==='terminal'&&(task.created_by_terminal_handle!==owner.handle||task.created_by_pane_key!==owner.paneKey||task.created_by_process_incarnation!==owner.processIncarnation||task.created_by_run_generation!==protocol.generation))throw Error('Question terminal creator unverified.');
+    if(SESSION_DECISION_KINDS.includes(spec.kind))validateSessionDecision(work,protocol,spec);
     if(spec.kind==='user-question'&&work.parent||spec.kind==='relay-question'&&!work.parent)throw Error('Only the highest supervisor asks the user; lower managers relay.');
     if(['user-question','relay-question'].includes(spec.kind)&&((spec.evidence!==undefined&&(!Array.isArray(spec.evidence)||spec.evidence.length>100||spec.evidence.some(v=>!text(v,2000))))||!text(spec.summary)||!Array.isArray(spec.options)||spec.options.length>20||spec.options.some(v=>!text(v,2000))||!Array.isArray(spec.blockingTaskKeys)||spec.blockingTaskKeys.some(v=>!text(v,120))))throw Error('Invalid question text or blocking scope.');
     if(['user-question','relay-question'].includes(spec.kind)){

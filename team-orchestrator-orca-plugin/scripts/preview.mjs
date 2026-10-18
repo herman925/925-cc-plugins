@@ -173,7 +173,7 @@ async function fixture(id, mode) {
       if (method === 'agentSession.history') return { ok: true, page: { sessionId: params.sessionId, fence: 7, submissions: [], items: [], ...(mode?.startsWith('idle-replacement')?{latestTurn:{itemId:'turn-idle',turn:{state:mode==='idle-replacement-busy'?'running':mode==='idle-replacement-unknown'?'unverifiable':'completed'}},queuedMessages:[],backgroundTasks:null}:{}), ...history.get(params.sessionId) } };
       if (method === 'agentSession.send' || method === 'terminal.send') {
         const text = params.body?.blocks?.[0]?.text ?? params.text;
-        const dispatchInput = text?.startsWith('TEAM_ROSTER_DELTA\n') || text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
+        const dispatchInput = text?.startsWith('TEAM_SESSION_') || text?.startsWith('TEAM_STAFFING_PROPOSAL') || text?.startsWith('TEAM_ROSTER_DELTA\n') || text?.startsWith('TEAM_GOAL_REWORK\n') || text?.startsWith('TEAM_DISPATCH_') || text?.startsWith('TEAM_USER_ANSWER\n') || text?.startsWith('TEAM_FAILURE_SUMMARY_NEEDED\n');
         const work = store.listWorks().flatMap(w=>store.listRunWorks(w.id)).find(row => (dispatchInput || row.input.state === 'sending') && (row.binding.sessionId === params.envelope?.sessionId || row.binding.handle === params.terminal));
         if (!work) throw Error('No durable objective intent');
         const instance = work.instance;

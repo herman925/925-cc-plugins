@@ -6,6 +6,7 @@ import {withNativeRuntime} from './native-runtime.mjs';
 import {createHash} from 'node:crypto';
 import {readNativeQuestionEvidence} from './native-questions.mjs';
 import {userMessage,accepted} from './dispatch.mjs';
+import {sessionDecisionInstructions,sessionQuestionMethod,sessionDecisionKey,sendSessionNotice} from './session-decisions.mjs';
 // No native replay key exists. Persist an attempted marker before the host effect;
 // restart never automatically repeats a possibly visible notification.
 export async function notifyQuestionEvent(store,notify,{workId,id,kind,title,body}) {
@@ -67,6 +68,8 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   if(work?.status==='completed'||!protocol||work?.run.state!=='verified')return;
   let native;
   try{({native}=await evidence(workId));}catch{return;}
+  const notice=(id,kind,body)=>sendSessionNotice({store,works,rpc,consent,userMessage,accepted,workId,id,kind,body});
+  if(!work.parent)await notice(`session-guide-v2-${work.epoch??0}-${protocol.generation}`,'TEAM_SESSION_DECISIONS',{instructions:sessionDecisionInstructions(work),questionMethod:sessionQuestionMethod(work),workId,runId:work.run.id,token:protocol.token,generation:protocol.generation});
   for(const streak of store.failureStreaks(workId).filter(s=>s.escalationNeeded)){
    const evidenceIds=streak.evidence.slice(-2).map(e=>e.evidenceId);
    if(store.listQuestions(workId).some(q=>q.evidence?.length&&evidenceIds.every(id=>q.evidence.includes(id))))continue;
@@ -85,6 +88,21 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
   for(const intent of native.intents)if(['user-question','relay-question'].includes(intent.spec.kind))try{if((intent.spec.kind==='relay-question'||intent.spec.relay)&&(!intent.spec.origin||!native.threads.some(t=>t.messageId===intent.spec.origin.messageId)))continue;const question=store.ingestQuestion(workId,intent);recordReport(question,reportFor(question,native));}catch{}
   for(const intent of native.intents)if(intent.spec.kind==='collaboration-directive')try{store.ingestCollaboration(workId,intent);}catch{}
   for(const message of native.messages||[])try{store.ingestTeamMessage(workId,message);}catch{}
+  for(const intent of native.intents.filter(i=>['session-answer','session-resolution'].includes(i.spec.kind))){
+   const s=intent.spec;
+   if(store.readQuestionEvent(workId,'result-'+sessionDecisionKey(intent))?.data.status==='rejected')continue;
+   try{
+    if(s.kind==='session-resolution')store.resolveSessionQuestion(workId,intent);
+    else {
+     const q=store.listQuestions(workId).find(q=>q.id===s.questionId);
+     if(!q)throw Error('The saved question is unavailable.');
+     if((questionOriginKind(q.origin)==='report'||q.sourceReport)&&!reportFor(q,native))throw Error('Original completion report evidence is unverified.');
+     const answer=store.recordSessionAnswer(workId,intent),thread=q.origin&&native.threads.find(t=>t.messageId===q.origin.messageId);
+     if((!q.origin||q.sourceReport||thread?.answer?.body===answer.body)&&await relayResolved(q))store.updateQuestion(workId,q.id,saved=>{const a=saved.answers.find(a=>a.id===answer.id);a.processed='confirmed';if(thread?.answer)a.nativeAnswer=thread.answer;if(saved.answers.at(-1).id===a.id)saved.status='answered';});
+    }
+    await notice('result-'+sessionDecisionKey(intent),'TEAM_SESSION_DECISION_RESULT',{decisionId:s.appQuestionId,kind:s.kind,status:'recorded',questionId:s.questionId,detail:s.kind==='session-answer'?'Answer recorded in this conversation. Any native worker question still requires its owning manager reply; no panel confirmation is needed.':'Superseded question resolved.'});
+   }catch(error){await notice('result-'+sessionDecisionKey(intent),'TEAM_SESSION_DECISION_RESULT',{decisionId:s.appQuestionId,kind:s.kind,status:'rejected',detail:error.message,proof:intent});}
+  }
   for(const intent of native.intents)if(intent.spec.kind==='answer-ack'){
    const s=intent.spec,q=store.listQuestions(workId).find(q=>q.id===s.appQuestionId),a=q?.answers.find(a=>a.id===s.answerId);
    if(!a||!['accepted','unknown','sending'].includes(a.state)||!await relayResolved(q))continue;
@@ -98,6 +116,7 @@ export function createQuestionService({store,rpc,userData,consent,works,notify})
    const relayReady=await relayResolved(q);
    if(thread)store.updateQuestion(workId,q.id,saved=>{saved.nativeQuestion={...thread,requesterResumed:'unconfirmed'};if(thread.status==='closed'){saved.status='closed';for(const a of saved.answers)if(a.state==='queued')Object.assign(a,{state:'blocked',detail:'The original Dispatch question closed. A new decision is required.'});}if(thread.answer&&relayReady){if(saved.to==='manager')saved.status='answered';for(const a of saved.answers)if(['accepted','unknown','sending'].includes(a.state)&&a.body===thread.answer.body){a.nativeAnswer=thread.answer;a.processed='confirmed';if(saved.answers.at(-1).id===a.id)saved.status='answered';}}});
    for(const a of q.answers){if(a.state==='sending')updateAnswer(workId,q.id,a.id,{state:'unknown',detail:'Worker restarted during answer submission; no automatic resend.'});else if(a.state==='queued')await deliver(workId,q.id,a.id);}
+   if(q.to==='user'&&(q.status==='pending'||(q.epoch??0)<(work.epoch??0)&&!q.resolution))await notice(`session-question-${q.id}-${work.epoch??0}`,'TEAM_SESSION_QUESTION',{questionId:q.id,questionRevision:q.revision,summary:q.summary,options:q.options,blockingTaskKeys:q.blockingTaskKeys,origin:q.origin,relay:q.relay,sourceReport:q.sourceReport,previousAnswers:q.answers.map(a=>({id:a.id,body:a.body,state:a.state,processed:a.processed})),...((q.epoch??0)<(work.epoch??0)?{superseded:true,recoveryRequestId:work.recoveryRequestId}:{}),instruction:'Discuss this with the user here, in the highest supervisor conversation. Record their explicit answer using session-answer, or session-resolution for a superseded question. Do not ask for a second confirmation in the panel.'});
    if(q.to==='user'&&q.notification.state==='queued'){
     if(!store.claimQuestionNotification(workId,q.id))continue;
     let state='unavailable';try{if(notify)state=(await notify({title:'Team decision needs your attention',body:q.summary.slice(0,1000)}))?.delivered===true?'delivered':'unconfirmed';}catch{}

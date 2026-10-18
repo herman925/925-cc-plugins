@@ -140,8 +140,9 @@ export function runtimeReconnectStore({
       records = all();
     for (const { key, value: r } of records) {
       const sameWork = r.workId === work.id || r.teamWorkId === work.id;
+      const deliveredSessionGuide = key.startsWith('question-event:') && r.kind === 'TEAM_SESSION_DECISIONS' && r.state === 'accepted' && r.data?.workId === work.id;
       if (
-        sameWork &&
+        sameWork && !deliveredSessionGuide &&
         /^(dispatch:|dispatch-queue:|question:|question-answer:|question-event:|collaboration:|staffing-proposal:|roster-delta:|configuration-amendment:|delivery:|native-run-binding:|intent-withdrawal:)/.test(
           key,
         )

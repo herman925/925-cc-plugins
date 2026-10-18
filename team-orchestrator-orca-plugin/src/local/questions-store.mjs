@@ -1,11 +1,13 @@
 import {isUnsentBlockedAnswer} from './acceptance.mjs';
 import {createHash} from 'node:crypto';
+import {validateSessionDecision} from './session-decisions.mjs';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const text=(v,n=8000)=>typeof v==='string'&&v.trim().length>0&&v.length<=n;
 export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches,effectiveTeamForWork,atomic}) {
  const list=workId=>db.prepare("SELECT json FROM receipts WHERE id LIKE 'question:%'").all().map(r=>{const q=JSON.parse(r.json);if(q.format!=='team-question-v1'||!['id','workId','teamId','fromMemberId','runId','summary'].every(k=>text(q[k]))||!Number.isSafeInteger(q.revision)||q.revision<1||!Number.isSafeInteger(q.generation)||q.generation<1||!['options','blockingTaskKeys','evidence','answers'].every(k=>Array.isArray(q[k]))||q.options.some(v=>!text(v,2000))||q.blockingTaskKeys.some(v=>!text(v,120))||q.evidence.some(v=>!text(v,2000))||!['queued','attempted','delivered','unconfirmed','unavailable'].includes(q.notification?.state)||q.answers.some(a=>!text(a.id,120)||!text(a.body)||!['queued','sending','accepted','unknown','blocked'].includes(a.state)||!['unconfirmed','confirmed'].includes(a.processed)||a.revision!==q.revision||a.from!=='user'||a.toMemberId!==q.fromMemberId||a.supplement!==undefined&&typeof a.supplement!=='boolean'||a.supersedesBlockedAnswers!==undefined&&(!Array.isArray(a.supersedesBlockedAnswers)||a.supplement!==true||a.supersedesBlockedAnswers.some(id=>!text(id,120))||new Set(a.supersedesBlockedAnswers).size!==a.supersedesBlockedAnswers.length))||new Set(q.answers.map(a=>a.id)).size!==q.answers.length||!['pending','answered','closed'].includes(q.status))throw Error('Saved pending question is damaged; preserve original data.');return q;}).filter(q=>q.workId===workId);
  const api={
   listQuestions:list,
+  readQuestionEvent:(workId,id)=>readPrivate(`question-event:${workId}:${id}`),
   claimQuestionAnswer(workId,id,answerId,nativeSend,supersedesBlockedAnswers=[]){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key),a=q?.answers.find(a=>a.id===answerId);if(!a||a.state!=='queued')return false;if(supersedesBlockedAnswers.length){const expected=q.answers.slice(0,q.answers.indexOf(a)).filter(isUnsentBlockedAnswer).map(row=>row.id);if(!q.sourceReport||a.supplement!==true||JSON.stringify(expected)!==JSON.stringify(supersedesBlockedAnswers))throw Error('Explicit report supplement supersession changed.');a.supersedesBlockedAnswers=supersedesBlockedAnswers;}Object.assign(a,{state:'sending',nativeSend});putPrivate(key,q);return true;});},
   claimQuestionNotification(workId,id){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key);if(q?.notification.state!=='queued')return false;q.notification={state:'attempted'};putPrivate(key,q);return true;});},
   claimQuestionEvent(workId,id,state,nativeSend){return atomic(()=>{const key=`question-event:${workId}:${id}`,e=readPrivate(key);if(e?.state!=='queued')return false;Object.assign(e,{state,...(nativeSend?{nativeSend}:{})});putPrivate(key,e);return true;});},
@@ -28,7 +30,7 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
   ensureQuestionEvent(workId,id,kind,data){return atomic(()=>{const key=`question-event:${workId}:${id}`,prior=readPrivate(key);if(prior)return prior;const event={id,workId,kind,data,state:'queued'};putPrivate(key,event);return event;});},
   updateQuestionEvent(workId,id,patch){return atomic(()=>{const key=`question-event:${workId}:${id}`,event=readPrivate(key);if(!event)throw Error('Question event missing.');Object.assign(event,patch);putPrivate(key,event);return event;});},
 
-  questionProjection:workId=>({messages:api.listTeamMessages(workId).map(({payloadHash,controlProof,...row})=>row),collaborations:api.listCollaborations(workId).map(({fingerprint,payloadHash,...row})=>row),questions:list(workId).map(({fingerprint,proof,...q})=>({...q,supersedableBlockedAnswers:q.sourceReport?q.answers.filter(isUnsentBlockedAnswer).map(a=>a.id):[],origin:q.sourceReport?null:q.origin?Object.fromEntries(Object.entries(q.origin).filter(([k])=>k!=='askParams')):null,answers:q.answers.map(({nativeSend,fingerprint,...a})=>a)})),failureStreaks:api.failureStreaks(workId)}),
+  questionProjection:workId=>({messages:api.listTeamMessages(workId).map(({payloadHash,controlProof,...row})=>row),collaborations:api.listCollaborations(workId).map(({fingerprint,payloadHash,...row})=>row),questions:list(workId).map(({fingerprint,proof,...q})=>({...q,supersedableBlockedAnswers:q.sourceReport?q.answers.filter(isUnsentBlockedAnswer).map(a=>a.id):[],origin:q.sourceReport?null:q.origin?Object.fromEntries(Object.entries(q.origin).filter(([k])=>k!=='askParams')):null,resolution:q.resolution?(({sessionDecision,...r})=>r)(q.resolution):undefined,answers:q.answers.map(({nativeSend,fingerprint,sessionDecision,...a})=>a)})),failureStreaks:api.failureStreaks(workId)}),
   ingestQuestion(workId,intent){return atomic(()=>{
    const work=readWork(workId),s=intent.spec,key=`question:${workId}:${s.appQuestionId}`,fingerprint=hash(intent),prior=readPrivate(key);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('Question ID conflicts with existing immutable question.');return prior;}
@@ -48,6 +50,26 @@ export function questionStore({db,readPrivate,putPrivate,readWork,listDispatches
    if(q.revision!==input.questionRevision||q.status==='closed')throw Error('Question changed or closed; reopen its saved evidence.');
    if(q.answers.length&&!input.supplement)throw Error('An answer already exists; submit an explicit supplement.');
    const a={id:input.answerId,body:input.body,supplement:input.supplement,revision:q.revision,from:'user',toMemberId:q.fromMemberId,state:'queued',processed:'unconfirmed',fingerprint,createdAt:new Date().toISOString()};q.answers.push(a);q.status='pending';putPrivate(`question:${q.workId}:${q.id}`,q);putPrivate(`question-answer:${a.id}`,{workId:q.workId,questionId:q.id,fingerprint});return a;
+  });},
+  recordSessionAnswer(workId,intent){return atomic(()=>{
+   const s=intent.spec,work=readWork(workId);
+   validateSessionDecision(work,readPrivate(`dispatch-protocol:${workId}`),s);
+   const q=readPrivate(`question:${workId}:${s.questionId}`);
+   if(s.kind!=='session-answer'||!q||q.to!=='user'||q.runId!==work.run.id||q.generation!==work.run.consumerGeneration||(q.epoch??0)!==(work.epoch??0)||q.revision!==s.questionRevision||q.status==='closed'||!text(s.body)||typeof s.supplement!=='boolean'||s.nextNativeTaskId!==undefined&&!text(s.nextNativeTaskId,120))throw Error('Choose the exact current question and record the user answer.');
+   const input={workId,questionId:q.id,questionRevision:q.revision,answerId:s.appQuestionId,body:s.body,supplement:s.supplement},fingerprint=hash({input,intent}),global=readPrivate(`question-answer:${input.answerId}`);
+   if(global&&global.fingerprint!==fingerprint)throw Error('Session answer identity conflicts.');
+   const prior=q.answers.find(a=>a.id===input.answerId);if(prior)return prior;
+   if(q.answers.length&&!s.supplement)throw Error('An answer already exists; record an explicit user supplement.');
+   const supersedesBlockedAnswers=q.sourceReport&&s.supplement?q.answers.filter(isUnsentBlockedAnswer).map(a=>a.id):[];
+   const a={id:input.answerId,body:s.body,supplement:s.supplement,revision:q.revision,from:'user',toMemberId:q.fromMemberId,state:'accepted',processed:'unconfirmed',source:'supervisor-session',recordedBy:work.supervisorMemberId,sessionDecision:intent,fingerprint,createdAt:new Date().toISOString(),...(supersedesBlockedAnswers.length?{supersedesBlockedAnswers}:{}),...(s.nextNativeTaskId?{nextNativeTaskId:s.nextNativeTaskId}:{})};
+   q.answers.push(a);q.status='pending';putPrivate(`question:${workId}:${q.id}`,q);putPrivate(`question-answer:${a.id}`,{workId,questionId:q.id,fingerprint});return a;
+  });},
+  resolveSessionQuestion(workId,intent){return atomic(()=>{
+   const s=intent.spec,work=readWork(workId);validateSessionDecision(work,readPrivate(`dispatch-protocol:${workId}`),s);
+   const q=readPrivate(`question:${workId}:${s.questionId}`),wake=readPrivate(`wake:${s.recoveryRequestId}`);
+   if(s.kind!=='session-resolution'||!q||q.to!=='user'||(q.epoch??0)>=(work.epoch??0)||wake?.state!=='bound'||wake.newInstance?.workId!==workId||work.recoveryRequestId!==wake.requestId||!text(s.note,4000))throw Error('Only a reviewed superseded question can be resolved after verified recovery.');
+   if(q.resolution){if(hash(q.resolution.sessionDecision)!==hash(intent))throw Error('Question resolution is immutable.');return q.resolution;}
+   q.status='closed';q.resolution={kind:'superseded-by-recovery',by:'user',source:'supervisor-session',recordedBy:work.supervisorMemberId,recoveryRequestId:wake.requestId,note:s.note,sessionDecision:intent,recordedAt:new Date().toISOString()};putPrivate(`question:${workId}:${q.id}`,q);return q.resolution;
   });},
   updateQuestion(workId,id,change){return atomic(()=>{if(readWork(workId)?.status==='completed')throw Error('Completed TeamWork is sealed.');const key=`question:${workId}:${id}`,q=readPrivate(key);if(!q)throw Error('Question missing.');change(q);putPrivate(key,q);return q;});},
   failureStreaks(workId){

@@ -13,6 +13,7 @@ function savedControl(entry,spec,task,receipt){
  const intent={spec,nativeTaskId:task.id,requestId:receipt.request_id,payloadHash:receipt.payload_hash};
  if(proof.spec&&!same(proof.spec,spec)||['question','staffing-proposal','collaboration-directive'].includes(entry.kind)&&r.fingerprint&&r.fingerprint!==digest(entry.kind==='staffing-proposal'?canonical(intent):intent))return false;
  switch(entry.kind){
+  case 'session-answer':case 'session-resolution':case 'staffing-decision':return spec.kind===entry.kind&&same(proof.spec,spec);
   case 'question':return spec.kind===(r.to==='manager'?'relay-question':'user-question')&&spec.appQuestionId===r.id&&spec.generation===r.generation&&r.runId===task.run_id;
   case 'delivery':return spec.protocol==='team-delivery/v1'&&spec.generation===r.generation&&spec.token===r.protocolToken&&spec.supervisorMemberId===r.supervisorMemberId&&same(spec.previousDeliveryId??null,r.previousDeliveryId??null)&&same(spec.summary,r.summary)&&same(spec.attemptIds,r.attemptIds)&&same(spec.evidenceRefs,r.evidenceRefs);
   case 'staffing-proposal':return spec.kind===entry.kind&&spec.appQuestionId===r.id&&spec.proposingManagerId===r.proposingManagerId&&r.runId===task.run_id&&spec.generation===r.generation;
