@@ -594,3 +594,5 @@ footer {
 
 .member-name { font-weight:600; }
 .team-heading-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+
+.staffing-counts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }

@@ -273,9 +273,9 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         const previous = store.replay('createTeam', params);
         if (previous) return { value: previous };
         const selected = selections.get(params.selectionToken);
-        if (!selected) throw new Error('Confirm the project and execution host again before saving.');
+        if (!selected) throw new Error('The detected project expired. Try launching again to read the current project.');
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
-        if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The selected execution host changed. Confirm the project again.');
+        if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The execution host changed. Try launching again to read the current project.');
         for (let level = 0; level < 3; level++) {
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? 'codex', model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);

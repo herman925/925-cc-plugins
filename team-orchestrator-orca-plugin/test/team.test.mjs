@@ -37,3 +37,16 @@ test('persisted data validates before use; malformed state is not overwritten', 
   assert.throws(() => validateState({ version: 2, teams: [] }), /unsupported/);
   assert.throws(() => validateState({ version: 1, teams: [{ ...plan, members: [{ ...plan.members[0], boss: 'missing' }] }] }), /reporting/);
 });
+
+test('lead count and workers per lead are independent, and legacy fan remains readable', () => {
+ const plan = planTeam(form({levels:3,leadCount:2,workersPerLead:4}));
+ assert.equal(plan.members.length,11);
+ assert.equal(plan.members.filter(m=>m.role==='head').length,1);
+ const leads=plan.members.filter(m=>m.role==='lead');assert.equal(leads.length,2);
+ for(const lead of leads)assert.equal(plan.members.filter(m=>m.boss===lead.id).length,4);
+ assert.deepEqual(validateState({version:1,teams:[plan]}).teams[0],plan);
+ const two=planTeam(form({levels:2,leadCount:5,workersPerLead:2}));
+ assert.deepEqual(two.members.map(m=>m.role),['head','worker','worker']);
+ assert.equal(planTeam(form({levels:3,fan:3})).members.length,13);
+ for(const key of ['leadCount','workersPerLead'])for(const value of [0,6,1.5,'2',null])assert.throws(()=>planTeam(form({[key]:value})),/1–5/);
+});

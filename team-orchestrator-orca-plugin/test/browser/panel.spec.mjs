@@ -78,14 +78,14 @@ test('failed supervisor navigation reports the error without launching or recove
 test('Add team opens a simple form and automatically loads separate CLI catalogs',async({page})=>{
  await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();
  await expect(ui.getByRole('heading',{name:'New team',exact:true})).toBeVisible();
- await expect(ui.getByRole('group',{name:'Hierarchy levels'}).getByRole('button')).toHaveCount(2);
+ await expect(ui.getByRole('group',{name:'Structure'}).getByRole('button')).toHaveCount(2);
  for(const text of ['Quick start','Head only','Preparation mode'])await expect(ui.getByText(text,{exact:false})).toHaveCount(0);
  await expect(ui.getByLabel('Head model',{exact:true}).locator('option[value="my-model"]')).toHaveCount(1);await expect(ui.locator('input[data-model]')).toHaveCount(0);
  await ui.getByLabel('Head model',{exact:true}).selectOption('my-model');await ui.getByLabel('Head effort',{exact:true}).selectOption('ultra');
  await ui.getByLabel('Head CLI',{exact:true}).selectOption('claude');await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('default');await expect(ui.getByLabel('Head effort',{exact:true})).toHaveValue('default');
  await expect(ui.getByLabel('Head model',{exact:true}).locator('option[value="my-model"]')).toHaveCount(0);await ui.getByLabel('Head model',{exact:true}).selectOption('claude-model');await expect(ui.getByLabel('Head effort',{exact:true}).locator('option')).toHaveText(['Default','low','max']);
- await ui.getByRole('button',{name:'3 · Head + leads + workers',exact:true}).click();await expect(ui.getByLabel('Leads CLI',{exact:true})).toBeVisible();
- await ui.getByRole('button',{name:'CEO over several teams',exact:true}).click();await expect(ui.getByRole('textbox',{name:/^Teams/})).toBeVisible();await expect(ui.getByLabel('CEO CLI',{exact:true})).toBeVisible();
+ await ui.getByRole('button',{name:'Head → Leads → Workers',exact:true}).click();await expect(ui.getByLabel('Leads CLI',{exact:true})).toBeVisible();
+ await expect(ui.getByRole('button',{name:'CEO over several teams',exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='launchSupervisor'))).toBe(false);
 });
 
@@ -103,4 +103,40 @@ test('model discovery retries automatically when the host catalog is still loadi
 test('remote model catalog does not offer unverified local model names',async({page})=>{
  await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Refresh models'})).toBeEnabled();
  await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveCount(1);await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('default');await expect(ui.getByLabel('Head effort',{exact:true})).toBeDisabled();await expect(ui.getByText('model list unavailable for this remote host',{exact:false})).toBeVisible();
+});
+
+test('Structure has two choices with independently adjustable staffing and one fixed head',async({page})=>{
+ await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+ await expect(ui.getByRole('group',{name:'Structure'}).getByRole('button')).toHaveText(['Head → Workers','Head → Leads → Workers']);
+ await expect(ui.getByLabel('Head',{exact:true})).toHaveValue('1');await expect(ui.getByLabel('Head',{exact:true})).toBeDisabled();await ui.getByLabel('Workers',{exact:true}).selectOption('4');await expect(ui.locator('#preview .count')).toContainText('5 members');
+ await ui.getByRole('button',{name:'Head → Leads → Workers',exact:true}).click();await expect(ui.getByLabel('Leads',{exact:true})).toHaveValue('1');await ui.getByLabel('Leads',{exact:true}).selectOption('2');await expect(ui.getByLabel('Workers per lead',{exact:true})).toHaveValue('4');await expect(ui.locator('#preview .count')).toContainText('11 members');
+ await ui.getByLabel('Workers per lead',{exact:true}).selectOption('3');await expect(ui.getByLabel('Leads',{exact:true})).toHaveValue('2');await expect(ui.locator('#preview .count')).toContainText('9 members');
+ await ui.getByRole('button',{name:'Head → Workers',exact:true}).click();await expect(ui.locator('#preview .count')).toContainText('4 members');await expect(ui.getByLabel('Head',{exact:true})).toHaveValue('1');
+ for(const name of ['Project and execution host','Confirm project and host','Refresh workspace','Reports each','Levels'])await expect(ui.getByText(name,{exact:true})).toHaveCount(0);
+});
+
+test('launch captures the current project after a switch without manual confirmation',async({page})=>{
+ await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();await ui.getByLabel('Workers',{exact:true}).selectOption('1');
+ let captured;await page.route('**/rpc',async route=>{
+  const data=route.request().postDataJSON();
+  if(data.message.args?.op==='context'){
+   const response=await route.fetch({postData:JSON.stringify({...data,mode:'folder'})});const body=await response.json();captured=body.value;await route.fulfill({response,json:body});
+  }else await route.continue();
+ });
+ await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(2,{timeout:45000});
+ const team=(await snapshot(page)).teams[0];expect(team.scope).toMatchObject({kind:'folder',displayName:'Demo folder',workspaceKey:captured.workspaceKey});expect(Object.keys(team.launch.members)).toHaveLength(2);
+ const creation=await page.evaluate(()=>bridgeCalls.find(c=>c.params?.teamWorker?.args?.op==='createTeam').params.teamWorker.args.params);expect(creation.selectionToken).not.toBeUndefined();expect(creation.form.workersPerLead).toBe(1);
+});
+
+test('New team follows the active project without losing typed setup',async({page})=>{
+ await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();await ui.getByLabel('Team name',{exact:true}).fill('Keep-my-draft');
+ await page.route('**/rpc',async route=>{const data=route.request().postDataJSON();if(data.message.args?.op==='context'){const response=await route.fetch({postData:JSON.stringify({...data,mode:'folder'})});await route.fulfill({response});}else await route.continue();});
+ await expect(ui.locator('[aria-label="Current project"]')).toContainText('Demo folder',{timeout:12000});await expect(ui.getByLabel('Team name',{exact:true})).toHaveValue('Keep-my-draft');
+});
+
+test('a missing current project prevents saving or launching against the previously detected one',async({page})=>{
+ await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+ await page.route('**/rpc',route=>route.request().postDataJSON().message.args?.op==='context'?route.fulfill({json:{ok:true,value:null}}):route.continue());
+ await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();await expect(ui.locator('[aria-label="Current project"]')).toContainText('No project selected');
+ expect(await page.evaluate(()=>bridgeCalls.some(c=>['createTeam','launchSupervisor'].includes(c.params?.teamWorker?.args?.op)))).toBe(false);
 });

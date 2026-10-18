@@ -423,7 +423,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
       },
       createTeam(input, scope) {
         return mutate('createTeam', input, next => {
-          if (!scope?.workspaceId || !scope.executionHostId || !['git', 'folder'].includes(scope.kind)) fail('Confirm a verified project and execution host before saving.');
+          if (!scope?.workspaceId || !scope.executionHostId || !['git', 'folder'].includes(scope.kind)) fail('A verified current project and execution host are required before saving.');
           const team = planTeam(input.form);
           const ids = new Map(team.members.map(member => [member.id, randomUUID()]));
           team.id = randomUUID(); team.createdAt = new Date().toISOString(); team.configVersion = 1; team.scope = publicScope(scope);

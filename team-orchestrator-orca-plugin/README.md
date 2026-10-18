@@ -4,7 +4,11 @@ An Orca plugin panel inspired by [925-cc-plugins / team-orchestrator](https://gi
 
 It is separate from that Claude Code mod (0.5.37), which runs inside each Claude Code session. The current source keeps new teams in its own SQLite database under the verified Orca profile. It neither imports nor overwrites the mod's `.claude/team-orchestrator/` files or the prototype's `team-definitions-v1` KV data. The source includes native roster preparation, admitted task dispatch, declared scope coordination and evidence reconciliation; the Claude mod remains a separate product.
 
-Release **0.1.15** (strict SemVer `0.1.15`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+Release **0.1.16** (strict SemVer `0.1.16`). The plugin now includes its local Node worker and runtime adapter. You do not install a helper application, rebuild Orca or apply a source patch. Automatic injection is conditional on the installed Orca build passing the compatibility checks below.
+
+Release 0.1.16 merges Structure and Levels into **Structure**: Head → Workers or Head → Leads → Workers. The head count is always one. **Leads** and **Workers per lead** are independent counts in the three-level layout; the two-level layout shows **Head: 1** and **Workers**. Creation no longer offers a separate CEO/department-name flow. Saved legacy organizations and fan-based configurations remain readable. New configuration fields `leadCount` and `workersPerLead` fall back to legacy `fan` when absent.
+
+The current project and its execution host are detected automatically from Orca. New team follows selection changes without losing the draft, and Launch reads the current selection again before saving. A fresh opaque native selection token binds the whole launch to that detected project/host. Later focus changes cannot retarget already-saved launches. Missing context blocks creation; there is no manual project/host confirmation or editable host selector. A small project caption is informational only.
 
 Release 0.1.15 adds **Add team** to Roster, linking to New team. The creation form removes Quick start, Head only and Preparation mode. One-team layouts offer two or three levels; new teams always prepare all saved members, boss first, with native admission pacing. Existing saved on-demand teams retain their original configuration. Model and effort are host-derived selectors, fetched on entering New team, with bounded background retries while the local catalog is listing. Switching CLI resets its model/effort to Default; model changes reset effort. No free-text model IDs are accepted by the form.
 
@@ -44,10 +48,10 @@ Terminal members receive a `team/member` title, for example `proposal/Worker-1`,
 
 1. Use this folder on the **PC running Orca**, as your existing development plugin path. A checkout on the server alone is not automatically a local PC path.
 2. Refresh **Settings → Plugins** and review/enable Team Orchestrator. Adding `main.mjs` changes Orca's consent to include **trusted Node worker code**. This worker has native process access, beyond the panel's declared host API capabilities.
-3. Open the Team Orchestrator panel and check **v0.1.15**.
+3. Open the Team Orchestrator panel and check **v0.1.16**.
 4. Orca starts workers lazily. An agent-status change or workspace-created event starts this worker and automatically injects the adapter. If the panel is opened on an idle desktop before either event, run the contributed Orca command **Team Orchestrator: Initialise local adapter** once. No external installer is involved. Bootstrap logs appear in this plugin's Orca logs.
 5. The panel opens the roster only after the worker connection and saved team data are verified. If either fails, it shows one **Plugin unavailable** warning with **Retry** and optional **Details**, hiding navigation, cached teams and the empty-team screen. Normal connection diagnostics and **Test connection** live under **Settings → Connection**; OS, Orca version and worker PID are collapsed under **Technical details**.
-6. In **New team**, choose the structure and preferences, confirm the project and host, then click **Launch team**. The roster appears after startup. Open the highest supervisor's session to give it work. Use **Open supervisor** on the team card to return to that conversation. Member names and the organisation chart are read-only; there is no member detail form.
+6. In **New team**, choose the structure, member counts and model preferences, then click **Launch team**. Orca supplies the current project and execution host automatically. The roster appears after startup. Open the highest supervisor's session to give it work. Use **Open supervisor** on the team card to return to that conversation. Member names and the organisation chart are read-only; there is no member detail form.
 
 The `main.mjs`, `runtime-adapter.cjs` and self-contained `panel.html` artifacts ship in this folder. Installation needs no npm packages or web server. The former manual patches and alternate manifest have been removed from this release; they remain in Git history.
 
@@ -57,9 +61,9 @@ If you see “plugin is not enabled with current consent”, first let any refre
 
 - Roster, New team and Settings views; read-only organisation tree and highest-supervisor session navigation.
 - Custom team hierarchies configured directly through Structure.
-- Head → Workers; Head → Leads → Workers; CEO → named Heads → Workers. Legacy one-member definitions remain readable.
-- One to five reports per manager, Codex or Claude Code, model and effort by level.
-- Persistent UUID team/member identities, confirmed project/host bindings, and immutable configuration/role versions in `<verified profile>/plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite`. The native worker is the single writer; `node:sqlite` is required.
+- Head → Workers or Head → Leads → Workers. Legacy CEO organizations and one-member definitions remain readable.
+- Independently choose one to five leads and one to five workers per lead, with Codex or Claude Code, model and effort by level.
+- Persistent UUID team/member identities, native-verified project/host bindings, and immutable configuration/role versions in `<verified profile>/plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite`. The native worker is the single writer; `node:sqlite` is required.
 - Version-checked semantic saves reject stale panels instead of overwriting another window. Same-name teams have independent identities.
 - Read/schema/corruption errors block writes and preserve data. Legacy KV and mod data stay isolated; no automatic import occurs.
 - Durable launch Operations and member reservations: intent before native effect, actual identity before naming, completed receipts reread without another launch.

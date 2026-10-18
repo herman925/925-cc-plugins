@@ -12,6 +12,7 @@ function nameValid(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-
 export function planTeam(form) {
   if(form.sessionMode!==undefined&&typeof form.sessionMode!=='boolean')throw Error('Invalid team conversation mode.');
   if (form.launchMode !== undefined && !['on-demand','all'].includes(form.launchMode)) throw Error('Choose a supported launch mode.');
+  for (const key of ['leadCount', 'workersPerLead']) if (form[key] !== undefined && (!Number.isInteger(form[key]) || form[key] < 1 || form[key] > 5)) throw Error('Choose 1–5 leads and 1–5 workers per lead.');
   const name = cleanName(form.name);
   if (!nameValid(name)) throw new Error('Use a team name of 1–64 letters, numbers, underscores or dashes, starting with a letter or number.');
   if (!['team', 'organisation'].includes(form.structure)) throw new Error('Choose a team structure.');
@@ -40,14 +41,14 @@ export function planTeam(form) {
     const ceo = add('CEO', name, 'ceo', 1, null);
     for (const group of groups) {
       const head = add(`${group}-Head`, group, 'head', 2, ceo);
-      for (let i = 1; i <= form.fan; i++) add(`${group}-Worker-${i}`, group, 'worker', 3, head);
+      for (let i = 1; i <= (form.workersPerLead ?? form.fan); i++) add(`${group}-Worker-${i}`, group, 'worker', 3, head);
     }
   } else {
     let tier = [add('Head', name, 'head', 1, null)];
     for (let level = 2; level <= form.levels; level++) {
       const next = [];
       tier.forEach((boss, index) => {
-        for (let i = 1; i <= form.fan; i++) {
+        for (let i = 1; i <= (level === form.levels ? form.workersPerLead ?? form.fan : form.leadCount ?? form.fan); i++) {
           const role = level === form.levels ? 'worker' : 'lead';
           const suffix = form.levels === 2 ? `${i}` : `${index + 1}-${i}`;
           next.push(add(`${role === 'worker' ? 'Worker' : 'Lead'}-${suffix}`, name, role, level, boss));

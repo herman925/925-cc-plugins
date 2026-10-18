@@ -63,7 +63,7 @@ test('missing SQLite, corrupt files and unknown schema never reset or overwrite 
  await assert.rejects(openTeamStore({ userData: f.profile }), /Cannot open team storage/);
  assert.deepEqual(await readFile(path), bytes);
 });
-test('executor binds confirmed folder/SSH scope, ignores later focus, and never trusts a panel supplied scope', async t => {
+test('executor binds detected folder/SSH scope, ignores later focus, and never trusts a panel supplied scope', async t => {
  const { createExecutor } = await import('../src/local/executor.mjs');
  const f = await fixture(t); const selectors = [];
  const cli = async args => { selectors.push(args[3]); return { worktree: { id: args[3].startsWith('folder:') ? args[3] : args[3].slice(3), hostId: 'ssh:build', displayName: 'Remote folder', git: { path: '/srv/project' } } }; };
@@ -75,7 +75,7 @@ test('executor binds confirmed folder/SSH scope, ignores later focus, and never 
  assert.equal(state.teams[0].scope.executionHostId, 'ssh:build');
  assert.equal(f.store.readScope(state.teams[0].id).workspaceId, 'folder:/srv/project');
  assert.equal(selectors.at(-1), 'folder:/srv/project');
- await assert.rejects(executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: 'forged', expectedRevision: 1, requestId: 'bad' } }), /Confirm/);
+ await assert.rejects(executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: 'forged', expectedRevision: 1, requestId: 'bad' } }), /detected project expired/);
 });
 
 test('a symlinked plugin data directory cannot write outside the verified profile', async t => {
@@ -152,4 +152,15 @@ test('level preferences and individual overrides preserve mixed agents and provi
  state = f.store.updateAgentPreferences({ requestId: 'inherit', expectedRevision: 4, teamId: team.id, memberId: team.members[1].id, inherit: true });
  assert.equal(state.teams[0].members[1].model, 'host-sonnet');
  assert.equal(state.teams[0].members[1].preferenceOverride, false);
+});
+
+test('independent staffing counts and reporting links survive storage restart', async t => {
+ const f=await fixture(t);
+ const result=f.store.createTeam({requestId:'independent-counts',expectedRevision:0,form:{...structuredClone(DEFAULT_FORM),levels:3,leadCount:2,workersPerLead:4}},scope);
+ const team=result.teams[0],leads=team.members.filter(m=>m.role==='lead');
+ assert.equal(team.members.length,11);assert.equal(leads.length,2);
+ for(const lead of leads)assert.equal(team.members.filter(m=>m.boss===lead.id).length,4);
+ await f.restart();assert.deepEqual(f.store.readSnapshot(),result);
+ assert.equal(f.store.readTeamVersion(team.id,1).configuration.leadCount,2);
+ assert.equal(f.store.readTeamVersion(team.id,1).configuration.workersPerLead,4);
 });

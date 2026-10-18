@@ -301,6 +301,7 @@ function nameValid(value) {
 function planTeam(form) {
   if (form.sessionMode !== void 0 && typeof form.sessionMode !== "boolean") throw Error("Invalid team conversation mode.");
   if (form.launchMode !== void 0 && !["on-demand", "all"].includes(form.launchMode)) throw Error("Choose a supported launch mode.");
+  for (const key of ["leadCount", "workersPerLead"]) if (form[key] !== void 0 && (!Number.isInteger(form[key]) || form[key] < 1 || form[key] > 5)) throw Error("Choose 1\u20135 leads and 1\u20135 workers per lead.");
   const name = cleanName(form.name);
   if (!nameValid(name)) throw new Error("Use a team name of 1\u201364 letters, numbers, underscores or dashes, starting with a letter or number.");
   if (!["team", "organisation"].includes(form.structure)) throw new Error("Choose a team structure.");
@@ -329,14 +330,14 @@ function planTeam(form) {
     const ceo = add("CEO", name, "ceo", 1, null);
     for (const group of groups) {
       const head = add(`${group}-Head`, group, "head", 2, ceo);
-      for (let i = 1; i <= form.fan; i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
+      for (let i = 1; i <= (form.workersPerLead ?? form.fan); i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
     }
   } else {
     let tier = [add("Head", name, "head", 1, null)];
     for (let level = 2; level <= form.levels; level++) {
       const next = [];
       tier.forEach((boss, index) => {
-        for (let i = 1; i <= form.fan; i++) {
+        for (let i = 1; i <= (level === form.levels ? form.workersPerLead ?? form.fan : form.leadCount ?? form.fan); i++) {
           const role = level === form.levels ? "worker" : "lead";
           const suffix = form.levels === 2 ? `${i}` : `${index + 1}-${i}`;
           next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
@@ -591,7 +592,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.15" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.16" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -4382,9 +4383,9 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
         const previous = store.replay("createTeam", params);
         if (previous) return { value: previous };
         const selected = selections.get(params.selectionToken);
-        if (!selected) throw new Error("Confirm the project and execution host again before saving.");
+        if (!selected) throw new Error("The detected project expired. Try launching again to read the current project.");
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
-        if (verified.workspaceKey !== selected.workspaceKey) throw new Error("The selected execution host changed. Confirm the project again.");
+        if (verified.workspaceKey !== selected.workspaceKey) throw new Error("The execution host changed. Try launching again to read the current project.");
         for (let level = 0; level < 3; level++) {
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? "codex", model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);
@@ -5988,7 +5989,7 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
       },
       createTeam(input, scope) {
         return mutate("createTeam", input, (next) => {
-          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("Confirm a verified project and execution host before saving.");
+          if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("A verified current project and execution host are required before saving.");
           const team = planTeam(input.form);
           const ids = new Map(team.members.map((member) => [member.id, randomUUID11()]));
           team.id = randomUUID11();
@@ -6120,7 +6121,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.15", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.16", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;
