@@ -37,6 +37,7 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
    let result;
    if (method === 'status.get') result = { runtimeId: 'runtime', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
    else if (method === 'settings.get') result = { settings: {} };
+   else if (method === 'terminal.list') result = { terminals: [{ handle: 'existing-cli', incarnationId: 'existing-instance', worktreeId: 'folder:/saved', executionHostId: 'local', connected: true, agentIdentity: agent }] };
    else if (method === 'preflight.detectAgents') result = ['codex', 'claude'];
    else if (method === 'agentSession.agents') result = { agents: [] };
    else if (method === 'agentSession.createSupport') result = { supported: true };
@@ -44,7 +45,7 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
    else if (method === 'agent.launchReplay') { const saved = store.readSnapshot().teams[0].launch.members; const operation=Object.values(saved).map(row=>store.readOperation(row.requestId)).find(row=>row.nativeRequest.operationId===params.operationId); assert.equal(operation.nativeRequest.operationId, params.operationId, 'intent must be durable before native effect'); assert.equal(operation.status, 'unknown'); result = await effect(params); recordNative(params, result); }
    else if (method === 'terminal.rename') { assert.equal(store.readOperation(input.requestId).status, 'created', 'identity must be durable before naming'); result = { rename: { handle: params.terminal, tabId: 'native-tab', title: params.title } }; }
    else if (method === 'terminal.show') result = { terminal: { handle: 'native-handle', worktreeId: 'folder:/saved', executionHostId: 'local', tabId: 'native-tab', leafId: 'native-leaf', agentWait: null } };
-   else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: 'native-handle', isRunningAgent: true, status: 'permission' } };
+   else if (method === 'terminal.agentStatus') result = { agentStatus: { handle: params.terminal, isRunningAgent: true, status: 'permission' } };
    else if (method === 'terminal.focus') result = { focus: { handle: params.terminal } };
    else if (method === 'agentSession.reveal') result = { ok: true, sessionId: params.sessionId, workspaceId: 'folder:/saved', agent, readable: true };
    else if (method === 'orchestration.sessionAddress') result = { orcaSessionId: 'orca_session_id:fixture' };
@@ -139,11 +140,13 @@ test('concurrent clicks reserve one member and native capability loss before eff
  const f = await fixture(t);
  let statusCalls = 0; const runtime = f.handlers.get('runtime:call');
  f.handlers.set('runtime:call', async (event, args) => args.method === 'status.get' && ++statusCalls > 1 ? { ok: true, result: { runtimeId: 'changed-runtime', capabilities: [] } } : runtime(event, args));
- const lost = await f.send('launchSupervisor'); assert.equal(lost.value.status, 'unknown');
+ const lost = await f.send('launchSupervisor'); assert.equal(lost.ok, false);
  assert.equal(f.calls.some(row => row.method === 'agent.launchReplay'), false);
  f.handlers.set('runtime:call', runtime);
- const results = await Promise.all([f.send('recoverLaunch'), f.send('launchSupervisor')]);
- assert.ok(results.every(row => row.ok)); assert.equal(f.calls.filter(row => row.method === 'agent.launchReplay').length, 0);
+ // The runtime changed during discovery, before an intent was admitted.
+ assert.equal(f.store().readOperation(f.input.requestId),null);
+ const results = await Promise.all([f.send('recoverLaunch'), f.send('recoverLaunch')]);
+ assert.ok(results.every(row => !row.ok)); assert.equal(f.calls.filter(row => row.method === 'agent.launchReplay').length, 0);
 });
 test('structured navigation refuses changed native scope before reveal', async t => {
  const f = await fixture(t, { kind: 'structured' }); await f.send('launchSupervisor');
@@ -194,8 +197,16 @@ test('checking an absent saved launch never creates a new operation or session',
  assert.equal(f.store().readOperation(f.input.requestId), null);
  assert.equal(f.calls.some(row => row.method === 'agent.launchReplay'), false);
 });
-test('load, capability-confirm, save and launch plus reread fit the actual 30-call panel admission budget', async t => {
+for (const cold of [false, true]) test(`load, ${cold ? 'cold' : 'warm'} capability-confirm, save and launch plus reread fit the actual 30-call panel admission budget`, async t => {
  const f = await fixture(t); f.budget(30);
+ let installed = !cold; const runtime = f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call', async (event, request) => {
+  if (request.method === 'agentSession.restartResumable') { installed = true; return {ok:true,result:{sessions:[],failed:[]}}; }
+  if (request.method === 'agentSession.modelCatalog' && !installed) return {ok:false,error:{code:'runtime_error',message:'structured_agent_session_unsupported'}};
+  const response = await runtime(event,request);
+  if (request.method === 'status.get') response.result.capabilities.push('agent-session.structured.v1');
+  return response;
+ });
  // Initial ping/load/context and the save each cost one admission. The fixture invokes equivalent harmless reads.
  for (let i = 0; i < 3; i++) assert.equal((await f.send('load', {})).ok, true);
  assert.equal((await f.send('capabilities', { teamId: f.input.teamId })).ok, true);

@@ -10,7 +10,7 @@ import { createRecoveryService } from './recovery.mjs';
 import { createDispatchService } from './dispatch.mjs';
 import { createNativeRpc } from './native-runtime.mjs';
 import { createWorkService } from './teamwork.mjs';
-import { preferenceIssue } from '../capabilities.mjs';
+import { preferenceIssue, sessionIssue } from '../capabilities.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { launchInput, nativeLaunchIntent, launchReceipt, publicOperation } from './native-launch.mjs';
@@ -156,6 +156,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const scope = store.readScope(team.id), observed = capabilities.get(scope.workspaceKey);
           if (!params.observationId || latestObservation.get(scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 30000) throw Error('Fresh authenticated launch capability admission is required.');
           if (typeof observed.runtimeId !== 'string' || !observed.runtimeId.trim()) throw Error('Native runtime identity is unavailable; no member was reserved.');
+          if (team.configuration.sessionMode === true) { const issue = sessionIssue(observed); if (issue) throw Error(issue); }
           const issue = preferenceIssue(member, observed, { requireCore: true }); if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error('The bound workspace or execution host changed.');
           if (latestObservation.get(scope.workspaceKey) !== params.observationId) throw Error('Launch capability admission was superseded.');
@@ -276,6 +277,10 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
         if (!selected) throw new Error('The detected project expired. Try launching again to read the current project.');
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The execution host changed. Try launching again to read the current project.');
+        if (params.form.sessionMode === true) {
+          const issue = sessionIssue(capabilities.get(selected.workspaceKey));
+          if (issue) throw Error(issue);
+        }
         for (let level = 0; level < 3; level++) {
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? 'codex', model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);

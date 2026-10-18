@@ -11,6 +11,7 @@
 ## 使用、历史规格与验证
 
 - [插件 README](../README.md)：使用入口、运行原理及当前限制。
+- [#137 模型目录验证](validation/model-catalog-137.md)：0.1.18 的真实 CLI 目录、插件下拉框与剩余验证边界。
 - [2026-10-16 开发规格](../../docs/team-orchestrator-orca-spec.md)：历史契约；与 ADR-001 冲突的相关条款已由后者替代，其余工程边界仍保留。
 - [原始宿主分析](../../docs/team-orchestrator-orca-analysis.md)：按其记录日期和版本理解，不作为当前完成状态。
 - [macOS 本机 #125 验证](validation/macos-local-125.md)、[#120–124 验证](validation/ready-agent-120-124.md)、[终端命名验证](validation/member-terminal-names.md)。

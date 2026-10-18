@@ -1,0 +1,49 @@
+{
+  "schema": "team-setup-validation/v1",
+  "version": "0.1.19",
+  "observedAt": "2026-10-18T12:11:16.901098+00:00",
+  "host": "Orca 1.4.229 / macOS arm64",
+  "leadNameExample": {
+    "input": "UI, Dev, Review",
+    "leadCount": 3,
+    "previewNames": [
+      "UI",
+      "Dev",
+      "Review"
+    ],
+    "mismatchedCount": {
+      "disabled": true,
+      "message": "Enter 1 lead name to match Leads; found 3."
+    }
+  },
+  "stableModelObservation": {
+    "elapsedMs": 40603,
+    "launchEnabled": true,
+    "names": "UI, Dev, Review",
+    "previewNames": [
+      "UI",
+      "Dev",
+      "Review"
+    ],
+    "sameModelElement": true,
+    "sameNameInput": true,
+    "sameProject": true,
+    "selectedModel": "gpt-6-astra"
+  },
+  "draftRestored": true,
+  "actualTeamsCreated": 0,
+  "tests": {
+    "domain": 576,
+    "browser": 29,
+    "pinnedHostContracts": 3
+  },
+  "artifacts": {
+    "main.mjs": "144f89bc31e2123f69c07f033de468c330baecb8766a2c34d2b1954775590e2c",
+    "runtime-adapter.cjs": "c1d06006498ad20466a5b351a0351211da631a9a818829e1b453e677c607e895",
+    "panel.html": "e0297914c748c14ebc4062c731a573e58f1eedbb92890192233b7db53a7fc4ff"
+  },
+  "limits": [
+    "Actual roster persistence and launch of custom names were exercised in fixtures, not by launching a real team.",
+    "Existing Windows/SSH support limits remain unchanged."
+  ]
+}

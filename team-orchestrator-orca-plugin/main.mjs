@@ -298,6 +298,17 @@ function cleanName(value) {
 function nameValid(value) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
 }
+function parseLeadNames(form) {
+  if (form.leadNames === void 0 || form.leadNames === "") return [];
+  if (typeof form.leadNames !== "string" || form.leadNames.length > 350) throw new Error("Keep lead names within 350 characters.");
+  if (!form.leadNames.trim()) return [];
+  const names = form.leadNames.split(/[,，]/).map((value) => value.trim());
+  const expected = form.levels === 3 ? form.leadCount ?? form.fan : 1;
+  if (names.length !== expected) throw new Error(`Enter ${expected} lead name${expected === 1 ? "" : "s"} to match Leads; found ${names.length}.`);
+  if (names.some((value) => !value || value.length > 64 || /[\u0000-\u001f\u007f]/.test(value))) throw new Error("Use 1\u201364 characters per lead name, with a name between each comma.");
+  if (new Set(names.map((value) => value.toLowerCase())).size !== names.length) throw new Error("Lead names must be unique.");
+  return names;
+}
 function planTeam(form) {
   if (form.sessionMode !== void 0 && typeof form.sessionMode !== "boolean") throw Error("Invalid team conversation mode.");
   if (form.launchMode !== void 0 && !["on-demand", "all"].includes(form.launchMode)) throw Error("Choose a supported launch mode.");
@@ -313,8 +324,10 @@ function planTeam(form) {
   if (form.models.some((model, i) => model === "default" && form.efforts[i] !== "default")) throw new Error("Choose a model before overriding its effort.");
   const agents = form.agents ?? ["codex", "codex", "codex"];
   if (!Array.isArray(agents) || agents.length !== 3 || agents.some((agent) => !["codex", "claude"].includes(agent))) throw new Error("Choose Codex or Claude Code for each level.");
+  const leadNames = form.structure === "team" ? parseLeadNames(form) : [];
   const members = [];
   const add = (memberName, team, role, level, boss) => {
+    if (members.some((member2) => member2.name.toLowerCase() === memberName.toLowerCase())) throw new Error("Lead names must not duplicate Head or a worker name.");
     const id2 = `member-${members.length + 1}`;
     const purpose = form.purpose.trim() || "the team goal";
     const brief = role === "worker" ? `Execute tasks from ${boss.name} and report back.` : `Own ${purpose}; plan, delegate to direct reports, review results and report to ${boss?.name || "the user"}.`;
@@ -333,14 +346,14 @@ function planTeam(form) {
       for (let i = 1; i <= (form.workersPerLead ?? form.fan); i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
     }
   } else {
-    let tier = [add("Head", name, "head", 1, null)];
+    let tier = [add(form.levels < 3 && leadNames.length ? leadNames[0] : "Head", name, "head", 1, null)];
     for (let level = 2; level <= form.levels; level++) {
       const next = [];
       tier.forEach((boss, index) => {
         for (let i = 1; i <= (level === form.levels ? form.workersPerLead ?? form.fan : form.leadCount ?? form.fan); i++) {
           const role = level === form.levels ? "worker" : "lead";
           const suffix = form.levels === 2 ? `${i}` : `${index + 1}-${i}`;
-          next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
+          next.push(add(role === "lead" && leadNames.length ? leadNames[i - 1] : `${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
         }
       });
       tier = next;
@@ -592,7 +605,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.17" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.19" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -800,7 +813,7 @@ import { createConnection } from "node:net";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { realpath as realpath2, readFile as readFile2 } from "node:fs/promises";
 import { join as join2, relative as relative2, isAbsolute as isAbsolute2, sep as sep2 } from "node:path";
-var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.handoffStatus", "agentSession.options", "agentSession.currentRequests", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
+var METHODS = /* @__PURE__ */ new Set(["status.get", "settings.get", "preflight.detectAgents", "preflight.detectRemoteAgents", "agentSession.agents", "agentSession.createSupport", "agentSession.modelCatalog", "worktree.show", "ssh.getState", "terminal.list", "session.tabs.list", "terminal.show", "terminal.rename", "terminal.agentStatus", "terminal.wait", "terminal.send", "agentSession.history", "agentSession.handoffStatus", "agentSession.options", "agentSession.currentRequests", "agentSession.restartResumable", "agentSession.restartContinue", "terminal.ensureAgentSession", "agentSession.send", "orchestration.sessionAddress", "orchestration.partyLocation", "orchestration.runShow", "orchestration.taskList", "orchestration.workerList", "orchestration.dispatchShow", "orchestration.workerShow", "orchestration.workerRead", "orchestration.workerStop", "terminal.stopExact", "agentSession.close"]);
 function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBytes = 2 * 1024 * 1024 }) {
   const context = new AsyncLocalStorage();
   const rpc = async (method, params, envelope = {}) => {
@@ -2243,7 +2256,12 @@ async function readNativeDispatchEvidence(userData, { work, protocol, team, owne
 
 // src/capabilities.mjs
 var AGENTS = ["codex", "claude"];
-function preferenceIssue(preference, capabilities, { requireCore = false } = {}) {
+function sessionIssue(capabilities, { requireFresh = true } = {}) {
+  if (capabilities?.session?.status === "missing") return "Open a Codex or Claude Code session in this project before launching a team, then refresh models.";
+  if (capabilities?.session?.status !== "ready" || capabilities.connection !== "connected" || requireFresh && Date.now() - capabilities.observedAt > 3e4) return "Checking this project\u2019s open Codex or Claude Code session. Refresh models if this check remains unavailable.";
+  return "";
+}
+function preferenceIssue(preference, capabilities, { requireCore = false, requireFresh = true } = {}) {
   const { agent, model, effort } = preference;
   if (!AGENTS.includes(agent) || [model, effort].some((value) => typeof value !== "string" || !value.trim() || value.length > 120)) return "Choose a valid agent, model and effort.";
   if (model === "default" && effort !== "default") return "Choose a model before overriding effort.";
@@ -2251,7 +2269,7 @@ function preferenceIssue(preference, capabilities, { requireCore = false } = {})
   if (entry?.availability === "unavailable") return `${agent} was not detected on this execution host. Check its installation in Orca.`;
   if (requireCore && (!capabilities?.launchSupported || capabilities.connection !== "connected" || Date.now() - capabilities.observedAt > 3e5)) return "This execution host has not confirmed the required launch capabilities and connection. Refresh capabilities.";
   if (model === "default") return "";
-  if (!capabilities || Date.now() - capabilities.observedAt > 3e5) return "Model validation is unavailable or stale. Refresh host capabilities or choose Default.";
+  if (!capabilities || requireFresh && Date.now() - capabilities.observedAt > 3e5) return "Model validation is unavailable or stale. Refresh host capabilities or choose Default.";
   if (entry?.catalogStatus !== "known") return "This host has not verified model and effort overrides. Choose Default to inherit Orca configuration, or refresh after the host can list models.";
   const listed = entry.models.find((row) => row.id === model);
   if (!listed) return `Model \u201C${model}\u201D is not supported by the observed host catalog. Choose an available model or Default.`;
@@ -2270,15 +2288,33 @@ function models(value) {
     return [{ id: row.id, label: text6(row.label) || row.id, isDefault: row.isDefault === true, efforts: bounded(row.efforts).flatMap((effort) => text6(effort?.value) ? [{ value: effort.value, label: text6(effort.label) || effort.value }] : []) }];
   });
 }
+async function projectSession(read, scope, worktree) {
+  const inventory = await read("terminal.list", { worktree, limit: 100, requireFreshPtyLiveness: true });
+  const terminals = bounded(inventory?.terminals).filter((row) => row.worktreeId === scope.workspaceId && row.executionHostId === scope.executionHostId && row.connected === true && row.orphaned !== true && text6(row.handle, 256) && text6(row.incarnationId, 256) && AGENTS.includes(row.agentIdentity));
+  let unverifiable = terminals.length > 4;
+  for (const terminal of terminals.slice(0, 4)) {
+    const running = (await read("terminal.agentStatus", { terminal: terminal.handle }))?.agentStatus;
+    if (running?.handle === terminal.handle && running.isRunningAgent === true) return { status: "ready", kind: "terminal", agent: terminal.agentIdentity };
+    if (running?.handle !== terminal.handle || running.isRunningAgent !== false) unverifiable = true;
+  }
+  const snapshot = await read("session.tabs.list", { worktree });
+  if (snapshot?.worktree !== scope.workspaceId || !Array.isArray(snapshot.tabs)) return { status: "unknown" };
+  const chat = scope.executionHostId === "local" && bounded(snapshot.tabs).find((row) => row.type === "agent-session" && AGENTS.includes(row.agent) && text6(row.sessionId, 256));
+  if (chat) return { status: "ready", kind: "structured", agent: chat.agent };
+  return { status: unverifiable || snapshot.agentSessionsUnverifiable || !Array.isArray(inventory?.terminals) || inventory.truncated ? "unknown" : "missing" };
+}
 async function discoverCapabilities(rpc, scope) {
+  const errors = /* @__PURE__ */ new Map();
   const read = async (method, params) => {
     try {
       return await rpc(method, params);
     } catch (error) {
       if (error.authority) throw error;
+      errors.set(method, /^[a-z_]+$/.test(error.message) ? error.message : text6(error.code) || "host_unavailable");
       return null;
     }
   };
+  const worktree = scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}`;
   const status = await read("status.get");
   const settings = (await read("settings.get"))?.settings ?? {};
   let connection = "connected", targetId, before;
@@ -2293,31 +2329,49 @@ async function discoverCapabilities(rpc, scope) {
     before = (await read("ssh.getState", { targetId }))?.state;
     if (before?.status !== "connected") connection = "unavailable";
   }
-  const detected = connection === "connected" ? await read(targetId ? "preflight.detectRemoteAgents" : "preflight.detectAgents", targetId ? { connectionId: targetId } : void 0) : null;
-  const registered = status?.capabilities?.includes("agent-session.structured.registered-agents.v1") ? await read("agentSession.agents", {}) : null;
-  const result = { workspaceKey: scope.workspaceKey, executionHostId: scope.executionHostId, observedAt: Date.now(), runtimeId: text6(status?.runtimeId, 256), connection, defaultAgent: AGENTS.includes(settings.defaultTuiAgent) ? settings.defaultTuiAgent : null, launchSupported: status?.capabilities?.includes("agent.launch.v2") === true && status?.capabilities?.includes("agent.launch.replay-required.v1") === true, agents: {} };
+  const detected = targetId && connection === "connected" ? await read("preflight.detectRemoteAgents", { connectionId: targetId }) : null;
+  const session = connection === "connected" ? await projectSession(read, scope, worktree) : { status: "unknown" };
+  let initialized = false;
+  const result = { workspaceKey: scope.workspaceKey, executionHostId: scope.executionHostId, observedAt: Date.now(), runtimeId: text6(status?.runtimeId, 256), connection, session, defaultAgent: AGENTS.includes(settings.defaultTuiAgent) ? settings.defaultTuiAgent : null, launchSupported: status?.capabilities?.includes("agent.launch.v2") === true && status?.capabilities?.includes("agent.launch.replay-required.v1") === true, agents: {} };
   for (const agent of AGENTS) {
-    const support = connection === "connected" ? await read("agentSession.createSupport", { worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}`, agent }) : null;
-    const catalog = !targetId && connection === "connected" ? await read("agentSession.modelCatalog", { agent, worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}` }) : null;
-    const configured = {};
-    for (const field of ["model", "effort"]) if (text6(support?.seedOptions?.[field])) configured[field] = support.seedOptions[field];
+    errors.delete("agentSession.modelCatalog");
+    let catalog = !targetId && connection === "connected" && session.status === "ready" ? await read("agentSession.modelCatalog", { agent, worktree }) : null;
+    if (!catalog && errors.get("agentSession.modelCatalog") === "structured_agent_session_unsupported" && !initialized && status?.capabilities?.includes("agent-session.structured.v1")) {
+      initialized = true;
+      const host = await read("agentSession.restartResumable", {});
+      if (host) {
+        errors.delete("agentSession.modelCatalog");
+        catalog = await read("agentSession.modelCatalog", { agent, worktree });
+      }
+    }
     const customCommand = typeof settings.agentCmdOverrides?.[agent] === "string" && Boolean(settings.agentCmdOverrides[agent].trim());
     result.agents[agent] = {
-      availability: !Array.isArray(detected) ? "unknown" : detected.includes(agent) ? "detected" : customCommand ? "unknown" : "unavailable",
+      availability: !targetId ? catalog?.unavailable?.reason === "cliMissing" ? "unavailable" : ["probe", "live-session"].includes(catalog?.origin) ? "detected" : "unknown" : !Array.isArray(detected) ? "unknown" : detected.includes(agent) ? "detected" : customCommand ? "unknown" : "unavailable",
       tuiPickerDisabled: Array.isArray(settings.disabledTuiAgents) && settings.disabledTuiAgents.includes(agent),
       customCommand,
-      configured,
-      configuredSource: "orca-saved-preference",
+      configured: {},
+      configuredSource: null,
       effective: { model: null, effort: null, contextUsage: null },
-      structuredSupported: typeof support?.supported === "boolean" ? support.supported : null,
-      contextUsageSupported: registered?.agents?.find((row) => row.agent === agent)?.capabilities?.contextUsage === true,
+      structuredSupported: null,
+      contextUsageSupported: null,
       catalogStatus: ["probe", "live-session"].includes(catalog?.origin) && Array.isArray(catalog.models) ? "known" : "unknown",
       listingInProgress: catalog?.listingInProgress === true,
       catalogSource: ["probe", "live-session"].includes(catalog?.origin) ? catalog.origin : null,
+      catalogError: errors.get("agentSession.modelCatalog") ?? (!catalog ? errors.get("agentSession.restartResumable") : null) ?? null,
       fetchedAt: Number.isFinite(catalog?.fetchedAt) ? catalog.fetchedAt : null,
       models: models(catalog?.models),
       detail: targetId ? "Remote model catalog unavailable. Default inherits Orca; explicit overrides require host validation." : catalog?.listingInProgress ? "Orca is listing models. Refresh capabilities shortly." : catalog?.origin === "unknown" || !catalog ? "Model catalog unknown. Default inherits Orca configuration." : ""
     };
+  }
+  const afterStatus = await read("status.get");
+  if (!result.runtimeId || afterStatus?.runtimeId !== result.runtimeId) {
+    result.connection = "unavailable";
+    result.session = { status: "unknown" };
+    for (const entry of Object.values(result.agents)) {
+      entry.availability = "unknown";
+      entry.catalogStatus = "unknown";
+      entry.models = [];
+    }
   }
   if (targetId) {
     const after = (await read("ssh.getState", { targetId }))?.state;
@@ -4209,6 +4263,10 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           const scope = store.readScope(team.id), observed = capabilities.get(scope.workspaceKey);
           if (!params.observationId || latestObservation.get(scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 3e4) throw Error("Fresh authenticated launch capability admission is required.");
           if (typeof observed.runtimeId !== "string" || !observed.runtimeId.trim()) throw Error("Native runtime identity is unavailable; no member was reserved.");
+          if (team.configuration.sessionMode === true) {
+            const issue2 = sessionIssue(observed);
+            if (issue2) throw Error(issue2);
+          }
           const issue = preferenceIssue(member, observed, { requireCore: true });
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error("The bound workspace or execution host changed.");
@@ -4386,6 +4444,10 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
         if (!selected) throw new Error("The detected project expired. Try launching again to read the current project.");
         const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error("The execution host changed. Try launching again to read the current project.");
+        if (params.form.sessionMode === true) {
+          const issue = sessionIssue(capabilities.get(selected.workspaceKey));
+          if (issue) throw Error(issue);
+        }
         for (let level = 0; level < 3; level++) {
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? "codex", model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);
@@ -6121,7 +6183,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.17", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.19", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

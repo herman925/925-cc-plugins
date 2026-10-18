@@ -183,6 +183,7 @@ async function runtimeResult(method, params, envelope = {}, transport = 'ipc') {
   else if (method === 'status.get') result = { runtimeId: 'fixture-runtime', capabilities: ['orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
   else if (method === 'worktree.show') result = { worktree: { id: 'repo::/remote/project', hostId: 'ssh:fixture' } };
   else if (method === 'settings.get') result = { settings: { agentDefaultEnv: { codex: { SECRET: 'must-not-leak' } } } };
+  else if (method === 'terminal.list') result = { terminals: [{ handle: 'existing-cli', incarnationId: 'existing-instance', worktreeId: 'repo::/remote/project', executionHostId: 'ssh:fixture', connected: true, agentIdentity: 'codex' }] };
   else if (method === 'ssh.getState') result = { state: { status: 'connected', connectionGeneration: 1 } };
   else if (method === 'preflight.detectRemoteAgents') result = ['codex', 'claude'];
   else if (method === 'agentSession.agents') result = { agents: [] };

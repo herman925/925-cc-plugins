@@ -17,7 +17,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'capabilities-local' || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
@@ -143,6 +143,8 @@ async function fixture(id, mode) {
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];
+      if (method === 'terminal.list') return { terminals: mode === 'capabilities-no-session' ? [] : [{ handle: 'existing-cli', incarnationId: 'existing-instance', worktreeId: params.worktree.replace(/^id:/, ''), executionHostId: host, connected: true, agentIdentity: 'codex' }] };
+      if (method === 'session.tabs.list') return { worktree: params.worktree.replace(/^id:/, ''), tabs: [] };
       if(method==='agentSession.handoffStatus')return {owner:sessionIds.has(params.sessionId)?'native':'none',phase:'idle',stage:null};
       if (method === 'agentSession.agents') return { agents: [] };
       if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };

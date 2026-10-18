@@ -74,6 +74,8 @@ Context 无观测时显示 `—`，不能显示成 0%。估计值需标记为估
 
 Team name 与 Function 保留；Function 描述团队用途，不是要求用户另行提交的面板总目标。业务任务在最高主管会话中交办。
 
+2026-10-18 / 0.1.19 补充：Team name 下增加可选的 Lead name，支持英文或中文逗号分隔。填写时名字数量必须与 Leads 一致，去除首尾空白，拒绝重复名和与自动生成成员重名；数量不符时提示并阻止创建。`UI, Dev, Review` 配合 Leads = 3 会直接用于三个 Lead 的预览、实际名册和启动命名。Leads = 1 时名字用于唯一的 Head。留空仍使用原默认名。名字用于标识成员，不自动改写其岗位职责。
+
 ### 项目和执行主机自动识别
 
 移除 Project and execution host 设置区、Confirm project and host、Refresh workspace。仅保留一行只读项目名称提示。
@@ -88,7 +90,15 @@ Team name 与 Function 保留；Function 描述团队用途，不是要求用户
 
 模型通过已选项目的 Orca 原生 `agentSession.modelCatalog` 读取，并呈现为下拉列表；effort 随该模型的宿主返回值变化。移除模型名称的自由输入框，不硬编码一份假定可用的模型表。
 
+模型选项只显示宿主返回的显示名称，不在括号中附加 model ID。实际选择、保存和启动仍使用对应 ID。
+
 Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切换模型时重置 effort；仅改变人数时保留角色配置。正在列举模型时进行有限、避开宿主限流窗口的重试，并提供 Refresh models。目录未知、宿主不支持或无法确认远端目录时，仅允许继承 Default；不能用本机列表替代 SSH 主机的有效目录。
+
+2026-10-18 / 0.1.18 的模型目录补充：New team 准备创建和启动时，该项目／主机必须已有 Codex 或 Claude Code session，任一种即可。普通终端以原生存活实例和 `terminal.agentStatus.isRunningAgent` 核对；原生 Chat 使用该项目的权威 tab 清单，不混用两种 session 身份。忙碌会话同样有效，不向其注入检索 prompt 或打断工作。
+
+普通终端场景下，目录服务未初始化的拒绝可通过既有只读 `agentSession.restartResumable` 初始化，再重读目录；不调用 continue／dismiss／create，不改 Chat UI 设置，不新增临时对话。为新团队读取时不传旧 Chat 的 sessionId，确保 Orca 以当前启动账户分别解析各 CLI，而不是借用旧会话固定账户。CLI 原生列表负责型号、别名和 effort；不需要大模型生成名单或插件自带静态型号表。
+
+0.1.19 根据用户反馈取消模型目录的周期刷新。建队时取得目录后，在该项目的表单中保持模型名称、选项和已选值稳定；切换 CLI 使用已取得的对应目录。只为尚未取得的所选 CLI 目录做有限重试；切换项目或手动 Refresh models 才重新读取。项目本身仍自动跟随桌面选择，但项目不变时不重绘表单。Launch 所需的新鲜证据在后台单独检查，不清空或替换已经选定的模型显示。无 session 时连 Default 也不能绕过新队准备前置；有 session 但目录未知时保留 Default。已有团队数据和原生回执继续保留。真实本机列表及未测边界见 [#137 模型目录验证](validation/model-catalog-137.md)。
 
 ### Launch team 与会话命名
 
@@ -144,7 +154,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | 项目 | 截至本 ADR 的事实 |
 | --- | --- |
 | 当前终端遥测 | 活动状态可读；原生接口未提供可靠的 Context 与有效模型/effort 时显示未知或标注配置 |
-| 本机模型目录 | 本轮检查 Orca 1.4.229 时返回 `hostDisabled`；自动读取入口已接入，但当时该机只能使用 Default。并非断言所有 Orca 安装都如此 |
+| 本机模型目录 | 0.1.17 的普通终端场景曾因目录 host 未初始化而只有 Default；0.1.18 已接入只读初始化路径，并在本机真实插件确认 Codex 7 项、Claude Code 4 项及对应 effort。完整边界见 #137 验证报告 |
 | SSH 模型目录 | 当前集成不能将本机目录当作远端能力证明 |
 | 原生 Chat 命名 | 尚未支持标题重命名 |
 | 被删管理入口 | 后端历史和恢复校验仍保留；没有因此承诺主管可代行所有暂停、替换、恢复等操作 |

@@ -50,3 +50,20 @@ test('lead count and workers per lead are independent, and legacy fan remains re
  assert.equal(planTeam(form({levels:3,fan:3})).members.length,13);
  for(const key of ['leadCount','workersPerLead'])for(const value of [0,6,1.5,'2',null])assert.throws(()=>planTeam(form({[key]:value})),/1–5/);
 });
+
+test('comma-separated lead names become the actual managers and survive saved configuration validation', () => {
+ const plan=planTeam(form({levels:3,leadCount:3,workersPerLead:2,leadNames:' UI, Dev, Review '}));
+ const leads=plan.members.filter(m=>m.role==='lead');
+ assert.deepEqual(leads.map(m=>m.name),['UI','Dev','Review']);
+ for(const lead of leads){const workers=plan.members.filter(m=>m.boss===lead.id);assert.equal(workers.length,2);assert.ok(workers.every(m=>m.brief.includes(`from ${lead.name}`)));}
+ assert.deepEqual(validateState({version:1,teams:[plan]}).teams[0],plan);
+ const single=planTeam(form({levels:2,leadCount:1,leadNames:'设计主管'}));
+ assert.equal(single.members[0].name,'设计主管');assert.equal(single.members.filter(m=>m.role==='lead').length,0);
+ assert.deepEqual(planTeam(form({levels:3,leadCount:2,leadNames:'UI，Dev'})).members.filter(m=>m.role==='lead').map(m=>m.name),['UI','Dev']);
+});
+
+test('lead naming refuses mismatched, empty, duplicate and colliding names while blank keeps legacy names',()=>{
+ for(const leadNames of ['UI,Dev','UI,,Review','UI,ui,Review','Head,Dev,Review','Worker-1-1,Dev,Review',null])assert.throws(()=>planTeam(form({levels:3,leadCount:3,leadNames})));
+ assert.throws(()=>planTeam(form({levels:2,leadCount:1,leadNames:'UI,Dev'})),/match Leads/);
+ assert.deepEqual(planTeam(form({levels:3,leadCount:2,leadNames:''})).members.filter(m=>m.role==='lead').map(m=>m.name),['Lead-1-1','Lead-1-2']);
+});

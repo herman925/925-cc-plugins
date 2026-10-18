@@ -586,7 +586,12 @@ footer {
 </style></head><body><div id="app" aria-busy="true"><p>Loading Team Orchestrator…</p></div><script>(() => {
   // src/capabilities.mjs
   var AGENTS = ["codex", "claude"];
-  function preferenceIssue(preference, capabilities, { requireCore = false } = {}) {
+  function sessionIssue(capabilities, { requireFresh = true } = {}) {
+    if (capabilities?.session?.status === "missing") return "Open a Codex or Claude Code session in this project before launching a team, then refresh models.";
+    if (capabilities?.session?.status !== "ready" || capabilities.connection !== "connected" || requireFresh && Date.now() - capabilities.observedAt > 3e4) return "Checking this project\u2019s open Codex or Claude Code session. Refresh models if this check remains unavailable.";
+    return "";
+  }
+  function preferenceIssue(preference, capabilities, { requireCore = false, requireFresh = true } = {}) {
     const { agent, model, effort } = preference;
     if (!AGENTS.includes(agent) || [model, effort].some((value) => typeof value !== "string" || !value.trim() || value.length > 120)) return "Choose a valid agent, model and effort.";
     if (model === "default" && effort !== "default") return "Choose a model before overriding effort.";
@@ -594,7 +599,7 @@ footer {
     if (entry?.availability === "unavailable") return `${agent} was not detected on this execution host. Check its installation in Orca.`;
     if (requireCore && (!capabilities?.launchSupported || capabilities.connection !== "connected" || Date.now() - capabilities.observedAt > 3e5)) return "This execution host has not confirmed the required launch capabilities and connection. Refresh capabilities.";
     if (model === "default") return "";
-    if (!capabilities || Date.now() - capabilities.observedAt > 3e5) return "Model validation is unavailable or stale. Refresh host capabilities or choose Default.";
+    if (!capabilities || requireFresh && Date.now() - capabilities.observedAt > 3e5) return "Model validation is unavailable or stale. Refresh host capabilities or choose Default.";
     if (entry?.catalogStatus !== "known") return "This host has not verified model and effort overrides. Choose Default to inherit Orca configuration, or refresh after the host can list models.";
     const listed = entry.models.find((row) => row.id === model);
     if (!listed) return `Model \u201C${model}\u201D is not supported by the observed host catalog. Choose an available model or Default.`;
@@ -617,6 +622,25 @@ footer {
   function nameValid(value) {
     return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
   }
+  function parseLeadNames(form2) {
+    if (form2.leadNames === void 0 || form2.leadNames === "") return [];
+    if (typeof form2.leadNames !== "string" || form2.leadNames.length > 350) throw new Error("Keep lead names within 350 characters.");
+    if (!form2.leadNames.trim()) return [];
+    const names = form2.leadNames.split(/[,，]/).map((value) => value.trim());
+    const expected = form2.levels === 3 ? form2.leadCount ?? form2.fan : 1;
+    if (names.length !== expected) throw new Error(`Enter ${expected} lead name${expected === 1 ? "" : "s"} to match Leads; found ${names.length}.`);
+    if (names.some((value) => !value || value.length > 64 || /[\u0000-\u001f\u007f]/.test(value))) throw new Error("Use 1\u201364 characters per lead name, with a name between each comma.");
+    if (new Set(names.map((value) => value.toLowerCase())).size !== names.length) throw new Error("Lead names must be unique.");
+    return names;
+  }
+  function leadNameIssue(form2) {
+    try {
+      parseLeadNames(form2);
+      return "";
+    } catch (error) {
+      return error.message;
+    }
+  }
   function planTeam(form2) {
     if (form2.sessionMode !== void 0 && typeof form2.sessionMode !== "boolean") throw Error("Invalid team conversation mode.");
     if (form2.launchMode !== void 0 && !["on-demand", "all"].includes(form2.launchMode)) throw Error("Choose a supported launch mode.");
@@ -632,8 +656,10 @@ footer {
     if (form2.models.some((model, i) => model === "default" && form2.efforts[i] !== "default")) throw new Error("Choose a model before overriding its effort.");
     const agents = form2.agents ?? ["codex", "codex", "codex"];
     if (!Array.isArray(agents) || agents.length !== 3 || agents.some((agent) => !["codex", "claude"].includes(agent))) throw new Error("Choose Codex or Claude Code for each level.");
+    const leadNames = form2.structure === "team" ? parseLeadNames(form2) : [];
     const members = [];
     const add = (memberName, team, role, level, boss) => {
+      if (members.some((member2) => member2.name.toLowerCase() === memberName.toLowerCase())) throw new Error("Lead names must not duplicate Head or a worker name.");
       const id = `member-${members.length + 1}`;
       const purpose = form2.purpose.trim() || "the team goal";
       const brief = role === "worker" ? `Execute tasks from ${boss.name} and report back.` : `Own ${purpose}; plan, delegate to direct reports, review results and report to ${boss?.name || "the user"}.`;
@@ -652,14 +678,14 @@ footer {
         for (let i = 1; i <= (form2.workersPerLead ?? form2.fan); i++) add(`${group}-Worker-${i}`, group, "worker", 3, head);
       }
     } else {
-      let tier = [add("Head", name, "head", 1, null)];
+      let tier = [add(form2.levels < 3 && leadNames.length ? leadNames[0] : "Head", name, "head", 1, null)];
       for (let level = 2; level <= form2.levels; level++) {
         const next = [];
         tier.forEach((boss, index) => {
           for (let i = 1; i <= (level === form2.levels ? form2.workersPerLead ?? form2.fan : form2.leadCount ?? form2.fan); i++) {
             const role = level === form2.levels ? "worker" : "lead";
             const suffix = form2.levels === 2 ? `${i}` : `${index + 1}-${i}`;
-            next.push(add(`${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
+            next.push(add(role === "lead" && leadNames.length ? leadNames[i - 1] : `${role === "worker" ? "Worker" : "Lead"}-${suffix}`, name, role, level, boss));
           }
         });
         tier = next;
@@ -822,7 +848,7 @@ footer {
   var connection = "Panel loaded \xB7 worker activation unknown \xB7 compatibility layer checking\u2026";
   var connectionReady = false;
   var state = emptyTeamState();
-  var form = { ...structuredClone(DEFAULT_FORM), name: "Team", sessionMode: true, launchMode: "all", leadCount: 1, workersPerLead: 3 };
+  var form = { ...structuredClone(DEFAULT_FORM), name: "Team", leadNames: "", sessionMode: true, launchMode: "all", leadCount: 1, workersPerLead: 3 };
   var leadPreferences = { agent: "codex", model: "default", effort: "default" };
   var telemetry = { members: {}, observedAt: null };
   var rosterRefreshRunning = false;
@@ -883,7 +909,7 @@ footer {
   function tree(members, parent = null, live = false, compact = false) {
     const children = members.filter((member) => member.boss === parent);
     return `<ul class="org-tree ${parent === null ? "root" : ""}">${children.map((member) => {
-      const shortName = compact ? member.role === "ceo" ? "CEO" : member.role === "head" ? member.team : member.name.replace(/^.*Worker-/, "W").replace(/^Lead-/, "L") : member.name;
+      const shortName = compact ? member.role === "ceo" ? "CEO" : member.role === "head" && member.name === "Head" ? member.team : member.name.replace(/^Worker-(\d+(?:-\d+)*)$/, "W$1").replace(/^Lead-(\d+(?:-\d+)*)$/, "L$1") : member.name;
       const observation = memberObservation(member);
       return `<li><span class="org-node ${escape(member.role)}" ${live ? `title="${escape(member.name)} \xB7 ${escape(STATUS_LABELS[observation.state] || "Unknown")}" data-state="${escape(observation.state)}"` : ""}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></span>${members.some((child) => child.boss === member.id) ? tree(members, member.id, live, compact) : ""}</li>`;
     }).join("")}</ul>`;
@@ -893,17 +919,19 @@ footer {
     const models = agent?.catalogStatus === "known" ? agent.models : [];
     const listed = models.find((row) => row.id === preference.model);
     const efforts = [.../* @__PURE__ */ new Set(["default", ...(listed?.efforts ?? []).map((row) => row.value)])];
-    const issue = preferenceIssue(preference, caps);
+    const issue = preferenceIssue(preference, caps, { requireFresh: false });
     return `<td><select aria-label="${name} CLI" data-agent="${suffix}">${[["codex", "Codex"], ["claude", "Claude Code"]].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? "selected" : ""}>${text}</option>`).join("")}</select></td>
-    <td><select aria-label="${name} model" data-model="${suffix}"><option value="default" ${preference.model === "default" ? "selected" : ""}>Default \xB7 Orca settings</option>${models.filter((row) => row.id !== "default").map((row) => `<option value="${escape(row.id)}" ${preference.model === row.id ? "selected" : ""}>${escape(row.label === row.id ? row.id : `${row.label} (${row.id})`)}</option>`).join("")}${preference.model !== "default" && !listed ? `<option value="${escape(preference.model)}" selected disabled>Unavailable \xB7 ${escape(preference.model)}</option>` : ""}</select></td>
+    <td><select aria-label="${name} model" data-model="${suffix}"><option value="default" ${preference.model === "default" ? "selected" : ""}>Default \xB7 Orca settings</option>${models.filter((row) => row.id !== "default").map((row) => `<option value="${escape(row.id)}" ${preference.model === row.id ? "selected" : ""}>${escape(row.label)}</option>`).join("")}${preference.model !== "default" && !listed ? `<option value="${escape(preference.model)}" selected disabled>Unavailable \xB7 ${escape(preference.model)}</option>` : ""}</select></td>
     <td><select aria-label="${name} effort" data-effort="${suffix}" ${!listed ? "disabled" : ""}>${efforts.map((value) => `<option value="${escape(value)}" ${preference.effort === value ? "selected" : ""}>${escape(value === "default" ? "Default" : value)}</option>`).join("")}${!efforts.includes(preference.effort) ? `<option selected disabled value="${escape(preference.effort)}">Unavailable \xB7 ${escape(preference.effort)}</option>` : ""}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ""}</td>`;
   }
   function capabilityNotice(scope) {
     if (capabilitiesLoading) return '<p class="subtle" role="status">Loading models from Orca\u2026</p>';
     const caps = capabilityViews.get(scope?.workspaceKey);
     if (!caps) return '<p class="subtle">Model list unavailable. Default uses Orca settings.</p>';
+    const preparation = sessionIssue(caps, { requireFresh: false });
+    if (preparation) return `<p class="subtle" role="status">${escape(preparation)}</p>`;
     const unavailable = [...new Set(form.agents.slice(0, form.levels))].filter((id) => caps.agents[id]?.catalogStatus !== "known" || !caps.agents[id]?.models.length);
-    return unavailable.length ? `<p class="subtle">${unavailable.map((id) => id === "claude" ? "Claude Code" : "Codex").join(", ")}: model list unavailable${caps.executionHostId !== "local" ? " for this remote host" : ""}. Default uses Orca settings.</p>` : "";
+    return unavailable.length ? `<p class="subtle">${unavailable.map((id) => id === "claude" ? "Claude Code" : "Codex").join(", ")}: model list unavailable${caps.executionHostId !== "local" ? " for this remote host" : ""}. Default uses Orca settings.</p>` : `<p class="subtle">Models from Orca \xB7 ${escape(new Date(Math.min(...Object.values(caps.agents).map((agent) => agent.fetchedAt ?? caps.observedAt))).toLocaleTimeString())}</p>`;
   }
   function configRows() {
     const count = form.levels;
@@ -923,12 +951,16 @@ footer {
     }
   }
   function formView() {
+    const namesIssue = leadNameIssue(form);
     return `<div class="flow"><h1>New team</h1><p class="steps">\u2460 Setup <span>\u2192</span> \u2461 Models <span>\u2192</span> \u2462 Preview <span>\u2192</span> Launch</p></div>
-    <section class="section"><h2><span>\u2460</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
+    <section class="section"><h2><span>\u2460</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Lead name<input id="lead-names" data-form="leadNames" value="${escape(form.leadNames)}" maxlength="350" autocomplete="off" placeholder="UI, Dev, Review" aria-describedby="lead-names-hint lead-names-validation" aria-invalid="${Boolean(namesIssue)}"></label><small id="lead-names-hint" class="subtle">Optional \xB7 Separate names with commas and match the Leads count.</small><small id="lead-names-validation" class="validation" role="status">${escape(namesIssue)}</small><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
     <div class="staffing-counts"><label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.leadCount === n ? "selected" : ""}>${n}</option>`).join("")}</select></label><label class="field">Workers per lead<select aria-label="Workers per lead" data-count="workersPerLead">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${form.workersPerLead === n ? "selected" : ""}>${n}</option>`).join("")}</select></label></div></section>
     <section class="section"><h2><span>\u2461</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(workspace)}${button("Refresh models", "refresh-capabilities", capabilitiesLoading || !workspace?.selectionToken ? "disabled" : "", "small")}</section>
     <section class="section"><h2><span>\u2462</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
-    ${state.teams.some((t) => !t.launch) ? `<details><summary>Unstarted teams</summary>${state.teams.filter((t) => !t.launch).map((t) => button("Launch @" + escape(t.name), "launch-existing", `data-team="${state.teams.indexOf(t)}"`, "small")).join("")}</details>` : ""}${projectSummary()}${launchControls()}<div class="actions">${button("Launch team", "create", busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) ? "disabled" : "", "primary")}${button("Cancel", "roster", "", "secondary")}</div>`;
+    ${state.teams.some((t) => !t.launch) ? `<details><summary>Unstarted teams</summary>${state.teams.filter((t) => !t.launch).map((t) => button("Launch @" + escape(t.name), "launch-existing", `data-team="${state.teams.indexOf(t)}"`, "small")).join("")}</details>` : ""}${projectSummary()}${launchControls()}<div class="actions">${button("Launch team", "create", creationDisabled() ? "disabled" : "", "primary")}${button("Cancel", "roster", "", "secondary")}</div>`;
+  }
+  function creationDisabled() {
+    return busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) || Boolean(leadNameIssue(form)) || Boolean(sessionIssue(capabilityViews.get(workspace?.workspaceKey), { requireFresh: false }));
   }
   function projectSummary() {
     return `<p class="subtle" aria-label="Current project">Project: ${escape(workspace?.displayName || "No project selected")}</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ""}`;
@@ -957,7 +989,7 @@ footer {
   function render() {
     app.setAttribute("aria-busy", String(busy));
     const usable = connectionReady && loaded && storageAvailable;
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.17")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.19")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
     ${view === "new" ? formView() : view === "settings" ? settingsView() : roster()}`}
@@ -967,6 +999,11 @@ footer {
   function updatePreview() {
     const node = document.getElementById("preview");
     if (node) node.innerHTML = preview();
+    const issue = leadNameIssue(form), input = document.getElementById("lead-names"), validation = document.getElementById("lead-names-validation");
+    if (input) input.setAttribute("aria-invalid", String(Boolean(issue)));
+    if (validation) validation.textContent = issue;
+    const create = app.querySelector('[data-action="create"]');
+    if (create) create.disabled = creationDisabled();
   }
   async function load(retry = false) {
     busy = true;
@@ -1034,17 +1071,16 @@ footer {
   async function refreshCapabilities(params, scope, force = false, retry = 0) {
     if (!scope?.selectionToken || capabilitiesLoading) return;
     const previous = capabilityViews.get(scope.workspaceKey);
-    if (!force && previous && Date.now() - previous.observedAt < 3e5) return;
+    if (!force && previous && !awaitingCatalog(previous)) return;
     clearTimeout(capabilityRetryTimer);
-    capabilityViews.delete(scope.workspaceKey);
     capabilitiesLoading = true;
     render();
     try {
       const value = await call("capabilities", params);
       capabilityViews.set(value.workspaceKey, value);
-      if (retry < 4 && value.connection === "connected" && value.executionHostId === "local" && Object.values(value.agents).some((agent) => agent.listingInProgress)) {
+      if (retry < 4 && value.connection === "connected" && value.executionHostId === "local" && awaitingCatalog(value)) {
         capabilityRetryTimer = setTimeout(() => {
-          if (view === "new" && !busy && workspace?.workspaceKey === scope.workspaceKey) void refreshCapabilities(params, scope, true, retry + 1);
+          if (view === "new" && !busy && workspace?.workspaceKey === scope.workspaceKey && awaitingCatalog(capabilityViews.get(scope.workspaceKey))) void refreshCapabilities(params, scope, true, retry + 1);
         }, 11e3);
       }
     } catch (error) {
@@ -1053,6 +1089,9 @@ footer {
       capabilitiesLoading = false;
       render();
     }
+  }
+  function awaitingCatalog(caps) {
+    return [...new Set(form.agents.slice(0, form.levels))].some((id) => caps?.agents?.[id]?.listingInProgress && caps.agents[id].catalogStatus !== "known");
   }
   async function enterNewTeam() {
     busy = true;
@@ -1077,7 +1116,7 @@ footer {
       if (busy || view !== "new") return;
       if (previousKey !== workspace?.workspaceKey || previousError !== targetError) {
         render();
-        if (scope?.selectionToken) await refreshCapabilities({ selectionToken: scope.selectionToken }, scope);
+        if (scope?.selectionToken) await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, previousKey !== scope.workspaceKey);
       }
     } finally {
       newContextRefreshing = false;
@@ -1095,11 +1134,15 @@ footer {
     clearTimeout(capabilityRetryTimer);
     render();
     try {
+      planTeam(draft);
       const scope = await refreshTargets();
       if (!scope?.selectionToken || targetError) throw Error(targetError || "Open a project in Orca to launch a team.");
-      await refreshCapabilities({ selectionToken: scope.selectionToken }, scope);
+      let admission = capabilityViews.get(scope.workspaceKey);
+      if (!admission || Date.now() - admission.observedAt >= 3e4) admission = await call("capabilities", { selectionToken: scope.selectionToken });
+      const preparation = sessionIssue(admission);
+      if (preparation) throw Error(preparation);
       for (let i = 0; i < draft.levels; i++) {
-        const issue = preferenceIssue({ agent: draft.agents[i], model: draft.models[i], effort: draft.efforts[i] }, capabilityViews.get(scope.workspaceKey));
+        const issue = preferenceIssue({ agent: draft.agents[i], model: draft.models[i], effort: draft.efforts[i] }, admission);
         if (issue) throw Error(issue);
       }
       const result = await call("createTeam", mutation({ form: draft, selectionToken: scope.selectionToken }));
@@ -1308,6 +1351,8 @@ footer {
       form.models[i] = "default";
       form.efforts[i] = "default";
       render();
+      const caps = capabilityViews.get(workspace?.workspaceKey);
+      if (workspace?.selectionToken && caps?.agents?.[target.value]?.catalogStatus !== "known") await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace, true);
     } else if (target.dataset.model !== void 0) {
       const i = Number(target.dataset.model);
       form.models[i] = target.value.trim() || "default";

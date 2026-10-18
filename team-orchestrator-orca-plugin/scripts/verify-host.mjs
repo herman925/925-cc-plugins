@@ -42,6 +42,8 @@ const bundle = async name => {
   await writeFile(entry, (await readFile(entry, 'utf8')) + `
 export { migrateMutationReceiptCapacity } from './src/main/runtime/orchestration/mutation-receipt-capacity';
 export { orchestrationMigrationFence } from './src/main/runtime/rpc/orchestration-contract-fence';
+export { RestartResumableParams } from './src/main/runtime/rpc/methods/structured-agent-session-schemas';
+export { TerminalListParams } from './src/shared/rpc-contract/terminal-unary-params';
 export { OrchestrationMutationExecutor } from './src/main/runtime/rpc/orchestration-mutation-executor';
 export { getOrCreateLocalMutationCallerFingerprint, beginMutationReceipt, completeMutationReceipt, discardPendingMutationReceipt, getMutationReceipt } from './src/main/runtime/orchestration/db/mutation-receipts/mutation-receipt-store';
 `);
@@ -166,6 +168,15 @@ try {
   const idleWire=await source(join(root,'src/shared/agent-session-wire.ts')),turnTypes=await source(join(root,'src/shared/agent-session-journal-types.ts'));
   assert.match(idleWire,/latestTurn\?: AgentSessionLatestTurn \| null/);assert.match(idleWire,/queuedMessages\?: AgentSessionQueuedMessage\[\] \| null/);assert.match(idleWire,/backgroundTasks\?: AgentSessionBackgroundTaskState \| null/);assert.match(turnTypes,/'running',[\s\S]*'completed',[\s\S]*'interrupted',[\s\S]*'unverifiable'/);
   const restartSource=await source(join(root,'src/main/runtime/rpc/methods/structured-agent-session-restart-resume.ts'));
+  assert.deepEqual(before.RestartResumableParams.parse({}),{});
+  assert.deepEqual(before.TerminalListParams.parse({worktree:'folder:/verified',limit:100,requireFreshPtyLiveness:true}),{worktree:'folder:/verified',limit:100,requireFreshPtyLiveness:true});
+  const listingBody=restartSource.match(/name: 'agentSession.restartResumable',[\s\S]*?handler: async \(_params, ctx\) => \{([\s\S]*?)\n    \}\n  \}\)/)?.[1];
+  assert.ok(listingBody,'A read-only host initialization path is required for terminal-only model catalogs.');
+  const readEffects=[],host={knownAgentIds:()=>['codex','claude'],restartResume:{list:async()=>{readEffects.push('list');return [];},listFailures:async()=>{readEffects.push('failures');return [];}}};
+  const nativeListing=new Function('ensureStructuredHostInstalled','requireStructuredHost','structuredAgentsReadBy',`return async (_params,ctx)=>{${listingBody}}`)(async()=>{readEffects.push('install');},()=>host,(_ctx,agents)=>agents);
+  assert.deepEqual(await nativeListing({},{}),{sessions:[],failed:[]});assert.deepEqual(readEffects,['install','list','failures']);
+  const catalogReadSource=await source(join(root,'src/main/runtime/rpc/methods/structured-agent-session-options-read.ts'));
+  assert.match(catalogReadSource,/params.sessionId === undefined\s*\? requireStructuredHost\(ctx\)/);
   assert.match(restartSource,/name: 'agentSession.restartResume'[\s\S]*return \{ results: \[\] \}/);
   assert.match(restartSource,/name: 'agentSession.restartContinue'[\s\S]*continueAfterRestart\(\s*params.sessionIds/);
   const ensureSource=await source(join(root,pairedHost?'src/main/runtime/session-construction/agent-session/get-agent-session-execution-namespace.ts':'src/main/runtime/orca-runtime-get-agent-session-execution-namespace.ts'));

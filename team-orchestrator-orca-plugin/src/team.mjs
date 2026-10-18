@@ -9,6 +9,20 @@ export const GLYPHS = { ceo: '■', head: '●', lead: '◇', worker: '○' };
 
 export function cleanName(value) { return value.trim().replace(/\s+/g, '-'); }
 function nameValid(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value); }
+export function parseLeadNames(form) {
+  if (form.leadNames === undefined || form.leadNames === '') return [];
+  if (typeof form.leadNames !== 'string' || form.leadNames.length > 350) throw new Error('Keep lead names within 350 characters.');
+  if (!form.leadNames.trim()) return [];
+  const names = form.leadNames.split(/[,，]/).map(value => value.trim());
+  const expected = form.levels === 3 ? form.leadCount ?? form.fan : 1;
+  if (names.length !== expected) throw new Error(`Enter ${expected} lead name${expected === 1 ? '' : 's'} to match Leads; found ${names.length}.`);
+  if (names.some(value => !value || value.length > 64 || /[\u0000-\u001f\u007f]/.test(value))) throw new Error('Use 1–64 characters per lead name, with a name between each comma.');
+  if (new Set(names.map(value => value.toLowerCase())).size !== names.length) throw new Error('Lead names must be unique.');
+  return names;
+}
+export function leadNameIssue(form) {
+  try { parseLeadNames(form); return ''; } catch (error) { return error.message; }
+}
 export function planTeam(form) {
   if(form.sessionMode!==undefined&&typeof form.sessionMode!=='boolean')throw Error('Invalid team conversation mode.');
   if (form.launchMode !== undefined && !['on-demand','all'].includes(form.launchMode)) throw Error('Choose a supported launch mode.');
@@ -24,8 +38,10 @@ export function planTeam(form) {
   if (form.models.some((model, i) => model === 'default' && form.efforts[i] !== 'default')) throw new Error('Choose a model before overriding its effort.');
   const agents = form.agents ?? ['codex', 'codex', 'codex'];
   if (!Array.isArray(agents) || agents.length !== 3 || agents.some(agent => !['codex', 'claude'].includes(agent))) throw new Error('Choose Codex or Claude Code for each level.');
+  const leadNames = form.structure === 'team' ? parseLeadNames(form) : [];
   const members = [];
   const add = (memberName, team, role, level, boss) => {
+    if (members.some(member => member.name.toLowerCase() === memberName.toLowerCase())) throw new Error('Lead names must not duplicate Head or a worker name.');
     const id = `member-${members.length + 1}`;
     const purpose = form.purpose.trim() || 'the team goal';
     const brief = role === 'worker' ? `Execute tasks from ${boss.name} and report back.` : `Own ${purpose}; plan, delegate to direct reports, review results and report to ${boss?.name || 'the user'}.`;
@@ -44,14 +60,14 @@ export function planTeam(form) {
       for (let i = 1; i <= (form.workersPerLead ?? form.fan); i++) add(`${group}-Worker-${i}`, group, 'worker', 3, head);
     }
   } else {
-    let tier = [add('Head', name, 'head', 1, null)];
+    let tier = [add(form.levels < 3 && leadNames.length ? leadNames[0] : 'Head', name, 'head', 1, null)];
     for (let level = 2; level <= form.levels; level++) {
       const next = [];
       tier.forEach((boss, index) => {
         for (let i = 1; i <= (level === form.levels ? form.workersPerLead ?? form.fan : form.leadCount ?? form.fan); i++) {
           const role = level === form.levels ? 'worker' : 'lead';
           const suffix = form.levels === 2 ? `${i}` : `${index + 1}-${i}`;
-          next.push(add(`${role === 'worker' ? 'Worker' : 'Lead'}-${suffix}`, name, role, level, boss));
+          next.push(add(role === 'lead' && leadNames.length ? leadNames[i - 1] : `${role === 'worker' ? 'Worker' : 'Lead'}-${suffix}`, name, role, level, boss));
         }
       });
       tier = next;

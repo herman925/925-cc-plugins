@@ -22,10 +22,14 @@ async function fixture(t, hostId = 'local') {
   ['plugins:invokeCommand', async (_event, args) => executor.execute(args.args)],
   ['runtime:call', async (actual, { method, params }) => {
    assert.equal(actual, event); calls.push({ method, params });
-   const result = method === 'status.get' ? { runtimeId: 'runtime-one', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.registered-agents.v1'] }
+   const result = method === 'status.get' ? { runtimeId: 'runtime-one', capabilities: ['agent.launch.v2', 'agent.launch.replay-required.v1', 'agent-session.structured.v1', 'agent-session.structured.registered-agents.v1'] }
     : method === 'settings.get' ? { settings: { defaultTuiAgent: 'claude', disabledTuiAgents: [], agentDefaultEnv: { claude: { SECRET: 'do-not-expose' } }, agentDefaultArgs: { claude: '--secret-arg' } } }
     : method === 'ssh.getState' ? { state: { status: 'connected', targetId: 'build host', connectionGeneration: 1 } }
     : method.startsWith('preflight.') ? ['codex', 'claude']
+    : method === 'terminal.list' ? { terminals: [{ handle: 'existing-cli', incarnationId: 'existing-instance', worktreeId: 'folder:/selected', executionHostId: hostId, connected: true, agentIdentity: 'codex' }] }
+    : method === 'terminal.agentStatus' ? { agentStatus: { handle: params.terminal, isRunningAgent: true, status: 'working' } }
+    : method === 'session.tabs.list' ? { worktree: 'folder:/selected', tabs: [] }
+    : method === 'agentSession.restartResumable' ? { sessions: [], failed: [] }
     : method === 'agentSession.agents' ? { agents: [{ agent: 'codex', capabilities: { contextUsage: true } }, { agent: 'claude', capabilities: {} }] }
     : method === 'agentSession.createSupport' ? { supported: true, seedOptions: { model: 'saved-pick' } }
     : method === 'agentSession.modelCatalog' ? { origin: 'probe', fetchedAt: Date.now(), models: [{ id: params.agent === 'codex' ? 'codex-model' : 'claude-model', label: 'Host model', isDefault: false, efforts: [{ value: params.agent === 'codex' ? 'ultra' : 'max', label: 'High effort' }] }] }
@@ -47,10 +51,11 @@ test('panel capability read uses its genuine event and saved scope, then validat
  const caps = response.value;
  assert.equal(caps.executionHostId, 'local');
  assert.deepEqual(caps.agents.codex.models[0].efforts.map(row => row.value), ['ultra']);
- assert.equal(caps.agents.claude.configured.model, 'saved-pick');
+ assert.deepEqual(caps.agents.claude.configured, {});
+ assert.equal(caps.agents.claude.configuredSource, null);
  assert.equal(JSON.stringify(caps).includes('do-not-expose'), false);
  assert.equal(JSON.stringify(caps).includes('trusted-worker-secret'), false);
- assert.equal(f.calls.filter(row => row.method === 'agentSession.createSupport').every(row => row.params.worktree === 'folder:/selected'), true);
+ assert.equal(f.calls.filter(row => row.method === 'agentSession.modelCatalog').every(row => row.params.worktree === 'folder:/selected'), true);
  const input = { requestId: 'override', expectedRevision: 1, teamId: f.team.id, memberId: f.team.members[1].id, agent: 'claude', model: 'claude-model', effort: 'max' };
  const updated = await f.send({ op: 'updateAgentPreferences', params: input });
  assert.equal(updated.ok, true, updated.error);
@@ -128,4 +133,73 @@ test('a model listing in progress stays unknown and allows inherited defaults on
  assert.equal((await f.send({op:'updateAgentPreferences',params:input})).ok,true);
  const denied=await f.send({op:'updateAgentPreferences',params:{...input,requestId:'unverified-model',expectedRevision:2,model:'guessed-model'}});
  assert.equal(denied.ok,false);assert.match(denied.error,/not verified/);
+});
+
+for (const agent of ['codex', 'claude']) test(`a single busy ${agent} terminal warms Orca's catalog host and reads both launch-account catalogs without sending input`, async t => {
+ const f = await fixture(t), runtime = f.handlers.get('runtime:call');
+ let installed = false;
+ f.handlers.set('runtime:call', async (event, request) => {
+  if (request.method === 'terminal.list') return {ok:true,result:{terminals:[{handle:'busy-cli',incarnationId:'busy-instance',worktreeId:'folder:/selected',executionHostId:'local',connected:true,agentIdentity:agent,status:'working'}]}};
+  if (request.method === 'agentSession.restartResumable') { installed = true; return {ok:true,result:{sessions:[{sessionId:'private-restart-offer'}],failed:[]}}; }
+  if (request.method === 'agentSession.modelCatalog') {
+   assert.equal(Object.hasOwn(request.params,'sessionId'),false);
+   if (!installed) return {ok:false,error:{code:'runtime_error',message:'structured_agent_session_unsupported'}};
+  }
+  return runtime(event,request);
+ });
+ const result = await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.ok,true,result.error);
+ assert.deepEqual(result.value.session,{status:'ready',kind:'terminal',agent});
+ assert.deepEqual(Object.values(result.value.agents).map(a=>a.catalogStatus),['known','known']);
+ assert.equal(JSON.stringify(result).includes('private-restart-offer'),false);
+ assert.equal(f.calls.some(c=>/send|Continue|Dismiss|\.create$|\.ensure$/.test(c.method)),false);
+});
+
+for (const variant of ['missing','closed','wrong-project','wrong-host','orphaned','agent-exited']) test(`${variant} terminal cannot supply a session prerequisite or a model catalog`, async t => {
+ const f=await fixture(t),runtime=f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:true,result:{terminals:variant==='missing'?[]:[{handle:'stale-cli',incarnationId:'stale-instance',worktreeId:variant==='wrong-project'?'folder:/other':'folder:/selected',executionHostId:variant==='wrong-host'?'ssh:other':'local',connected:variant!=='closed',orphaned:variant==='orphaned',agentIdentity:'codex'}]}}:variant==='agent-exited'&&request.method==='terminal.agentStatus'?{ok:true,result:{agentStatus:{handle:request.params.terminal,isRunningAgent:false}}}:runtime(event,request));
+ const result=await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.ok,true,result.error);assert.equal(result.value.session.status,'missing');
+ assert.equal(f.calls.some(c=>['agentSession.modelCatalog','agentSession.restartResumable'].includes(c.method)),false);
+ assert.deepEqual(result.value.agents.codex.models,[]);
+ const selected=await f.executor.execute({op:'context',workspaceId:'folder:/selected'});
+ await assert.rejects(f.executor.execute({op:'createTeam',params:{form:{...DEFAULT_FORM,name:'New-session-team',sessionMode:true},selectionToken:selected.selectionToken,requestId:'blocked-team',expectedRevision:1}}),/Open a Codex or Claude Code session/);
+ assert.equal(f.store.readSnapshot().teams.length,1);
+});
+
+test('an open structured tab establishes the prerequisite without using its pinned account for a new team', async t=>{
+ const f=await fixture(t),runtime=f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:true,result:{terminals:[]}}:request.method==='session.tabs.list'?{ok:true,result:{worktree:'folder:/selected',tabs:[{type:'agent-session',sessionId:'claude:real-chat',agent:'claude'}]}}:runtime(event,request));
+ const result=await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.ok,true,result.error);assert.deepEqual(result.value.session,{status:'ready',kind:'structured',agent:'claude'});
+ assert.equal(f.calls.filter(c=>c.method==='agentSession.modelCatalog').every(c=>!Object.hasOwn(c.params,'sessionId')),true);
+});
+
+test('unverifiable inventories and a runtime change discard session and model evidence',async t=>{
+ const f=await fixture(t),runtime=f.handlers.get('runtime:call');let reads=0;
+ f.handlers.set('runtime:call',async(event,request)=>request.method==='status.get'&&++reads===2?{ok:true,result:{runtimeId:'new-runtime'}}:runtime(event,request));
+ const result=await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.value.connection,'unavailable');assert.equal(result.value.session.status,'unknown');assert.deepEqual(result.value.agents.codex.models,[]);
+ f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:false,error:{code:'host_unavailable'}}:request.method==='session.tabs.list'?{ok:true,result:{worktree:'folder:/selected',tabs:[],agentSessionsUnverifiable:true}}:runtime(event,request));
+ assert.equal((await f.send({op:'capabilities',params:{teamId:f.team.id}})).value.session.status,'unknown');
+});
+
+test('failed host initialization retains a diagnostic code and does not invent models or another session',async t=>{
+ const f=await fixture(t),runtime=f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call',async(event,request)=>['agentSession.restartResumable','agentSession.modelCatalog'].includes(request.method)?{ok:false,error:{code:'runtime_error',message:'structured_agent_session_unsupported'}}:runtime(event,request));
+ const result=await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.value.session.status,'ready');assert.equal(result.value.agents.codex.catalogStatus,'unknown');
+ assert.equal(result.value.agents.codex.catalogError,'structured_agent_session_unsupported');assert.deepEqual(result.value.agents.codex.models,[]);
+});
+
+test('a session closed between new-team save and launch prevents reserving or starting a member',async t=>{
+ const f=await fixture(t);
+ await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ const selected=await f.executor.execute({op:'context',workspaceId:'folder:/selected'});
+ const created=await f.executor.execute({op:'createTeam',params:{form:{...DEFAULT_FORM,name:'Session-required',sessionMode:true},selectionToken:selected.selectionToken,requestId:'new-team',expectedRevision:1}});
+ const team=created.value.teams.at(-1),head=team.members.find(m=>!m.boss),runtime=f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:true,result:{terminals:[]}}:runtime(event,request));
+ const result=await f.send({op:'launchSupervisor',params:{teamId:team.id,memberId:head.id,requestId:'must-not-launch',configVersion:team.configVersion}});
+ assert.equal(result.ok,false);assert.match(result.error,/Open a Codex or Claude Code session/);
+ assert.equal(f.store.readOperation('must-not-launch'),null);assert.equal(f.calls.some(c=>c.method==='agent.launchReplay'),false);
 });

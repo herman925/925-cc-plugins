@@ -118,10 +118,10 @@ test('unavailable native evidence reports a bounded diagnostic without exposing 
 });
 test('native start arriving during capability reads is not retroactively admitted from an older Task snapshot',async t=>{
  const {createDispatchService}=await import('../src/local/dispatch.mjs');const f=await fixture(t);let inject=false;
- const rpc=async(method,...args)=>{if(inject&&method==='preflight.detectAgents'){inject=false;f.start({nativeTaskId:'task-one',startParams:{task:'task-one',worktree:'folder:/work',agent:'claude',run:'run-head'}});}return f.rpc(method,...args);};
+ const rpc=async(method,...args)=>{if(inject&&method==='settings.get'){inject=false;f.start({nativeTaskId:'task-one',startParams:{task:'task-one',worktree:'folder:/work',agent:'claude',run:'run-head'}});}return f.rpc(method,...args);};
  const service=createDispatchService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works:f.works});
  await service.check(f.work.id);f.createIntent(f.store.readDispatchProtocol(f.work.id));inject=true;
- await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');
+ await service.check(f.work.id);const row=f.store.listDispatches(f.work.id)[0];assert.equal(inject,false);assert.equal(row.admission,'unadmitted');assert.equal(row.status,'unknown');
  assert.equal(f.messages.filter(text=>text.startsWith('TEAM_DISPATCH_PERMIT\n')).length,0);
 });
 test('an observed native start after app reservation but before permit is fenced without issuing the permit',async t=>{

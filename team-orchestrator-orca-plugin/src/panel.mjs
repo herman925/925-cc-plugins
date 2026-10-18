@@ -1,5 +1,5 @@
-import { preferenceIssue } from './capabilities.mjs';
-import { DEFAULT_FORM, GLYPHS, planTeam, emptyTeamState, validatePersistentState } from './team.mjs';
+import { preferenceIssue, sessionIssue } from './capabilities.mjs';
+import { DEFAULT_FORM, GLYPHS, planTeam, leadNameIssue, emptyTeamState, validatePersistentState } from './team.mjs';
 import { createBridge } from './bridge.mjs';
 import { createWorkerBridge } from './worker-bridge.mjs';
 import { initialMembers } from './launch.mjs';
@@ -11,7 +11,7 @@ const call = (action, params) => worker.call(action, params);
 let connection = 'Panel loaded · worker activation unknown · compatibility layer checking…';
 let connectionReady = false;
 let state = emptyTeamState();
-let form = {...structuredClone(DEFAULT_FORM),name:'Team',sessionMode:true,launchMode:'all',leadCount:1,workersPerLead:3};
+let form = {...structuredClone(DEFAULT_FORM),name:'Team',leadNames:'',sessionMode:true,launchMode:'all',leadCount:1,workersPerLead:3};
 let leadPreferences = {agent:'codex',model:'default',effort:'default'};
 let telemetry={members:{},observedAt:null};
 let rosterRefreshRunning=false;
@@ -55,7 +55,7 @@ function supervisorSessionButton(team) {
 function tree(members, parent = null, live = false, compact = false) {
   const children = members.filter(member => member.boss === parent);
   return `<ul class="org-tree ${parent === null ? 'root' : ''}">${children.map(member => {
-    const shortName = compact ? member.role === 'ceo' ? 'CEO' : member.role === 'head' ? member.team : member.name.replace(/^.*Worker-/, 'W').replace(/^Lead-/, 'L') : member.name;
+    const shortName = compact ? member.role === 'ceo' ? 'CEO' : member.role === 'head' && member.name === 'Head' ? member.team : member.name.replace(/^Worker-(\d+(?:-\d+)*)$/, 'W$1').replace(/^Lead-(\d+(?:-\d+)*)$/, 'L$1') : member.name;
     const observation = memberObservation(member);
     return `<li><span class="org-node ${escape(member.role)}" ${live ? `title="${escape(member.name)} · ${escape(STATUS_LABELS[observation.state] || 'Unknown')}" data-state="${escape(observation.state)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></span>${members.some(child => child.boss === member.id) ? tree(members, member.id, live, compact) : ''}</li>`;
   }).join('')}</ul>`;
@@ -65,17 +65,19 @@ function preferenceControls(name, preference, caps, suffix) {
   const models = agent?.catalogStatus === 'known' ? agent.models : [];
   const listed = models.find(row => row.id === preference.model);
   const efforts = [...new Set(['default', ...(listed?.efforts ?? []).map(row => row.value)])];
-  const issue = preferenceIssue(preference, caps);
+  const issue = preferenceIssue(preference, caps, { requireFresh: false });
   return `<td><select aria-label="${name} CLI" data-agent="${suffix}">${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? 'selected' : ''}>${text}</option>`).join('')}</select></td>
-    <td><select aria-label="${name} model" data-model="${suffix}"><option value="default" ${preference.model === 'default' ? 'selected' : ''}>Default · Orca settings</option>${models.filter(row => row.id !== 'default').map(row => `<option value="${escape(row.id)}" ${preference.model === row.id ? 'selected' : ''}>${escape(row.label === row.id ? row.id : `${row.label} (${row.id})`)}</option>`).join('')}${preference.model !== 'default' && !listed ? `<option value="${escape(preference.model)}" selected disabled>Unavailable · ${escape(preference.model)}</option>` : ''}</select></td>
+    <td><select aria-label="${name} model" data-model="${suffix}"><option value="default" ${preference.model === 'default' ? 'selected' : ''}>Default · Orca settings</option>${models.filter(row => row.id !== 'default').map(row => `<option value="${escape(row.id)}" ${preference.model === row.id ? 'selected' : ''}>${escape(row.label)}</option>`).join('')}${preference.model !== 'default' && !listed ? `<option value="${escape(preference.model)}" selected disabled>Unavailable · ${escape(preference.model)}</option>` : ''}</select></td>
     <td><select aria-label="${name} effort" data-effort="${suffix}" ${!listed ? 'disabled' : ''}>${efforts.map(value => `<option value="${escape(value)}" ${preference.effort === value ? 'selected' : ''}>${escape(value === 'default' ? 'Default' : value)}</option>`).join('')}${!efforts.includes(preference.effort) ? `<option selected disabled value="${escape(preference.effort)}">Unavailable · ${escape(preference.effort)}</option>` : ''}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ''}</td>`;
 }
 function capabilityNotice(scope) {
   if (capabilitiesLoading) return '<p class="subtle" role="status">Loading models from Orca…</p>';
   const caps = capabilityViews.get(scope?.workspaceKey);
   if (!caps) return '<p class="subtle">Model list unavailable. Default uses Orca settings.</p>';
+  const preparation = sessionIssue(caps, { requireFresh: false });
+  if (preparation) return `<p class="subtle" role="status">${escape(preparation)}</p>`;
   const unavailable = [...new Set(form.agents.slice(0, form.levels))].filter(id => caps.agents[id]?.catalogStatus !== 'known' || !caps.agents[id]?.models.length);
-  return unavailable.length ? `<p class="subtle">${unavailable.map(id => id === 'claude' ? 'Claude Code' : 'Codex').join(', ')}: model list unavailable${caps.executionHostId !== 'local' ? ' for this remote host' : ''}. Default uses Orca settings.</p>` : '';
+  return unavailable.length ? `<p class="subtle">${unavailable.map(id => id === 'claude' ? 'Claude Code' : 'Codex').join(', ')}: model list unavailable${caps.executionHostId !== 'local' ? ' for this remote host' : ''}. Default uses Orca settings.</p>` : `<p class="subtle">Models from Orca · ${escape(new Date(Math.min(...Object.values(caps.agents).map(agent => agent.fetchedAt ?? caps.observedAt))).toLocaleTimeString())}</p>`;
 }
 function configRows() {
   const count = form.levels;
@@ -93,12 +95,16 @@ function preview() {
   } catch (error) { return `<p class="validation">${escape(error.message)}</p>`; }
 }
 function formView() {
+  const namesIssue = leadNameIssue(form);
   return `<div class="flow"><h1>New team</h1><p class="steps">① Setup <span>→</span> ② Models <span>→</span> ③ Preview <span>→</span> Launch</p></div>
-    <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
+    <section class="section"><h2><span>①</span> Setup</h2><label class="field">Team name<input id="team-name" data-form="name" value="${escape(form.name)}" maxlength="64" autocomplete="off"></label><label class="field">Lead name<input id="lead-names" data-form="leadNames" value="${escape(form.leadNames)}" maxlength="350" autocomplete="off" placeholder="UI, Dev, Review" aria-describedby="lead-names-hint lead-names-validation" aria-invalid="${Boolean(namesIssue)}"></label><small id="lead-names-hint" class="subtle">Optional · Separate names with commas and match the Leads count.</small><small id="lead-names-validation" class="validation" role="status">${escape(namesIssue)}</small><label class="field">Function<textarea id="team-purpose" data-form="purpose" maxlength="500" rows="2" placeholder="What the team is for, in a sentence">${escape(form.purpose)}</textarea></label>
     <div class="staffing-counts"><label class="field">Leads<select aria-label="Leads" data-count="leadCount">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.leadCount===n?'selected':''}>${n}</option>`).join('')}</select></label><label class="field">Workers per lead<select aria-label="Workers per lead" data-count="workersPerLead">${[1,2,3,4,5].map(n=>`<option value="${n}" ${form.workersPerLead===n?'selected':''}>${n}</option>`).join('')}</select></label></div></section>
     <section class="section"><h2><span>②</span> CLI, model and effort per level</h2><p class="subtle">Default inherits your agent configuration.</p><div class="table-scroll"><table class="models"><thead><tr><th>Level</th><th>CLI</th><th>Model</th><th>Effort</th></tr></thead><tbody>${configRows()}</tbody></table></div>${capabilityNotice(workspace)}${button('Refresh models', 'refresh-capabilities', capabilitiesLoading || !workspace?.selectionToken ? 'disabled' : '', 'small')}</section>
     <section class="section"><h2><span>③</span> Organisation preview</h2><div id="preview">${preview()}</div></section>
-    ${state.teams.some(t=>!t.launch)?`<details><summary>Unstarted teams</summary>${state.teams.filter(t=>!t.launch).map(t=>button('Launch @'+escape(t.name),'launch-existing',`data-team="${state.teams.indexOf(t)}"`,'small')).join('')}</details>`:''}${projectSummary()}${launchControls()}<div class="actions">${button('Launch team', 'create', busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+    ${state.teams.some(t=>!t.launch)?`<details><summary>Unstarted teams</summary>${state.teams.filter(t=>!t.launch).map(t=>button('Launch @'+escape(t.name),'launch-existing',`data-team="${state.teams.indexOf(t)}"`,'small')).join('')}</details>`:''}${projectSummary()}${launchControls()}<div class="actions">${button('Launch team', 'create', creationDisabled() ? 'disabled' : '', 'primary')}${button('Cancel', 'roster', '', 'secondary')}</div>`;
+}
+function creationDisabled() {
+  return busy || capabilitiesLoading || !loaded || !storageAvailable || !workspace?.selectionToken || Boolean(targetError) || Boolean(leadNameIssue(form)) || Boolean(sessionIssue(capabilityViews.get(workspace?.workspaceKey), { requireFresh: false }));
 }
 function projectSummary() {
   return `<p class="subtle" aria-label="Current project">Project: ${escape(workspace?.displayName || 'No project selected')}</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}`;
@@ -134,7 +140,13 @@ function render() {
     </main>${usable ? '<footer>Orca · Agent teams</footer>' : ''}`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
-function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
+function updatePreview() {
+  const node = document.getElementById('preview'); if (node) node.innerHTML = preview();
+  const issue = leadNameIssue(form), input = document.getElementById('lead-names'), validation = document.getElementById('lead-names-validation');
+  if (input) input.setAttribute('aria-invalid', String(Boolean(issue)));
+  if (validation) validation.textContent = issue;
+  const create = app.querySelector('[data-action="create"]'); if (create) create.disabled = creationDisabled();
+}
 async function load(retry = false) {
   busy = true; loading = true; connectionReady = false; loaded = false; storageAvailable = false; showFailureDetails = false; storageRecovery = null; problem = ''; message = ''; canRetry = false; render();
   try {
@@ -162,20 +174,22 @@ async function refreshTargets() {
 async function refreshCapabilities(params, scope, force = false, retry = 0) {
   if (!scope?.selectionToken || capabilitiesLoading) return;
   const previous = capabilityViews.get(scope.workspaceKey);
-  if (!force && previous && Date.now() - previous.observedAt < 300000) return;
+  if (!force && previous && !awaitingCatalog(previous)) return;
   clearTimeout(capabilityRetryTimer);
-  capabilityViews.delete(scope.workspaceKey);
   capabilitiesLoading = true; render();
   try {
     const value = await call('capabilities', params);
     capabilityViews.set(value.workspaceKey, value);
-    if (retry < 4 && value.connection === 'connected' && value.executionHostId === 'local' && Object.values(value.agents).some(agent => agent.listingInProgress)) {
+    if (retry < 4 && value.connection === 'connected' && value.executionHostId === 'local' && awaitingCatalog(value)) {
       capabilityRetryTimer = setTimeout(() => {
-        if (view === 'new' && !busy && workspace?.workspaceKey === scope.workspaceKey) void refreshCapabilities(params, scope, true, retry + 1);
+        if (view === 'new' && !busy && workspace?.workspaceKey === scope.workspaceKey && awaitingCatalog(capabilityViews.get(scope.workspaceKey))) void refreshCapabilities(params, scope, true, retry + 1);
       }, 11000);
     }
   } catch (error) { problem = `Could not load models: ${error.message}`; }
   finally { capabilitiesLoading = false; render(); }
+}
+function awaitingCatalog(caps) {
+  return [...new Set(form.agents.slice(0, form.levels))].some(id => caps?.agents?.[id]?.listingInProgress && caps.agents[id].catalogStatus !== 'known');
 }
 async function enterNewTeam() {
   busy = true; view = 'new'; message = ''; problem = ''; render();
@@ -193,7 +207,7 @@ async function refreshNewTeamContext() {
     if (busy || view !== 'new') return;
     if (previousKey !== workspace?.workspaceKey || previousError !== targetError) {
       render();
-      if (scope?.selectionToken) await refreshCapabilities({ selectionToken: scope.selectionToken }, scope);
+      if (scope?.selectionToken) await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, previousKey !== scope.workspaceKey);
     }
   } finally { newContextRefreshing = false; }
 }
@@ -202,11 +216,17 @@ async function createCurrentTeam() {
   for (let i = draft.levels; i < 3; i++) { draft.models[i] = 'default'; draft.efforts[i] = 'default'; }
   busy = true; problem = ''; message = ''; clearTimeout(capabilityRetryTimer); render();
   try {
+    planTeam(draft);
     const scope = await refreshTargets();
     if (!scope?.selectionToken || targetError) throw Error(targetError || 'Open a project in Orca to launch a team.');
-    await refreshCapabilities({selectionToken:scope.selectionToken}, scope);
+    // Fresh launch admission is separate from the frozen form catalog. Never clear
+    // selected labels or replace the user's choices while checking the host.
+    let admission = capabilityViews.get(scope.workspaceKey);
+    if (!admission || Date.now() - admission.observedAt >= 30000) admission = await call('capabilities', { selectionToken: scope.selectionToken });
+    const preparation = sessionIssue(admission);
+    if (preparation) throw Error(preparation);
     for (let i = 0; i < draft.levels; i++) {
-      const issue = preferenceIssue({agent:draft.agents[i],model:draft.models[i],effort:draft.efforts[i]}, capabilityViews.get(scope.workspaceKey));
+      const issue = preferenceIssue({agent:draft.agents[i],model:draft.models[i],effort:draft.efforts[i]}, admission);
       if (issue) throw Error(issue);
     }
     const result = await call('createTeam', mutation({form:draft,selectionToken:scope.selectionToken}));
@@ -313,7 +333,11 @@ app.addEventListener('change', async event => {
   if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
   else if (target.dataset.count === 'leadCount') { setLeadCount(Number(target.value)); }
   else if (target.dataset.count === 'workersPerLead') { form.workersPerLead = Number(target.value); updatePreview(); }
-  else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render(); }
+  else if (target.dataset.agent !== undefined) {
+    const i = Number(target.dataset.agent); form.agents[i] = target.value; form.models[i] = 'default'; form.efforts[i] = 'default'; render();
+    const caps = capabilityViews.get(workspace?.workspaceKey);
+    if (workspace?.selectionToken && caps?.agents?.[target.value]?.catalogStatus !== 'known') await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace, true);
+  }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);
     form.models[i] = target.value.trim() || 'default';

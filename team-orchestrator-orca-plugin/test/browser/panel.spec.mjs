@@ -153,6 +153,37 @@ test('a missing current project prevents saving or launching against the previou
 
 test('more than one lead saves and launches a three-level team with exactly one head',async({page})=>{
  await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
- await ui.getByLabel('Leads',{exact:true}).selectOption('2');await ui.getByLabel('Workers per lead',{exact:true}).selectOption('1');await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(5,{timeout:55000});
+ await ui.getByLabel('Leads',{exact:true}).selectOption('2');await ui.getByLabel('Lead name',{exact:true}).fill('UI, Dev');await ui.getByLabel('Workers per lead',{exact:true}).selectOption('1');await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(5,{timeout:55000});
  const team=(await snapshot(page)).teams[0];expect(team.configuration).toMatchObject({levels:3,leadCount:2,workersPerLead:1});expect(team.members.filter(m=>m.role==='head')).toHaveLength(1);const leads=team.members.filter(m=>m.role==='lead');expect(leads).toHaveLength(2);for(const lead of leads)expect(team.members.filter(m=>m.boss===lead.id)).toHaveLength(1);expect(Object.keys(team.launch.members)).toHaveLength(5);
+ expect(leads.map(m=>m.name)).toEqual(['UI','Dev']);expect(team.configuration.leadNames).toBe('UI, Dev');
+});
+
+test('lead names validate against the selected count and update the preview without moving input focus',async({page})=>{
+ await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+ const names=ui.getByLabel('Lead name',{exact:true});await names.fill('UI, Dev, Review');await expect(names).toBeFocused();
+ await expect(ui.locator('#lead-names-validation')).toContainText('match Leads; found 3');await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
+ await ui.getByLabel('Leads',{exact:true}).selectOption('3');await expect(ui.locator('#preview .org-node.lead > span:nth-child(2)')).toHaveText(['UI','Dev','Review']);await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+ await names.fill('UI, UI, Review');await expect(ui.locator('#lead-names-validation')).toHaveText('Lead names must be unique.');await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
+ await names.fill('');await ui.getByLabel('Leads',{exact:true}).selectOption('1');await names.fill('Design');await expect(ui.locator('#preview .org-node.head > span:nth-child(2)')).toHaveText('Design');
+});
+
+test('chosen models remain stable past discovery expiry and unchanged-project polling preserves the form DOM',async({page})=>{
+ await page.clock.install();await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();
+ await ui.getByLabel('Head model',{exact:true}).selectOption('my-model');await ui.getByLabel('Head effort',{exact:true}).selectOption('ultra');
+ await ui.getByLabel('Head model',{exact:true}).evaluate(e=>{window.originalModelPicker=e;});await ui.getByLabel('Lead name',{exact:true}).focus();
+ const counts=await page.evaluate(()=>({caps:bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length,context:bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='context').length}));
+ await page.clock.fastForward(360000);
+ await expect.poll(()=>page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='context').length)).toBeGreaterThan(counts.context);
+ await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('my-model');await expect(ui.getByLabel('Head effort',{exact:true})).toHaveValue('ultra');await expect(ui.getByLabel('Lead name',{exact:true})).toBeFocused();
+ expect(await ui.getByLabel('Head model',{exact:true}).evaluate(e=>e===window.originalModelPicker)).toBe(true);
+ expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length)).toBe(counts.caps);
+ await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeEnabled();
+});
+
+test('New team requires an existing project session even when Default is selected',async({page})=>{
+ await page.goto('/?mode=capabilities-no-session');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();
+ await expect(ui.getByText('Open a Codex or Claude Code session in this project before launching a team, then refresh models.',{exact:true})).toBeVisible();
+ await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveText(['Default · Orca settings']);
+ expect(await page.evaluate(()=>bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='launchSupervisor'))).toBe(false);
 });

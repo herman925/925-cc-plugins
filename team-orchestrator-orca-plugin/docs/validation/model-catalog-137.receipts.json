@@ -1,0 +1,593 @@
+{
+  "schema": "team-model-catalog-validation/v1",
+  "observedAt": "2026-10-18T11:30:19.651Z",
+  "pluginVersion": "0.1.18",
+  "platform": "darwin",
+  "arch": "arm64",
+  "appVersion": "1.4.229",
+  "runtimeId": "0418a9d7-3830-4b20-9ade-cb3348fab152",
+  "scene": "existing ordinary Codex and Claude Code terminals; no native Chat created",
+  "baseline": {
+    "catalogsRefusedBeforeHostRead": true,
+    "errorCode": "runtime_error",
+    "errorMessage": "structured_agent_session_unsupported",
+    "readOnlyInitializationMethod": "agentSession.restartResumable",
+    "restartOffers": 0,
+    "failedOffers": 0
+  },
+  "session": {
+    "status": "ready",
+    "kind": "terminal",
+    "agent": "codex"
+  },
+  "connection": "connected",
+  "methods": [
+    "status.get",
+    "settings.get",
+    "terminal.list",
+    "terminal.agentStatus",
+    "agentSession.modelCatalog",
+    "agentSession.modelCatalog",
+    "status.get"
+  ],
+  "agents": {
+    "codex": {
+      "catalogStatus": "known",
+      "source": "probe",
+      "fetchedAt": 1792322904599,
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "label": "GPT-6.1-Sol",
+          "isDefault": true,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            },
+            {
+              "value": "ultra",
+              "label": "Ultra"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra",
+          "label": "GPT-6-Astra",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            },
+            {
+              "value": "ultra",
+              "label": "Ultra"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-sol",
+          "label": "GPT-6-Sol",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            },
+            {
+              "value": "ultra",
+              "label": "Ultra"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-luna",
+          "label": "GPT-6-Luna",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "label": "GPT-5.6-Sol",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            },
+            {
+              "value": "ultra",
+              "label": "Ultra"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "GPT-5.6-Terra",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            },
+            {
+              "value": "ultra",
+              "label": "Ultra"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "GPT-5.6-Luna",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        }
+      ]
+    },
+    "claude": {
+      "catalogStatus": "known",
+      "source": "probe",
+      "fetchedAt": 1792322903983,
+      "models": [
+        {
+          "id": "opus",
+          "label": "deepseek-v4-pro",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "fable",
+          "label": "Fable",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "sonnet",
+          "label": "deepseek-flash",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "haiku",
+          "label": "deepseek-flash",
+          "isDefault": false,
+          "efforts": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "nativeTurnsSent": 0,
+  "teamsLaunched": 0,
+  "panel": {
+    "claude": {
+      "label": "Workers model",
+      "options": [
+        {
+          "id": "default",
+          "label": "Default · Orca settings"
+        },
+        {
+          "id": "opus",
+          "label": "deepseek-v4-pro (opus)"
+        },
+        {
+          "id": "fable",
+          "label": "Fable (fable)"
+        },
+        {
+          "id": "sonnet",
+          "label": "deepseek-flash (sonnet)"
+        },
+        {
+          "id": "haiku",
+          "label": "deepseek-flash (haiku)"
+        }
+      ]
+    },
+    "claudeEfforts": [
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "codex": {
+      "label": "Head model",
+      "options": [
+        {
+          "id": "default",
+          "label": "Default · Orca settings"
+        },
+        {
+          "id": "gpt-6.1-sol",
+          "label": "GPT-6.1-Sol (gpt-6.1-sol)"
+        },
+        {
+          "id": "gpt-6-astra",
+          "label": "GPT-6-Astra (gpt-6-astra)"
+        },
+        {
+          "id": "gpt-6-sol",
+          "label": "GPT-6-Sol (gpt-6-sol)"
+        },
+        {
+          "id": "gpt-6-luna",
+          "label": "GPT-6-Luna (gpt-6-luna)"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "label": "GPT-5.6-Sol (gpt-5.6-sol)"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "GPT-5.6-Terra (gpt-5.6-terra)"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "GPT-5.6-Luna (gpt-5.6-luna)"
+        }
+      ]
+    },
+    "codexEfforts": [
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "launchEnabled": true,
+    "projectLabel": "Project: Outreach",
+    "restored": {
+      "headModel": "default",
+      "workerCLI": "codex"
+    },
+    "selected": [
+      {
+        "label": "Head model",
+        "value": "gpt-6-astra"
+      },
+      {
+        "label": "Head effort",
+        "value": "high"
+      },
+      {
+        "label": "Workers model",
+        "value": "fable"
+      },
+      {
+        "label": "Workers effort",
+        "value": "max"
+      }
+    ],
+    "version": "v0.1.18"
+  },
+  "nativeWorkspace": "925-cc-plugins",
+  "artifacts": {
+    "main.mjs": "2228c632c08aa5a3ad7684b55e302a9c45e5574fc1de3140ad1489200d12ee66",
+    "runtime-adapter.cjs": "c1d06006498ad20466a5b351a0351211da631a9a818829e1b453e677c607e895",
+    "panel.html": "d9d617326e6fceb2617442260601ded948658b05eaebdcd14b8eac8298bb38ce"
+  },
+  "validation": {
+    "domain": {
+      "passed": 574
+    },
+    "browserFull": {
+      "passed": 27
+    },
+    "browserAffectedAfterFinalCatalogChange": {
+      "passed": 4
+    },
+    "hostPinnedRevisions": {
+      "passed": 3
+    },
+    "isolatedElectronSyntheticMetadata": {
+      "passed": 4
+    },
+    "boundaries": [
+      "Both providers were already open in the initial real project. Single-provider and structured-chat prerequisite variants are fixtures, not additional live acceptance.",
+      "Cold native API initialization was exercised on the live host; the final plugin was exercised against the warmed live catalog. No full Orca restart was performed.",
+      "The final visible panel followed the desktop-selected project automatically; nativeWorkspace names the separately scoped direct read.",
+      "No actual model generation, new-team launch, Windows or SSH catalog acceptance in this change."
+    ]
+  },
+  "labelOnlyFollowup": {
+    "observedAt": "2026-10-18T11:44:30.902505+00:00",
+    "display": "Host display name only; native model IDs retained as option values.",
+    "artifacts": {
+      "main.mjs": "2228c632c08aa5a3ad7684b55e302a9c45e5574fc1de3140ad1489200d12ee66",
+      "runtime-adapter.cjs": "c1d06006498ad20466a5b351a0351211da631a9a818829e1b453e677c607e895",
+      "panel.html": "fb350aae54e536ddfb0165796eaf585748f946c520c96ab7083018b9900fd309"
+    },
+    "panel": {
+      "models": [
+        {
+          "label": "Head model",
+          "options": [
+            {
+              "label": "Default · Orca settings",
+              "value": "default"
+            },
+            {
+              "label": "GPT-6.1-Sol",
+              "value": "gpt-6.1-sol"
+            },
+            {
+              "label": "GPT-6-Astra",
+              "value": "gpt-6-astra"
+            },
+            {
+              "label": "GPT-6-Sol",
+              "value": "gpt-6-sol"
+            },
+            {
+              "label": "GPT-6-Luna",
+              "value": "gpt-6-luna"
+            },
+            {
+              "label": "GPT-5.6-Sol",
+              "value": "gpt-5.6-sol"
+            },
+            {
+              "label": "GPT-5.6-Terra",
+              "value": "gpt-5.6-terra"
+            },
+            {
+              "label": "GPT-5.6-Luna",
+              "value": "gpt-5.6-luna"
+            }
+          ],
+          "value": "default"
+        },
+        {
+          "label": "Workers model",
+          "options": [
+            {
+              "label": "Default · Orca settings",
+              "value": "default"
+            },
+            {
+              "label": "GPT-6.1-Sol",
+              "value": "gpt-6.1-sol"
+            },
+            {
+              "label": "GPT-6-Astra",
+              "value": "gpt-6-astra"
+            },
+            {
+              "label": "GPT-6-Sol",
+              "value": "gpt-6-sol"
+            },
+            {
+              "label": "GPT-6-Luna",
+              "value": "gpt-6-luna"
+            },
+            {
+              "label": "GPT-5.6-Sol",
+              "value": "gpt-5.6-sol"
+            },
+            {
+              "label": "GPT-5.6-Terra",
+              "value": "gpt-5.6-terra"
+            },
+            {
+              "label": "GPT-5.6-Luna",
+              "value": "gpt-5.6-luna"
+            }
+          ],
+          "value": "default"
+        }
+      ]
+    },
+    "existingBrowserSelectionTestPassed": true
+  }
+}
