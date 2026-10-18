@@ -137,32 +137,6 @@ nav button.active {
 .worker>.glyph {
   color:var(--dim);
 }
-.presets {
-  display:grid;
-  gap:8px;
-  margin:10px 0 16px;
-}
-.preset {
-  text-align:left;
-  padding:11px 12px;
-}
-.preset>span {
-  display:flex;
-  justify-content:space-between;
-  gap:8px;
-}
-.preset strong {
-  font-size:12px;
-  font-weight:550;
-}
-.preset code {
-  color:var(--cyan);
-  white-space:nowrap;
-}
-.preset small {
-  display:block;
-  margin-top:3px;
-}
 .secondary {
   background:transparent;
 }
@@ -213,10 +187,7 @@ nav button.active {
 .field small {
   font-weight:400;
 }
-.field .presets {
-  margin:0;
-}
-.field input,.field textarea,.field select,input[data-model],select[data-effort],select[data-agent] {
+.field input,.field textarea,.field select,select[data-model],select[data-effort],select[data-agent] {
   width:100%;
   min-width:0;
   background:var(--surface);
@@ -273,12 +244,9 @@ th,td {
 .models td {
   padding:7px 5px;
 }
-.models input,.models select {
+.models select {
   font-size:11px;
   min-width:95px;
-}
-.models input {
-  width:100%;
 }
 .count {
   font-size:11px;

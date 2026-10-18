@@ -1,10 +1,10 @@
 import {test,expect} from '@playwright/test';
 import {panel,snapshot} from './helpers.mjs';
 test('initial staffing and per-level CLI/model/effort choices persist without member editors',async({page})=>{
- await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'New team',exact:true}).click();await ui.getByRole('button',{name:/Squad/}).click();await ui.getByRole('button',{name:'Confirm project and host'}).click();
- await ui.getByLabel('Head CLI',{exact:true}).selectOption('codex');await ui.getByLabel('Head model',{exact:true}).fill('my-model');await ui.getByLabel('Head model',{exact:true}).press('Tab');await ui.getByLabel('Head effort',{exact:true}).selectOption('ultra');
- await ui.getByLabel('Workers CLI',{exact:true}).selectOption('claude');await ui.getByLabel('Workers model',{exact:true}).fill('claude-model');await ui.getByLabel('Workers model',{exact:true}).press('Tab');await ui.getByLabel('Workers effort',{exact:true}).selectOption('max');
- await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(4);
+ await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'New team',exact:true}).click();await ui.getByLabel('Team name',{exact:true}).fill('Squad');await ui.getByRole('button',{name:'Confirm project and host'}).click();
+ await ui.getByLabel('Head CLI',{exact:true}).selectOption('codex');await ui.getByLabel('Head model',{exact:true}).selectOption('my-model');await ui.getByLabel('Head effort',{exact:true}).selectOption('ultra');
+ await ui.getByLabel('Workers CLI',{exact:true}).selectOption('claude');await ui.getByLabel('Workers model',{exact:true}).selectOption('claude-model');await ui.getByLabel('Workers effort',{exact:true}).selectOption('max');
+ await ui.getByRole('button',{name:'Launch team',exact:true}).click();await expect(ui.locator('.roster tbody tr')).toHaveCount(4,{timeout:45000});
  const team=(await snapshot(page)).teams[0];expect(team.members[0]).toMatchObject({agent:'codex',model:'my-model',effort:'ultra'});for(const member of team.members.slice(1))expect(member).toMatchObject({agent:'claude',model:'claude-model',effort:'max'});
  await page.reload();await expect(panel(page).locator('.roster tbody tr').first()).toContainText('my-model');await expect(panel(page).locator('.roster tbody tr').nth(1)).toContainText('claude-model');expect((await snapshot(page)).teams[0]).toMatchObject({id:team.id,members:team.members,configuration:team.configuration,configVersion:team.configVersion});
  await expect(panel(page).locator('main input, main select, main textarea')).toHaveCount(0);

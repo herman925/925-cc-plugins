@@ -116,3 +116,16 @@ test('changed host catalogs preserve saved requested choices and reject new unsu
  assert.equal(f.store.readSnapshot().teams[0].members[0].model, 'codex-model');
  assert.equal((await f.send({ op: 'updateAgentPreferences', params: input })).ok, true, 'completed request replay precedes capability revalidation');
 });
+
+test('a model listing in progress stays unknown and allows inherited defaults only', async t => {
+ const f = await fixture(t), runtime = f.handlers.get('runtime:call');
+ f.handlers.set('runtime:call', async (event, request) => request.method === 'agentSession.modelCatalog' ? {ok:true,result:{origin:'unknown',listingInProgress:true}} : runtime(event, request));
+ const result = await f.send({op:'capabilities',params:{teamId:f.team.id}});
+ assert.equal(result.value.agents.codex.listingInProgress,true);
+ assert.equal(result.value.agents.codex.catalogStatus,'unknown');
+ assert.deepEqual(result.value.agents.codex.models,[]);
+ const input={requestId:'listing-default',expectedRevision:1,teamId:f.team.id,memberId:f.team.members[0].id,agent:'codex',model:'default',effort:'default'};
+ assert.equal((await f.send({op:'updateAgentPreferences',params:input})).ok,true);
+ const denied=await f.send({op:'updateAgentPreferences',params:{...input,requestId:'unverified-model',expectedRevision:2,model:'guessed-model'}});
+ assert.equal(denied.ok,false);assert.match(denied.error,/not verified/);
+});

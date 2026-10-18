@@ -40,6 +40,7 @@ export async function discoverCapabilities(rpc, scope) {
       structuredSupported: typeof support?.supported === 'boolean' ? support.supported : null,
       contextUsageSupported: registered?.agents?.find(row => row.agent === agent)?.capabilities?.contextUsage === true,
       catalogStatus: ['probe', 'live-session'].includes(catalog?.origin) && Array.isArray(catalog.models) ? 'known' : 'unknown',
+      listingInProgress: catalog?.listingInProgress === true,
       catalogSource: ['probe', 'live-session'].includes(catalog?.origin) ? catalog.origin : null,
       fetchedAt: Number.isFinite(catalog?.fetchedAt) ? catalog.fetchedAt : null,
       models: models(catalog?.models),

@@ -6,7 +6,9 @@ test('Roster contains only launched teams and member monitoring; creation belong
  await launchTeam(page);await expect(ui.getByRole('heading',{name:'@Squad',exact:true})).toBeVisible();
  await expect(ui.locator('.roster tbody tr')).toHaveCount(4);await expect(ui.locator('.roster thead')).toContainText('Status');await expect(ui.locator('.roster thead')).toContainText('Context');
  for(const label of ['Start team work','Submit total objective','Next total objectives','Pause new assignments','Open verified session','Check saved launch'])await expect(ui.getByText(label,{exact:true})).toHaveCount(0);
- await expect(ui.locator('main [data-action="new"]')).toHaveCount(0);await expect(ui.locator('main textarea')).toHaveCount(0);await expect(ui.locator('main')).not.toContainText('Input acceptance does not prove');
+ await expect(ui.getByRole('button',{name:'Add team',exact:true})).toHaveCount(1);await expect(ui.locator('main textarea')).toHaveCount(0);await expect(ui.locator('main')).not.toContainText('Input acceptance does not prove');
+ const team=(await snapshot(page)).teams[0];expect(team.configuration.launchMode).toBe('all');expect(Object.keys(team.launch.members)).toHaveLength(4);
+ await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('heading',{name:'New team',exact:true})).toBeVisible();
  await page.reload();await expect(panel(page).locator('.roster tbody tr')).toHaveCount(4);
 });
 
@@ -19,7 +21,7 @@ test('launch automatically initializes the highest supervisor and never needs a 
 });
 
 for(const [mode,label] of [['roster-idle','Idle'],['roster-asking','Needs input']])test(mode+' reports native state for the supervisor',async({page})=>{
- const ui=await launchTeam(page,{mode});await expect(ui.locator('.roster tbody tr').first()).toContainText(label);await expect(ui.locator('.roster tbody tr').nth(1)).toContainText('Not started');
+ const ui=await launchTeam(page,{mode});await expect(ui.locator('.roster tbody tr').first()).toContainText(label);await expect(ui.locator('.roster tbody tr').nth(1)).toContainText(label);
 });
 
 test('terminal context is unavailable rather than fabricated, and launch preferences are labeled as configured',async({page})=>{
@@ -71,4 +73,34 @@ test('failed supervisor navigation reports the error without launching or recove
  await page.route('**/rpc',async route=>{if(route.request().postDataJSON().message.args?.op==='openMember')await route.fulfill({json:{error:'Saved supervisor session is no longer available.'}});else await route.continue();});
  await ui.getByRole('button',{name:'Open supervisor',exact:true}).click();await expect(ui.getByRole('alert')).toContainText('Saved supervisor session is no longer available');
  const calls=await page.evaluate(offset=>bridgeCalls.slice(offset).map(c=>c.params?.teamWorker?.args?.op),before);expect(calls).toContain('openMember');expect(calls.some(op=>['launchSupervisor','recoverLaunch','wakeMember','replaceMember','requestReplacement'].includes(op))).toBe(false);
+});
+
+test('Add team opens a simple form and automatically loads separate CLI catalogs',async({page})=>{
+ await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();
+ await expect(ui.getByRole('heading',{name:'New team',exact:true})).toBeVisible();
+ await expect(ui.getByRole('group',{name:'Hierarchy levels'}).getByRole('button')).toHaveCount(2);
+ for(const text of ['Quick start','Head only','Preparation mode'])await expect(ui.getByText(text,{exact:false})).toHaveCount(0);
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option[value="my-model"]')).toHaveCount(1);await expect(ui.locator('input[data-model]')).toHaveCount(0);
+ await ui.getByLabel('Head model',{exact:true}).selectOption('my-model');await ui.getByLabel('Head effort',{exact:true}).selectOption('ultra');
+ await ui.getByLabel('Head CLI',{exact:true}).selectOption('claude');await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('default');await expect(ui.getByLabel('Head effort',{exact:true})).toHaveValue('default');
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option[value="my-model"]')).toHaveCount(0);await ui.getByLabel('Head model',{exact:true}).selectOption('claude-model');await expect(ui.getByLabel('Head effort',{exact:true}).locator('option')).toHaveText(['Default','low','max']);
+ await ui.getByRole('button',{name:'3 · Head + leads + workers',exact:true}).click();await expect(ui.getByLabel('Leads CLI',{exact:true})).toBeVisible();
+ await ui.getByRole('button',{name:'CEO over several teams',exact:true}).click();await expect(ui.getByRole('textbox',{name:/^Teams/})).toBeVisible();await expect(ui.getByLabel('CEO CLI',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='launchSupervisor'))).toBe(false);
+});
+
+test('model discovery retries automatically when the host catalog is still loading',async({page})=>{
+ let reads=0;await page.route('**/rpc',async route=>{
+  if(route.request().postDataJSON().message.args?.op!=='capabilities')return route.continue();
+  const response=await route.fetch(),body=await response.json();if(++reads===1)for(const a of Object.values(body.value.agents)){a.models=[];a.catalogStatus='unknown';a.listingInProgress=true;}
+  await route.fulfill({response,json:body});
+ });
+ await page.goto('/?mode=capabilities-local');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveCount(1);
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option[value="my-model"]')).toHaveCount(1,{timeout:15000});expect(reads).toBeGreaterThan(1);
+});
+
+test('remote model catalog does not offer unverified local model names',async({page})=>{
+ await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Refresh models'})).toBeEnabled();
+ await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveCount(1);await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('default');await expect(ui.getByLabel('Head effort',{exact:true})).toBeDisabled();await expect(ui.getByText('model list unavailable for this remote host',{exact:false})).toBeVisible();
 });
