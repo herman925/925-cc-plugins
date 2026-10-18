@@ -15,7 +15,6 @@ let form = {...structuredClone(DEFAULT_FORM),sessionMode:true};
 let telemetry={members:{},observedAt:null};
 let rosterRefreshRunning=false;
 let view = 'roster';
-let selection = null;
 let busy = true;
 let loaded = false;
 let storageAvailable = false;
@@ -30,12 +29,7 @@ let workspace = null;
 let targetError = '';
 let confirmedWorkspace = null;
 const capabilityViews = new Map();
-let memberPreferences = null;
-let preferenceTarget = 'member';
-const replacementDrafts=new Map();
 
-const wakeDrafts = new Map(), wakeRequests = new Map();
-const reconnectRequests=new Map();
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -53,23 +47,29 @@ function memberObservation(member){return telemetry.members[member.id]??{state:'
 function statusCell(member){const row=memberObservation(member);return `<span class="member-status" data-state="${escape(row.state)}" title="${escape(row.detail||'Observed from the native session')}"><span class="status-dot" aria-hidden="true"></span>${STATUS_LABELS[row.state]||'Unknown'}</span>`;}
 function contextCell(member){const usage=memberObservation(member).context;if(!usage)return '<span class="subtle" title="Context usage has not been reported by this session">—</span>';const percent=Math.round(usage.percent),tone=percent<50?'low':percent<80?'medium':'high';return `<span class="context-usage ${tone}" title="${escape(usage.used)} / ${escape(usage.limit)} tokens${usage.estimated?' · Estimated from native token usage':''}"><span>${usage.estimated?'≈':''}${percent}%</span><span class="context-track"><span style="width:${Math.min(100,Math.max(0,percent))}%"></span></span></span>`;}
 function preferenceCell(member,field){const row=memberObservation(member),reported=row[field],setting=row[field==='model'?'sessionModel':'sessionEffort']??row[field==='model'?'requestedModel':'requestedEffort'];return reported?escape(reported):`<span title="Configured value; the current CLI has not confirmed its effective ${field}">${escape(setting==='default'?'Default':setting||'—')} <small class="subtle">set</small></span>`;}
-function currentBinding(team,member){const observed=telemetry.members[member.id];if(observed?.sessionRequestId)return {requestId:observed.sessionRequestId,kind:observed.kind,status:'created',...(team.launch?.members?.[member.id]??{})};const prepared=team.launch?.members?.[member.id];if(prepared?.status==='created')return prepared;for(const work of state.works||[]){const task=work.tasks?.filter(a=>a.memberId===member.id&&a.binding).at(-1);if(task)return {...task.binding,requestId:task.id};}return null;}
-function openSessionButton(team,member){const b=currentBinding(team,member);return b?button('Open session','open-member',`data-team="${team.id}" data-member="${member.id}" data-request="${b.requestId}"`,'small'):'';}
-function tree(members, parent = null, clickable = false, teamIndex = 0, compact = false) {
+function supervisorSessionButton(team) {
+  const member = team.members.find(row => row.boss === null);
+  const observed = telemetry.members[member?.id];
+  const saved = team.launch?.members?.[member?.id];
+  const requestId = observed?.sessionRequestId || (saved?.status === 'created' ? saved.requestId : null);
+  return requestId ? button('Open supervisor', 'open-supervisor', `data-team="${escape(team.id)}" data-member="${escape(member.id)}" data-request="${escape(requestId)}" title="Open ${escape(member.name)}’s session"`, 'small') : '';
+}
+function tree(members, parent = null, live = false, compact = false) {
   const children = members.filter(member => member.boss === parent);
   return `<ul class="org-tree ${parent === null ? 'root' : ''}">${children.map(member => {
     const shortName = compact ? member.role === 'ceo' ? 'CEO' : member.role === 'head' ? member.team : member.name.replace(/^.*Worker-/, 'W').replace(/^Lead-/, 'L') : member.name;
-    return `<li><${clickable ? 'button type="button"' : 'span'} class="org-node ${escape(member.role)}" ${clickable ? `data-action="member" data-team="${teamIndex}" data-member="${escape(member.id)}" aria-label="${escape(member.name)}" title="${escape(member.name)} · ${escape(STATUS_LABELS[memberObservation(member).state]||'Unknown')}" data-state="${escape(memberObservation(member).state)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></${clickable ? 'button' : 'span'}>${members.some(child => child.boss === member.id) ? tree(members, member.id, clickable, teamIndex, compact) : ''}</li>`;
+    const observation = memberObservation(member);
+    return `<li><span class="org-node ${escape(member.role)}" ${live ? `title="${escape(member.name)} · ${escape(STATUS_LABELS[observation.state] || 'Unknown')}" data-state="${escape(observation.state)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></span>${members.some(child => child.boss === member.id) ? tree(members, member.id, live, compact) : ''}</li>`;
   }).join('')}</ul>`;
 }
-function preferenceControls(name, preference, caps, suffix, member = false) {
+function preferenceControls(name, preference, caps, suffix) {
   const agent = caps?.agents?.[preference.agent];
   const models = agent?.models ?? [];
   const listed = models.find(row => row.id === preference.model);
   const efforts = [...new Set(['default', ...(listed?.efforts ?? []).map(row => row.value), ...(preference.effort === 'default' ? [] : [preference.effort])])];
-  const attr = field => member ? `data-preference="${field}"` : `data-${field}="${suffix}"`;
+  const attr = field => `data-${field}="${suffix}"`;
   const issue = preferenceIssue(preference, caps);
-  return `<td><select aria-label="${name} ${member ? 'agent' : 'CLI'}" ${attr('agent')}>${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? 'selected' : ''}>${text}${caps?.agents?.[value]?.tuiPickerDisabled ? ' · hidden in TUI picker' : ''}</option>`).join('')}</select></td><td><input aria-label="${name} model" ${attr('model')} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map(row => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join('')}</datalist></td><td><select aria-label="${name} effort" ${attr('effort')} ${preference.model === 'default' ? 'disabled' : ''}>${efforts.map(value => `<option value="${escape(value)}" ${preference.effort === value ? 'selected' : ''}>${escape(value === 'default' ? 'Default' : value)}</option>`).join('')}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ''}</td>`;
+  return `<td><select aria-label="${name} CLI" ${attr('agent')}>${[['codex', 'Codex'], ['claude', 'Claude Code']].map(([value, text]) => `<option value="${value}" ${preference.agent === value ? 'selected' : ''}>${text}${caps?.agents?.[value]?.tuiPickerDisabled ? ' · hidden in TUI picker' : ''}</option>`).join('')}</select></td><td><input aria-label="${name} model" ${attr('model')} list="models-${suffix}" value="${escape(preference.model)}" maxlength="120"><datalist id="models-${suffix}"><option value="default"></option>${models.map(row => `<option value="${escape(row.id)}">${escape(row.label)}</option>`).join('')}</datalist></td><td><select aria-label="${name} effort" ${attr('effort')} ${preference.model === 'default' ? 'disabled' : ''}>${efforts.map(value => `<option value="${escape(value)}" ${preference.effort === value ? 'selected' : ''}>${escape(value === 'default' ? 'Default' : value)}</option>`).join('')}</select>${issue ? `<small class="validation">${escape(issue)}</small>` : ''}</td>`;
 }
 function capabilityNotice(scope) {
   const caps = capabilityViews.get(scope?.workspaceKey);
@@ -103,58 +103,13 @@ function projectControls() {
   const target = confirmedWorkspace || workspace;
   return `<section class="section"><h2>Project and execution host</h2><p>${escape(target?.displayName || 'No selected workspace')} · ${escape(target?.kind || 'unknown kind')} · ${escape(target?.executionHostId || 'unknown host')}</p>${button('Refresh workspace', 'refresh-tabs', '', 'small')} ${button('Confirm project and host', 'confirm-project', !workspace?.selectionToken ? 'disabled' : '', 'small')}<p class="subtle">${confirmedWorkspace ? 'Project confirmed. Changing Orca focus will not change this binding.' : 'Open the intended project in Orca, refresh here, then confirm it before saving.'}</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
 }
-function recoveryEvidence(value) {
-  if (!value) return '';
-  return `<div class="recovery-evidence"><p>Recovery: ${escape(value.state)} · Execution: ${escape(value.liveness || 'unknown')}</p><p>${escape(value.detail || '')}</p><small>Last observed: ${escape(value.observedAt || 'Not observed')} · Source: ${escape(value.source || 'unknown')}</small>${value.incomplete ? '<p>Observation or output is incomplete. Check the native session and reconnect its saved host.</p>' : ''}${value.output?.archived ? '<p>Output source is archived; it does not prove current execution.</p>' : ''}${value.output?.warnings?.length ? `<p>${escape(value.output.warnings.join(' · '))}</p>` : ''}</div>`;
-}
 function launchControls() {
   return `<section class="section launch-controls"><h2>Launch</h2><p>On demand prepares the highest supervisor and department managers; other members start on their first task. All at start prepares exactly the saved roster. Orca chooses terminal or native chat and applies its saved launch configuration. The supervisor receives its role and waits for the total objective.</p>${targetError ? `<p class="validation" role="alert">${escape(targetError)}</p>` : ''}</section>`;
-}
-function launchStatus(team, member) {
-  if (!team.launch) return 'Not started';
-  if (!team.launch.native) return 'Legacy request · unverified';
-  const row = team.launch.members?.[member.id];
-  if (row?.status === 'created') return row.briefAccepted ? 'Created · startup brief supplied' : 'Created · brief unconfirmed';
-  if (row?.status === 'starting') return 'Starting';
-  if (row?.status === 'unknown') return 'Unconfirmed';
-  return initialMembers(team, team.launch.mode).some(initial => initial.id === member.id) ? 'Not started' : 'On demand';
-}
-function launchReceipt(team) {
-  if (!team.launch) return '';
-  if (!team.launch.native) return '<p class="subtle">Legacy coordinator request · unverified.</p>';
-  const rows = Object.entries(team.launch.members ?? {});
-  return `<p class="subtle">${rows.filter(([, row]) => row.terminalId).length} actual session receipt(s). Input acceptance does not prove agent readiness.</p><ul>${rows.map(([memberId, row]) => `<li>${escape(row.title || team.members.find(member => member.id === memberId)?.name || 'Supervisor')} · ${escape(row.status)}${row.kind ? ` · ${escape(row.kind)}` : ''}<br><small>Input: ${escape(row.prompt?.outcome || 'unconfirmed')} · Observation: ${escape(row.observation?.state || 'unknown')}</small>${recoveryEvidence(row.recovery)}${row.error || row.warning ? `<p>${escape(row.error || row.warning)}</p>` : ''}${row.terminalId ? button('Open verified session', 'open-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Wake closed member', 'wake-member', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}${row.requestId ? button('Check saved launch', 'recover-launch', `data-team="${team.id}" data-member="${memberId}" data-request="${row.requestId}"`, 'small') : ''}</li>`).join('')}</ul>`;
-}
-function admissionControls(team,member) {
- const paused=member?team.admission?.members?.[member.id]===true:team.admission?.paused===true;
- return `<p>${member?'Member':'Team'} new assignments: ${paused?'Paused':'Allowed'}${member&&team.admission?.paused?' · Team is paused':''}</p>${button(paused?'Resume new assignments':'Pause new assignments','admission',`data-team="${team.id}" ${member?`data-member="${member.id}"`:''} data-paused="${!paused}"`,'small')}`;
-}
-function stopControls(team,member){
- const tasks=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>(w.tasks||[]).map(t=>({...t,workId:t.workId??w.id}))).filter(t=>t.memberId===member.id),task=tasks.at(-1),launch=team.launch?.members?.[member.id];
- const stops=(state.stops||[]).filter(s=>s.teamId===team.id&&s.memberId===member.id),stop=stops.at(-1);
- const action=task?.dispatchId?`data-work="${task.workId}" data-attempt="${task.attemptId}"`:!tasks.length&&launch?.requestId?`data-operation="${launch.requestId}"`:null;
- return `<section aria-label="Execution control"><h3>Execution control</h3>${admissionControls(team,member)}${action?button('Stop current execution','stop-member',`data-team="${team.id}" data-member="${member.id}" ${action}`,'small'):''}${stops.map(s=>`<p>Stop: ${escape(s.state)}</p><p>${escape(s.detail||'Intent saved; execution stop is not confirmed.')}</p>${button('Check stop evidence','check-stop',`data-request="${s.requestId}"`,'small')}${s.recoverable?`<p>Recover the same native request. The original outcome stays in history; no new stop identity is created.</p>${button('Recover same stop request','recover-stop',`data-request="${s.requestId}" data-version="${s.version}"`,'small')}`:''}`).join('')}<p>Stopping requires native execution evidence. Modified files are retained.</p></section>`;
-}
-function replacementControls(team,member){
- const task=(state.works||[]).filter(w=>w.teamId===team.id&&w.status!=='completed').flatMap(w=>w.tasks||[]).filter(t=>t.memberId===member.id).at(-1),bindingRequestId=task?.id??team.launch?.members?.[member.id]?.requestId;
- if(!bindingRequestId)return '';
- return `<section aria-label="Replace agent"><h3>Replace idle agent or model</h3><p>Use the requested choices above in a new conversation with the same member identity. Admission pauses while the handoff is checked. Unknown or unfinished execution must be resolved first. The old conversation may remain open for inspection.</p><label class="field">Replacement handoff summary<textarea data-replacement-summary="${member.id}" maxlength="4000">${escape(replacementDrafts.get(member.id)||'')}</textarea></label>${button(member.boss?'Approve idle member replacement':'Approve idle supervisor replacement','request-replacement',`data-request="${escape(bindingRequestId)}"`,'small')}</section>`;
-}
-function details() {
- if(!selection)return '';const team=state.teams[selection.team],member=team?.members.find(m=>m.id===selection.member);if(!member)return '';
- const boss=team.members.find(m=>m.id===member.boss),binding=currentBinding(team,member);
- return `<section class="inspector" aria-label="Member details"><div class="section-heading"><h2>${escape(member.name)}</h2>${button('Close details','close-details','','small')}</div><dl><dt>Role</dt><dd>${label(member.role)}</dd><dt>Reports to</dt><dd>${escape(boss?.name||'You')}</dd><dt>Status</dt><dd data-live-status="${member.id}">${statusCell(member)}</dd><dt>Context</dt><dd data-live-context="${member.id}">${contextCell(member)}</dd><dt>Model</dt><dd>${preferenceCell(member,'model')}</dd><dt>Effort</dt><dd>${preferenceCell(member,'effort')}</dd></dl>${openSessionButton(team,member)}<details><summary>Role and preferences</summary><p>Role version ${member.roleVersion} · Configuration version ${team.configVersion}</p><label class="field">Preference applies to<select data-preference-target><option value="member" ${preferenceTarget==='member'?'selected':''}>This member</option><option value="level" ${preferenceTarget==='level'?'selected':''}>Level ${member.level} defaults</option></select></label><div class="table-scroll"><table class="models"><tbody><tr>${preferenceControls('Member',memberPreferences||member,capabilityViews.get(team.scope.workspaceKey),'member',true)}</tr></tbody></table></div>${capabilityNotice(team.scope)}${button('Refresh host capabilities','refresh-capabilities','','small')}${button('Save preferences','save-preferences','','small')}${button('Use level default','inherit-preferences','','small')}<label class="field">Role description<textarea data-role="brief" maxlength="1500">${escape(member.brief)}</textarea></label><label class="field">Work habits<textarea data-role="habits" maxlength="1500">${escape(member.habits)}</textarea></label><label class="field">Collaboration rules<textarea data-role="collaboration" maxlength="1500">${escape(member.collaboration)}</textarea></label>${button('Save role','save-role','','small')}</details><details><summary>Session controls and diagnostics</summary>${(state.works||[]).filter(w=>w.supervisorMemberId===member.id&&w.canReconnectRuntime).map(w=>button('Reconnect existing team','reconnect-work',`data-work="${w.id}"`,'small')).join('')}${stopControls(team,member)}${replacementControls(team,member)}${binding&&team.launch?.members?.[member.id]?launchReceipt({...team,launch:{...team.launch,members:{[member.id]:binding}}}):''}${recoveryCards(team.id,member.id)}${initialMembers(team).some(m=>!team.launch?.members?.[m.id])?button('Continue starting team','launch-existing',`data-team="${state.teams.indexOf(team)}"`,'small'):''}</details></section>`;
 }
 function roster() {
  const teams=workspace?state.teams.filter(t=>t.launch&&t.scope.workspaceKey===workspace.workspaceKey):[];
  if(!teams.length)return empty();
- return `<div class="section-heading"><h1>Team roster</h1><small>Updates every 5s</small></div>${state.settings.chart?`<section class="organisation">${teams.map(team=>`<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members,null,true,state.teams.indexOf(team),true)}</div>`).join('')}</section>`:''}<div class="team-cards ${state.settings.layout==='columns'?'columns':''}">${teams.map(team=>`<section class="team-card"><header><h2>@${escape(team.name)}</h2><small>${team.members.length} members</small></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map(member=>`<tr data-member-row="${member.id}"><td>${button(`${GLYPHS[member.role]} ${escape(member.name)}`,'member',`data-team="${state.teams.indexOf(team)}" data-member="${member.id}"`,'name-button')}</td><td>${label(member.role)}</td><td>${memberObservation(member).agent==='claude'?'Claude':'Codex'}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member,'model')}</td><td data-live-effort="${member.id}">${preferenceCell(member,'effort')}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>${details()}`;
-}
-function recoveryCards(teamId,memberId){
- return (state.recoveries||[]).filter(row=>row.teamId===teamId&&row.memberId===memberId).map(row=>{
-  const team=state.teams.find(t=>t.id===row.teamId),member=team?.members.find(m=>m.id===row.memberId),root=!member?.boss;
-  return `<article class="task-card" aria-label="Member recovery"><h3>${escape(member?.name||row.memberId)} · Recovery</h3><p>State: ${escape(row.state)}</p><p>${escape(row.detail||'The old execution was confirmed stopped; native continuation is checked first.')}</p><p>Closing a conversation keeps this member on the roster. Assignment pause and removal are separate actions.</p><small>Previous instance ${escape(row.oldInstanceGeneration)} · Original request ${escape(row.oldRequestId)}</small>${row.handoff?`<p>Checked handoff: ${escape(row.handoff.summary)}</p><p>Reviewer: ${escape(row.handoff.reviewer)}</p>`:''}${row.state==='needs_decision'&&root?`<label class="field">Checked handoff summary<textarea data-wake-summary="${escape(row.requestId)}" maxlength="4000">${escape(wakeDrafts.get(row.requestId)||'')}</textarea></label>${button('Approve fresh supervisor', 'decide-wake', `data-request="${escape(row.requestId)}"`, 'primary small')}`:''}${row.state==='needs_decision'&&!root?`<p>Awaiting the actual direct manager’s checked handoff.</p>${button('Check manager handoff','handoff-wake',`data-request="${escape(row.requestId)}"`,'small')}`:''}${row.state==='approved'?button('Create approved replacement','replace-wake',`data-request="${escape(row.requestId)}" data-team="${escape(row.teamId)}"`,'primary small'):''}${button('Check recovery evidence','check-wake',`data-request="${escape(row.requestId)}"`,'small')}</article>`;
- }).join('');
+ return `<div class="section-heading"><h1>Team roster</h1><small>Updates every 5s</small></div>${state.settings.chart?`<section class="organisation">${teams.map(team=>`<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members,null,true,true)}</div>`).join('')}</section>`:''}<div class="team-cards ${state.settings.layout==='columns'?'columns':''}">${teams.map(team=>`<section class="team-card"><header><h2>@${escape(team.name)}</h2><div class="team-heading-actions"><small>${team.members.length} members</small>${supervisorSessionButton(team)}</div></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map(member=>`<tr data-member-row="${member.id}"><td><span class="member-name">${GLYPHS[member.role]} ${escape(member.name)}</span></td><td>${label(member.role)}</td><td>${memberObservation(member).agent==='claude'?'Claude':'Codex'}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member,'model')}</td><td data-live-effort="${member.id}">${preferenceCell(member,'effort')}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>`;
 }
 function storageRecoveryView(){
  return `<section aria-label="Storage recovery"><h1>Saved storage is unavailable</h1><p>Your saved teams could not be read. Existing data has not been reset.</p><p>Preserve the database together with its WAL, SHM and journal sidecars. Stop the plugin before copying recovery evidence. Use a compatible plugin for a newer schema. Restoring an older backup requires manual reconciliation of later native effects before starting work.</p>${button('Inspect recovery details','storage-recovery','','small')}${storageRecovery?`<dl><dt>Storage status</dt><dd>${escape(storageRecovery.status)}</dd><dt>Found / supported schema</dt><dd>${escape(storageRecovery.foundSchema??'Unreadable')} / ${escape(storageRecovery.supportedSchema)}</dd>${storageRecovery.location?`<dt>Verified local recovery directory</dt><dd>${escape(storageRecovery.location)}</dd>`:''}</dl><p>${escape(storageRecovery.guidance)}</p><h2>Migration backups</h2>${storageRecovery.backups.length?storageRecovery.backups.map(b=>`<p>${escape(b.id)} · ${escape(b.status)} · ${escape(b.createdAt||'Incomplete')}</p>`).join(''):'<p>No verified migration backup is available.</p>'}`:''}</section>`;
@@ -266,74 +221,25 @@ app.addEventListener('click', async event => {
   } else if (action === 'create') {
     try {
       if (!confirmedWorkspace) throw new Error('Confirm the project and execution host first.');
-      if (await submit('createTeam', { form:{...form,sessionMode:true}, selectionToken: confirmedWorkspace.selectionToken })) { selection = null; await launchTeam(state.teams.length-1); view='roster'; await refreshRoster();render(); }
+      if (await submit('createTeam', { form:{...form,sessionMode:true}, selectionToken: confirmedWorkspace.selectionToken })) { await launchTeam(state.teams.length-1); view='roster'; await refreshRoster();render(); }
     } catch (error) { busy = false; message = ''; problem = error.message; canRetry = false; render(); }
-  } else if (action === 'member') { selection = { team: Number(target.dataset.team), member: target.dataset.member }; const team = state.teams[selection.team]; memberPreferences = { ...team.members.find(row => row.id === selection.member) }; preferenceTarget = 'member'; await refreshCapabilities({ teamId: team.id }, team.scope); render(); document.querySelector('.inspector')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-  else if (action === 'close-details') { selection = null; render(); }
+  }
   else if (action === 'retry' || action === 'test-connection') { connectionReady = false; await load(action === 'test-connection'); }
   else if (action === 'refresh-tabs') { confirmedWorkspace = null; await refreshTargets(); render(); }
   else if (action === 'confirm-project') { confirmedWorkspace = workspace; await refreshCapabilities({ selectionToken: workspace.selectionToken }, workspace); render(); }
   else if (action === 'refresh-capabilities') {
     if (view === 'new') { const scope = confirmedWorkspace || workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
-    else if (selection) { const team = state.teams[selection.team]; await refreshCapabilities({ teamId: team.id }, team.scope, true); }
   }
-  else if (action === 'save-preferences' || action === 'inherit-preferences') {
-    const team = state.teams[selection.team], member = team.members.find(row => row.id === selection.member);
-    const params = { teamId: team.id, ...(action === 'inherit-preferences' ? { memberId: member.id, inherit: true } : { ...(preferenceTarget === 'level' ? { level: member.level } : { memberId: member.id }), agent: memberPreferences.agent, model: memberPreferences.model, effort: memberPreferences.effort }) };
-    if (await submit('updateAgentPreferences', params)) { memberPreferences = { ...state.teams[selection.team].members.find(row => row.id === member.id) }; message = 'Requested preferences saved. Effective model remains unknown until Orca reports it.'; render(); }
-  }
-  else if(action==='request-replacement'){
-   const team=state.teams.find(t=>t.id===target.dataset.team),member=team.members.find(m=>m.id===target.dataset.member),params={requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:team.id,memberId:member.id,bindingRequestId:target.dataset.request,agent:memberPreferences.agent,model:memberPreferences.model,effort:memberPreferences.effort,summary:replacementDrafts.get(member.id)||'',evidenceRefs:[`previous-instance:${target.dataset.request}`,`role:${member.id}:${member.roleVersion}`]};
-   busy=true;problem='';render();try{await call('requestReplacement',params);state=validatePersistentState((await call('storage.get',{})).value);message='Replacement decision saved.';}catch(error){problem=error.message;}finally{busy=false;render();}
-  }
-  else if (action === 'save-role') {
-    const team = state.teams[selection.team];
-    const fields = Object.fromEntries([...app.querySelectorAll('[data-role]')].map(node => [node.dataset.role, node.value]));
-    if (await submit('updateRole', { teamId: team.id, memberId: selection.member, ...fields })) { message = 'Role saved as a new version.'; render(); }
-  }
-  else if(['wake-member','check-wake','decide-wake','handoff-wake','replace-wake'].includes(action)){
-    busy=true;problem='';render();
-    try{
-      let op,params;const id=target.dataset.request,row=(state.recoveries||[]).find(r=>r.requestId===id);
-      if(action==='wake-member'){
-        if(!wakeRequests.has(id))wakeRequests.set(id,crypto.randomUUID());
-        op='wakeMember';params={teamId:target.dataset.team,memberId:target.dataset.member,bindingRequestId:id,requestId:wakeRequests.get(id)};
-      }else if(action==='decide-wake'){op='decideWake';params={requestId:id,version:row.version,decision:'replace',summary:wakeDrafts.get(id)||'',evidenceRefs:[`previous-instance:${row.oldRequestId}`,`native-death:${row.proof?.death?.ownerFence??row.proof?.stop?.stopRequestId??'exact-worker'}`]};}
-      else if(action==='replace-wake'){op='replaceMember';params={requestId:id,teamId:target.dataset.team};}
-      else {op=action==='check-wake'?'checkWake':'checkHandoff';params={requestId:id};}
-      const result=await call(op,params);message=`Recovery: ${result.value?.state??result.state??result.status??'saved'}. ${result.value?.detail??result.detail??''}`;state=validatePersistentState((await call('storage.get',{})).value);view='roster';
-    }catch(error){problem=error.message;}finally{busy=false;render();}
-  }
-  else if (action === 'admission' || action === 'stop-member' || action === 'check-stop' || action === 'recover-stop') {
-    busy=true;problem='';render();
-    try {
-      let result;
-      if(action==='admission')result=await call('setAdmission',{requestId:crypto.randomUUID(),expectedRevision:state.revision,teamId:target.dataset.team,...(target.dataset.member?{memberId:target.dataset.member}:{}),paused:target.dataset.paused==='true'});
-      else if(action==='recover-stop')result=await call('recoverStop',{requestId:crypto.randomUUID(),stopRequestId:target.dataset.request,version:Number(target.dataset.version)});
-      else if(action==='check-stop')result=await call('checkStop',{requestId:target.dataset.request});
-      else result=await call('stopMember',{requestId:crypto.randomUUID(),teamId:target.dataset.team,memberId:target.dataset.member,...(target.dataset.attempt?{workId:target.dataset.work,attemptId:target.dataset.attempt}:{operationRequestId:target.dataset.operation})});
-      state=validatePersistentState(result.value);message=action==='admission'?'Assignment admission saved. Existing sessions retain their execution state.':'Native stop evidence updated.';
-    }catch(error){problem=error.message;}finally{busy=false;render();}
-  }
-  else if (action === 'open-member' || action === 'recover-launch') {
-    busy = true; render();
+  else if (action === 'open-supervisor') {
+    busy = true; problem = ''; message = ''; render();
     try {
       const team = state.teams.find(row => row.id === target.dataset.team);
-      const params = { teamId: team.id, memberId: target.dataset.member, requestId: target.dataset.request };
-      if (action === 'recover-launch') params.configVersion = team.launch.configVersion;
-      const result = await call(action === 'open-member' ? 'openMember' : 'recoverLaunch', params);
-      message = action === 'open-member' ? 'Opened the verified native session.' : `Saved launch: ${result.status}.`;
+      const supervisor = team?.members.find(row => row.boss === null);
+      if (!supervisor || supervisor.id !== target.dataset.member) throw Error('The team supervisor has changed. Refresh the roster.');
+      await call('openMember', { teamId: team.id, memberId: supervisor.id, requestId: target.dataset.request });
+      message = 'Opened the supervisor’s session.';
     } catch (error) { problem = error.message; }
-    finally { try { state = validatePersistentState((await call('storage.get', {})).value); } catch (error) { problem = error.message; } busy = false; render(); }
-  }
-  else if(action==='reconnect-work'){
-    busy=true;problem='';message='';render();
-    try{
-      const work=state.works.find(w=>w.id===target.dataset.work);
-      if(!reconnectRequests.has(work.id))reconnectRequests.set(work.id,mutation({workId:work.id,expectedWorkVersion:work.version}));
-      const result=await call('reconnectWork',reconnectRequests.get(work.id));state=validatePersistentState(result.value);reconnectRequests.delete(work.id);message='Existing sessions reconnected. Continue the original objective when ready.';
-    }catch(error){problem=error.message;if(/changed|reload/i.test(error.message))reconnectRequests.delete(target.dataset.work);try{state=validatePersistentState((await call('storage.get',{})).value);}catch{}}
-    finally{busy=false;render();}
+    finally { busy = false; render(); }
   }
   else if (action === 'launch-existing') {
     try { await launchTeam(Number(target.dataset.team)); }
@@ -347,8 +253,6 @@ app.addEventListener('input', event => {
 app.addEventListener('change', async event => {
   const target = event.target;
   if(target.dataset.cleanupWork){if(target.checked)cleanupSelection.add(target.dataset.cleanupWork);else cleanupSelection.delete(target.dataset.cleanupWork);cleanupPreview=null;cleanupRequest=null;render();}
-  else if (target.hasAttribute('data-preference-target')) { preferenceTarget = target.value; render(); }
-  else if (target.dataset.preference) { memberPreferences[target.dataset.preference] = target.value.trim() || 'default'; if (target.dataset.preference === 'model' && memberPreferences.model === 'default') memberPreferences.effort = 'default'; render(); }
   else if (target.dataset.agent !== undefined) { const i = Number(target.dataset.agent); form.agents[i] = target.value; render(); }
   else if (target.dataset.model !== undefined) {
     const i = Number(target.dataset.model);
@@ -361,7 +265,14 @@ app.addEventListener('change', async event => {
 async function refreshRoster(){
  if(rosterRefreshRunning||busy||!connectionReady||!storageAvailable||view!=='roster'||document.visibilityState==='hidden')return;
  rosterRefreshRunning=true;
- try{const result=await call('rosterStatus',{});if(busy||view!=='roster')return;if(result.value.revision>=state.revision)state=validatePersistentState(result.value);telemetry=result.telemetry;const previousWorkspace=workspace?.workspaceKey;await refreshTargets();if(previousWorkspace!==workspace?.workspaceKey)selection=null;if(!selection){message='';render();}else for(const team of state.teams)for(const member of team.members){for(const [field,html] of [['status',statusCell(member)],['context',contextCell(member)],['model',preferenceCell(member,'model')],['effort',preferenceCell(member,'effort')]])for(const node of app.querySelectorAll(`[data-live-${field}="${member.id}"]`))node.innerHTML=html;for(const node of app.querySelectorAll(`.org-node[data-member="${member.id}"]`)){node.dataset.state=memberObservation(member).state;node.title=member.name+' · '+(STATUS_LABELS[memberObservation(member).state]||'Unknown');}}}
+ try {
+   const result = await call('rosterStatus', {});
+   if (busy || view !== 'roster') return;
+   if (result.value.revision >= state.revision) state = validatePersistentState(result.value);
+   telemetry = result.telemetry;
+   await refreshTargets();
+   if (!busy && view === 'roster') render();
+ }
  catch(error){connectionReady=false;storageAvailable=false;problem=error.message;render();}
  finally{rosterRefreshRunning=false;}
 }
@@ -369,5 +280,3 @@ setInterval(()=>void refreshRoster(),5000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refreshRoster();});
 render();
 void load();
-
-app.addEventListener('input',event=>{if(event.target.dataset.replacementSummary)replacementDrafts.set(event.target.dataset.replacementSummary,event.target.value);if(event.target.dataset.wakeSummary)wakeDrafts.set(event.target.dataset.wakeSummary,event.target.value);});

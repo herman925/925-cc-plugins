@@ -423,17 +423,6 @@ th,td {
 .team-card .tree-scroll {
   margin-bottom:14px;
 }
-.name-button {
-  background:transparent;
-  border:0;
-  padding:0;
-  text-align:left;
-  font-size:11px;
-  color:var(--fg);
-}
-.name-button:hover {
-  color:var(--cyan);
-}
 .status-dot {
   display:inline-block;
   width:6px;
@@ -441,14 +430,6 @@ th,td {
   border:1px solid var(--dim);
   border-radius:50%;
   margin-right:5px;
-}
-.inspector {
-  margin-top:22px;
-  border-top:2px solid var(--cyan);
-  padding:18px 0;
-}
-.inspector h2 {
-  color:var(--cyan);
 }
 dl {
   display:grid;
@@ -462,9 +443,6 @@ dt {
 dd {
   margin:0;
   overflow-wrap:anywhere;
-}
-.inspector p {
-  font-size:12px;
 }
 .check {
   display:flex;
@@ -566,9 +544,6 @@ footer {
   border-color:transparent;
   font-size:11px;
 }
-.org-chart .org-node:hover {
-  border-color:var(--cyan);
-}
 .org-chart .glyph {
   font-size:15px;
 }
@@ -648,5 +623,6 @@ footer {
 .context-track>span { display:block; height:100%; background:#81c995; }
 .context-usage.medium .context-track>span { background:var(--yellow); }
 .context-usage.high .context-track>span { background:var(--danger); }
-.inspector>details { margin-top:16px; border-top:1px solid var(--line); padding-top:12px; }
-.inspector summary { cursor:pointer; color:var(--dim); }
+
+.member-name { font-weight:600; }
+.team-heading-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
