@@ -1,0 +1,98 @@
+{
+  "version": "0.1.21",
+  "environment": {
+    "orca": "1.4.229",
+    "electron": "43.7.8",
+    "node": "24.21.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "live": {
+    "observedAt": "2026-10-18T13:33:58.948Z",
+    "navigation": [
+      {
+        "name": "UI-Worker-1",
+        "entry": ".org-chart",
+        "verified": true
+      },
+      {
+        "name": "UI-Worker-2",
+        "entry": ".roster",
+        "verified": true
+      },
+      {
+        "name": "UI-Worker-3",
+        "entry": ".org-chart",
+        "verified": true
+      },
+      {
+        "name": "UI",
+        "entry": ".roster",
+        "verified": true
+      }
+    ],
+    "panel": {
+      "openSupervisorButtons": 0,
+      "rows": [
+        {
+          "context": "9%",
+          "name": "● UI",
+          "tooltip": "70,722 tokens / 828,400 · Last reported 18/10/2026, 21:19:49"
+        },
+        {
+          "context": "≈39.6K tokens",
+          "name": "○ UI-Worker-1",
+          "tooltip": "39,622 tokens · Window size not reported · Estimated from the latest response input · Last reported 18/10/2026, 21:19:36"
+        },
+        {
+          "context": "≈28.1K tokens",
+          "name": "○ UI-Worker-2",
+          "tooltip": "28,076 tokens · Window size not reported · Estimated from the latest response input · Last reported 18/10/2026, 21:18:08"
+        },
+        {
+          "context": "≈27.8K tokens",
+          "name": "○ UI-Worker-3",
+          "tooltip": "27,763 tokens · Window size not reported · Estimated from the latest response input · Last reported 18/10/2026, 21:18:15"
+        }
+      ],
+      "version": "v0.1.21"
+    },
+    "screenshot": "roster-navigation-context-021.png"
+  },
+  "preservation": {
+    "preserved": true,
+    "teams": 2,
+    "members": 8,
+    "launchRequests": 5,
+    "works": 1,
+    "goals": 0
+  },
+  "validation": {
+    "domain": {
+      "passed": 583
+    },
+    "browser": {
+      "cases": 32,
+      "fullRunPassed": 31,
+      "fullRunFailed": 1,
+      "failure": "Expected lowercase k; Intl.NumberFormat renders uppercase K. Corrected only the assertion.",
+      "affectedRerunPassed": 1
+    },
+    "hostContracts": {
+      "passed": 3,
+      "revisions": [
+        "9fdd90ffa7721e145f1353ad9fb9df2f70c31f43",
+        "ff4a51c872e723d87ab141044814301ea5a78634",
+        "37c314bcc96063c42c468e564df2c34bac8ef8a1"
+      ]
+    }
+  },
+  "artifacts": {
+    "main.mjs": "d927a8343482ace431a7a1c666b61e9e224533d72ff811138d1e84c205596c26",
+    "runtime-adapter.cjs": "c1d06006498ad20466a5b351a0351211da631a9a818829e1b453e677c607e895",
+    "panel.html": "071525143fc1250d000c2aeb080fbf47b9561bdb4c7247db430973661d70d751",
+    "orca-plugin.json": "8bb16cbde557b43f10a8a5f47c4cb5b1c318b0d98a742b2ea57a4404a1c9e7d2",
+    "package.json": "87b9c618da0fed6895e729d4726811b8a55dfb092088b9fa45187a89e897de0c",
+    "package-lock.json": "2250ba886e03248f07a9da2f263f9ab026b87d21579ddac7c0e4be89cb74177b"
+  }
+}

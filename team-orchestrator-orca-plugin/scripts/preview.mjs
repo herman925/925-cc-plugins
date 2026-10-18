@@ -5,7 +5,7 @@ import http from 'node:http';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openTeamStore } from '../src/local/store.mjs';
@@ -17,7 +17,7 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode === 'terminal-context' || mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
     const cli = async args => {
       if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
@@ -144,7 +144,7 @@ async function fixture(id, mode) {
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];
       if (method === 'terminal.list') return { terminals: mode === 'capabilities-no-session' ? [] : [{ handle: 'existing-cli', incarnationId: 'existing-instance', worktreeId: params.worktree.replace(/^id:/, ''), executionHostId: host, connected: true, agentIdentity: 'codex' }] };
-      if (method === 'session.tabs.list') return { worktree: params.worktree.replace(/^id:/, ''), tabs: [] };
+      if (method === 'session.tabs.list') return { worktree: params.worktree.replace(/^id:/, ''), tabs: mode==='terminal-context'?[...launches.values()].map(row=>{const [parentTabId,leafId]=row.outcome.paneKey.split(':'),handle=row.outcome.handle;return {type:'terminal',parentTabId,leafId,ptyId:'pty-'+handle,incarnationId:'instance-'+handle,agentStatus:{terminalHandle:handle,agentType:agents.get(handle),providerSession:{key:'session_id',id:handle,transcriptPath:join(profile,handle+'.jsonl')}}};}):[] };
       if(method==='agentSession.handoffStatus')return {owner:sessionIds.has(params.sessionId)?'native':'none',phase:'idle',stage:null};
       if (method === 'agentSession.agents') return { agents: [] };
       if (method === 'agentSession.createSupport') return { supported: true, seedOptions: {} };
@@ -160,10 +160,14 @@ async function fixture(id, mode) {
         if (mode === 'partial' || mode === 'launch-unknown' || mode === 'roster-partial' && creates === 2) throw Error('Agent launch outcome unknown');
         const structured = mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
+        if(mode==='terminal-context'){
+          const handle=result.outcome.handle,rows=params.agent==='codex'?[{type:'session_meta',payload:{id:handle,cwd:profile}},{type:'event_msg',timestamp:'2026-10-18T13:00:00Z',payload:{type:'token_count',info:{last_token_usage:{total_tokens:25000},total_token_usage:{total_tokens:999999},model_context_window:100000}}}]:[{type:'assistant',sessionId:handle,cwd:profile,timestamp:'2026-10-18T13:00:00Z',message:{model:'fixture-model',usage:{input_tokens:1000,cache_read_input_tokens:39000,output_tokens:5000}}}];
+          await writeFile(join(profile,handle+'.jsonl'),rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+        }
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
       }
       const launch = [...launches.values()].find(row => params?.terminal !== undefined && row.outcome.handle === params.terminal || params?.sessionId !== undefined && row.outcome.sessionId === params.sessionId);
-      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, ptyId: 'pty-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
+      if (method === 'terminal.show' && launch) { const [tabId, leafId] = launch.outcome.paneKey.split(':'); return { terminal: { handle: params.terminal, worktreeId: launch.worktreeId, worktreePath: profile, executionHostId: host, tabId, leafId, connected: true, writable: true, incarnationId: 'instance-' + params.terminal, ptyId: 'pty-' + params.terminal, agentIdentity: agents.get(params.terminal) } }; }
       if (method === 'terminal.rename') { title = params.title; return { rename: { handle: params.terminal, title, tabId: 'tab-1' } }; }
       if(method==='terminal.wait')return {wait:{handle:params.terminal,condition:params.for,satisfied:true,status:'running',exitCode:null}};
       if (method === 'terminal.agentStatus') return { agentStatus: { handle: params.terminal, isRunningAgent: true, status: mode === 'runtime-reconnect-busy'&&runtimeEpoch!=='fixture-runtime' ? 'working' : mode === 'permission' ? 'permission' : 'idle' } };

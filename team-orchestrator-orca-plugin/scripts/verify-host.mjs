@@ -318,6 +318,16 @@ try {
   assert.equal(before.CreateSupportParams.safeParse({ worktree: 'folder:/fixture', agent: 'codex' }).success, true);
   assert.equal(before.ModelCatalogParams.safeParse({ worktree: 'folder:/fixture', agent: 'claude' }).success, true);
   assert.equal(before.ModelCatalogParams.safeParse({ agent: 'claude', executionHost: 'made-up' }).success, false);
+  if (pairedHost) {
+    const sessions = await source(join(root, 'src/shared/runtime-session-contracts.ts'));
+    const tabs = await source(join(root, 'src/shared/runtime-mobile-session-tab-contracts.ts'));
+    const provider = await source(join(root, 'src/shared/agent-session-resume.ts'));
+    const status = await source(join(root, 'src/shared/agent-status-types.ts'));
+    assert.match(sessions, /RuntimeMobileSessionTabsResult = \{\s*worktree: string/);
+    for (const field of ['parentTabId: string', 'leafId: string', 'ptyId?: string', 'incarnationId?: string', 'agentStatus?: AgentStatusEntry']) assert.ok(tabs.includes(field), field);
+    assert.match(provider, /type AgentProviderSessionMetadata = \{[\s\S]*?id: string[\s\S]*?transcriptPath\?: string/);
+    assert.match(status, /providerSession\?: AgentProviderSessionMetadata/);
+  }
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
   assert.equal(before.parsePluginManifest(manifest).ok, true);
   assert.equal(before.parsePluginManifest({ ...manifest, version: '0.1.04' }).ok, false);

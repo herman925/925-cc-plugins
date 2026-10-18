@@ -43,21 +43,34 @@ function empty() { return `<section class="welcome"><h1>${workspace?'No teams in
 const STATUS_LABELS={working:'Working',idle:'Idle',asking:'Needs input',starting:'Starting',closed:'Closed','not-started':'Not started',offline:'Offline',unknown:'Unknown'};
 function memberObservation(member){return telemetry.members[member.id]??{state:'unknown',model:null,effort:null,context:null,requestedModel:member.model,requestedEffort:member.effort};}
 function statusCell(member){const row=memberObservation(member);return `<span class="member-status" data-state="${escape(row.state)}" title="${escape(row.detail||'Observed from the native session')}"><span class="status-dot" aria-hidden="true"></span>${STATUS_LABELS[row.state]||'Unknown'}</span>`;}
-function contextCell(member){const usage=memberObservation(member).context;if(!usage)return '<span class="subtle" title="Context usage has not been reported by this session">—</span>';const percent=Math.round(usage.percent),tone=percent<50?'low':percent<80?'medium':'high';return `<span class="context-usage ${tone}" title="${escape(usage.used)} / ${escape(usage.limit)} tokens${usage.estimated?' · Estimated from native token usage':''}"><span>${usage.estimated?'≈':''}${percent}%</span><span class="context-track"><span style="width:${Math.min(100,Math.max(0,percent))}%"></span></span></span>`;}
-function preferenceCell(member,field){const row=memberObservation(member),reported=row[field],setting=row[field==='model'?'sessionModel':'sessionEffort']??row[field==='model'?'requestedModel':'requestedEffort'];return reported?escape(reported):`<span title="Configured value; the current CLI has not confirmed its effective ${field}">${escape(setting==='default'?'Default':setting||'—')} <small class="subtle">set</small></span>`;}
-function supervisorSessionButton(team) {
-  const member = team.members.find(row => row.boss === null);
-  const observed = telemetry.members[member?.id];
-  const saved = team.launch?.members?.[member?.id];
-  const requestId = observed?.sessionRequestId || (saved?.status === 'created' ? saved.requestId : null);
-  return requestId ? button('Open supervisor', 'open-supervisor', `data-team="${escape(team.id)}" data-member="${escape(member.id)}" data-request="${escape(requestId)}" title="Open ${escape(member.name)}’s session"`, 'small') : '';
+function contextCell(member){
+  const usage=memberObservation(member).context;
+  if(!usage)return '<span class="subtle" title="Context usage has not been reported by this session">—</span>';
+  const measured=typeof usage.percent==='number'&&Number.isFinite(usage.percent);
+  const tokens=new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(usage.used);
+  const title=`${usage.used.toLocaleString('en')} tokens${usage.limit?` / ${usage.limit.toLocaleString('en')}`:' · Window size not reported'}${usage.estimated?' · Estimated from the latest response input':''}${usage.capturedAt?` · Last reported ${new Date(usage.capturedAt).toLocaleString()}`:''}`;
+  if(!measured)return `<span class="context-usage" title="${escape(title)}">${usage.estimated?'≈':''}${escape(tokens)} tokens</span>`;
+  const percent=Math.round(usage.percent),tone=percent<50?'low':percent<80?'medium':'high';
+  return `<span class="context-usage ${tone}" title="${escape(title)}"><span>${usage.estimated?'≈':''}${percent}%</span><span class="context-track"><span style="width:${Math.min(100,Math.max(0,percent))}%"></span></span></span>`;
 }
-function tree(members, parent = null, live = false, compact = false) {
+function preferenceCell(member,field){const row=memberObservation(member),reported=row[field],setting=row[field==='model'?'sessionModel':'sessionEffort']??row[field==='model'?'requestedModel':'requestedEffort'];return reported?escape(reported):`<span title="Configured value; the current CLI has not confirmed its effective ${field}">${escape(setting==='default'?'Default':setting||'—')} <small class="subtle">set</small></span>`;}
+function memberSessionRequest(team, member) {
+  const observed = telemetry.members[member.id];
+  const saved = team.launch?.members?.[member.id];
+  return observed?.sessionRequestId || (saved?.status === 'created' ? saved.requestId : null);
+}
+function memberSessionButton(team, member, content, className, attrs = '') {
+  const requestId = memberSessionRequest(team, member);
+  return button(content, 'open-member', `data-team="${escape(team.id)}" data-member="${escape(member.id)}" data-request="${escape(requestId || '')}" aria-label="Open ${escape(member.name)}’s session" title="${requestId ? `Open ${escape(member.name)}’s session` : 'No saved session is available'}" ${requestId ? '' : 'disabled'} ${attrs}`, className);
+}
+function tree(members, parent = null, live = false, compact = false, team = null) {
   const children = members.filter(member => member.boss === parent);
   return `<ul class="org-tree ${parent === null ? 'root' : ''}">${children.map(member => {
     const shortName = compact ? member.role === 'ceo' ? 'CEO' : member.role === 'head' && member.name === 'Head' ? member.team : member.name.replace(/^Worker-(\d+(?:-\d+)*)$/, 'W$1').replace(/^Lead-(\d+(?:-\d+)*)$/, 'L$1') : member.name;
     const observation = memberObservation(member);
-    return `<li><span class="org-node ${escape(member.role)}" ${live ? `title="${escape(member.name)} · ${escape(STATUS_LABELS[observation.state] || 'Unknown')}" data-state="${escape(observation.state)}"` : ''}><span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small></span>${members.some(child => child.boss === member.id) ? tree(members, member.id, live, compact) : ''}</li>`;
+    const content = `<span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small>`;
+    const node = live && team ? memberSessionButton(team, member, content, `org-node ${escape(member.role)}`, `data-state="${escape(observation.state)}"`) : `<span class="org-node ${escape(member.role)}">${content}</span>`;
+    return `<li>${node}${members.some(child => child.boss === member.id) ? tree(members, member.id, live, compact, team) : ''}</li>`;
   }).join('')}</ul>`;
 }
 function preferenceControls(name, preference, caps, suffix) {
@@ -115,7 +128,7 @@ function launchControls() {
 function roster() {
  const teams=workspace?state.teams.filter(t=>t.launch&&t.scope.workspaceKey===workspace.workspaceKey):[];
  if(!teams.length)return empty();
- return `<div class="section-heading"><h1>Team roster</h1><div class="team-heading-actions"><small>Updates every 5s</small>${button('Add team','new','','small')}</div></div>${state.settings.chart?`<section class="organisation">${teams.map(team=>`<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members,null,true,true)}</div>`).join('')}</section>`:''}<div class="team-cards ${state.settings.layout==='columns'?'columns':''}">${teams.map(team=>`<section class="team-card"><header><h2>@${escape(team.name)}</h2><div class="team-heading-actions"><small>${team.members.length} members</small>${supervisorSessionButton(team)}</div></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map(member=>`<tr data-member-row="${member.id}"><td><span class="member-name">${GLYPHS[member.role]} ${escape(member.name)}</span></td><td>${label(member.role)}</td><td>${memberObservation(member).agent==='claude'?'Claude':'Codex'}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member,'model')}</td><td data-live-effort="${member.id}">${preferenceCell(member,'effort')}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>`;
+ return `<div class="section-heading"><h1>Team roster</h1><div class="team-heading-actions"><small>Updates every 5s</small>${button('Add team','new','','small')}</div></div>${state.settings.chart?`<section class="organisation">${teams.map(team=>`<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members,null,true,true,team)}</div>`).join('')}</section>`:''}<div class="team-cards ${state.settings.layout==='columns'?'columns':''}">${teams.map(team=>`<section class="team-card"><header><h2>@${escape(team.name)}</h2><div class="team-heading-actions"><small>${team.members.length} members</small></div></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map(member=>`<tr data-member-row="${member.id}"><td>${memberSessionButton(team,member,`<span aria-hidden="true">${GLYPHS[member.role]}</span> ${escape(member.name)}`,'member-name')}</td><td>${label(member.role)}</td><td>${memberObservation(member).agent==='claude'?'Claude':'Codex'}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member,'model')}</td><td data-live-effort="${member.id}">${preferenceCell(member,'effort')}</td></tr>`).join('')}</tbody></table></div></section>`).join('')}</div>`;
 }
 function storageRecoveryView(){
  return `<section aria-label="Storage recovery"><h1>Saved storage is unavailable</h1><p>Your saved teams could not be read. Existing data has not been reset.</p><p>Preserve the database together with its WAL, SHM and journal sidecars. Stop the plugin before copying recovery evidence. Use a compatible plugin for a newer schema. Restoring an older backup requires manual reconciliation of later native effects before starting work.</p>${button('Inspect recovery details','storage-recovery','','small')}${storageRecovery?`<dl><dt>Storage status</dt><dd>${escape(storageRecovery.status)}</dd><dt>Found / supported schema</dt><dd>${escape(storageRecovery.foundSchema??'Unreadable')} / ${escape(storageRecovery.supportedSchema)}</dd>${storageRecovery.location?`<dt>Verified local recovery directory</dt><dd>${escape(storageRecovery.location)}</dd>`:''}</dl><p>${escape(storageRecovery.guidance)}</p><h2>Migration backups</h2>${storageRecovery.backups.length?storageRecovery.backups.map(b=>`<p>${escape(b.id)} · ${escape(b.status)} · ${escape(b.createdAt||'Incomplete')}</p>`).join(''):'<p>No verified migration backup is available.</p>'}`:''}</section>`;
@@ -290,14 +303,14 @@ app.addEventListener('click', async event => {
   else if (action === 'refresh-capabilities') {
     if (view === 'new') { const scope = workspace; await refreshCapabilities({ selectionToken: scope.selectionToken }, scope, true); }
   }
-  else if (action === 'open-supervisor') {
+  else if (action === 'open-member') {
     busy = true; problem = ''; message = ''; render();
     try {
       const team = state.teams.find(row => row.id === target.dataset.team);
-      const supervisor = team?.members.find(row => row.boss === null);
-      if (!supervisor || supervisor.id !== target.dataset.member) throw Error('The team supervisor has changed. Refresh the roster.');
-      await call('openMember', { teamId: team.id, memberId: supervisor.id, requestId: target.dataset.request });
-      message = 'Opened the supervisor’s session.';
+      const member = team?.members.find(row => row.id === target.dataset.member);
+      if (!member || !target.dataset.request || memberSessionRequest(team, member) !== target.dataset.request) throw Error('The member session has changed. Refresh the roster.');
+      await call('openMember', { teamId: team.id, memberId: member.id, requestId: target.dataset.request });
+      message = `Opened ${member.name}’s session.`;
     } catch (error) { problem = error.message; }
     finally { busy = false; render(); }
   }

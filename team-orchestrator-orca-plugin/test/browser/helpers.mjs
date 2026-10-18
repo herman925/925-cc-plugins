@@ -1,8 +1,9 @@
 import {expect} from '@playwright/test';
 export const panel=page=>page.frameLocator('#panel');
-export async function launchTeam(page,{mode=''}={}){
+export async function launchTeam(page,{mode='',workersCLI}={}){
  await page.goto('/'+(mode?'?mode='+mode:''));const ui=panel(page);
  await ui.getByRole('button',{name:'New team',exact:true}).click();await ui.getByLabel('Team name',{exact:true}).fill('Squad');
+ if(workersCLI)await ui.getByLabel('Workers CLI',{exact:true}).selectOption(workersCLI);
  await ui.getByRole('button',{name:'Launch team',exact:true}).click();
  await expect(ui.locator('#app')).toHaveAttribute('aria-busy','false',{timeout:45000});return ui;
 }

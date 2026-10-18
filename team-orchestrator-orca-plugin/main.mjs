@@ -606,7 +606,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.20" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.21" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -748,14 +748,14 @@ async function connectInspector(url, timeoutMs = 4e3) {
   const address = new URL(url);
   if (address.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw new Error("Inspector must be loopback-only.");
   const socket = new WebSocket(url);
-  await new Promise((resolve, reject2) => {
+  await new Promise((resolve2, reject2) => {
     const timer = setTimeout(() => {
       socket.close();
       reject2(new Error("Inspector connection timed out."));
     }, timeoutMs);
     socket.addEventListener("open", () => {
       clearTimeout(timer);
-      resolve();
+      resolve2();
     }, { once: true });
     socket.addEventListener("error", () => {
       clearTimeout(timer);
@@ -790,12 +790,12 @@ async function connectInspector(url, timeoutMs = 4e3) {
   return {
     async evaluate(expression) {
       const id2 = ++sequence;
-      const result = await new Promise((resolve, reject2) => {
+      const result = await new Promise((resolve2, reject2) => {
         const timer = setTimeout(() => {
           pending.delete(id2);
           reject2(new Error("Inspector evaluation timed out."));
         }, timeoutMs);
-        pending.set(id2, { resolve, reject: reject2, timer });
+        pending.set(id2, { resolve: resolve2, reject: reject2, timer });
         socket.send(JSON.stringify({ id: id2, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true } }));
       });
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
@@ -842,7 +842,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
       if (current.runtimeId !== metadata.runtimeId || current.pid !== parentPid || current.authToken !== metadata.authToken) throw Error("Native runtime epoch changed before effect or observation settlement.");
     };
     await consent();
-    return new Promise((resolve, reject2) => {
+    return new Promise((resolve2, reject2) => {
       const id2 = randomUUID2(), socket = createConnection(transport.endpoint);
       let buffer = "", finished = false, validating = false;
       const finish = (error, result) => {
@@ -850,7 +850,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
         finished = true;
         clearTimeout(timer);
         socket.destroy();
-        error ? reject2(error) : resolve(result);
+        error ? reject2(error) : resolve2(result);
       };
       const timer = setTimeout(() => finish(Error("Native runtime timed out; any submitted objective remains unconfirmed.")), timeoutMs);
       socket.setEncoding("utf8");
@@ -996,13 +996,13 @@ async function probeHostCompatibility({ rpc, userData, appVersion }) {
 // src/local/bootstrap.mjs
 var execute = promisify(execFile);
 var activateParent = (pid) => execute(process.execPath, ["-e", "process._debugProcess(Number(process.argv[1]))", String(pid)], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 4e3, windowsHide: true });
-var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var delay = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 var SENTINEL = Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX");
-var occupied = (port) => new Promise((resolve) => {
+var occupied = (port) => new Promise((resolve2) => {
   const socket = createConnection2({ host: "127.0.0.1", port });
   const finish = (value) => {
     socket.destroy();
-    resolve(value);
+    resolve2(value);
   };
   socket.once("connect", () => finish(true));
   socket.once("error", () => finish(false));
@@ -1010,16 +1010,16 @@ var occupied = (port) => new Promise((resolve) => {
 });
 function inspectorFuse(bytes) {
   let cursor = 0;
-  let count = 0;
+  let count2 = 0;
   for (; ; ) {
     const index = bytes.indexOf(SENTINEL, cursor);
     if (index < 0) break;
     const offset = index + SENTINEL.length;
     if (bytes[offset] !== 1 || bytes[offset + 1] < 4 || bytes[offset + 5] !== 49) return false;
-    count++;
+    count2++;
     cursor = offset + 6;
   }
-  return count > 0;
+  return count2 > 0;
 }
 function packageType(platform, executable, entry) {
   if (platform === "darwin") return executable.includes(".app/") ? "macOS app bundle" : "development";
@@ -1162,6 +1162,102 @@ function matchesTerminalObservation(terminal, saved) {
   return (!saved.incarnationId || saved.incarnationId === actual.incarnationId) && (!saved.ptyId || saved.ptyId === actual.ptyId) && (!saved.processIncarnation || saved.processIncarnation === actual.processIncarnation);
 }
 
+// src/local/terminal-context.mjs
+import { open as open2 } from "node:fs/promises";
+import { constants } from "node:fs";
+import { isAbsolute as isAbsolute4, resolve } from "node:path";
+var HEAD_BYTES = 256 * 1024;
+var TAIL_BYTES = 512 * 1024;
+var count = (value) => Number.isSafeInteger(value) && value >= 0;
+var samePath = (a, b) => typeof a === "string" && typeof b === "string" && isAbsolute4(a) && isAbsolute4(b) && resolve(a) === resolve(b);
+function records(text9, partialStart = false) {
+  const lines = text9.split("\n");
+  if (partialStart) lines.shift();
+  lines.pop();
+  return lines.flatMap((line) => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
+}
+function transcriptContext({ agent, sessionId, cwd, head, tail, partialStart = false }) {
+  const rows = records(tail, partialStart);
+  if (agent === "codex") {
+    const meta = records(head).find((row) => row.type === "session_meta")?.payload;
+    if (meta?.id !== sessionId || !samePath(meta.cwd, cwd)) return null;
+    for (const row of rows.reverse()) {
+      if (row.type === "compacted" || row.type === "event_msg" && row.payload?.type === "context_compacted") return null;
+      if (row.type !== "event_msg" || row.payload?.type !== "token_count" || !row.payload.info) continue;
+      const info = row.payload.info, used = info.last_token_usage?.total_tokens, limit = info.model_context_window;
+      if (!count(used) || used === 0) return null;
+      return { used, limit: count(limit) && limit > 0 ? limit : null, percent: count(limit) && limit > 0 ? 100 * used / limit : null, estimated: false, capturedAt: row.timestamp, source: "provider-transcript" };
+    }
+  } else if (agent === "claude") {
+    for (const row of rows.reverse()) {
+      if (row.isSidechain || row.sessionId !== sessionId || !samePath(row.cwd, cwd)) continue;
+      if (row.type === "system" && row.subtype === "compact_boundary") return null;
+      if (row.type !== "assistant" || row.message?.model === "<synthetic>") continue;
+      const usage = row.message?.usage;
+      if (!usage) continue;
+      const parts = [usage.input_tokens, usage.cache_creation_input_tokens ?? 0, usage.cache_read_input_tokens ?? 0];
+      if (!parts.every(count)) return null;
+      const used = parts.reduce((sum, value) => sum + value, 0);
+      if (!count(used)) return null;
+      return { used, limit: null, percent: null, estimated: true, capturedAt: row.timestamp, source: "provider-transcript" };
+    }
+  }
+  return null;
+}
+function terminalProviderSession(snapshot, shown, agent) {
+  if (snapshot?.worktree !== shown.worktreeId) return null;
+  const rows = snapshot.tabs?.filter((tab2) => tab2.type === "terminal" && tab2.parentTabId === shown.tabId && tab2.leafId === shown.leafId);
+  if (rows?.length !== 1) return null;
+  const tab = rows[0], status = tab.agentStatus, provider = status?.providerSession;
+  if (tab.ptyId !== shown.ptyId || tab.incarnationId !== shown.incarnationId || status?.terminalHandle !== shown.handle || status.agentType !== agent || status.restoredUnconfirmed || status.sessionBoundary || provider?.key !== "session_id" || typeof provider.id !== "string" || !provider.id || typeof provider.transcriptPath !== "string" || !isAbsolute4(provider.transcriptPath) || !provider.transcriptPath.endsWith(".jsonl")) return null;
+  return { sessionId: provider.id, path: provider.transcriptPath };
+}
+function createTerminalContextReader() {
+  const cache = /* @__PURE__ */ new Map();
+  return async ({ rpc, shown, agent, scope, snapshots }) => {
+    if (scope.executionHostId !== "local" || !["codex", "claude"].includes(agent)) return null;
+    const params = { worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}` };
+    if (!snapshots.has(scope.workspaceId)) snapshots.set(scope.workspaceId, rpc("session.tabs.list", params));
+    const provider = terminalProviderSession(await snapshots.get(scope.workspaceId), shown, agent);
+    if (!provider) return null;
+    const file = await open2(provider.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let context;
+    try {
+      const before = await file.stat();
+      if (!before.isFile()) return null;
+      const key = JSON.stringify([agent, provider.sessionId, provider.path, shown.worktreePath]);
+      const stamp3 = [before.dev, before.ino, before.size, before.mtimeMs, before.ctimeMs].join(":");
+      const previous = cache.get(key);
+      if (previous?.stamp === stamp3) context = previous.context;
+      else {
+        const read = async (position, length) => {
+          const buffer = Buffer.alloc(length);
+          const { bytesRead } = await file.read(buffer, 0, length, position);
+          return buffer.subarray(0, bytesRead).toString("utf8");
+        };
+        const start = Math.max(0, before.size - TAIL_BYTES);
+        const tail = await read(start, Math.min(before.size, TAIL_BYTES));
+        const head = agent === "codex" ? start === 0 ? tail : await read(0, Math.min(before.size, HEAD_BYTES)) : "";
+        const after = await file.stat();
+        if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) return null;
+        context = transcriptContext({ agent, sessionId: provider.sessionId, cwd: shown.worktreePath, head, tail, partialStart: start > 0 });
+        if (cache.size >= 256) cache.clear();
+        cache.set(key, { stamp: stamp3, context });
+      }
+    } finally {
+      await file.close();
+    }
+    const current = terminalProviderSession(await rpc("session.tabs.list", params), shown, agent);
+    return current?.sessionId === provider.sessionId && current.path === provider.path ? context : null;
+  };
+}
+
 // src/local/roster-status.mjs
 var text3 = (v) => typeof v === "string" && v.trim() && v.length <= 200 ? v : null;
 var finite = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -1197,22 +1293,23 @@ async function pendingRequests(rpc, page) {
 }
 function createRosterStatusService({ store, rpc, consent }) {
   let inFlight;
+  const terminalContext = createTerminalContextReader();
   async function read() {
     await consent();
     const snapshot = store.readSnapshot(), status = await rpc("status.get");
     if (!status?.runtimeId) throw Error("Runtime status is unavailable.");
-    const output = { observedAt: (/* @__PURE__ */ new Date()).toISOString(), members: {} };
+    const output = { observedAt: (/* @__PURE__ */ new Date()).toISOString(), members: {} }, snapshots = /* @__PURE__ */ new Map();
     const jobs = snapshot.teams.flatMap((team) => team.members.map((member) => ({ team, member })));
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
       while (index < jobs.length) {
         const { team, member } = jobs[index++];
-        output.members[member.id] = await observe(team, member, status.runtimeId);
+        output.members[member.id] = await observe(team, member, status.runtimeId, snapshots);
       }
     }));
     return output;
   }
-  async function observe(team, member, runtimeId) {
+  async function observe(team, member, runtimeId, snapshots) {
     const operation = store.readMemberOperation(member.id), attempt = store.readMemberDispatch(member.id);
     const binding = operation?.status === "created" ? operation : attempt?.binding ? { ...attempt.binding, scope: attempt.scope, sessionId: attempt.binding.liveSessionId ?? attempt.binding.sessionId, paneKey: attempt.binding.paneKey, observation: { processIncarnation: attempt.binding.incarnationId }, nativeRequest: { agent: attempt.reuse?.preferences?.agent ?? attempt.startParams?.agent ?? member.agent, sessionOptions: { model: attempt.reuse?.preferences?.model ?? attempt.startParams?.model ?? member.model, effort: attempt.reuse?.preferences?.effort ?? attempt.startParams?.effort ?? member.effort } } } : null;
     const row = { state: operation?.status === "unknown" ? "unknown" : binding ? "unknown" : team.launch?.members?.[member.id] ? "offline" : "not-started", agent: binding?.nativeRequest?.agent ?? member.agent, model: null, effort: null, context: null, requestedModel: binding?.nativeRequest?.sessionOptions?.model ?? member.model, requestedEffort: binding?.nativeRequest?.sessionOptions?.effort ?? member.effort, observedAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -1237,6 +1334,13 @@ function createRosterStatusService({ store, rpc, consent }) {
           const expected = terminalIdentity(shown), activity = (await rpc("terminal.agentStatus", { terminal: binding.handle }))?.agentStatus;
           if (activity?.handle !== binding.handle || !shown.connected || activity.isRunningAgent && shown.agentIdentity !== row.agent) throw Error("Member session is unavailable.");
           row.state = activity.isRunningAgent === false ? "offline" : activity.status === "working" ? "working" : activity.status === "permission" ? "asking" : activity.status === "idle" ? "idle" : "unknown";
+          if (activity.isRunningAgent) {
+            try {
+              row.context = await terminalContext({ rpc, shown, agent: row.agent, scope, snapshots });
+            } catch {
+              row.context = null;
+            }
+          }
           const final = (await rpc("terminal.show", { terminal: binding.handle }))?.terminal;
           if (!matchesTerminalObservation(final, expected) || final.handle !== binding.handle) throw Error("Member session changed during observation.");
         } else {
@@ -1400,12 +1504,12 @@ import { createHash as createHash9 } from "node:crypto";
 
 // src/local/orchestration-snapshot.mjs
 import { realpath as realpath5 } from "node:fs/promises";
-import { join as join6, relative as relative4, isAbsolute as isAbsolute4, sep as sep4 } from "node:path";
+import { join as join6, relative as relative4, isAbsolute as isAbsolute5, sep as sep4 } from "node:path";
 async function withOrchestrationSnapshot(userData, { pathError, schemaError }, read) {
   let db;
   try {
     const root = await realpath5(userData), file = await realpath5(join6(root, "orchestration.db")), rel = relative4(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute4(rel)) throw Error(pathError);
+    if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute5(rel)) throw Error(pathError);
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     db.exec("BEGIN");
@@ -1790,12 +1894,12 @@ async function readNativeParentEvidence(userData, { parentWork, attempt, active 
 import { createHash as createHash7, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 
 // src/local/native-run.mjs
-import { isAbsolute as isAbsolute5 } from "node:path";
+import { isAbsolute as isAbsolute6 } from "node:path";
 var columns = ["id", "objective", "home_database", "coordinator_handle", "coordinator_pane_key", "coordinator_orca_session_id", "coordinator_orca_session_id_generation", "consumer_generation", "legacy"];
 async function readNativeRunEvidence(userData, { objective, owner, runId } = {}) {
   const unknown = (detail2) => ({ state: "unverified", detail: detail2 });
   try {
-    if (!isAbsolute5(userData || "") || typeof objective !== "string" || !owner) throw Error();
+    if (!isAbsolute6(userData || "") || typeof objective !== "string" || !owner) throw Error();
     return await withOrchestrationSnapshot(userData, { pathError: "", schemaError: "" }, (db) => {
       const names = new Set(db.prepare("PRAGMA table_info(runs)").all().map((row) => row.name));
       if (columns.some((name) => !names.has(name))) throw Error();
@@ -3021,12 +3125,12 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
 
 // src/local/wake-evidence.mjs
 import { realpath as realpath6 } from "node:fs/promises";
-import { join as join7, relative as relative5, isAbsolute as isAbsolute6, sep as sep5 } from "node:path";
+import { join as join7, relative as relative5, isAbsolute as isAbsolute7, sep as sep5 } from "node:path";
 async function resumedOwner(userData, operation, oldFence) {
   let db;
   try {
     const root = await realpath6(userData), path = await realpath6(join7(root, "agent-session-journal.db")), rel = relative5(root, path);
-    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute6(rel)) return null;
+    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute7(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3348,12 +3452,12 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
 
 // src/local/recovery.mjs
 import { realpath as realpath8 } from "node:fs/promises";
-import { join as join9, relative as relative7, isAbsolute as isAbsolute8, sep as sep7 } from "node:path";
+import { join as join9, relative as relative7, isAbsolute as isAbsolute9, sep as sep7 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
 import { createHash as createHash12 } from "node:crypto";
 import { realpath as realpath7 } from "node:fs/promises";
-import { join as join8, relative as relative6, isAbsolute as isAbsolute7, sep as sep6 } from "node:path";
+import { join as join8, relative as relative6, isAbsolute as isAbsolute8, sep as sep6 } from "node:path";
 var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
 var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
@@ -3362,10 +3466,10 @@ function nativeLaunchFingerprint(input) {
 async function readNativeLaunchLedger(userData, request) {
   let db;
   try {
-    if (!isAbsolute7(userData || "")) throw Error();
+    if (!isAbsolute8(userData || "")) throw Error();
     const profile = await realpath7(userData), file = await realpath7(join8(profile, "agent-session-journal.db"));
     const rel = relative6(profile, file);
-    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute7(rel)) throw Error();
+    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute8(rel)) throw Error();
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) throw Error();
@@ -3391,9 +3495,9 @@ var detail = (error) => String(error?.message ?? error).slice(0, 1200);
 async function readSessionDeath(userData, sessionId, ownerFence, scope) {
   let db;
   try {
-    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute8(userData || "")) return null;
+    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute9(userData || "")) return null;
     const profile = await realpath8(userData), path = await realpath8(join9(profile, "agent-session-journal.db")), rel = relative7(profile, path);
-    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute8(rel)) return null;
+    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute9(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3817,12 +3921,12 @@ Member ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id ?
 
 // src/local/native-stop.mjs
 import { realpath as realpath9 } from "node:fs/promises";
-import { join as join10, relative as relative8, isAbsolute as isAbsolute9, sep as sep8 } from "node:path";
+import { join as join10, relative as relative8, isAbsolute as isAbsolute10, sep as sep8 } from "node:path";
 async function readStopReceipt(userData, row) {
   let db;
   try {
     const root = await realpath9(userData), file = await realpath9(join10(root, "orchestration.db")), rel = relative8(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute9(rel)) return null;
+    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute10(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 43) return null;
@@ -4522,8 +4626,8 @@ function runtimeReconnectStore({
       fail("The original supervisor binding changed.");
     if (new Set(operations.map((o) => o.handle)).size !== operations.length || new Set(operations.map((o) => o.paneKey)).size !== operations.length)
       fail("Prepared member identities overlap.");
-    const members = new Set(team.members.map((m) => m.id)), records = all();
-    for (const { key, value: r } of records) {
+    const members = new Set(team.members.map((m) => m.id)), records2 = all();
+    for (const { key, value: r } of records2) {
       const sameWork = r.workId === work.id || r.teamWorkId === work.id;
       const deliveredSessionGuide = key.startsWith("question-event:") && r.kind === "TEAM_SESSION_DECISIONS" && r.state === "accepted" && r.data?.workId === work.id;
       if (sameWork && !deliveredSessionGuide && /^(dispatch:|dispatch-queue:|question:|question-answer:|question-event:|collaboration:|staffing-proposal:|roster-delta:|configuration-amendment:|delivery:|native-run-binding:|intent-withdrawal:)/.test(
@@ -4548,7 +4652,7 @@ function runtimeReconnectStore({
       operations,
       protocol,
       control: readControl(work),
-      records: records.filter(
+      records: records2.filter(
         ({ value: r }) => r.workId === work.id || r.teamWorkId === work.id || r.teamId === team.id || members.has(r.memberId) || members.has(r.target?.memberId)
       )
     };
@@ -5368,8 +5472,8 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 }
 
 // src/local/store.mjs
-import { mkdir as mkdir2, realpath as realpath10, stat as stat3, open as open2 } from "node:fs/promises";
-import { join as join11, isAbsolute as isAbsolute10, relative as relative9, sep as sep9 } from "node:path";
+import { mkdir as mkdir2, realpath as realpath10, stat as stat3, open as open3 } from "node:fs/promises";
+import { join as join11, isAbsolute as isAbsolute11, relative as relative9, sep as sep9 } from "node:path";
 import { randomUUID as randomUUID11, createHash as createHash19 } from "node:crypto";
 var FORMAT = "orca-team-store";
 var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
@@ -5388,7 +5492,7 @@ async function openTeamStore(options) {
   }
 }
 async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}) {
-  if (typeof userData !== "string" || !isAbsolute10(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
+  if (typeof userData !== "string" || !isAbsolute11(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
   let DatabaseSync, backup;
   try {
     ({ DatabaseSync, backup } = await sqlite());
@@ -5400,7 +5504,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
   const directory = join11(profile, "plugins-data", "herman925.team-orchestrator");
   const inside = (path2) => {
     const rel = relative9(profile, path2);
-    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute10(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
+    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute11(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
   };
   for (const target of [join11(profile, "plugins-data"), directory]) {
     try {
@@ -5429,7 +5533,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter((b) => b.status === "verified-backup").length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);
   }
   if (!exists) {
-    const fresh = await open2(path, "wx", 384);
+    const fresh = await open3(path, "wx", 384);
     await fresh.close();
   }
   const db = new DatabaseSync(path);
@@ -6184,7 +6288,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.20", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.21", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

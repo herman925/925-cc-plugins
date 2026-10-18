@@ -1,5 +1,6 @@
 import {withNativeRuntime} from './native-runtime.mjs';
 import {matchesTerminalObservation,terminalIdentity} from './terminal-identity.mjs';
+import {createTerminalContextReader} from './terminal-context.mjs';
 
 const text=v=>typeof v==='string'&&v.trim()&&v.length<=200?v:null;
 const finite=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0;
@@ -24,15 +25,16 @@ async function pendingRequests(rpc,page){
 }
 export function createRosterStatusService({store,rpc,consent}){
  let inFlight;
+ const terminalContext=createTerminalContextReader();
  async function read(){
   await consent();const snapshot=store.readSnapshot(),status=await rpc('status.get');
   if(!status?.runtimeId)throw Error('Runtime status is unavailable.');
-  const output={observedAt:new Date().toISOString(),members:{}};
+  const output={observedAt:new Date().toISOString(),members:{}},snapshots=new Map();
   const jobs=snapshot.teams.flatMap(team=>team.members.map(member=>({team,member})));let index=0;
-  await Promise.all(Array.from({length:Math.min(4,jobs.length)},async()=>{while(index<jobs.length){const {team,member}=jobs[index++];output.members[member.id]=await observe(team,member,status.runtimeId);}}));
+  await Promise.all(Array.from({length:Math.min(4,jobs.length)},async()=>{while(index<jobs.length){const {team,member}=jobs[index++];output.members[member.id]=await observe(team,member,status.runtimeId,snapshots);}}));
   return output;
  }
- async function observe(team,member,runtimeId){
+ async function observe(team,member,runtimeId,snapshots){
   const operation=store.readMemberOperation(member.id),attempt=store.readMemberDispatch(member.id);
   const binding=operation?.status==='created'?operation:attempt?.binding?{...attempt.binding,scope:attempt.scope,sessionId:attempt.binding.liveSessionId??attempt.binding.sessionId,paneKey:attempt.binding.paneKey,observation:{processIncarnation:attempt.binding.incarnationId},nativeRequest:{agent:attempt.reuse?.preferences?.agent??attempt.startParams?.agent??member.agent,sessionOptions:{model:attempt.reuse?.preferences?.model??attempt.startParams?.model??member.model,effort:attempt.reuse?.preferences?.effort??attempt.startParams?.effort??member.effort}}}:null;
   const row={state:operation?.status==='unknown'?'unknown':binding?'unknown':team.launch?.members?.[member.id]?'offline':'not-started',agent:binding?.nativeRequest?.agent??member.agent,model:null,effort:null,context:null,requestedModel:binding?.nativeRequest?.sessionOptions?.model??member.model,requestedEffort:binding?.nativeRequest?.sessionOptions?.effort??member.effort,observedAt:new Date().toISOString()};
@@ -48,6 +50,7 @@ export function createRosterStatusService({store,rpc,consent}){
     const expected=terminalIdentity(shown),activity=(await rpc('terminal.agentStatus',{terminal:binding.handle}))?.agentStatus;
     if(activity?.handle!==binding.handle||!shown.connected||activity.isRunningAgent&&shown.agentIdentity!==row.agent)throw Error('Member session is unavailable.');
     row.state=activity.isRunningAgent===false?'offline':activity.status==='working'?'working':activity.status==='permission'?'asking':activity.status==='idle'?'idle':'unknown';
+    if(activity.isRunningAgent){try{row.context=await terminalContext({rpc,shown,agent:row.agent,scope,snapshots});}catch{row.context=null;}}
     const final=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;if(!matchesTerminalObservation(final,expected)||final.handle!==binding.handle)throw Error('Member session changed during observation.');
    }else{
     const address=(await rpc('orchestration.sessionAddress',{sessionId:binding.sessionId}))?.orcaSessionId,location=address&&(await rpc('orchestration.partyLocation',{address}))?.location;

@@ -1,9 +1,9 @@
 # ADR-001：Roster 与 New team 的职责及最终交互
 
-- 状态：已接受，已合并截至 `0.1.20` 的用户决策。
+- 状态：已接受，已合并截至 `0.1.21` 的用户决策。
 - 决策日期：2026-10-18。
 - 决策人：Lin；依据为本轮连续产品讨论及最终确认。
-- 当前实现基线：插件 `0.1.20`，提交 `8feb269`；模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地。
+- 当前实现基线：插件 `0.1.21`；新增全员会话跳转与本机终端 Context 读取。此前模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地，Worker 前缀由 `8feb269` 落地。
 - 初始设计基线：插件 `0.1.17`，提交 `26bc866`；其后修订以本文当前条款为准。
 - 范围：Roster、New team，以及两页依赖的主管交互、可用性与宿主能力边界。Settings 的整体设计不在本次定稿范围内。
 - 关联历史：[2026-10-16 开发规格](../../docs/team-orchestrator-orca-spec.md)、[原版 Claude Code mod](../../team-orchestrator/README.md)。
@@ -20,7 +20,7 @@
 
 | 位置 | 最终职责 |
 | --- | --- |
-| Roster | 查看当前项目中已启动团队的全员状态；进入最高主管会话；通过 Add team 进入 New team |
+| Roster | 查看当前项目中已启动团队的全员状态；点击任意成员进入对应会话；通过 Add team 进入 New team |
 | New team | 配置 Team name、Lead name、Function、人数、CLI、模型、effort；预览组织关系并 Launch team |
 | 最高主管会话 | 交办业务目标、沟通进展与结果、回答问题、讨论并决定增员 |
 | Settings | 保留连接检查等现有设置；本 ADR 不重新设计整个 Settings 页 |
@@ -42,8 +42,8 @@ Roster 按 Orca 当前选中的项目过滤已启动团队。这里的“已启�
 保留的监控列为 Name、Role、CLI、Status、Context、Model、Effort。页面可见时约每 5 秒读取一次原生状态；显示必须来自当前、准确匹配的会话身份，不能沿用启动时的旧 Working 记录。
 
 - Add team 保留在 Roster，包含空名册状态；点击只跳转 New team，不另建一套创建流程。
-- 每个团队保留一个 Open supervisor 入口，定位已有的最高主管会话。身份失效时报告失败，不能顺便创建替代会话。
-- 成员名字与组织图只读，不打开个人详情或下属会话管理表单。
+- 点击列表中的成员名字或组织图节点，直接打开该成员已绑定的会话，覆盖 Head／CEO、Lead 和 Worker；移除单独的 Open supervisor 按钮。没有保存的绑定时禁用入口，身份失效时报告错误，不创建替代会话。
+- 名称使用支持键盘操作的按钮；点击只进行会话导航，不打开个人详情或下属会话管理表单。
 - 移除成员角色说明、工作习惯、协作规则、个人模型偏好、暂停派工、停止、替换、唤醒及恢复诊断等详情入口。
 - 移除会话回执列表、内部 request/instance 信息、团队派工开关等面板块。
 - 移除 Start team work、Submit total objective、Next total objective，以及总目标队列、交付验收表单。
@@ -54,7 +54,7 @@ Roster 按 Orca 当前选中的项目过滤已启动团队。这里的“已启�
 
 ### 状态与显示真实性
 
-Context 无观测时显示 `—`，不能显示成 0%。估计值需标记为估计，不能把输出 token 当作当前上下文占用。有效 Model/Effort 只有获得 provider 确认才按实际值呈现；未确认的配置显示 `set`，不得宣称已生效。
+Context 无观测时显示 `—`，不能显示成 0%。本机终端通过 Orca 原生名册中精确匹配的 tab／pane／PTY 实例、handle 和 provider session 定位 hook 上报的 transcriptPath，只读有界尾部并再次核对身份。Codex 使用 provider 的最近一次上下文总量及窗口，不使用累计计费 token；Claude Code 使用最近一次主会话 assistant 的输入及缓存 token，不累计输出。Claude 没有报告窗口时显示 `≈39.6K tokens` 这样的用量，不猜测百分比。估计值标记 `≈`，悬浮说明提供采集时间和可用的原始计数。压缩边界后的旧读数失效；远端路径不会在本机读取，缺少原生身份或数据时保持未知。只缓存提取出的用量，不保存或向面板发送 transcript 正文。有效 Model/Effort 只有获得 provider 确认才按实际值呈现；未确认的配置显示 `set`，不得宣称已生效。
 
 `terminal_handle_stale` 表示保存的终端标识已失效，不能仅凭同名 tab 重新认定身份。它不证明任务失败或文件丢失；无可靠身份时显示 Unknown，不自动重复启动。个别成员 Unknown 与整个插件不可用是不同情况。
 
@@ -158,6 +158,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | Structure 与 Levels 分开选择 | 先合并，最终都取消；由 Lead 数量推导 |
 | 两层显示不可编辑的 Head = 1，三层才显示 Leads | 最终统一显示可编辑的 Leads；1 位对应单主管，超过 1 位增加 Head |
 | 一个 Reports each 同时决定 Lead 和 Worker 数量 | 分开配置 Leads 与 Workers per lead |
+| 单独 Open supervisor 按钮，成员名与组织图不可点击 | 点击任意成员打开其已绑定会话，不新增会话或个人管理表单 |
 | 成员详情中修改角色、模型、控制会话与查看诊断 | Roster 只读监控，个人管理表单移除 |
 | 用户手动填写模型 ID | 从宿主目录选择，未知时 Default |
 | 模型名称后附加括号中的 ID | 选项仅显示宿主名称，内部保存并传递原始 model ID |
@@ -185,7 +186,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | 启动证据边界 | 具名成员保存、启动和名册一致性通过 fixtures；本轮实机只检查目录与表单／预览，没有新建真实团队完成业务任务 |
 | 跨平台及规模 | 本 ADR 不宣告 Windows、SSH 或 11/21 人真实协作验收完成；既有实机证据见 [validation](validation/) |
 
-本 ADR 是文档归档，不触发插件版本升级、重新启动团队、修改宿主设置或重跑真实 provider 工作。
+本 ADR 记录当前产品决定；0.1.21 的导航和 Context 验证见对应验证报告。
 
 ## 8. 实现与历史索引
 

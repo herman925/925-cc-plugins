@@ -26,7 +26,7 @@ for(const [mode,label] of [['roster-idle','Idle'],['roster-asking','Needs input'
 
 test('terminal context is unavailable rather than fabricated, and launch preferences are labeled as configured',async({page})=>{
  const ui=await launchTeam(page);const row=ui.locator('.roster tbody tr').first();await expect(row).toContainText('Idle');await expect(row.locator('[title="Context usage has not been reported by this session"]')).toHaveText('—');await expect(row).toContainText('set');
- await ui.getByRole('button',{name:'Open supervisor',exact:true}).click();await expect(ui.locator('.success')).toContainText('Opened the supervisor’s session');
+ await ui.locator('.roster').getByRole('button',{name:'Open Head’s session',exact:true}).click();await expect(ui.locator('.success')).toContainText('Opened Head’s session');
  const team=(await snapshot(page)).teams[0],root=team.members.find(m=>m.boss===null);const opens=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').map(c=>c.params.teamWorker.args.params));expect(opens).toHaveLength(1);expect(opens[0]).toMatchObject({teamId:team.id,memberId:root.id,requestId:team.launch.members[root.id].requestId});
 });
 
@@ -43,7 +43,7 @@ for(const width of [320,960])test('member monitoring stays inside '+width+'px pa
 });
 
 test('unconfirmed launch remains visible as Unknown without a duplicate launch on reload',async({page})=>{
- const ui=await launchTeam(page,{mode:'launch-unknown'});await expect(ui.locator('.roster tbody tr').first()).toContainText('Unknown');await page.reload();await expect(panel(page).locator('.roster tbody tr').first()).toContainText('Unknown');
+ const ui=await launchTeam(page,{mode:'launch-unknown'});await expect(ui.locator('.roster tbody tr').first()).toContainText('Unknown');await expect(ui.locator('.roster button').first()).toBeDisabled();await expect(ui.locator('.org-chart button').first()).toBeDisabled();await page.reload();await expect(panel(page).locator('.roster tbody tr').first()).toContainText('Unknown');
  expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='launchSupervisor').length)).toBe(0);
 });
 
@@ -52,17 +52,23 @@ test('connection diagnostics are optional in Settings and missing interfaces hid
  await page.goto('/?mode=incompatible-host');await expect(panel(page).getByRole('alert')).toContainText('Plugin unavailable');await expect(panel(page).locator('.roster')).toHaveCount(0);await panel(page).getByRole('button',{name:'Details',exact:true}).click();await expect(panel(page).locator('#failure-details')).toContainText('required interfaces');
 });
 
-test('member names and organisation chart remain read-only through refresh and reload',async({page})=>{
+test('member names and organisation chart open exact sessions through refresh and reload',async({page})=>{
  const ui=await launchTeam(page);const team=(await snapshot(page)).teams[0];
  const refreshes=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length);
  const capabilities=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length);
- await ui.locator('.roster tbody tr').nth(1).locator('.member-name').click();await ui.locator('.org-chart .org-node').last().click();
+ await ui.locator('.roster tbody tr').nth(1).locator('.member-name').click();await expect(ui.locator('.success')).toContainText('Opened Worker-1’s session');
+ await ui.locator('.org-chart .org-node').last().click();await expect(ui.locator('.success')).toContainText('Opened Worker-3’s session');
  const check=async()=>{
   await expect(panel(page).getByRole('region',{name:'Member details'})).toHaveCount(0);
-  await expect(panel(page).locator('.roster button, .org-chart button, main input, main select, main textarea')).toHaveCount(0);
-  await expect(panel(page).locator('.team-card button')).toHaveCount(1);
+  await expect(panel(page).locator('main input, main select, main textarea')).toHaveCount(0);
+  await expect(panel(page).locator('.roster button, .org-chart button')).toHaveCount(8);
+  await expect(panel(page).getByRole('button',{name:'Open supervisor',exact:true})).toHaveCount(0);
+  await expect(panel(page).locator('.team-card button')).toHaveCount(4);
   for(const name of ['Role and preferences','Session controls and diagnostics','Save role','Save preferences','Pause new assignments'])await expect(panel(page).getByText(name,{exact:true})).toHaveCount(0);
  };
+ const opens=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').map(c=>c.params.teamWorker.args.params));
+ expect(opens.map(o=>o.memberId)).toEqual([team.members[1].id,team.members[3].id]);
+ expect(opens.every(o=>o.teamId===team.id&&o.requestId===team.launch.members[o.memberId].requestId)).toBe(true);
  await check();expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length)).toBe(capabilities);
  await expect.poll(()=>page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length),{timeout:10000}).toBeGreaterThan(refreshes);
  expect((await snapshot(page)).teams[0]).toMatchObject({id:team.id,members:team.members,configuration:team.configuration,configVersion:team.configVersion});await page.reload();await expect(panel(page).locator('.roster tbody tr')).toHaveCount(4);await check();
@@ -71,7 +77,7 @@ test('member names and organisation chart remain read-only through refresh and r
 test('failed supervisor navigation reports the error without launching or recovering a member',async({page})=>{
  const ui=await launchTeam(page);const before=await page.evaluate(()=>bridgeCalls.length);
  await page.route('**/rpc',async route=>{if(route.request().postDataJSON().message.args?.op==='openMember')await route.fulfill({json:{error:'Saved supervisor session is no longer available.'}});else await route.continue();});
- await ui.getByRole('button',{name:'Open supervisor',exact:true}).click();await expect(ui.getByRole('alert')).toContainText('Saved supervisor session is no longer available');
+ await ui.locator('.roster').getByRole('button',{name:'Open Head’s session',exact:true}).click();await expect(ui.getByRole('alert')).toContainText('Saved supervisor session is no longer available');
  const calls=await page.evaluate(offset=>bridgeCalls.slice(offset).map(c=>c.params?.teamWorker?.args?.op),before);expect(calls).toContain('openMember');expect(calls.some(op=>['launchSupervisor','recoverLaunch','wakeMember','replaceMember','requestReplacement'].includes(op))).toBe(false);
 });
 
@@ -157,6 +163,8 @@ test('more than one lead saves and launches a three-level team with exactly one 
  const team=(await snapshot(page)).teams[0];expect(team.configuration).toMatchObject({levels:3,leadCount:2,workersPerLead:1});expect(team.members.filter(m=>m.role==='head')).toHaveLength(1);const leads=team.members.filter(m=>m.role==='lead');expect(leads).toHaveLength(2);for(const lead of leads)expect(team.members.filter(m=>m.boss===lead.id)).toHaveLength(1);expect(Object.keys(team.launch.members)).toHaveLength(5);
  expect(leads.map(m=>m.name)).toEqual(['UI','Dev']);expect(team.configuration.leadNames).toBe('UI, Dev');
  expect(team.members.filter(m=>m.role==='worker').map(m=>m.name)).toEqual(['UI-Worker-1','Dev-Worker-1']);
+ await ui.locator('.org-chart').getByRole('button',{name:'Open UI’s session',exact:true}).focus();await page.keyboard.press('Enter');await expect(ui.locator('.success')).toContainText('Opened UI’s session');
+ const opened=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').at(-1).params.teamWorker.args.params);expect(opened).toMatchObject({teamId:team.id,memberId:leads[0].id,requestId:team.launch.members[leads[0].id].requestId});
 });
 
 test('lead names validate against the selected count and update the preview without moving input focus',async({page})=>{
@@ -189,4 +197,20 @@ test('New team requires an existing project session even when Default is selecte
  await expect(ui.getByRole('button',{name:'Launch team',exact:true})).toBeDisabled();
  await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveText(['Default · Orca settings']);
  expect(await page.evaluate(()=>bridgeCalls.some(c=>c.params?.teamWorker?.args?.op==='launchSupervisor'))).toBe(false);
+});
+
+for(const mode of ['', 'roster-live'])test(`worker navigation uses the bound ${mode?'structured':'terminal'} session`,async({page})=>{
+ const ui=await launchTeam(page,{mode});const team=(await snapshot(page)).teams[0],member=team.members[2];
+ await ui.locator('.roster').getByRole('button',{name:`Open ${member.name}’s session`,exact:true}).click();
+ await expect(ui.locator('.success')).toContainText(`Opened ${member.name}’s session`);
+ const opened=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').at(-1).params.teamWorker.args.params);
+ expect(opened).toEqual({teamId:team.id,memberId:member.id,requestId:team.launch.members[member.id].requestId});
+});
+
+test('terminal context shows provider counts and refreshes without inventing a window',async({page})=>{
+ const ui=await launchTeam(page,{mode:'terminal-context',workersCLI:'claude'});
+ await expect(ui.locator('.roster tbody tr').first().locator('.context-usage')).toHaveText('25%');
+ await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('≈40K tokens');
+ await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveAttribute('title',/Window size not reported/);
+ await page.reload();await expect(panel(page).locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('≈40K tokens');
 });
