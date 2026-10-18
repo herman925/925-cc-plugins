@@ -17,6 +17,8 @@ let selection = null;
 let busy = true;
 let loaded = false;
 let storageAvailable = false;
+let loading = true;
+let showFailureDetails = false;
 let message = '';
 let problem = '';
 let canRetry = false;
@@ -215,23 +217,24 @@ function cleanupView(){
  return `<section class="section" aria-label="Manual history cleanup"><h2>Manual history cleanup</h2><p>Select accepted work to preview summary and task-result cleanup. Identity, acceptance and replay evidence stay saved.</p>${history.map(w=>`<label class="check"><input type="checkbox" data-cleanup-work="${escape(w.id)}" ${cleanupSelection.has(w.id)?'checked':''} ${w.historyPruned?'disabled':''}> ${escape(w.objective)} · ${w.historyPruned?'Previously cleaned':'Accepted by you'}</label>`).join('')}${!history.length?'<p>No accepted history yet.</p>':''}${button('Preview history cleanup','preview-cleanup',!storageAvailable||!cleanupSelection.size?'disabled':'','small')}${cleanupPreview?`<section aria-label="Cleanup preview"><h3>Cleanup preview</h3><p>${cleanupPreview.eligibleWorkIds.length} eligible Work(s) · ${cleanupPreview.changes.length} records · ${cleanupPreview.snapshotCount} cached snapshots · ${cleanupPreview.logicalBytes} logical bytes inspected</p><p>${escape(cleanupPreview.notice)}</p>${cleanupPreview.retained.map(r=>`<p>Kept ${escape(r.workId)}: ${escape(r.reason)}</p>`).join('')}<details><summary>Exact affected records</summary>${cleanupPreview.changes.map(r=>`<p>${escape(r.recordId)}: ${r.fields.map(escape).join(', ')}</p>`).join('')}</details>${button('Clear previewed summaries and results','apply-cleanup',!cleanupPreview.eligibleWorkIds.length?'disabled':'','primary small')}${button('Cancel preview','cancel-cleanup','','small')}</section>`:''}</section>`;
 }
 function settingsView() {
-  return `<h1>Settings</h1>${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
+  return `<h1>Settings</h1><section class="section" aria-label="Connection"><h2>Connection</h2><p>Connected to Orca</p>${button('Test connection', 'test-connection', '', 'small')}<details><summary>Technical details</summary><p>${escape(connection)}</p></details></section>${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. On demand prepares managers; all at start prepares the saved roster. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
+}
+function unavailableView() {
+  return `<section class="unavailable" aria-label="Plugin unavailable"><div role="alert"><h1>Plugin unavailable</h1><p>${connectionReady ? 'Your saved teams could not be loaded.' : 'Team Orchestrator could not connect to Orca.'}</p></div><div class="actions">${button('Retry', 'retry-plugin', '', 'primary small')}${button(showFailureDetails ? 'Hide details' : 'Details', 'failure-details', `aria-expanded="${showFailureDetails}" aria-controls="failure-details"`, 'secondary small')}</div>${showFailureDetails ? `<div id="failure-details" class="failure-details"><p>${escape(problem || connection)}</p>${connectionReady ? storageRecoveryView() : '<p>In Orca’s command menu, run <strong>Team Orchestrator: Initialise local adapter</strong>, then retry.</p>'}</div>` : ''}</section>`;
 }
 function render() {
   app.setAttribute('aria-busy', String(busy));
-  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div><nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav></header><main>
-    ${state.teams.length ? `<div class="notice bound-project">Bound projects: ${state.teams.map(team => `${escape(team.name)} · ${escape(team.scope.displayName)} · ${escape(team.scope.executionHostId)}`).join(' | ')}</div>` : ''}
-    <div class="notice" role="status">${escape(connection)} ${button('Test connection', 'test-connection', busy ? 'disabled' : '', 'small')}</div>
+  const usable = connectionReady && loaded && storageAvailable;
+  app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">◆</span> Team Orchestrator<small>v${escape(__PLUGIN_DISPLAY_VERSION__)}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[['roster', 'Roster'], ['new', 'New team'], ['settings', 'Settings']].map(([id, text]) => button(text, id, `aria-current="${view === id ? 'page' : 'false'}"`, view === id ? 'active' : '')).join('')}</nav>` : ''}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca…</p>' : unavailableView() : `
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button('Retry storage', 'retry', busy ? 'disabled' : '', 'small') : ''}</div>` : ''}
-    ${loaded && !storageAvailable ? `<div class="notice" role="status">Session-only mode. The local executor has not loaded persistent storage. Launching stays disabled until connection is verified.</div>` : ''}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ''}
-    ${busy && !loaded ? '<p class="loading">Reading saved teams…</p>' : view === 'new' ? formView() : view === 'settings' ? settingsView() : connectionReady&&!storageAvailable&&!busy?storageRecoveryView():roster()}
-    </main><footer>${storageAvailable ? 'Saved in Orca' : loaded ? 'Session only' : 'Connecting to Orca'}<span>Orca · Agent teams</span></footer>`;
+    ${view === 'new' ? formView() : view === 'settings' ? settingsView() : roster()}`}
+    </main>${usable ? '<footer>Orca · Agent teams</footer>' : ''}`;
   if (busy) for (const control of app.querySelectorAll('button,input,select,textarea')) control.disabled = true;
 }
 function updatePreview() { const node = document.getElementById('preview'); if (node) node.innerHTML = preview(); }
 async function load(retry = false) {
-  busy = true; problem = ''; canRetry = false; render();
+  busy = true; loading = true; connectionReady = false; loaded = false; storageAvailable = false; showFailureDetails = false; storageRecovery = null; problem = ''; message = ''; canRetry = false; render();
   try {
     const report = await worker.connect({ retry });
     connectionReady = true;
@@ -242,7 +245,7 @@ async function load(retry = false) {
   } catch (error) {
     if (!connectionReady) { loaded = true; storageAvailable = false; connection = `Panel loaded · worker ${error.report ? 'activated' : 'activation unverified'} · compatibility layer unavailable. Run the Orca command “Team Orchestrator: Initialise local adapter” to initialise or retry; its diagnostics explain failures.`; problem = error.message; }
     else { loaded = false; storageAvailable = false; problem = error.message; canRetry = true; }
-  } finally { busy = false; await refreshTargets(); render(); }
+  } finally { if (storageAvailable) await refreshTargets(); busy = false; loading = false; render(); }
 }
 async function refreshTargets() {
   try {
@@ -297,6 +300,8 @@ app.addEventListener('click', async event => {
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
   if (['roster', 'new', 'settings'].includes(action)) { view = action; message = ''; render(); }
+  else if (action === 'failure-details') { showFailureDetails = !showFailureDetails; render(); }
+  else if (action === 'retry-plugin') { view = 'roster'; await load(!connectionReady); }
   else if(action==='storage-recovery') {busy=true;render();try{storageRecovery=await call('storageRecovery',{});}catch(error){problem=error.message;}finally{busy=false;render();}}
   else if(action==='preview-cleanup'||action==='apply-cleanup') {
     busy=true;problem='';render();try{

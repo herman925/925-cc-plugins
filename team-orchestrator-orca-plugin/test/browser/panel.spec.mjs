@@ -58,10 +58,11 @@ test('CEO flow, per-level choices, independent same-name teams and settings pers
 test('unpatched host blocks launching instead of sending a coordinator workaround', async ({ page }) => {
   await page.goto('/?mode=unpatched');
   const ui = panel(page);
-  await expect(ui.getByRole('status').filter({ hasText: 'Session-only' })).toContainText('Session-only');
-  await ui.getByRole('button', { name: /Squad/ }).click();
-  await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
-  await expect(ui.getByRole('alert').first()).toContainText('connection');
+  await expect(ui.getByRole('alert')).toContainText('Plugin unavailable');
+  await expect(ui.getByRole('navigation')).toHaveCount(0);
+  await expect(ui.getByRole('heading', { name: 'No team yet' })).toHaveCount(0);
+  await expect(ui.getByRole('button', { name: /Squad|Save team|New team/ })).toHaveCount(0);
+  await expect(ui.getByText('Session-only', { exact: false })).toHaveCount(0);
   expect(await page.evaluate(() => bridgeCalls.filter(call => call.params?.teamWorker?.args?.op === 'start').map(call => ({ action: 'terminal.createAgent', params: call.params.teamWorker.args.params })).length)).toBe(0);
 });
 test('save failure retains existing data and stays on the form', async ({ page }) => {
@@ -75,9 +76,10 @@ test('save failure retains existing data and stays on the form', async ({ page }
 });
 test('unreadable stored data blocks writes and preserves the recovery error', async ({ page }) => {
   await page.goto('/?mode=read-error'); const ui = panel(page);
-  await expect(ui.getByRole('alert')).toContainText('Original data has been preserved');
-  await ui.getByRole('button', { name: 'New team', exact: true }).click();
-  await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
+  await expect(ui.getByRole('alert')).toContainText('Your saved teams could not be loaded');
+  await expect(ui.getByRole('button', { name: 'New team', exact: true })).toHaveCount(0);
+  await ui.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(ui.locator('#failure-details')).toContainText('Original data has been preserved');
 });
 for (const width of [320, 960]) {
   test(`organisation chart stays inside a ${width}px panel`, async ({ page }) => {
@@ -131,7 +133,10 @@ test('structured supervisor keeps prompt acceptance separate from provider obser
 
 test('connection test verifies a nonce and sends only worker envelopes', async ({ page }) => {
   await page.goto('/'); const ui = panel(page);
-  await expect(ui.getByRole('status').filter({ hasText: 'compatibility layer available' })).toBeVisible();
+  await expect(ui.getByRole('heading', { name: 'No team yet' })).toBeVisible();
+  await expect(ui.locator('.notice')).toHaveCount(0);
+  await expect(ui.getByRole('button', { name: 'Test connection' })).toHaveCount(0);
+  await ui.getByRole('button', { name: 'Settings', exact: true }).click();
   await ui.getByRole('button', { name: 'Test connection' }).click();
   await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
   const calls = await page.evaluate(() => bridgeCalls);
@@ -142,22 +147,26 @@ test('connection test verifies a nonce and sends only worker envelopes', async (
 test('connection diagnostics separate panel, worker and adapter; retry uses the declared native command', async ({ page }) => {
   await page.goto('/');
   const ui = panel(page);
-  await expect(ui.getByRole('status').first()).toContainText('Panel loaded · worker activated · compatibility layer available');
-  await expect(ui.getByRole('status').first()).toContainText('agent readiness not verified');
+  await ui.getByRole('button', { name: 'Settings', exact: true }).click();
+  const connection = ui.getByRole('region', { name: 'Connection', exact: true });
+  await connection.getByText('Technical details', { exact: true }).click();
+  await expect(connection).toContainText('Panel loaded · worker activated · compatibility layer available');
+  await expect(connection).toContainText('agent readiness not verified');
   await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
   await ui.getByRole('button', { name: 'Test connection' }).click();
   await expect(ui.locator('#app')).toHaveAttribute('aria-busy', 'false');
-  await expect(ui.getByRole('status').first()).toContainText('compatibility layer available');
+  await expect(connection).toContainText('Connected to Orca');
   expect(await page.evaluate(() => bridgeCalls.some(call => call.params?.teamWorker?.commandId === 'team.initialise'))).toBe(true);
 });
 
 test('unsupported build shows actionable diagnostics with worker active and launch disabled', async ({ page }) => {
   await page.goto('/?mode=unsupported-build');
   const ui = panel(page);
-  await expect(ui.getByRole('status').first()).toContainText('worker activated · compatibility layer unavailable');
-  await expect(ui.getByRole('alert').first()).toContainText('Unsupported Orca build');
-  await ui.getByRole('button', { name: /Squad/ }).click();
-  await expect(ui.getByRole('button', { name: 'Save team', exact: true })).toBeDisabled();
+  await expect(ui.getByRole('alert')).toContainText('Plugin unavailable');
+  await expect(ui.getByRole('navigation')).toHaveCount(0);
+  await expect(ui.getByRole('heading', { name: 'No team yet' })).toHaveCount(0);
+  await ui.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(ui.locator('#failure-details')).toContainText('Unsupported Orca build');
 });
 test('host model choices and individual mixed-provider preferences persist with effective model unknown', async ({ page }) => {
  await page.goto('/?mode=capabilities-local'); const ui = panel(page);
