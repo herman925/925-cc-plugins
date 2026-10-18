@@ -43,7 +43,7 @@ for(const width of [320,960])test('member monitoring stays inside '+width+'px pa
 });
 
 test('unconfirmed launch remains visible as Unknown without a duplicate launch on reload',async({page})=>{
- const ui=await launchTeam(page,{mode:'launch-unknown'});await expect(ui.locator('.roster tbody tr').first()).toContainText('Unknown');await expect(ui.locator('.roster button').first()).toBeDisabled();await expect(ui.locator('.org-chart button').first()).toBeDisabled();await page.reload();await expect(panel(page).locator('.roster tbody tr').first()).toContainText('Unknown');
+ const ui=await launchTeam(page,{mode:'launch-unknown'});await expect(ui.locator('.roster tbody tr').first()).toContainText('Unknown');await expect(ui.locator('.roster button').first()).toBeDisabled();await expect(ui.locator('.organisation button').first()).toBeDisabled();await page.reload();await expect(panel(page).locator('.roster tbody tr').first()).toContainText('Unknown');
  expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='launchSupervisor').length)).toBe(0);
 });
 
@@ -52,16 +52,22 @@ test('connection diagnostics are optional in Settings and missing interfaces hid
  await page.goto('/?mode=incompatible-host');await expect(panel(page).getByRole('alert')).toContainText('Plugin unavailable');await expect(panel(page).locator('.roster')).toHaveCount(0);await panel(page).getByRole('button',{name:'Details',exact:true}).click();await expect(panel(page).locator('#failure-details')).toContainText('required interfaces');
 });
 
-test('member names and organisation chart open exact sessions through refresh and reload',async({page})=>{
+test('member names and vertical tree nodes open exact sessions through refresh and reload',async({page})=>{
  const ui=await launchTeam(page);const team=(await snapshot(page)).teams[0];
  const refreshes=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length);
  const capabilities=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length);
  await ui.locator('.roster tbody tr').nth(1).locator('.member-name').click();await expect(ui.locator('.success')).toContainText('Opened Worker-1’s session');
- await ui.locator('.org-chart .org-node').last().click();await expect(ui.locator('.success')).toContainText('Opened Worker-3’s session');
+ await ui.locator('.organisation .org-node').last().click();await expect(ui.locator('.success')).toContainText('Opened Worker-3’s session');
  const check=async()=>{
   await expect(panel(page).getByRole('region',{name:'Member details'})).toHaveCount(0);
   await expect(panel(page).locator('main input, main select, main textarea')).toHaveCount(0);
-  await expect(panel(page).locator('.roster button, .org-chart button')).toHaveCount(8);
+  await expect(panel(page).locator('.roster button')).toHaveCount(4);
+  await expect(panel(page).locator('.organisation button.org-node')).toHaveCount(4);
+  const tree=panel(page).locator('.organisation .org-tree.root');
+  await expect(tree.locator(':scope > li > .org-tree > li > .org-node > span:nth-child(2)')).toHaveText(['W1','W2','W3']);
+  const nodes=await tree.locator('.org-node').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y};}));
+  expect(nodes[1].x).toBeGreaterThan(nodes[0].x);
+  for(let i=2;i<nodes.length;i++){expect(nodes[i].x).toBe(nodes[1].x);expect(nodes[i].y).toBeGreaterThan(nodes[i-1].y);}
   await expect(panel(page).getByRole('button',{name:'Open supervisor',exact:true})).toHaveCount(0);
   await expect(panel(page).locator('.team-card button')).toHaveCount(4);
   for(const name of ['Role and preferences','Session controls and diagnostics','Save role','Save preferences','Pause new assignments'])await expect(panel(page).getByText(name,{exact:true})).toHaveCount(0);
@@ -72,6 +78,9 @@ test('member names and organisation chart open exact sessions through refresh an
  await check();expect(await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='capabilities').length)).toBe(capabilities);
  await expect.poll(()=>page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='rosterStatus').length),{timeout:10000}).toBeGreaterThan(refreshes);
  expect((await snapshot(page)).teams[0]).toMatchObject({id:team.id,members:team.members,configuration:team.configuration,configVersion:team.configVersion});await page.reload();await expect(panel(page).locator('.roster tbody tr')).toHaveCount(4);await check();
+ await ui.locator('.organisation .org-node').first().focus();await page.keyboard.press('Enter');await expect(ui.locator('.success')).toContainText('Opened Head’s session');
+ const opened=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').at(-1).params.teamWorker.args.params);
+ expect(opened).toMatchObject({teamId:team.id,memberId:team.members[0].id,requestId:team.launch.members[team.members[0].id].requestId});
 });
 
 test('failed supervisor navigation reports the error without launching or recovering a member',async({page})=>{
@@ -163,7 +172,7 @@ test('more than one lead saves and launches a three-level team with exactly one 
  const team=(await snapshot(page)).teams[0];expect(team.configuration).toMatchObject({levels:3,leadCount:2,workersPerLead:1});expect(team.members.filter(m=>m.role==='head')).toHaveLength(1);const leads=team.members.filter(m=>m.role==='lead');expect(leads).toHaveLength(2);for(const lead of leads)expect(team.members.filter(m=>m.boss===lead.id)).toHaveLength(1);expect(Object.keys(team.launch.members)).toHaveLength(5);
  expect(leads.map(m=>m.name)).toEqual(['UI','Dev']);expect(team.configuration.leadNames).toBe('UI, Dev');
  expect(team.members.filter(m=>m.role==='worker').map(m=>m.name)).toEqual(['UI-Worker-1','Dev-Worker-1']);
- await ui.locator('.org-chart').getByRole('button',{name:'Open UI’s session',exact:true}).focus();await page.keyboard.press('Enter');await expect(ui.locator('.success')).toContainText('Opened UI’s session');
+ await ui.locator('.organisation').getByRole('button',{name:'Open UI’s session',exact:true}).focus();await page.keyboard.press('Enter');await expect(ui.locator('.success')).toContainText('Opened UI’s session');
  const opened=await page.evaluate(()=>bridgeCalls.filter(c=>c.params?.teamWorker?.args?.op==='openMember').at(-1).params.teamWorker.args.params);expect(opened).toMatchObject({teamId:team.id,memberId:leads[0].id,requestId:team.launch.members[leads[0].id].requestId});
 });
 

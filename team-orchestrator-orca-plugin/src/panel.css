@@ -468,79 +468,6 @@ footer {
   color:var(--dim);
   margin:12px 0 4px;
 }
-.org-chart {
-  padding:10px 0 18px;
-}
-.org-chart>.root {
-  display:flex;
-  width:max-content;
-  min-width:100%;
-  justify-content:center;
-}
-.org-chart .org-tree {
-  display:flex;
-  padding:18px 0 0;
-  justify-content:center;
-}
-.org-chart .org-tree.root {
-  padding-top:0;
-}
-.org-chart .org-tree li {
-  padding:0 4px;
-  text-align:center;
-}
-.org-chart .org-node {
-  flex-direction:column;
-  gap:1px;
-  min-width:42px;
-  padding:5px 7px;
-  background:transparent;
-  border-color:transparent;
-  font-size:11px;
-}
-.org-chart .glyph {
-  font-size:15px;
-}
-.org-chart .org-node small {
-  display:none;
-}
-.org-chart .org-tree:not(.root)>li:before {
-  left:0;
-  right:0;
-  top:-9px;
-  height:9px;
-  bottom:auto;
-  border-left:0;
-  border-top:1px solid var(--line);
-  width:100%;
-}
-.org-chart .org-tree:not(.root)>li:after {
-  left:50%;
-  top:-9px;
-  width:0;
-  height:9px;
-  border-top:0;
-  border-left:1px solid var(--line);
-}
-.org-chart .org-tree:not(.root)>li:first-child:before {
-  left:50%;
-  width:50%;
-}
-.org-chart .org-tree:not(.root)>li:last-child:before {
-  width:50%;
-  height:9px;
-}
-.org-chart .org-tree:not(.root)>li:only-child:before {
-  border-top:0;
-}
-.org-chart .org-tree li:has(>.org-tree)>.org-node:after {
-  content:'';
-  position:absolute;
-  left:50%;
-  top:48px;
-  height:9px;
-  border-left:1px solid var(--line);
-}
 
 .task-card {
   border:1px solid var(--line);
@@ -581,7 +508,8 @@ footer {
 .member-name { font-weight:600; }
 button.member-name { border:0; background:transparent; padding:2px 0; text-align:left; }
 button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:underline; }
-.org-chart button.org-node:hover:not(:disabled) { border-color:var(--cyan); background:var(--surface); }
 .team-heading-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
 
 .staffing-counts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+
+button.org-node:hover:not(:disabled) { border-color:var(--cyan); background:var(--surface); }

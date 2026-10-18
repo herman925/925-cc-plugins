@@ -42,8 +42,8 @@ Roster 按 Orca 当前选中的项目过滤已启动团队。这里的“已启�
 保留的监控列为 Name、Role、CLI、Status、Context、Model、Effort。页面可见时约每 5 秒读取一次原生状态；显示必须来自当前、准确匹配的会话身份，不能沿用启动时的旧 Working 记录。
 
 - Add team 保留在 Roster，包含空名册状态；点击只跳转 New team，不另建一套创建流程。
-- 点击列表中的成员名字或组织图节点，直接打开该成员已绑定的会话，覆盖 Head／CEO、Lead 和 Worker；移除单独的 Open supervisor 按钮。没有保存的绑定时禁用入口，身份失效时报告错误，不创建替代会话。
-- 名称使用支持键盘操作的按钮；点击只进行会话导航，不打开个人详情或下属会话管理表单。
+- 组织树沿用 New team 的 Organisation preview，纵向显示主管与下属层级。点击树节点或下方监控列表中的成员名字，直接打开该成员已绑定的会话，覆盖 Head／CEO、Lead 和 Worker；移除单独的 Open supervisor 按钮。没有保存的绑定时禁用入口，身份失效时报告错误，不创建替代会话。
+- 组织树节点和监控列表中的名称使用支持键盘操作的按钮；点击只进行会话导航，不打开个人详情或下属会话管理表单。
 - 移除成员角色说明、工作习惯、协作规则、个人模型偏好、暂停派工、停止、替换、唤醒及恢复诊断等详情入口。
 - 移除会话回执列表、内部 request/instance 信息、团队派工开关等面板块。
 - 移除 Start team work、Submit total objective、Next total objective，以及总目标队列、交付验收表单。
@@ -166,7 +166,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | Structure 与 Levels 分开选择 | 先合并，最终都取消；由 Lead 数量推导 |
 | 两层显示不可编辑的 Head = 1，三层才显示 Leads | 最终统一显示可编辑的 Leads；1 位对应单主管，超过 1 位增加 Head |
 | 一个 Reports each 同时决定 Lead 和 Worker 数量 | 分开配置 Leads 与 Workers per lead |
-| 单独 Open supervisor 按钮，成员名与组织图不可点击 | 点击任意成员打开其已绑定会话，不新增会话或个人管理表单 |
+| 单独 Open supervisor 按钮，成员名与组织图不可点击 | 纵向组织树节点与下方监控列表中的成员名均打开已绑定会话，不新增会话或个人管理表单 |
 | 成员详情中修改角色、模型、控制会话与查看诊断 | Roster 只读监控，个人管理表单移除 |
 | 用户手动填写模型 ID | 从宿主目录选择，未知时 Default |
 | 模型名称后附加括号中的 ID | 选项仅显示宿主名称，内部保存并传递原始 model ID |
