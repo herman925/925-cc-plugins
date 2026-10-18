@@ -1,6 +1,7 @@
 import { open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { readStatuslineContext, registerStatuslineBinding, statuslineBinding } from './claude-context.mjs';
 
 const HEAD_BYTES = 256 * 1024, TAIL_BYTES = 512 * 1024;
 const count = value => Number.isSafeInteger(value) && value >= 0;
@@ -56,17 +57,19 @@ export function terminalProviderSession(snapshot, shown, agent) {
 
 export function createTerminalContextReader() {
   const cache = new Map();
-  return async ({ rpc, shown, agent, scope, snapshots }) => {
+  return async ({ rpc, shown, agent, scope, snapshots, contextDirectory, statuslineEnabled=false }) => {
     // Paths belong to the execution host. Never read a remote path on this PC.
     if (scope.executionHostId !== 'local' || !['codex', 'claude'].includes(agent)) return null;
     const params = { worktree: scope.workspaceId.startsWith('folder:') ? scope.workspaceId : `id:${scope.workspaceId}` };
     if (!snapshots.has(scope.workspaceId)) snapshots.set(scope.workspaceId, rpc('session.tabs.list', params));
     const provider = terminalProviderSession(await snapshots.get(scope.workspaceId), shown, agent);
     if (!provider) return null;
+    if(agent==='claude'&&contextDirectory)await registerStatuslineBinding(contextDirectory,statuslineBinding(provider,shown)).catch(()=>{});
     const file = await open(provider.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    let context;
+    let context,transcriptStat;
     try {
       const before = await file.stat();
+      transcriptStat=before;
       if (!before.isFile()) return null;
       const key = JSON.stringify([agent, provider.sessionId, provider.path, shown.worktreePath]);
       const stamp = [before.dev, before.ino, before.size, before.mtimeMs, before.ctimeMs].join(':');
@@ -88,6 +91,10 @@ export function createTerminalContextReader() {
         cache.set(key, { stamp, context });
       }
     } finally { await file.close(); }
+    if(agent==='claude'&&statuslineEnabled){
+      const reported=await readStatuslineContext({directory:contextDirectory,provider,shown,transcript:context,transcriptStat});
+      if(reported!==undefined)context=reported;
+    }
     // A provider can reset/resume inside the same PTY; recheck the conversation too.
     const current = terminalProviderSession(await rpc('session.tabs.list', params), shown, agent);
     return current?.sessionId === provider.sessionId && current.path === provider.path ? context : null;

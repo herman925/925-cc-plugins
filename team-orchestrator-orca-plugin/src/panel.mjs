@@ -33,6 +33,7 @@ let newContextRefreshing = false;
 const capabilityViews = new Map();
 let capabilitiesLoading = false;
 let capabilityRetryTimer;
+let claudeContextStatus = null;
 
 const mutation = params => ({ ...params, expectedRevision: state.revision, requestId: crypto.randomUUID() });
 
@@ -137,8 +138,12 @@ function cleanupView(){
  const history=(state.works||[]).filter(w=>w.status==='completed');
  return `<section class="section" aria-label="Manual history cleanup"><h2>Manual history cleanup</h2><p>Select accepted work to preview summary and task-result cleanup. Identity, acceptance and replay evidence stay saved.</p>${history.map(w=>`<label class="check"><input type="checkbox" data-cleanup-work="${escape(w.id)}" ${cleanupSelection.has(w.id)?'checked':''} ${w.historyPruned?'disabled':''}> ${escape(w.objective)} · ${w.historyPruned?'Previously cleaned':'Accepted by you'}</label>`).join('')}${!history.length?'<p>No accepted history yet.</p>':''}${button('Preview history cleanup','preview-cleanup',!storageAvailable||!cleanupSelection.size?'disabled':'','small')}${cleanupPreview?`<section aria-label="Cleanup preview"><h3>Cleanup preview</h3><p>${cleanupPreview.eligibleWorkIds.length} eligible Work(s) · ${cleanupPreview.changes.length} records · ${cleanupPreview.snapshotCount} cached snapshots · ${cleanupPreview.logicalBytes} logical bytes inspected</p><p>${escape(cleanupPreview.notice)}</p>${cleanupPreview.retained.map(r=>`<p>Kept ${escape(r.workId)}: ${escape(r.reason)}</p>`).join('')}<details><summary>Exact affected records</summary>${cleanupPreview.changes.map(r=>`<p>${escape(r.recordId)}: ${r.fields.map(escape).join(', ')}</p>`).join('')}</details>${button('Clear previewed summaries and results','apply-cleanup',!cleanupPreview.eligibleWorkIds.length?'disabled':'','primary small')}${button('Cancel preview','cancel-cleanup','','small')}</section>`:''}</section>`;
 }
+function claudeContextView() {
+  const status=claudeContextStatus;
+  return `<section class="section" aria-label="Claude context"><h2>Claude context</h2><p>${escape(status?.detail||'Checking Claude context connection…')}</p>${status?.supported?`${button(status.enabled?'Disconnect Claude context':'Connect Claude context','claude-context-toggle','','small')}<p class="subtle">Applies to Claude user settings on this Mac. Disconnect restores the previous status line.</p>`:''}</section>`;
+}
 function settingsView() {
-  return `<h1>Settings</h1><section class="section" aria-label="Connection"><h2>Connection</h2><p>Connected to Orca</p>${button('Test connection', 'test-connection', '', 'small')}<details><summary>Technical details</summary><p>${escape(connection)}</p></details></section>${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. New teams start all roster members. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
+  return `<h1>Settings</h1><section class="section" aria-label="Connection"><h2>Connection</h2><p>Connected to Orca</p>${button('Test connection', 'test-connection', '', 'small')}<details><summary>Technical details</summary><p>${escape(connection)}</p></details></section>${claudeContextView()}${cleanupView()}<section class="section"><h2>Roster display</h2><label class="check"><input type="checkbox" data-setting="chart" ${state.settings.chart ? 'checked' : ''} ${busy || !loaded ? 'disabled' : ''}> Show organisation tree</label><label class="field">Team cards<select data-setting="layout" ${busy || !loaded ? 'disabled' : ''}><option value="stacked" ${state.settings.layout === 'stacked' ? 'selected' : ''}>Stacked</option><option value="columns" ${state.settings.layout === 'columns' ? 'selected' : ''}>Side by side when there is room</option></select></label></section><section class="section"><h2>Team launching</h2><p>Launch calls go to the bundled worker on your PC through the runtime adapter. Orca opens agent tabs on each team's saved project and execution host and passes each role brief as its startup prompt. The panel records actual created-tab receipts; it does not infer readiness or provider session IDs.</p><p>Default model and effort inherit agent configuration. New teams start all roster members. Tasks share the selected directory. Scope coordination does not isolate undeclared filesystem writes.</p></section>`;
 }
 function unavailableView() {
   return `<section class="unavailable" aria-label="Plugin unavailable"><div role="alert"><h1>Plugin unavailable</h1><p>${connectionReady ? 'Your saved teams could not be loaded.' : 'Team Orchestrator could not connect to Orca.'}</p></div><div class="actions">${button('Retry', 'retry-plugin', '', 'primary small')}${button(showFailureDetails ? 'Hide details' : 'Details', 'failure-details', `aria-expanded="${showFailureDetails}" aria-controls="failure-details"`, 'secondary small')}</div>${showFailureDetails ? `<div id="failure-details" class="failure-details"><p>${escape(problem || connection)}</p>${connectionReady ? storageRecoveryView() : '<p>In Orca’s command menu, run <strong>Team Orchestrator: Initialise local adapter</strong>, then retry.</p>'}</div>` : ''}</section>`;
@@ -287,7 +292,18 @@ app.addEventListener('click', async event => {
   if (!target || target.disabled || busy) return;
   const action = target.dataset.action;
   if (action === 'new') { await enterNewTeam(); }
-  else if (['roster', 'settings'].includes(action)) { view = action; message = ''; render(); }
+  else if (action === 'roster') { view = action; message = ''; render(); }
+  else if (action === 'settings') {
+    view=action;message='';busy=true;render();
+    try{claudeContextStatus=await call('claudeContext',{});}catch(error){problem=error.message;}
+    finally{busy=false;render();}
+  }
+  else if (action === 'claude-context-toggle') {
+    busy=true;problem='';message='';render();
+    try{claudeContextStatus=await call('claudeContext',{enabled:!claudeContextStatus.enabled});message=claudeContextStatus.enabled?'Claude context connected. Updates appear when Claude refreshes its status line.':'Previous Claude status line restored.';}
+    catch(error){problem=error.message;}
+    finally{busy=false;render();}
+  }
   else if (action === 'failure-details') { showFailureDetails = !showFailureDetails; render(); }
   else if (action === 'retry-plugin') { view = 'roster'; await load(!connectionReady); }
   else if(action==='storage-recovery') {busy=true;render();try{storageRecovery=await call('storageRecovery',{});}catch(error){problem=error.message;}finally{busy=false;render();}}

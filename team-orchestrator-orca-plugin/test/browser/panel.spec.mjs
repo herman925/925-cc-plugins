@@ -214,3 +214,19 @@ test('terminal context shows provider counts and refreshes without inventing a w
  await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveAttribute('title',/Window size not reported/);
  await page.reload();await expect(panel(page).locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('≈40K tokens');
 });
+
+test('Claude context connects an existing statusline, reports 1M percentages and disconnects to transcript counts',async({page})=>{
+ const ui=await launchTeam(page,{mode:'terminal-context',workersCLI:'claude'});
+ await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('≈40K tokens');
+ await ui.getByRole('button',{name:'Settings',exact:true}).click();
+ await ui.getByRole('button',{name:'Connect Claude context',exact:true}).click();
+ await expect(ui.getByRole('button',{name:'Disconnect Claude context',exact:true})).toBeEnabled();
+ await ui.getByRole('button',{name:'Roster',exact:true}).click();
+ await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('4%');
+ await expect(ui.locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveAttribute('title',/40,000 tokens \/ 1,000,000/);
+ await page.reload();await expect(panel(page).locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('4%');
+ await panel(page).getByRole('button',{name:'Settings',exact:true}).click();await panel(page).getByRole('button',{name:'Disconnect Claude context',exact:true}).click();
+ await expect(panel(page).getByRole('button',{name:'Connect Claude context',exact:true})).toBeEnabled();
+ await panel(page).getByRole('button',{name:'Roster',exact:true}).click();
+ await expect(panel(page).locator('.roster tbody tr').nth(1).locator('.context-usage')).toHaveText('≈40K tokens');
+});

@@ -1,0 +1,76 @@
+{
+  "version": "0.1.22",
+  "environment": {
+    "orca": "1.4.229",
+    "electron": "43.7.8",
+    "node": "24.21.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "connection": {
+    "version": "0.1.22",
+    "before": {
+      "supported": true,
+      "enabled": false,
+      "detail": "Connect Claude context through your user settings. Existing status line output is preserved."
+    },
+    "connected": {
+      "supported": true,
+      "enabled": true,
+      "detail": "Connected. Claude reports its context when the status line updates."
+    }
+  },
+  "live": {
+    "observedAt": "2026-10-18T13:48:18.765Z",
+    "panel": {
+      "rows": [
+        {
+          "context": "9%",
+          "name": "● UI",
+          "tooltip": "70,722 tokens / 828,400 · Last reported 18/10/2026, 21:19:49"
+        },
+        {
+          "context": "4%",
+          "name": "○ UI-Worker-1",
+          "tooltip": "39,622 tokens / 1,000,000 · Last reported 18/10/2026, 21:44:59"
+        },
+        {
+          "context": "3%",
+          "name": "○ UI-Worker-2",
+          "tooltip": "28,076 tokens / 1,000,000 · Last reported 18/10/2026, 21:44:59"
+        },
+        {
+          "context": "3%",
+          "name": "○ UI-Worker-3",
+          "tooltip": "27,763 tokens / 1,000,000 · Last reported 18/10/2026, 21:44:59"
+        }
+      ],
+      "version": "v0.1.22"
+    },
+    "settings": "Claude contextConnected. Claude reports its context when the status line updates.Disconnect Claude contextApplies to Claude user settings on this Mac. Disconnect restores the previous status line."
+  },
+  "preservation": {
+    "preserved": true,
+    "teams": 2,
+    "members": 8,
+    "launchRequests": 5,
+    "works": 1,
+    "goals": 0
+  },
+  "validation": {
+    "domainPassed": 589,
+    "browserPassed": 33,
+    "hostContractsPassed": 3,
+    "affectedContextRerunPassed": 2
+  },
+  "installedHelperMatchesBuild": true,
+  "artifacts": {
+    "main.mjs": "90851c3a96af084e06fd53b106184ce796ad9c8eac736cae67ddef80383269ec",
+    "runtime-adapter.cjs": "3a74c7fe09678653ab20011ef465eff69b61105216e27ffc3be0c3b51245fd49",
+    "claude-statusline.cjs": "d3e83592998187bd3e92f4327c17e4e4f8b741f3447affc8672c30cf85b8859e",
+    "panel.html": "a6116c4399dc997dde5221fcb477ecc617a9e2a9fefa2c9204c6124779e0344d",
+    "orca-plugin.json": "6958de62f82368ef2078c20d18c810a7259ce8112713b59a77ddd0d5b94f69f3",
+    "package.json": "2333b138e816c277d6c2598fcf36477f8a52d21660c73a42bb9ff01f63883e88",
+    "package-lock.json": "a71bbda9fd42355b4976a78684346c2a7ea4454a7a952309556d85a19fd1114a"
+  }
+}

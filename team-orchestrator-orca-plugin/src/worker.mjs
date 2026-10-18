@@ -1,5 +1,6 @@
 import {inspectTeamStorage} from './local/storage-maintenance.mjs';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { bootstrap } from './local/bootstrap.mjs';
 import { locateCli, createCliRunner } from './local/cli.mjs';
 import { createExecutor } from './local/executor.mjs';
@@ -16,7 +17,7 @@ export default function activate(orca) {
     storeProfile = report.cliPaths.userData;
     storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
     executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
-      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid }))
+      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid, claudeContextOptions:{electron:true,helperPath:import.meta.url.startsWith('file:')?fileURLToPath(new URL('./claude-statusline.cjs',import.meta.url)):undefined} }))
       .catch(error => { executorPromise = null; throw error; });
     return executorPromise;
   };

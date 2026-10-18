@@ -55,6 +55,7 @@ ${pairedHost?'':"export { sshBridgeCredentials } from './src/main/runtime/rpc/ss
 export { z } from 'zod';
 `);
   const outfile = join(root, `${name}.mjs`);
+  if(pairedHost)await writeFile(entry,(await readFile(entry,'utf8'))+`\nexport { getStatusLineSlotState, applyManagedStatusLine } from './src/main/claude/hook-settings';\n`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', banner: { js: "import { fileURLToPath as contractFilePath } from 'node:url'; const __filename = contractFilePath(import.meta.url);" }, plugins: [{
     name: 'pinned-orca-source', setup(api) {
       // These boundaries are not executed: existing-worker reuse returns before provider creation;
@@ -327,6 +328,9 @@ try {
     for (const field of ['parentTabId: string', 'leafId: string', 'ptyId?: string', 'incarnationId?: string', 'agentStatus?: AgentStatusEntry']) assert.ok(tabs.includes(field), field);
     assert.match(provider, /type AgentProviderSessionMetadata = \{[\s\S]*?id: string[\s\S]*?transcriptPath\?: string/);
     assert.match(status, /providerSession\?: AgentProviderSessionMetadata/);
+    const wrapper={statusLine:{type:'command',command:"ELECTRON_RUN_AS_NODE=1 '/app/Orca Helper' '/home/.claude/team-orchestrator-orca/statusline.cjs' '/home/.claude/team-orchestrator-orca/bridge.json'",padding:2}};
+    assert.equal(before.getStatusLineSlotState(wrapper,'claude-statusline.sh'),'user');
+    assert.deepEqual(before.applyManagedStatusLine(wrapper,'managed replacement','claude-statusline.sh'),wrapper);
   }
   const manifest = JSON.parse(await readFile(join(project, 'orca-plugin.json'), 'utf8'));
   assert.equal(before.parsePluginManifest(manifest).ok, true);

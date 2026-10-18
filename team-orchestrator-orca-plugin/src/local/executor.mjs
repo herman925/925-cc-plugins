@@ -1,4 +1,5 @@
 import {createRosterStatusService} from './roster-status.mjs';
+import {createClaudeStatuslineSettings} from './claude-statusline-settings.mjs';
 import {createStaffingService} from './staffing.mjs';
 import {createHierarchyService} from './hierarchy.mjs';
 import {createWakeService} from './wake.mjs';
@@ -15,10 +16,11 @@ import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { launchInput, nativeLaunchIntent, launchReceipt, publicOperation } from './native-launch.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc } = {}) {
+export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
-  const rosterStatus=createRosterStatusService({store,rpc,consent});
+  const claudeContext=createClaudeStatuslineSettings({userData,consent,...claudeContextOptions});
+  const rosterStatus=createRosterStatusService({store,rpc,consent,userData,claudeContext});
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing=createStaffingService({store,userData,consent,rpc,works,notify:params=>host.call('notifications.show',params)});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
@@ -268,6 +270,10 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'context') return context(workspaceId, params.teamId);
       if(op==='previewHistoryCleanup')return store.previewHistoryCleanup(params);
       if(op==='applyHistoryCleanup')return {cleanup:store.applyHistoryCleanup(params),value:store.readSnapshot()};
+      if(op==='claudeContext'){
+        if(Object.keys(params??{}).some(key=>key!=='enabled'))throw Error('Invalid Claude context setting.');
+        return Object.hasOwn(params??{},'enabled')?claudeContext.configure(params.enabled):claudeContext.status();
+      }
       if(op==='rosterStatus')return {value:store.readSnapshot(),telemetry:await rosterStatus.read()};
       if (op === 'load') { await recovery.reconcile(); await stops.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {

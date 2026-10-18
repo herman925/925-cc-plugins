@@ -2,12 +2,13 @@ import {inspectTeamStorage} from '../src/local/storage-maintenance.mjs';
 import { mediateOperation } from '../src/local/native-broker.mjs';
 // Development/test host only: real plugin persistence/service, fake Orca boundary.
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { openTeamStore } from '../src/local/store.mjs';
 import { createExecutor } from '../src/local/executor.mjs';
 const port = Number(process.env.PORT || 4173);
@@ -161,7 +162,7 @@ async function fixture(id, mode) {
         const structured = mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode === 'structured' || (mode?.startsWith('dispatch-') && mode !== 'dispatch-reverse');
         const result = { worktreeId: params.target.worktree.replace(/^id:/, ''), outcome: structured ? { kind: 'structured', handle: `chat-${creates}`, sessionId: `codex:fixture-${creates}` } : { kind: 'terminal', handle: `created-member-${creates}`, paneKey: `tab-${creates}:leaf-${creates}` }, receipt: { mode: structured ? 'structured' : 'terminal', preferred: structured ? 'structured' : 'terminal', reason: 'user_default', detail: 'Fixture native mode' }, prompt: { delivery: 'submit', outcome: structured ? 'journaled' : 'handed-to-terminal', ...(structured ? { messageId: 'message-1' } : {}) } };
         if(mode==='terminal-context'){
-          const handle=result.outcome.handle,rows=params.agent==='codex'?[{type:'session_meta',payload:{id:handle,cwd:profile}},{type:'event_msg',timestamp:'2026-10-18T13:00:00Z',payload:{type:'token_count',info:{last_token_usage:{total_tokens:25000},total_token_usage:{total_tokens:999999},model_context_window:100000}}}]:[{type:'assistant',sessionId:handle,cwd:profile,timestamp:'2026-10-18T13:00:00Z',message:{model:'fixture-model',usage:{input_tokens:1000,cache_read_input_tokens:39000,output_tokens:5000}}}];
+          const handle=result.outcome.handle,rows=params.agent==='codex'?[{type:'session_meta',payload:{id:handle,cwd:profile}},{type:'event_msg',timestamp:new Date().toISOString(),payload:{type:'token_count',info:{last_token_usage:{total_tokens:25000},total_token_usage:{total_tokens:999999},model_context_window:100000}}}]:[{type:'assistant',sessionId:handle,cwd:profile,timestamp:new Date().toISOString(),message:{model:'fixture-model',usage:{input_tokens:1000,cache_read_input_tokens:39000,output_tokens:5000}}}];
           await writeFile(join(profile,handle+'.jsonl'),rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
         }
         launches.set(params.operationId, result); agents.set(result.outcome.handle, params.agent); if (structured) sessionIds.add(result.outcome.sessionId); if(mode?.startsWith('idle-replacement'))journal.prepare('INSERT OR REPLACE INTO agent_session_records VALUES(?,?)').run(result.outcome.sessionId,JSON.stringify({schemaVersion:2,sessionId:result.outcome.sessionId,provider:params.agent,location:{workspaceId:result.worktreeId,executionHostId:host},lease:{sessionId:result.outcome.sessionId,runtimeFence:7,claimStatus:'live',ownerProcess:{pid:1,hostId:'local',spawnToken:'fixture-owner'}}})); return result;
@@ -208,8 +209,18 @@ async function fixture(id, mode) {
       }
       throw Error('Unknown fixture read');
     };
-    executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, nativeRpc: runtime });
-    return { profile, store, executor, nativeDb, journal, restartDesktop(){runtimeEpoch='fixture-runtime-after-restart';}, async mediate(op, input) {
+    executor = createExecutor({ call: async () => ({ value: null }) }, cli, { store, internalKey, userData: profile, claudeContextOptions:{configDir:join(profile,'claude'),helperPath:resolve('claude-statusline.cjs'),executable:process.execPath,electron:false,platform:'darwin'}, nativeRpc: runtime });
+    return { profile, store, executor, nativeDb, journal, async statuslineUpdate(){
+      if(mode!=='terminal-context')return;
+      // Simulate a real CLI statusline callback at the provider boundary. The
+      // installed helper, settings, binding checks and reader are production code.
+      const bridge=join(profile,'claude','team-orchestrator-orca');
+      for(const launch of launches.values()){
+        const handle=launch.outcome.handle;if(agents.get(handle)!=='claude')continue;
+        const payload={session_id:handle,transcript_path:join(profile,handle+'.jsonl'),cwd:profile,model:{id:'fixture-model[1m]'},context_window:{context_window_size:1000000,used_percentage:4,current_usage:{input_tokens:1000,cache_read_input_tokens:39000,output_tokens:5000}}};
+        await new Promise((resolve,reject)=>{const child=spawn(process.execPath,[join(bridge,'statusline.cjs'),join(bridge,'bridge.json')],{env:{...process.env,ORCA_PANE_KEY:launch.outcome.paneKey,CLAUDE_JOB_DIR:''},stdio:['pipe','ignore','ignore']});child.on('error',reject);child.on('close',code=>code?reject(Error('Fixture statusline failed')):resolve());child.stdin.end(JSON.stringify(payload));});
+      }
+    },restartDesktop(){runtimeEpoch='fixture-runtime-after-restart';}, async mediate(op, input) {
       if(op==='stopMember'||op==='recoverStop'){
         const row=await executor.execute({op:op==='recoverStop'?'_stopRecover':'_stopPrepare',params:input,internalKey}),plan=op==='recoverStop'?row.plan:await executor.execute({op:'_stopValidate',params:{requestId:row.requestId},internalKey});
         if(plan){let receipt,error;try{receipt=await runtime(plan.method,plan.params,plan.envelope);}catch(e){error={message:e.message,native:e.native===true,code:e.code};}await executor.execute({op:'_stopSettle',params:{requestId:row.requestId,receipt,error},internalKey});}
@@ -259,7 +270,9 @@ http.createServer(async (req, res) => {
       if(mode==='goal-lifecycle-observe'&&op==='decideWork')for(let n=0;n<2;n++)await f.executor.execute({op:'checkWork',params:{workId:params.workId}}); // Background checks after the UI captured its decision version.
 
       if (['saveStaffing','stopMember','recoverStop','decideWork', 'startNextGoal', 'capabilities', 'launchSupervisor', 'recoverLaunch', 'openMember','replaceMember'].includes(op)) return reply(await f.mediate(op, params));
-      return reply(await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' }));
+      const result=await f.executor.execute({ op, params, workspaceId: mode === 'folder' ? 'folder:/fixture/folder' : 'repo::/fixture/project' });
+      if(op==='claudeContext'&&params.enabled===true)await f.statuslineUpdate();
+      return reply(result);
     } catch (error) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, errorCode: 'action_failed', error: error.message })); }
   } else if (path === '/panel.html') {
     try { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(await readFile(new URL('../panel.html', import.meta.url))); }
