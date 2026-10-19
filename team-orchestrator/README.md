@@ -565,7 +565,7 @@ Removing changes only the roster. No tab is closed and no session is stopped. Be
 | Tool | What it does |
 |---|---|
 | `team_launch` | Launches a team as Orca tabs in the current workspace, members ordered boss first. Optional model, effort and short name per member. From 0.5.17, a taken team name needs `ifExists: "add"` or `"merge"`. |
-| `team_adopt` | Puts sessions that are already running onto the roster, without launching anything. The named team's members become exactly the adopted sessions. Records which CLI each tab runs. A name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore) is refused, as the name goes into the command that reopens the member (0.5.37). |
+| `team_adopt` | Puts sessions that are already running onto the roster, without launching anything. The named team's members become exactly the adopted sessions, so a member of that team left out of the list would be removed: such a list is refused, nothing is changed, and the reply names who would be removed. To remove them on purpose, call it again with `remove` naming each one (slice 2, guardrail #1). Records which CLI each tab runs. A name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore) is refused, as the name goes into the command that reopens the member (0.5.37). |
 | `team_message` | Messages a teammate on the roster. Starts or reopens it first when needed. `startHere: true`, only after your yes, starts a fresh copy of a member from another computer here. |
 | `member_add` (0.5.17) | Adds a new member that starts on its boss's first message. From a head or lead below the top, it is a request within its purview, which you approve. The team top adds only after asking you in the same turn, and applies a request with `{ request, approve }`. |
 | `member_move` | Moves one member to another team, under a given boss or that team's head. Refused while others report to the member. |
@@ -621,6 +621,24 @@ reopens, closes, briefs, messages or tab-checks them.
 - The queue holds one file per message in `.claude/team-orchestrator/queue/`. The team top's round delivers what has
   room. After 3 failed tries, an entry is marked failed and the sender's head is told. Finished entries are pruned
   after a day, and all entries after 7 days.
+- **Held sessions.** A member that an undecided identity claim names (see [Identity and `member_claim`](#identity-and-member_claim))
+  is never auto-closed or evicted. It still counts toward **Max open**. Once you decide the claim (`is`, `new` or `reject`),
+  it stops shielding the member and stops counting, so a stale hold cannot fill the cap for ever.
+- **Idle clock.** A member's own session start restarts its idle clock. Its earlier "clean" and turn end no longer count, so
+  it must say "clean" again before it can be auto-closed. A reload (`/reload-plugins`) starts a session again too, so
+  every confirmed member's idle clock restarts at the reload. The clock counts from the reload, not from the last turn.
+- **Fail-closed claims file.** If `.claude/team-orchestrator/claims.json` cannot be read, is not valid JSON, or has one
+  row that is not an object with a `team` and a `member`, then auto-close and eviction stop for every member until it is
+  repaired. The team top's round skips auto-close and shows a toast. A message that would need an eviction waits in the
+  queue. A new hold is not recorded, and a `member_claim` answer is refused. The file is left exactly as it is. A missing
+  file holds nobody, so it is not an error. The cap count is the one part that stays open: while the file is unreadable,
+  its holds are not counted, so an open that is under the cap still goes ahead, and the number of open members can go
+  above **Max open**. Closing and evicting stay refused.
+  - **Repair:** open `.claude/team-orchestrator/claims.json`. Fix the JSON syntax, or delete the malformed row and keep
+    the valid rows. Each valid row has `sessionId`, `member`, `team`, `tab`, `name`, `why` and `at`. Save the file. The
+    next roster refresh (within 30 seconds) resumes auto-close and eviction.
+  - Do not delete the whole file to clear the block. That discards every pending hold and every decision not yet
+    applied. Repair the rows instead.
 
 #### Housekeeping
 

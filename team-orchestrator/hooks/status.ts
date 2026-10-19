@@ -118,7 +118,7 @@ const hasReports = (m: Member, list: Member[]) => list.some(x => x !== m && x.bo
 const idleSince = (s: Status) => Math.max(s.turnEnd ?? 0, s.lastClean ?? 0)
 
 /** Workers that may be closed: no reports, not exempt, idle, said "clean", and idle for the set minutes (awake). */
-export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Member[] {
+export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = [], held: ReadonlySet<string> = new Set()): Member[] {
   if (!t.autoClose) return []
   return list.filter(m => {
     const s = statuses.get(m.name)
@@ -126,6 +126,7 @@ export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSe
       !!s &&
       !hasReports(m, list) &&
       !t.exempt.includes(m.name) &&
+      !held.has(m.name) &&
       shownState(s, now, sleeps) === 'idle' &&
       !!s.lastClean &&
       awakeAge(idleSince(s), now, sleeps) >= t.idleMinutes * MIN
@@ -133,9 +134,16 @@ export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSe
   })
 }
 
-/** How many sessions are open: members whose state is neither offline nor closed. */
-export const openCount = (statuses: Map<string, Status>, now: number, sleeps: readonly Sleep[] = []) =>
-  [...statuses.values()].filter(s => !['offline', 'closed'].includes(shownState(s, now, sleeps) ?? 'offline')).length
+/**
+ * How many sessions are open: members whose state is neither offline nor closed. A held member (an undecided identity
+ * claim names it, see held in register.tsx) counts while it is not closed, even when its status is silent or missing.
+ */
+export const openCount = (statuses: Map<string, Status>, now: number, sleeps: readonly Sleep[] = [], held: ReadonlySet<string> = new Set()) =>
+  [...new Set([...statuses.keys(), ...held])].filter(name => {
+    const s = statuses.get(name)
+    if (held.has(name)) return s?.state !== 'closed'
+    return !['offline', 'closed'].includes(shownState(s, now, sleeps) ?? 'offline')
+  }).length
 
 export type Admit = { kind: 'open' } | { kind: 'evict'; name: string } | { kind: 'queue' }
 
@@ -143,10 +151,10 @@ export type Admit = { kind: 'open' } | { kind: 'evict'; name: string } | { kind:
  * Whether a closed member can reopen now: under the cap it opens; at the cap the longest-idle closable worker makes
  * room; with no worker to close, the message waits in the queue.
  */
-export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Admit {
-  if (t.maxOpen <= 0 || openCount(statuses, now, sleeps) < t.maxOpen) return { kind: 'open' }
+export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = [], held: ReadonlySet<string> = new Set()): Admit {
+  if (t.maxOpen <= 0 || openCount(statuses, now, sleeps, held) < t.maxOpen) return { kind: 'open' }
   const idle = list
-    .filter(m => !hasReports(m, list) && !t.exempt.includes(m.name) && shownState(statuses.get(m.name), now, sleeps) === 'idle')
+    .filter(m => !hasReports(m, list) && !t.exempt.includes(m.name) && !held.has(m.name) && shownState(statuses.get(m.name), now, sleeps) === 'idle')
     .sort((a, b) => idleSince(statuses.get(a.name)!) - idleSince(statuses.get(b.name)!))
   return idle.length ? { kind: 'evict', name: idle[0]!.name } : { kind: 'queue' }
 }

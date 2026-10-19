@@ -1118,21 +1118,35 @@ async function moveFiles($: any, from: string, to: string) {
 
 // Held sessions waiting for the user's decision, one per session id: <team folder>/claims.json.
 const claimsFile = async ($: any) => `${await teamDir($)}/claims.json`
-async function readClaims($: any): Promise<Claim[]> {
-  const p = await claimsFile($)
-  if (!(await $.fs.exists(p))) return []
+// undefined when claims.json exists but cannot be read or parsed, or a row is malformed: callers then refuse to write or
+// to decide, so a corrupt file is never overwritten or read as "no claims". A missing file holds no claims.
+async function readClaims($: any): Promise<Claim[] | undefined> {
   try {
+    const p = await claimsFile($)
+    if (!(await $.fs.exists(p))) return []
     const c = JSON.parse(String(await $.fs.read(p)))
-    return Array.isArray(c) ? c : []
+    return Array.isArray(c) && c.every((x: any) => !!x && typeof x === 'object' && typeof x.team === 'string' && typeof x.member === 'string') ? c : undefined
   } catch {
-    return []
+    return undefined
   }
 }
 const writeClaims = async ($: any, c: Claim[]) => putFile($, await claimsFile($), JSON.stringify(c, null, 1))
+// The members an undecided identity claim names, as team|name. undefined when claims.json cannot be read: the caller
+// then skips auto-close and eviction for the round. A missing file holds nobody.
+async function heldMembers($: any): Promise<Set<string> | undefined> {
+  const claims = await readClaims($)
+  return claims ? new Set(claims.filter(c => c.decision === undefined).map(c => `${c.team}|${c.member}`)) : undefined
+}
+// The names of the roster's own members that the held keys name: a claim for a member not on the roster holds no slot.
+const heldNamesOf = (list: Member[], keys: Set<string>) => new Set(list.filter(m => keys.has(keyOf(m))).map(m => m.name))
 
 // Once per session id: record the claim, warn the member's head, and tell the team top to ask the user at once.
 async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string; machine: string }) {
   const claims = await readClaims($)
+  if (!claims) {
+    await $.ui.toast('Team Orchestrator: claims.json could not be read, so this hold was not recorded. Repair or remove that file.')
+    return
+  }
   if (claims.some(c => c.sessionId === f.sessionId)) return
   const c: Claim = { sessionId: f.sessionId, member: x.name, team: x.team, tab: f.tab, name: f.name, why, at: Date.now(), ...(f.machine ? { machine: f.machine } : {}) }
   await writeClaims($, [...claims, c])
@@ -1162,6 +1176,7 @@ async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; 
 // The team top applies the user's answer to a held session (member_claim).
 async function settleClaim($: any, input: { sessionId?: string; decision?: string; member?: string }): Promise<string> {
   const claims = await readClaims($)
+  if (!claims) return 'claims.json could not be read, so no decision was recorded. Repair or remove that file, then decide again.'
   const c = claims.find(x => x.sessionId === String(input.sessionId ?? '').trim())
   if (!c) return `No session ${String(input.sessionId ?? '')} is waiting for an identity decision.`
   const decision = String(input.decision ?? '')
@@ -1380,8 +1395,28 @@ async function closeMember($: any, m: Member): Promise<boolean> {
   if (!isManaged(m)) return false
   const handle = await liveHandleOf($, m)
   if (!handle) return false
-  await orca($, 'terminal', 'close', '--terminal', handle)
-  if (await showTab($, handle)) return false
+  const worktreeId = typeof m.worktree === 'string' ? m.worktree.trim() : ''
+  if (!worktreeId) return false
+  const worktree = `id:${worktreeId}`
+  try {
+    const info = await worktreeInfo($, worktreeId)
+    if (!info.exists || !worktreeHolds(info.path, await rootOf($))) return false
+    const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
+    if (!listed.ok) return false
+    const terminals = JSON.parse(listed.out)?.result?.terminals
+    if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
+    if (!terminals.some((t: any) => t.handle === handle && t.connected === true)) return false
+  } catch { return false }
+  let closed
+  try { closed = await orca($, 'terminal', 'close', '--terminal', handle) } catch { return false }
+  if (!closed.ok) return false
+  try {
+    const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
+    if (!listed.ok) return false
+    const terminals = JSON.parse(listed.out)?.result?.terminals
+    if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
+    if (terminals.some((t: any) => t.handle === handle && t.connected !== false)) return false
+  } catch { return false }
   await writeStatusOf($, m, { state: 'closed' })
   await update($, members, old => old.map(x => (x.name === m.name ? { ...x, state: 'closed', handle: '' } : x)))
   await share($)
@@ -1418,7 +1453,7 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   // the roster first: a status write that fails must not leave a started member "not started" there
   await share($)
   // its "clean" from before the close no longer counts: kept, the idle round would close it again at once
-  await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now(), lastClean: 0 })
+  await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now(), turnEnd: Date.now(), lastClean: 0 })
   return ready
 }
 
@@ -1512,11 +1547,13 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
   const here = await machineOf($)
   const list = list0.filter(m => !isAway(m, here))
   const statuses = await readStatuses($, list)
-  const a = admit(list, statuses, t, Date.now(), sleeps())
-  if (a.kind === 'queue') return undefined
+  const held = await heldMembers($)
+  const a = admit(list, statuses, t, Date.now(), sleeps(), heldNamesOf(list, held ?? new Set()))
+  // an unreadable claims file: no member is evicted this round, the message waits in the queue
+  if (a.kind === 'queue' || (held === undefined && a.kind === 'evict')) return undefined
   if (a.kind === 'evict') {
     const out = list.find(x => x.name === a.name)
-    if (out) await closeMember($, out)
+    if (!out || !(await closeMember($, out))) return undefined
   }
   return reopen($, target, t)
 }
@@ -1732,7 +1769,10 @@ async function deliver($: any, target: Member, message: string, startHere = fals
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
   const here = await machineOf($)
   const t = await readTeamSettings($)
-  for (const m of toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now, sleeps())) await closeMember($, m)
+  // an unreadable claims file: nobody is auto-closed this round, and the queue below still runs
+  const held = await heldMembers($)
+  if (held === undefined) await $.ui.toast('Team Orchestrator: claims.json could not be read; auto-close and eviction are skipped this round.')
+  for (const m of held === undefined ? [] : toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now, sleeps(), heldNamesOf(list, held))) await closeMember($, m)
   await migrateQueue($)
   const queue = await readQueue($)
   const prune: string[] = []
@@ -2651,6 +2691,11 @@ export const register: Register = (on, options) => {
               required: ['name', 'role', 'level', 'boss'],
             },
           },
+          remove: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'names of existing members of this team that this list removes on purpose; a member left out of members is refused unless it is named here',
+          },
         },
         required: ['members'],
       },
@@ -2753,13 +2798,15 @@ export const register: Register = (on, options) => {
         if ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet) || busy) await update($, frame, x => x + 1)
       })(),
     )
+    // a member's own process starts: its idle clock starts now, whatever its last turn or clean said (guardrail #11)
+    void writeMine($, { turnEnd: Date.now(), lastClean: 0 })
     return next(e)
   })
 
   on('tool.call', { tool: ADOPT }, async ($, e) => safely(async () => {
     const held = await onHold($, 'team_adopt')
     if (held) return held
-    const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
+    const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[]; remove?: string[] }
     // an adopted name is the running session's own; it goes into the shell command that reopens the member
     const unsafe = (input.members ?? []).find(m => !SAFE_NAME.test(String(m.name ?? '')))
     if (unsafe)
@@ -2769,6 +2816,14 @@ export const register: Register = (on, options) => {
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
     const team = clean(input.team || '') || 'team'
+    // the list replaces the team's members, so a member left out of it is removed: refuse that unless each removal is named
+    const listed = new Set((input.members ?? []).map(m => m.name))
+    const named = new Set((input.remove ?? []).map(String))
+    const dropped = (await readMembers($)).filter(m => m.team === team && !listed.has(m.name) && !named.has(m.name)).map(m => m.name)
+    if (dropped.length > 0)
+      return {
+        result: `Refused: this list would remove ${dropped.length} existing member${dropped.length === 1 ? '' : 's'} of team "${team}": ${dropped.join(', ')}. Nothing was changed. Add them to the list, or call team_adopt again with remove: [${dropped.map(n => JSON.stringify(n)).join(', ')}] to name each removal.`,
+      } as any
     // the tabs adopted run on this machine
     const here = await machineOf($)
     // which CLI each tab runs (#69), from Orca's terminal list: by handle, else the one tab of that name in this project
