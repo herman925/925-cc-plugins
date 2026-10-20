@@ -1,13 +1,12 @@
 # team-orchestrator
 
 Team Orchestrator runs a team of Claude Code sessions for you. Each member is its own Claude Code session in its own
-Orca tab. You build the team, watch it and change it from a panel above the prompt. The members message each other,
-start when they are first needed, close when they have been idle, and reopen when a message arrives.
+Orca tab. You build the team, watch it and change it from a panel above the prompt. The members message each other, start when they are first needed, and reopen when a message arrives. Automatic close and eviction are paused until native cleanup verification exists.
 
 A guard keeps the members inside their roles: members with reports plan and delegate instead of writing files, and
 nobody starts subagents unless you allow it.
 
-Version 0.5.37. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.39. What changed in each version is in the [changelog](#changelog-05x).
 
 ## Contents
 
@@ -54,7 +53,7 @@ Version 0.5.37. What changed in each version is in the [changelog](#changelog-05
 | Role files | One file per member: a generated role, plus your own notes that the mod never changes |
 | Team messaging | `team_message` starts or reopens a member, then delivers. `@team` sends your message to a team's head. |
 | Adding members | New members on a running team, within a lead's purview and with your approval (0.5.17) |
-| Auto-close and reopen | Idle workers close; a message reopens them with their conversation |
+| Auto-close and reopen | A message can reopen a member; automatic close and eviction are paused until native cleanup verification exists |
 | Assumptions (opt-in, 0.5.25) | Each member's open assumptions from Session Panel: "N open" on its row, and Confirm or Wrong for its boss and the team top. Off by default; needs Session Panel. |
 | Session cap and queue | A limit on open sessions; messages wait until there is room |
 | Permission guard | No subagents for members, and no file writes for members with reports, unless you allow it |
@@ -211,30 +210,18 @@ session, on the team top's computer. The guard refuses every other member's tool
 | The mod can | The mod does not |
 |---|---|
 | Open, close and switch Orca tabs of this project's members on this computer | Close or reopen members of other computers, or members that run another CLI |
-| Start `claude` sessions for members, with their role pointer | Kill processes. Members are told to close their own leftovers. |
+| Start `claude` sessions for members, with their role pointer | Kill operating-system processes. Cleanup status is self-reported. |
 | Write in `.claude/team-orchestrator/`, in its status folder on this computer, and in the repository's `info/exclude` | Delete files. Applied change files and queue entries stay, listed in an index. |
 | Read session transcripts (title, requested model, last model, effort, context use and working folder only) | Keep or show anything else from a transcript |
 | Read the session registry and look up member processes by id | Poll processes on a timer |
-| Approve a plain delete of a member's own scratch files | Override a deny from your rules or your organisation |
+| Record an explicit cleanup field as a self-report in a member's status file | Treat it as OS verification or auto-approve cleanup deletes |
 | Send messages to members by session id | Message sessions of other projects or Remote Control copies |
 
 ### Scratch clean-up without asking
 
-With **Scratch: Auto-approve clean-up** on, the mod approves some deletes that Claude Code would otherwise ask about.
+**Paused in the interim safety phase.** The `autoScratch` setting remains in saved team settings for compatibility, but the mod does not turn an `ask` into `allow` for cleanup deletes. Every delete—including own scratch, shared temp, project scratch, task output, logs, tests, retained results and artifacts—uses normal Claude Code permissions. The mod never overrides a deny.
 
-| Member | May delete without asking |
-|---|---|
-| Worker | Inside its own session's folder in the Claude temp folder |
-| Head or lead | The above, plus anything in the system temp folder and in the project's scratch folder (**Scratch dir**) |
-
-Limits:
-
-- Only one plain delete command. No pipes, chains, redirects or variables.
-- Only plain literal paths. A wildcard (`*`, `?`, `[`, `]`) or a trailing slash asks.
-- Every folder from the allowed root down to the target is checked on disk. A link asks.
-- A recursive delete also walks the target, up to 2000 entries. It asks if it finds a link, or if the folder holds
-  more entries than that.
-- The mod only lifts an "ask" to "allow". It never overrides a deny.
+This is deliberate: a literal path and a session folder do not prove that the current task created the file. Native task-owned resource tracking is future work; no cleanup ledger or auto-approval exists in this phase.
 
 ## Details
 
@@ -252,14 +239,14 @@ Limits:
 
 | Setting | What it does | Default |
 |---|---|---|
-| Auto-close | Closes workers that said "clean" and stayed idle (On, Off) | On |
-| Idle minutes | How long a worker stays idle before it is closed (5, 10, 20, 30, 60) | 10 |
+| Auto-close | Setting is retained, but automatic close is paused until a native verifier can prove task-owned resources are gone | On |
+| Idle minutes | Future verifier's idle threshold (5, 10, 20, 30, 60) | 10 |
 | Reopen as | Resume keeps the conversation; Fresh starts a new session that reads its role file again | Resume |
 | Max open | Most of this computer's members open at once (No cap, 6, 8, 10, 12) | 8 |
 | Launch | On demand starts only the top and the team heads; All at Create starts everyone | On demand |
 | Batch size | Sessions started at once at Launch (1, 2, 3, 4, 6); the next batch follows 5 seconds after the last is ready | 3 |
-| Scratch | Auto-approve clean-up, or Ask each time. See [Scratch clean-up](#scratch-clean-up-without-asking). | Auto-approve |
-| Scratch dir | The project's scratch folder that heads and leads may clean without asking | `.claude/scratch` |
+| Scratch | Stored for compatibility; auto-approval is paused and all cleanup deletes ask. See [Scratch clean-up](#scratch-clean-up-without-asking). | On |
+| Scratch dir | Stored for compatibility; does not grant cleanup approval | `.claude/scratch` |
 | Never close | A tick box per worker; a ticked worker is never auto-closed | None ticked |
 
 **Team-wide (Settings → Assumptions, 0.5.27).** Shared by every session, in `.claude/team-orchestrator/settings.json`.
@@ -354,10 +341,7 @@ Each member writes its own status file on its own computer:
 every character except letters and digits turned into `-`.
 
 A member writes its status when a turn starts and ends, when it asks you a question, and on a 60-second heartbeat.
-The file holds its state, model, effort, context use and window, its current task line, its last "clean", and its
-count of leftover processes. Nobody reads other members' screens. Only the team top (or your own session, when it is
-not on the roster) asks Orca whether tabs still exist, and only when someone has been silent for over 2 minutes. The
-check runs at most every 2 minutes, and less often while Orca answers slowly.
+The file holds its state, model, effort, context use and window, its current task line, and the latest **self-reported** cleanup field (if supplied). A cleanup report is not OS verification. Historical `lastClean`, `leftover` and `countedAt` values from older versions are not proof and no longer drive closure. The mod does not census processes on each turn. Nobody reads other members' screens. Only the team top (or your own session, when it is not on the roster) checks Orca tabs after a member has been silent for over 2 minutes; it backs off when Orca is slow.
 
 #### Computers and "on PC-X"
 
@@ -524,7 +508,7 @@ A note after a row explains anything unusual, such as `on PC-X`, `not managed (c
 | `·` not yet | On the roster, starts on its first message |
 | `○` queued | Waiting for its batch at Launch |
 | `○` offline | No status for 5 minutes of awake time |
-| `–` closed | Closed by auto-close; a message reopens it |
+| `–` closed | Closed by explicit close or confirmed-dead recovery; a message may reopen it |
 | `✗` failed | Could not be started |
 | `◌` away | Its home is another computer |
 | `◇` external | Runs another CLI; not managed |
@@ -613,43 +597,25 @@ reopens, closes, briefs, messages or tab-checks them.
 
 ### Auto-close, the session cap and the queue
 
-- A worker that told its boss "clean" and stayed idle for the set minutes is closed. Its tab closes first; only then
-  is it marked closed.
-- Members with reports, members ticked under **Never close**, and members of other computers are never closed.
-- **Max open** caps how many of this computer's members are open. At the cap, the worker idle longest is closed to
-  make room. If every worker is busy, the message waits in the queue.
-- The queue holds one file per message in `.claude/team-orchestrator/queue/`. The team top's round delivers what has
-  room. After 3 failed tries, an entry is marked failed and the sender's head is told. Finished entries are pruned
-  after a day, and all entries after 7 days.
-- **Held sessions.** A member that an undecided identity claim names (see [Identity and `member_claim`](#identity-and-member_claim))
-  is never auto-closed or evicted. It still counts toward **Max open**. Once you decide the claim (`is`, `new` or `reject`),
-  it stops shielding the member and stops counting, so a stale hold cannot fill the cap for ever.
-- **Idle clock.** A member's own session start restarts its idle clock. Its earlier "clean" and turn end no longer count, so
-  it must say "clean" again before it can be auto-closed. A reload (`/reload-plugins`) starts a session again too, so
-  every confirmed member's idle clock restarts at the reload. The clock counts from the reload, not from the last turn.
-- **Fail-closed claims file.** If `.claude/team-orchestrator/claims.json` cannot be read, is not valid JSON, or has one
-  row that is not an object with a `team` and a `member`, then auto-close and eviction stop for every member until it is
-  repaired. The team top's round skips auto-close and shows a toast. A message that would need an eviction waits in the
-  queue. A new hold is not recorded, and a `member_claim` answer is refused. The file is left exactly as it is. A missing
-  file holds nobody, so it is not an error. The cap count is the one part that stays open: while the file is unreadable,
-  its holds are not counted, so an open that is under the cap still goes ahead, and the number of open members can go
-  above **Max open**. Closing and evicting stay refused.
-  - **Repair:** open `.claude/team-orchestrator/claims.json`. Fix the JSON syntax, or delete the malformed row and keep
-    the valid rows. Each valid row has `sessionId`, `member`, `team`, `tab`, `name`, `why` and `at`. Save the file. The
-    next roster refresh (within 30 seconds) resumes auto-close and eviction.
-  - Do not delete the whole file to clear the block. That discards every pending hold and every decision not yet
-    applied. Repair the rows instead.
+**Interim safety mode:** the Auto-close setting remains for compatibility, but automatic closure is paused until a native verifier can establish ownership and confirm task-owned resources are gone. A worker's `Cleanup: clean` field is self-reported only; it is not OS verification. Legacy `lastClean`, `leftover` and `countedAt` values never authorize closure. The mod does not census processes at turn completion.
+
+At **Max open**, a new or reopened member waits in the queue; the mod does not evict another worker to make room. A worker report, old status number, or failed/unknown close is never used to exceed the cap. Confirmed dead-member recovery remains separate from cleanup policy.
+
+- Members with reports, members ticked under **Never close**, and members of other computers are never auto-closed.
+- The queue holds one file per message in `.claude/team-orchestrator/queue/`. The team top's round delivers what has room. After 3 failed tries, an entry is marked failed and the sender's head is told. Finished entries are pruned after a day, and all entries after 7 days.
+- **Held sessions.** A member that an undecided identity claim names (see [Identity and `member_claim`](#identity-and-member_claim)) still counts toward **Max open**. Once you decide the claim (`is`, `new` or `reject`), it stops counting.
+- **Fail-closed claims file.** If `.claude/team-orchestrator/claims.json` cannot be read or validated, no automatic close occurs. Existing claim records are left intact; a missing file holds nobody. Repair malformed JSON or rows before relying on identity decisions.
 
 #### Housekeeping
 
-When a worker reports to its boss, it is reminded to close the processes its own session started, stop unused
-browser-automation servers, delete its scratch files and tell its boss "clean". When a head or lead hears from one of
-its reports, it is reminded to check that report's leftovers. A plain "clean" reply does not trigger the reminder
-again.
+Include cleanup status in the same completion report as the task result, using one explicit field: `Cleanup: clean`, `Cleanup: incomplete`, `Cleanup: failed`, or `Cleanup: unverified`. This is a self-report, never proof. Do not send a separate clean-only message; incoming reports do not trigger a head-side process scan. The mod records the worker-reported status and delivery id separately from legacy OS process counts.
 
-Members start with the browser-automation plugins you enabled (Chrome DevTools, Playwright) turned off, so no idle
-browser server starts in each tab. The mod writes `<claude config dir>/team-orchestrator/member-settings.json` and starts
-each member with `--settings` pointing at it. Your own sessions keep the plugins.
+No cleanup process census, cleanup process manager or process kill runs. The existing send-time crash check is separate: it looks up exact session-registry PIDs only when delivering to a stale member, and may close an orphaned Orca tab only after that session is proved dead. It never kills by name. Every cleanup delete stays with normal Claude Code permission checks, including own scratch; `autoScratch` is stored but paused. Shared temp, project scratch, task outputs, logs, tests, retained results and artifacts are not silently approved.
+
+**Later native phase—not implemented here:** mandatory project-owned SQLite core (storage/host authority and the actual location still require resolution), explicit task and delivery IDs, an owned launch/file ledger, protected declared running tests and artifacts, and role+timestamp+task-ID project-owned result folders. A controller must recover without depending on a worker's reply: one bounded recovery check, then unresolved with one notification. An unavailable project-owned store pauses unsafe actions and preserves unconfirmed outputs; upstream-service outages use a coordinated pause and probe; a local-session/tool hang has one restart budget. Never kill by process name. Project-local operation must work without GitHub; an optional GitHub wayfinder is per project and receives only explicitly approved summary fields. This interim fix adds no schema, task table or DB implementation.
+
+Members start with the browser-automation plugins you enabled (Chrome DevTools, Playwright) turned off, so no idle browser server starts in each tab. The mod writes `<claude config dir>/team-orchestrator/member-settings.json` and starts each member with `--settings` pointing at it. Your own sessions keep the plugins.
+
 
 ### Assumptions from Session Panel
 
@@ -829,6 +795,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.39 | Interim cleanup-safety mode: cleanup status is stored only as an explicitly self-reported, unverified status; cleanup reminders and the turn-end process census are removed; automatic close and eviction are paused until native cleanup verification exists. Capacity overflow queues instead of evicting; cleanup deletes use ordinary permission checks. A remote `startHere` request at capacity is not queued and must be retried after a slot opens. |
 | 0.5.37 | Subagents' and teammates' turns no longer mark a member working: Claude Code now reports them to `turn.start` too, so the hook skips any turn with an `agentId`. `team_adopt` refuses a name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore), since the name goes into the command that reopens the member; a name saved before goes into that command in its cleaned form. Text uses `weight` instead of the deprecated `bold`. |
 | 0.5.36 | `team_message` answers when it runs out of time. On a busy machine the hook could outrun its 10 s budget after the message had gone out; the engine then reported "no tool.call hook answered this call", and senders sent the same message again. A `.catch` handler now answers a timeout with "most likely delivered: do not send it again", and any other failure with its kind. |
 | 0.5.35 | A new member starts fresh. `member_add` resets the status file of its name first: a file left by an earlier member of that name named the old session, and refresh took that id onto the new row and reopened the old conversation (or failed with "No conversation found"). A name taken in the same team can now be replaced: `member_add` refuses a taken name and says to ask the user and call it again with `replace: true`; with it, the old row goes (its queued messages failed, its session and tab left alone and never resumed) and a fresh member takes the name. Not for a member of another team, the team top, the one who asks, or a member others report to. The user is asked first, as for any add. Tests: `adding.test.ts`. |

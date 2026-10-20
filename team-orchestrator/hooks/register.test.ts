@@ -834,7 +834,7 @@ test('an evictee without a saved worktree scope is not closed', async ($, on) =>
   expect(JSON.parse(queue!).tries).toBe(0)
 })
 
-test('a scoped inventory without the exact evictee handle cannot authorize closure', async ($, on) => {
+test('at the cap, an idle candidate is not inspected or closed; the incoming message queues', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/other', closeSucceeds: true },
@@ -856,14 +856,14 @@ test('a scoped inventory without the exact evictee handle cannot authorize closu
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
   expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'list' && a.includes('--worktree') && a[a.indexOf('--worktree') + 1] === 'id:repo::C:/proj')).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'list' && a.includes('--worktree') && a[a.indexOf('--worktree') + 1] === 'id:repo::C:/proj')).toBe(false)
   const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
   expect(queue).toBeDefined()
   expect(JSON.parse(queue!).state).toBe('pending')
   expect(JSON.parse(queue!).tries).toBe(0)
 })
 
-test('a failed eviction close queues the message instead of starting another session', async ($, on) => {
+test('an idle worker and old clean record never justify auto-eviction at the cap', async ($, on) => {
   const files = world(on, [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj' },
@@ -880,7 +880,7 @@ test('a failed eviction close queues the message instead of starting another ses
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
   const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(JSON.stringify(result)).toContain('queued')
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
   const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
   expect(queue).toBeDefined()
@@ -888,7 +888,7 @@ test('a failed eviction close queues the message instead of starting another ses
   expect(JSON.parse(queue!).tries).toBe(0)
 })
 
-test('a failed close with an unverified show keeps a still-listed worker and queues the message', async ($, on) => {
+test('at capacity, admission queues without attempting a close even if the tab cannot be verified', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', showFailsAfterClose: true },
@@ -906,7 +906,7 @@ test('a failed close with an unverified show keeps a still-listed worker and que
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
   const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(JSON.stringify(result)).toContain('queued')
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
   const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
@@ -915,7 +915,7 @@ test('a failed close with an unverified show keeps a still-listed worker and que
   expect(JSON.parse(queue!).tries).toBe(0)
 })
 
-test('a malformed post-close inventory cannot authorize an eviction', async ($, on) => {
+test('at capacity, malformed inventory does not trigger a close or a second launch', async ($, on) => {
   const files = world(on, [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true, malformedListAfterClose: true },
@@ -932,7 +932,7 @@ test('a malformed post-close inventory cannot authorize an eviction', async ($, 
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
   const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(JSON.stringify(result)).toContain('queued')
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
   const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
   expect(queue).toBeDefined()
@@ -940,7 +940,7 @@ test('a malformed post-close inventory cannot authorize an eviction', async ($, 
   expect(JSON.parse(queue!).tries).toBe(0)
 })
 
-test('a nonzero terminal inventory after close keeps the message queued', async ($, on) => {
+test('at capacity, terminal-list failure leaves the worker alone and keeps the message queued', async ($, on) => {
   const files = world(on, [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true, listFailsAfterClose: true },
@@ -957,7 +957,7 @@ test('a nonzero terminal inventory after close keeps the message queued', async 
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
   const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(JSON.stringify(result)).toContain('queued')
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
   const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
   expect(queue).toBeDefined()
@@ -981,7 +981,7 @@ test('a member resumed by a message gets its idle clock from the resume, not fro
 })
 
 // slice 1, #15: a member with an undecided identity claim is never closed or evicted, and still counts toward Max open
-test('a member held by an undecided identity claim is never evicted, yet still counts toward Max open', async ($, on) => {
+test('a member held by an undecided identity claim is never auto-closed, and the at-cap message queues', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_h1', title: 'H1', worktreePath: 'C:/proj' },
@@ -1006,15 +1006,15 @@ test('a member held by an undecided identity claim is never evicted, yet still c
   const statusBefore = files.get('C:/home/.claude/team-orchestrator/C--proj/status/H1.json')
   await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_h1'))).toBe(false)
-  // zero effects for the held member: no create under its name, no roster or status write, no queue entry
+  // the held member has no side effects; no worker is evicted, so the target message remains queued
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create' && a[a.indexOf('--title') + 1] === 'H1')).toBe(false)
   expect(h1Row()).toBe(h1Before)
   expect(files.get('C:/home/.claude/team-orchestrator/C--proj/status/H1.json')).toBe(statusBefore)
-  expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(false)
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
 })
 
-test('a verified eviction close starts the target and delivers its message', async ($, on) => {
+test('an idle worker and old clean record never justify auto-eviction at the cap', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true },
@@ -1032,16 +1032,13 @@ test('a verified eviction close starts the target and delivers its message', asy
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
   const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
-  expect(JSON.stringify(result)).toContain('Sent to W2.')
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
-  const scopedLists = files.calls.filter(a => a[1] === 'terminal' && a[2] === 'list' && a.includes('--worktree'))
-  expect(scopedLists.map(a => a[a.indexOf('--worktree') + 1])).toEqual(['id:repo::C:/proj', 'id:repo::C:/proj'])
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create' && a.includes('--title') && a[a.indexOf('--title') + 1] === 'W2')).toBe(true)
-  expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/W1.json')!).state).toBe('closed')
-  expect(saved(files).find((m: any) => m.name === 'W2')?.handle).toBe('term_abcd')
-  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(false)
-  expect(tabs.some(tab => tab.handle === 'term_abcd')).toBe(true)
-  expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(false)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close')).toBe(false)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
 })
 
 // slice 1 (guardrail #11): a member's own process start restarts its idle clock, also for a start that is not a reopen
@@ -1072,7 +1069,7 @@ test('a member session start restarts its idle clock, so an old clean and turn e
 })
 
 // slice 1 (#15): a claim for a member not on the roster, or in another team, does not shield a same-named member
-test('an undecided claim in another team does not shield a same-named member of this team from eviction', async ($, on) => {
+test('a claim outside this team does not affect its member status; at the cap the target queues without eviction', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true },
@@ -1089,7 +1086,7 @@ test('an undecided claim in another team does not shield a same-named member of 
   files.set('C:/proj/.claude/team-orchestrator/claims.json', JSON.stringify([{ sessionId: '44444444-4444-4444-8444-444444444444', member: 'W1', team: 'Other', tab: 'term_x', name: 'W1', why: 'looks like W1', at: Date.now() }]))
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: ID1, state: 'idle', heartbeat: Date.now(), turnEnd: Date.now() - 30 * 60_000, lastClean: Date.now() - 30 * 60_000 }))
   await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
 })
 
 // slice 1 (#15): a claims file that cannot be read stops eviction for the round, and the message waits in the queue
@@ -1115,7 +1112,7 @@ test('an unreadable claims file blocks eviction and the message waits in the que
 })
 
 // slice 1 (#15): a held member with a silent or missing status still counts toward Max open
-test('a held member with no status file still counts toward Max open, so another member is evicted', async ($, on) => {
+test('a held member without a status file still counts toward Max open; another start waits in the queue', async ($, on) => {
   const tabs: Tab[] = [
     { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
     { handle: 'term_h1', title: 'H1', worktreePath: 'C:/proj' },
@@ -1135,7 +1132,8 @@ test('a held member with no status file still counts toward Max open, so another
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: ID1, state: 'idle', heartbeat: Date.now(), turnEnd: Date.now() - 30 * 60_000, lastClean: Date.now() - 30 * 60_000 }))
   await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
   expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_h1'))).toBe(false)
-  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
+  expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(true)
 })
 
 // slice 1 (#15, rework): a corrupt claims file is never overwritten by a new hold; the earlier holds are kept for repair
@@ -1180,16 +1178,16 @@ for (const decision of ['is', 'new', 'reject']) {
     { handle: 'term_h1', title: 'H1', worktreePath: 'C:/proj', closeSucceeds: true },
     { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true },
   ]
-  test(`a claim decided "${decision}" stops shielding: a fresh idle member older than the rest is evicted`, async ($, on) => {
+  test(`a claim decided "${decision}" does not authorize auto-eviction`, async ($, on) => {
     const files = world(on, tabs(), [], 'repo::C:/proj', true)
     on('ui.toast', async () => ({ value: undefined }) as any)
     on('session.send', async () => ({ isDelivered: true }) as any)
     setup(files, claimFor(decision), 0)
     await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
-    expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_h1'))).toBe(true)
+    expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_h1'))).toBe(false)
     expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
   })
-  test(`a claim decided "${decision}" stops counting: a silent member no longer fills the cap`, async ($, on) => {
+  test(`a claim decision does not authorize admission by evicting another member`, async ($, on) => {
     const files = world(on, tabs(), [], 'repo::C:/proj', true)
     on('ui.toast', async () => ({ value: undefined }) as any)
     on('session.send', async () => ({ isDelivered: true }) as any)
@@ -1197,6 +1195,7 @@ for (const decision of ['is', 'new', 'reject']) {
     await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
     expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
     expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_h1'))).toBe(false)
-    expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create' && a[a.indexOf('--title') + 1] === 'W2')).toBe(true)
+    expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create' && a.includes('--title') && a[a.indexOf('--title') + 1] === 'W2')).toBe(false)
+    expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(true)
   })
 }
