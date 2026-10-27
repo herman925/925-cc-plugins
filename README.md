@@ -18,6 +18,33 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod, 
 
 To update: `claude plugin marketplace update herman-mods`, then `claude plugin update <mod>@herman-mods`, then `/reload-plugins`. For Team Orchestrator, reload the team top first (see its README).
 
+### Develop a mod
+
+The marketplace is this repository on GitHub, and nothing else. A mod is changed in a
+clone of this repo, on a branch, and is only real once it is pushed.
+
+1. Clone: `git clone https://github.com/herman925/925-cc-plugins.git`
+2. Branch: `git checkout -b feature/<mod>-<version>`
+3. Change the mod folder, and bump its `.claude-plugin/plugin.json` `version`.
+4. Check it: `claude plugin validate <folder>` and `claude plugin test <folder>`.
+5. Commit and push the branch, then merge it into `main`.
+6. On every computer that uses the mod:
+   `claude plugin marketplace update herman-mods`,
+   `claude plugin update <mod>@herman-mods`, then `/reload-plugins`.
+
+**Why the update step is not optional.** The installed copy lives in
+`~/.claude/plugins/cache/<marketplace>/<mod>/<version>/`, and the marketplace itself is a
+clone of this repo under `~/.claude/plugins/marketplaces/`. Both are refreshed only by
+`claude plugin marketplace update` and `claude plugin update`. A change that exists only
+in a working directory is not installed, and a machine that does not run the update keeps
+the version it last installed. That is what makes several computers work: every one of
+them pulls the same published commit.
+
+**Do not develop against the installed copy.** `~/.claude/plugins/cache/` and
+`~/.claude/plugins/marketplaces/` are both replaced by the update commands, so an edit
+made there is lost on the next update. Change the clone, push it, and let the update
+commands install it.
+
 ### Add a mod
 
 1. Make a folder with `.claude-plugin/plugin.json` and `hooks/hooks.json` (and `hooks/register.tsx`).
