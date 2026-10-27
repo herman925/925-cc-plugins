@@ -1,6 +1,7 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installAdapter } from '../src/local/adapter.mjs';
@@ -11,10 +12,10 @@ async function fixture(t, hostId = 'local') {
  const profile = await mkdtemp(join(tmpdir(), 'capabilities-'));
  const store = await openTeamStore({ userData: profile });
  const calls = []; let gates = 0, budget = Infinity; const internalKey = 'trusted-worker-secret';
- const cli = async () => ({ worktree: { id: 'folder:/selected', hostId, displayName: 'Selected' } });
+ const cli = async () => ({ worktree: { id: 'folder:/selected', hostId, path: profile, displayName: 'Selected' } });
  const executor = createExecutor({}, cli, { store, internalKey });
  const context = await executor.execute({ op: 'context', workspaceId: 'folder:/selected' });
- const state = (await executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: context.selectionToken, requestId: 'team', expectedRevision: 0 } })).value;
+ const state = hostId === 'local' ? (await executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: context.selectionToken, requestId: 'team', expectedRevision: 0 } })).value : store.createTeam({form:DEFAULT_FORM,requestId:'team',expectedRevision:0},{workspaceId:'folder:/selected',executionHostId:hostId,kind:'folder',displayName:'Selected',workspaceKey:context.workspaceKey});
  const sender = { id: 1, mainFrame: {}, isDestroyed: () => false }; const event = { sender, senderFrame: sender.mainFrame };
  const handlers = new Map([
   ['plugins:readPanelEntry', async () => ({ sessionToken: 'panel-token' })],
@@ -40,7 +41,7 @@ async function fixture(t, hostId = 'local') {
  const electron = { ipcMain: { _invokeHandlers: handlers, removeHandler: name => handlers.delete(name), handle: (name, fn) => handlers.set(name, fn) } };
  await installAdapter(electron, { identity: profile, version: 'test', internalKey });
  await handlers.get('plugins:readPanelEntry')(event, { pluginKey: 'herman925.team-orchestrator', panelId: 'team' });
- t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); store.close(); await rm(profile, { recursive: true, force: true }); });
+ t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); store.close(); await rmTemp(profile); });
  const send = args => handlers.get('plugins:panelAction')(event, { sessionToken: 'panel-token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'nonce', commandId: 'team.control', args } } });
  return { store, executor, send, calls, team: state.teams[0], handlers, event, limit: value => { budget = value; gates = 0; } };
 }
@@ -89,7 +90,6 @@ test('disconnected SSH and revoked panel authority never produce a usable capabi
  const denied = await f.send({ op: 'capabilities', params: { teamId: f.team.id }, internalKey: 'forged' });
  assert.equal(denied.ok, false);
 });
-
 test('capability refresh respects the pinned 30-call admission budget and preserves rate refusal codes', async t => {
  const f = await fixture(t); f.limit(30);
  for (let i = 0; i < 3; i++) assert.equal((await f.send({ op: 'capabilities', params: { teamId: f.team.id } })).ok, true);
@@ -121,7 +121,6 @@ test('changed host catalogs preserve saved requested choices and reject new unsu
  assert.equal(f.store.readSnapshot().teams[0].members[0].model, 'codex-model');
  assert.equal((await f.send({ op: 'updateAgentPreferences', params: input })).ok, true, 'completed request replay precedes capability revalidation');
 });
-
 test('a model listing in progress stays unknown and allows inherited defaults only', async t => {
  const f = await fixture(t), runtime = f.handlers.get('runtime:call');
  f.handlers.set('runtime:call', async (event, request) => request.method === 'agentSession.modelCatalog' ? {ok:true,result:{origin:'unknown',listingInProgress:true}} : runtime(event, request));
@@ -134,7 +133,6 @@ test('a model listing in progress stays unknown and allows inherited defaults on
  const denied=await f.send({op:'updateAgentPreferences',params:{...input,requestId:'unverified-model',expectedRevision:2,model:'guessed-model'}});
  assert.equal(denied.ok,false);assert.match(denied.error,/not verified/);
 });
-
 for (const agent of ['codex', 'claude']) test(`a single busy ${agent} terminal warms Orca's catalog host and reads both launch-account catalogs without sending input`, async t => {
  const f = await fixture(t), runtime = f.handlers.get('runtime:call');
  let installed = false;
@@ -154,7 +152,6 @@ for (const agent of ['codex', 'claude']) test(`a single busy ${agent} terminal w
  assert.equal(JSON.stringify(result).includes('private-restart-offer'),false);
  assert.equal(f.calls.some(c=>/send|Continue|Dismiss|\.create$|\.ensure$/.test(c.method)),false);
 });
-
 for (const variant of ['missing','closed','wrong-project','wrong-host','orphaned','agent-exited']) test(`${variant} terminal cannot supply a session prerequisite or a model catalog`, async t => {
  const f=await fixture(t),runtime=f.handlers.get('runtime:call');
  f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:true,result:{terminals:variant==='missing'?[]:[{handle:'stale-cli',incarnationId:'stale-instance',worktreeId:variant==='wrong-project'?'folder:/other':'folder:/selected',executionHostId:variant==='wrong-host'?'ssh:other':'local',connected:variant!=='closed',orphaned:variant==='orphaned',agentIdentity:'codex'}]}}:variant==='agent-exited'&&request.method==='terminal.agentStatus'?{ok:true,result:{agentStatus:{handle:request.params.terminal,isRunningAgent:false}}}:runtime(event,request));
@@ -166,7 +163,6 @@ for (const variant of ['missing','closed','wrong-project','wrong-host','orphaned
  await assert.rejects(f.executor.execute({op:'createTeam',params:{form:{...DEFAULT_FORM,name:'New-session-team',sessionMode:true},selectionToken:selected.selectionToken,requestId:'blocked-team',expectedRevision:1}}),/Open a Codex or Claude Code session/);
  assert.equal(f.store.readSnapshot().teams.length,1);
 });
-
 test('an open structured tab establishes the prerequisite without using its pinned account for a new team', async t=>{
  const f=await fixture(t),runtime=f.handlers.get('runtime:call');
  f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:true,result:{terminals:[]}}:request.method==='session.tabs.list'?{ok:true,result:{worktree:'folder:/selected',tabs:[{type:'agent-session',sessionId:'claude:real-chat',agent:'claude'}]}}:runtime(event,request));
@@ -174,7 +170,6 @@ test('an open structured tab establishes the prerequisite without using its pinn
  assert.equal(result.ok,true,result.error);assert.deepEqual(result.value.session,{status:'ready',kind:'structured',agent:'claude'});
  assert.equal(f.calls.filter(c=>c.method==='agentSession.modelCatalog').every(c=>!Object.hasOwn(c.params,'sessionId')),true);
 });
-
 test('unverifiable inventories and a runtime change discard session and model evidence',async t=>{
  const f=await fixture(t),runtime=f.handlers.get('runtime:call');let reads=0;
  f.handlers.set('runtime:call',async(event,request)=>request.method==='status.get'&&++reads===2?{ok:true,result:{runtimeId:'new-runtime'}}:runtime(event,request));
@@ -183,7 +178,6 @@ test('unverifiable inventories and a runtime change discard session and model ev
  f.handlers.set('runtime:call',async(event,request)=>request.method==='terminal.list'?{ok:false,error:{code:'host_unavailable'}}:request.method==='session.tabs.list'?{ok:true,result:{worktree:'folder:/selected',tabs:[],agentSessionsUnverifiable:true}}:runtime(event,request));
  assert.equal((await f.send({op:'capabilities',params:{teamId:f.team.id}})).value.session.status,'unknown');
 });
-
 test('failed host initialization retains a diagnostic code and does not invent models or another session',async t=>{
  const f=await fixture(t),runtime=f.handlers.get('runtime:call');
  f.handlers.set('runtime:call',async(event,request)=>['agentSession.restartResumable','agentSession.modelCatalog'].includes(request.method)?{ok:false,error:{code:'runtime_error',message:'structured_agent_session_unsupported'}}:runtime(event,request));
@@ -191,7 +185,6 @@ test('failed host initialization retains a diagnostic code and does not invent m
  assert.equal(result.value.session.status,'ready');assert.equal(result.value.agents.codex.catalogStatus,'unknown');
  assert.equal(result.value.agents.codex.catalogError,'structured_agent_session_unsupported');assert.deepEqual(result.value.agents.codex.models,[]);
 });
-
 test('a session closed between new-team save and launch prevents reserving or starting a member',async t=>{
  const f=await fixture(t);
  await f.send({op:'capabilities',params:{teamId:f.team.id}});

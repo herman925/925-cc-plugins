@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { chartLabelInfo, chartLabels, shorten } from './layout'
-import { adopt, HUALONG, mountBand, saved, shown, world } from './test-world'
+import { HUALONG, adopt, mountBand, saved, sessionAs, shown, world } from './test-world'
 
 // The short names the person wants for the Hualong team (the table in the README). The team here is named "Hualong";
 // the real teams are Hualong-HQ and Hualong-PC (see layout.test.ts).
@@ -108,6 +108,7 @@ const FLAG = 'mcp__team-orchestrator__'
 
 test('team_adopt takes a short name, saves it, keeps it when the member is adopted again, and an empty one clears it', async ($, on) => {
   const files = world(on)
+  sessionAs(on)
   await adopt($, [{ name: 'A-Head', role: 'head', level: 1, boss: 'user', short: 'Boss' }, { name: 'A-W1', role: 'worker', level: 2, boss: 'A-Head' }], 'A')
   expect(saved(files).map((m: any) => m.short)).toEqual(['Boss', undefined])
   // adopted again without the field: the name stays
@@ -128,6 +129,7 @@ test('team_launch takes a short name per member and saves it', async ($, on) => 
     if (a.includes('"send"')) return '{}'
     return undefined
   })
+  sessionAs(on)
   await $.tool.call({
     tool: `${FLAG}team_launch`,
     team: 'Sq',
@@ -138,6 +140,7 @@ test('team_launch takes a short name per member and saves it', async ($, on) => 
 
 test('member_move keeps the short name', async ($, on) => {
   const files = world(on)
+  sessionAs(on)
   await adopt($, [{ name: 'Head', role: 'head', level: 1, boss: 'user' }, { name: 'W1', role: 'worker', level: 2, boss: 'Head', short: 'Wonder' }], 'Alpha')
   await adopt($, [{ name: 'BHead', role: 'head', level: 1, boss: 'user', short: 'BH' }], 'Beta')
   await $.tool.call({ tool: `${FLAG}member_move`, team: 'Alpha', name: 'W1', toTeam: 'Beta' } as any)
@@ -155,6 +158,7 @@ const teamActions = async (band: any, v: string) => {
 
 test('Set short name: tick one row, type, Save; an empty name clears; ticking none or two says so', async ($, on) => {
   const files = world(on)
+  sessionAs(on)
   await adopt($, [{ name: 'Head', role: 'head', level: 1, boss: 'user' }, { name: 'Worker-1', role: 'worker', level: 2, boss: 'Head' }, { name: 'Worker-2', role: 'worker', level: 2, boss: 'Head' }], 'Sq')
   const band = await mountBand($)
   // none ticked
@@ -188,6 +192,7 @@ test('Set short name: tick one row, type, Save; an empty name clears; ticking no
 
 test('the chart shows the short name as typed and dims the automatic ones', async ($, on) => {
   world(on)
+  sessionAs(on)
   // no tabs: a member with a handle that Orca does not know is drawn dim as offline, so these have none
   await adopt($, HUALONG.map(m => ({ ...m, handle: '', ...(m.name === 'Hualong PC Console Boss' ? { short: 'Boss' } : {}) })))
   const s = await shown($, 100)
@@ -212,6 +217,7 @@ test('the chart shows the short name as typed and dims the automatic ones', asyn
 
 test('two members with one short name: the chart shows both with "!" and each row says so', async ($, on) => {
   world(on)
+  sessionAs(on)
   await adopt($, HUALONG.map(m => ({ ...m, ...(m.name.startsWith('Hualong PC Worker') ? { short: 'PCW' } : {}) })))
   const s = await shown($, 120)
   // the "!" is its own coloured run (red), one for each of the two
@@ -224,6 +230,7 @@ test('two members with one short name: the chart shows both with "!" and each ro
 
 test('a long short name is cut with "…" when the chart would not fit, and shown whole when it does', async ($, on) => {
   world(on)
+  sessionAs(on)
   const long = 'the person in charge of every release'
   await adopt($, [
     { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', short: long },
@@ -238,6 +245,7 @@ test('a long short name is cut with "…" when the chart would not fit, and show
 
 test('the explaining hints are gone: no LIVE ORG subtitle, no legend note, no second "selected" count in the bottom bar', async ($, on) => {
   world(on)
+  sessionAs(on)
   await adopt($, HUALONG.map(m => ({ ...m, handle: '' })))
   const s = await shown($, 100)
   expect(s).toContain('LIVE ORG')

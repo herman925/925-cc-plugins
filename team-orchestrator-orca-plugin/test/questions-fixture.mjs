@@ -1,7 +1,8 @@
+import { rmTemp } from './temp.mjs';
 import {WORKER_RULES} from '../src/dispatch.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -84,7 +85,7 @@ export async function questionFixture(t,{headAgent='codex',workerAgent='claude',
   receipt('start-'+permit.nativeTaskId,'orchestration.workerStart',{...permit.startParams,from,devMode:false},{runId:'run-head',taskId:permit.nativeTaskId,dispatchId:id,state:'ready'});
   return id;
  };
- t.after(async()=>{db.close();store.close();await rm(profile,{recursive:true,force:true});});
+ t.after(async()=>{db.close();store.close();await rmTemp(profile);});
  const complete=(attempt,{outcome='succeeded'}={})=>{
   const reportId='report-'+attempt.nativeTaskId,d=db.prepare('SELECT * FROM dispatch_contexts WHERE id=?').get(attempt.dispatchId);
   db.prepare('UPDATE dispatch_contexts SET status=? WHERE id=?').run(outcome==='succeeded'?'completed':'failed',attempt.dispatchId);

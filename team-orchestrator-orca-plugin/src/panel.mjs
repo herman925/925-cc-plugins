@@ -12,6 +12,7 @@ let connection = 'Panel loaded · worker activation unknown · compatibility lay
 let connectionReady = false;
 let state = emptyTeamState();
 let form = {...structuredClone(DEFAULT_FORM),name:'Team',leadNames:'',sessionMode:true,launchMode:'all',leadCount:1,workersPerLead:3};
+let pendingCreation = null;
 let leadPreferences = {agent:'codex',model:'default',effort:'default'};
 let telemetry={members:{},observedAt:null};
 let rosterRefreshRunning=false;
@@ -247,9 +248,12 @@ async function createCurrentTeam() {
       const issue = preferenceIssue({agent:draft.agents[i],model:draft.models[i],effort:draft.efforts[i]}, admission);
       if (issue) throw Error(issue);
     }
-    const result = await call('createTeam', mutation({form:draft,selectionToken:scope.selectionToken}));
+    const creationKey = JSON.stringify([scope.workspaceKey, draft]);
+    if (pendingCreation?.key !== creationKey) pendingCreation = {key:creationKey,request:mutation({form:draft,selectionToken:scope.selectionToken})};
+    const result = await call('createTeam', pendingCreation.request);
     state = validatePersistentState(result.value);
     await launchTeam(state.teams.length - 1);
+    pendingCreation = null;
     view = 'roster'; render(); await refreshRoster();
   } catch (error) { problem = error.message; canRetry = false; }
   finally { busy = false; render(); }

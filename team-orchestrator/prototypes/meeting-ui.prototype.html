@@ -1,0 +1,655 @@
+<!-- Three meeting UI directions on one standalone route; all controls mutate memory-only sample state. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meeting UI Prototype</title>
+  <style>
+    :root {
+      --ink: #1d3036;
+      --muted: #52666b;
+      --line: #ccd7d8;
+      --paper: #f3f6f4;
+      --surface: #ffffff;
+      --surface-soft: #e8efed;
+      --teal: #075f60;
+      --teal-soft: #d9ece9;
+      --amber: #9b5c15;
+      --amber-soft: #f5e8d6;
+      --red: #963f3d;
+      --red-soft: #f6e2df;
+      --blue: #365f8b;
+      --shadow: 0 10px 32px rgba(20, 45, 48, .12);
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0 0 92px;
+      color: var(--ink);
+      background: var(--paper);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 7px 11px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--teal); background: #f7fbfa; color: var(--ink); }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 3px solid #0b7774;
+      outline-offset: 2px;
+    }
+    button:disabled { cursor: not-allowed; color: #52666b; background: #edf0ef; opacity: 1; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 9px;
+      color: var(--ink);
+      background: white;
+    }
+    .prototype-banner {
+      padding: 8px 18px;
+      color: #fff;
+      background: #5b3025;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-align: center;
+    }
+    .app { width: min(1480px, 100%); margin: 0 auto; padding: 20px clamp(12px, 2.2vw, 32px) 34px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 11px 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .mark {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      place-items: center;
+      border-radius: 9px;
+      color: white;
+      background: var(--teal);
+      font-weight: 800;
+      letter-spacing: -.04em;
+    }
+    .brand-copy { min-width: 0; }
+    .brand-copy strong { display: block; font-size: 15px; }
+    .brand-copy span { color: var(--muted); font-size: 12px; }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .primary { color: #fff; border-color: var(--teal); background: var(--teal); font-weight: 700; }
+    .primary:hover:not(:disabled) { color: #fff; background: #064f50; }
+    .subtle { background: transparent; }
+    .page-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 22px 0 14px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 5px; font-size: clamp(25px, 3vw, 34px); line-height: 1.12; letter-spacing: -.03em; }
+    h2 { margin-bottom: 10px; font-size: 17px; line-height: 1.2; }
+    h3 { margin-bottom: 7px; font-size: 14px; }
+    .lede { max-width: 68ch; margin: 0; color: var(--muted); }
+    .eyebrow { margin-bottom: 5px; color: var(--teal); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pill, .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .pill.online { border-color: #9ac9b4; color: #165b3c; background: #e3f3e9; }
+    .pill.offline { border-color: #d8b27e; color: #75440f; background: var(--amber-soft); }
+    .pill.pending { border-color: #ddbc84; color: #78500f; background: #fff4d9; }
+    .pill.unknown { border-color: #c9a3a1; color: #813f3d; background: var(--red-soft); }
+    .pill.sample { border-color: #aebfc1; color: #4e6569; background: #f0f4f3; }
+    .intro-strip, .panel, .review-card, .state-dock, .placeholder-board {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 2px 10px rgba(20,45,48,.04);
+    }
+    .intro-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 11px 14px;
+      margin-bottom: 14px;
+    }
+    .intro-strip p { margin: 0; color: var(--muted); font-size: 13px; }
+    .panel { padding: 14px; min-width: 0; }
+    .panel-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .panel-head p { margin: 0; color: var(--muted); font-size: 12px; }
+    .meeting-grid { display: grid; grid-template-columns: minmax(220px, .88fr) minmax(330px, 1.34fr) minmax(290px, 1fr); gap: 12px; align-items: start; }
+    .agenda-list { display: grid; gap: 7px; }
+    .agenda-row {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      padding: 8px;
+      border: 1px solid #dbe3e2;
+      border-radius: 7px;
+      background: #fbfcfb;
+    }
+    .agenda-row.is-current { border-color: var(--teal); background: var(--teal-soft); }
+    .agenda-row.is-disabled { opacity: 1; background: #edf0ef; color: var(--muted); }
+    .agenda-row.is-disabled .agenda-title { color: var(--muted); }
+    .agenda-num { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
+    .agenda-title { min-width: 0; font-size: 13px; font-weight: 650; }
+    .agenda-tools { display: flex; align-items: center; gap: 3px; }
+    .tiny-button { min-height: 27px; padding: 2px 6px; font-size: 12px; }
+    .check-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .check-line input { width: auto; }
+    .topic-body { margin: 12px 0; padding: 13px; border-radius: 8px; background: #f4f7f6; }
+    .topic-body h3 { font-size: 16px; }
+    .topic-body p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .gate-box { margin-top: 12px; padding: 11px; border: 1px solid #ddbc84; border-radius: 8px; background: #fff8e9; }
+    .gate-box strong { display: block; margin-bottom: 4px; color: #75440f; }
+    .gate-box p { margin: 0; color: #604719; font-size: 12px; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+    .participant-list { display: grid; gap: 7px; }
+    .person-row { border: 1px solid #dbe3e2; border-radius: 8px; background: #fbfcfb; overflow: hidden; }
+    .person-main { display: grid; grid-template-columns: minmax(90px, 1.1fr) minmax(54px, .62fr) minmax(72px, .72fr) minmax(110px, 1.1fr); align-items: center; gap: 8px; padding: 8px 9px; }
+    .person-name { min-width: 0; font-weight: 750; font-size: 13px; }
+    .person-role, .person-cli { color: var(--muted); font-size: 11px; }
+    .join-state { justify-self: start; max-width: 100%; }
+    .person-controls { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 9px 8px; }
+    .identity { border-top: 1px solid #e0e7e6; padding: 7px 9px 9px; font-size: 11px; }
+    .identity summary { color: var(--blue); cursor: pointer; font-weight: 700; }
+    .identity-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; margin-top: 7px; }
+    .identity-item { overflow-wrap: anywhere; }
+    .identity-item b { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .sample-id { color: #4e6267; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
+    .mock-note { color: var(--muted); font-size: 11px; }
+    .draft-list { display: grid; gap: 8px; }
+    .draft-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 10px; border: 1px solid #dbe3e2; border-radius: 8px; background: #fbfcfb; }
+    .draft-title { margin-bottom: 3px; font-size: 13px; font-weight: 720; }
+    .draft-meta { color: var(--muted); font-size: 11px; }
+    .draft-actions { display: flex; align-items: start; gap: 5px; }
+    .output-grid { display: grid; grid-template-columns: minmax(280px, 1.15fr) minmax(300px, .85fr); gap: 12px; margin-top: 12px; }
+    .role-proposal { margin-top: 12px; padding: 12px; border: 1px solid #d9b885; border-radius: 9px; background: #fff9ee; }
+    .role-proposal p { margin: 5px 0; color: #695536; font-size: 12px; }
+    .role-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+    .minutes-list, .event-list { padding-left: 18px; margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .minutes-list li, .event-list li { margin: 4px 0; }
+    .settings-panel { margin: 0 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f9fbfa; }
+    .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)); gap: 10px; }
+    .field-label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .field-label input, .field-label select { color: var(--ink); font-size: 13px; }
+    .review-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 18px; background: rgba(14,32,34,.42); }
+    .review-backdrop[hidden] { display: none; }
+    .review-dialog { width: min(720px, 100%); max-height: min(86vh, 900px); overflow: auto; padding: 18px; border: 1px solid #bfcfcd; border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
+    .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 12px 0; }
+    .review-item { padding: 10px; border: 1px solid #dbe3e2; border-radius: 7px; background: #f8faf9; }
+    .review-item b { display: block; margin-bottom: 3px; font-size: 12px; }
+    .review-item span { color: var(--muted); font-size: 12px; }
+    .delegation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 10px 0; }
+    .delegation-grid div { min-width: 0; padding: 7px; border: 1px solid #dbe3e2; border-radius: 6px; background: #fff; }
+    .delegation-grid dt { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .delegation-grid dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
+    .participant-chooser { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin: 12px 0; }
+    .review-footer { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--line); }
+    .review-callers { margin: 10px 0; padding: 9px; border-left: 3px solid var(--teal); background: #f3f8f7; color: var(--muted); font-size: 12px; }
+    .prototype-variant { display: grid; gap: 12px; }
+    .variant-a-layout { display: grid; grid-template-columns: minmax(300px, 1.2fr) minmax(250px, .8fr); gap: 12px; }
+    .a-roster-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 11px 8px; border-bottom: 1px solid #e0e6e5; }
+    .a-menu { display: grid; align-content: start; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .stage-layout { display: grid; grid-template-columns: 220px 1fr; gap: 12px; min-height: 420px; }
+    .stage-rail { display: grid; align-content: start; gap: 6px; }
+    .stage-step { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--muted); text-align: left; cursor: pointer; font-size: 13px; }
+    .stage-step.current { border-color: var(--teal); color: var(--ink); background: var(--teal-soft); font-weight: 700; }
+    .stage-main { display: grid; align-content: start; gap: 12px; }
+    .placeholder-board { display: grid; align-content: start; gap: 12px; padding: 22px; border-style: dashed; box-shadow: none; }
+    .placeholder-copy { max-width: 60ch; color: var(--muted); }
+    .sample-state { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
+    .sample-state summary { color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+    .sample-state pre { max-height: 280px; overflow: auto; padding: 10px; border-radius: 7px; color: #e4efed; background: #20353a; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .switcher {
+      position: fixed;
+      z-index: 30;
+      left: 50%;
+      bottom: 13px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 6px 9px;
+      border: 1px solid #26494b;
+      border-radius: 999px;
+      color: white;
+      background: #16383a;
+      box-shadow: 0 8px 26px rgba(9,30,32,.28);
+    }
+    .switcher button { min-width: 34px; min-height: 34px; border-color: #55787a; border-radius: 50%; padding: 3px; color: white; background: #244b4d; font-size: 20px; }
+    .switch-label { min-width: 195px; text-align: center; font-size: 12px; font-weight: 750; }
+    .hint { color: var(--muted); font-size: 11px; }
+    .section-rule { display: flex; align-items: center; gap: 8px; margin: 12px 0 8px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .section-rule::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+    .spacer { height: 5px; }
+    .danger-note { color: #813f3d; }
+    .ok-note { color: #27644b; }
+    @media (max-width: 1050px) {
+      .meeting-grid { grid-template-columns: minmax(220px, .9fr) minmax(320px, 1.1fr); }
+      .people-panel { grid-column: 1 / -1; }
+      .participant-list { grid-template-columns: 1fr 1fr; }
+      .output-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .topbar, .page-head { align-items: start; flex-direction: column; }
+      .top-actions { justify-content: start; }
+      .meeting-grid, .variant-a-layout, .stage-layout { grid-template-columns: 1fr; }
+      .participant-list { grid-template-columns: 1fr; }
+      .settings-grid, .review-grid, .delegation-grid { grid-template-columns: 1fr; }
+      .person-main { grid-template-columns: 1fr 1fr; }
+      .switch-label { min-width: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-banner">PROTOTYPE — sample data; no real changes; reload resets</div>
+  <main id="app" class="app"></main>
+  <nav class="switcher" aria-label="Prototype direction switcher">
+    <button type="button" id="previous-variant" aria-label="Previous direction">←</button>
+    <span class="switch-label" id="variant-label"></span>
+    <button type="button" id="next-variant" aria-label="Next direction">→</button>
+  </nav>
+  <script>
+    (() => {
+      const variantNames = { A: 'Roster-first', B: 'Dedicated meeting view', C: 'Guided stages' };
+      const validVariants = ['A', 'B', 'C'];
+      const params = new URLSearchParams(window.location.search);
+      let currentVariant = validVariants.includes(params.get('variant')) ? params.get('variant') : 'B';
+      if (params.get('variant') !== currentVariant) {
+        params.set('variant', currentVariant);
+        history.replaceState(null, '', `${location.pathname}?${params.toString()}${location.hash}`);
+      }
+
+      const roster = [
+        { id: 'SAMPLE-MEMBER-001', key: 'head', name: 'Head (sample)', role: 'Highest leader', cli: 'Claude Code CLI', binding: 'VERIFIED', providerHistory: 'SAMPLE-PROVIDER-HISTORY-001', orcaSession: 'SAMPLE-ORCA-SESSION-001', terminalHandle: 'SAMPLE-TERMINAL-HEAD', tab: 'SAMPLE-TAB-HEAD', pane: 'SAMPLE-PANE-HEAD', worktree: 'SAMPLE-WORKTREE-01', project: 'SAMPLE-PROJECT-01', host: 'SAMPLE-LOCAL-HOST', work: 'ready', relevant: true, reports: ['lead-a', 'lead-b'] },
+        { id: 'SAMPLE-MEMBER-002', key: 'lead-a', name: 'Lead A (sample)', role: 'Lead', cli: 'Claude Code CLI', binding: 'VERIFIED', providerHistory: 'UNKNOWN', orcaSession: 'SAMPLE-ORCA-SESSION-002', terminalHandle: 'SAMPLE-TERMINAL-A', tab: 'SAMPLE-TAB-A', pane: 'SAMPLE-PANE-A', worktree: 'SAMPLE-WORKTREE-01', project: 'SAMPLE-PROJECT-01', host: 'SAMPLE-LOCAL-HOST', work: 'working', relevant: true, reports: [] },
+        { id: 'SAMPLE-MEMBER-003', key: 'lead-b', name: 'Lead B (sample)', role: 'Lead', cli: 'Codex CLI', binding: 'VERIFIED', providerHistory: 'SAMPLE-PROVIDER-HISTORY-003', orcaSession: 'SAMPLE-ORCA-SESSION-003', terminalHandle: 'SAMPLE-TERMINAL-B', tab: 'SAMPLE-TAB-B', pane: 'SAMPLE-PANE-B', worktree: 'SAMPLE-WORKTREE-01', project: 'SAMPLE-PROJECT-01', host: 'SAMPLE-LOCAL-HOST', work: 'ready', relevant: false, reports: [] },
+        { id: 'SAMPLE-MEMBER-004', key: 'worker-c', name: 'Worker C (sample)', role: 'Worker', cli: 'Codex CLI', binding: 'UNKNOWN', providerHistory: 'UNKNOWN', orcaSession: 'UNKNOWN', terminalHandle: 'UNKNOWN', tab: 'UNKNOWN', pane: 'UNKNOWN', worktree: 'SAMPLE-WORKTREE-01', project: 'SAMPLE-PROJECT-01', host: 'SAMPLE-LOCAL-HOST', work: 'unknown', relevant: false, reports: [] },
+      ];
+      const topics = [
+        { id: 'lessons', title: 'Lessons from mistakes' },
+        { id: 'practices', title: 'Good practices' },
+        { id: 'instructions', title: 'Lost user / agent instructions' },
+        { id: 'progress', title: 'Progress and replanning', essentialKey: 'lead-a' },
+        { id: 'research', title: 'Unshared research and findings' },
+        { id: 'housekeeping', title: 'Housekeeping: misplaced files and stale work' },
+        { id: 'misunderstandings', title: 'Misunderstandings and duty changes' },
+      ];
+      const state = {
+        tracker: 'OFFLINE',
+        localController: 'AVAILABLE (SAMPLE)',
+        meetingState: 'SETUP',
+        reviewOpen: false,
+        settingsOpen: false,
+        invitationsSent: false,
+        started: false,
+        caller: 'Highest leader (sample)',
+        attendeeKeys: new Set(['head', 'lead-a', 'lead-b']),
+        invitedKeys: new Set(),
+        joinedKeys: new Set(),
+        joinedNextKeys: new Set(),
+        finishedKeys: new Set(),
+        contributionKeys: new Set(),
+        agenda: topics.map(topic => ({ ...topic, enabled: true, deferred: false })),
+        currentTopic: 'progress',
+        guidedStage: 0,
+        limits: { linesPerMember: '~25', replyRounds: 2, leaderExtensions: 1 },
+        customTopicDraft: '',
+        attendeeDraft: '',
+        roleProposal: { member: 'Lead A (sample)', from: 'Lead', to: 'Meeting facilitator', reason: 'Support this agenda only (sample)', proposalRef: 'SAMPLE-ROLE-PROPOSAL-01', state: 'PENDING USER APPROVAL', approval: null, priorDelegation: null, applied: false },
+        outputs: [
+          { id: 'SAMPLE-OUTPUT-01', kind: 'team:work action item', title: 'Verify the sample meeting summary', owner: 'Lead A (sample)', state: 'DRAFT — NOT PUBLISHED', authorized: false },
+          { id: 'SAMPLE-OUTPUT-02', kind: 'Wayfinder question proposal', title: 'Clarify a sample open decision', owner: 'Highest leader (sample)', state: 'PROPOSAL — top and user OK required before ticketing', authorized: false },
+          { id: 'SAMPLE-OUTPUT-03', kind: 'Handbook proposal', title: 'Add a sample lesson', owner: 'Highest leader (sample)', state: 'PROPOSAL — approval/application policy undecided', authorized: false },
+          { id: 'SAMPLE-OUTPUT-04', kind: 'Meeting minutes', title: 'Minutes and links to outputs', owner: 'Meeting record (sample)', state: 'DRAFT — NOT WRITTEN', authorized: false },
+        ],
+        minutes: [],
+        events: [],
+        customIndex: 1,
+      };
+      const app = document.getElementById('app');
+      const variantLabel = document.getElementById('variant-label');
+      const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+      const activeTopic = () => state.agenda.find(topic => topic.id === state.currentTopic) || state.agenda.find(topic => topic.enabled) || { id: 'none', title: 'No active topic' };
+      const findPerson = key => roster.find(person => person.key === key);
+      const allInviteesJoined = () => state.invitationsSent && state.invitedKeys.size > 0 && [...state.invitedKeys].every(key => state.joinedKeys.has(key));
+      const log = message => {
+        state.events.unshift(`SAMPLE ${String(state.events.length + 1).padStart(2, '0')} · ${message}`);
+        state.events = state.events.slice(0, 12);
+      };
+      const minute = message => {
+        state.minutes.unshift(`SAMPLE MINUTE · ${message}`);
+        state.minutes = state.minutes.slice(0, 12);
+      };
+      const tag = (text, className = 'sample') => `<span class="pill ${className}">${escapeHTML(text)}</span>`;
+      const priorDelegationSummary = () => {
+        const delegation = state.roleProposal.priorDelegation;
+        if (!delegation) return 'None in sample; user approval required by default.';
+        return `Issuer: ${delegation.issuer} · Grantee: ${delegation.grantee} · Exact change: ${delegation.exactChange} · Scope: ${delegation.scope} · Approval ref: ${delegation.reference}`;
+      };
+      const statusFor = person => {
+        if (person.binding !== 'VERIFIED') return ['UNKNOWN IDENTITY · NOT ELIGIBLE', 'unknown'];
+        if (!state.attendeeKeys.has(person.key)) return ['NOT INVITED', 'sample'];
+        if (!state.invitationsSent) return ['SELECTED · NO INVITATION SENT', 'sample'];
+        if (state.joinedKeys.has(person.key)) return [state.contributionKeys.has(person.key) ? 'JOINED · INPUT RECEIVED' : 'JOINED · CONTRIBUTION PENDING', state.contributionKeys.has(person.key) ? 'online' : 'pending'];
+        if (state.joinedNextKeys.has(person.key)) return ['FINISHED · NEXT TOPIC', 'pending'];
+        if (state.invitedKeys.has(person.key) && !state.finishedKeys.has(person.key) && person.work === 'working') return ['INVITED · FINISH CURRENT STEP', 'pending'];
+        if (state.invitedKeys.has(person.key)) return ['INVITED · WAITING TO JOIN', 'pending'];
+        return ['NOT INVITED', 'sample'];
+      };
+      const stateSnapshot = () => ({
+        label: 'SAMPLE DATA ONLY', tracker: state.tracker, localController: state.localController, meetingState: state.meetingState,
+        reviewOpen: state.reviewOpen, settingsOpen: state.settingsOpen, invitationsSent: state.invitationsSent, started: state.started,
+        caller: state.caller, attendees: [...state.attendeeKeys], invited: [...state.invitedKeys], joined: [...state.joinedKeys],
+        joinedNextTopic: [...state.joinedNextKeys], finishedCurrentStep: [...state.finishedKeys], contributionsReceived: [...state.contributionKeys],
+        currentTopic: state.currentTopic, guidedStage: state.guidedStage, agenda: state.agenda.map(({ id, title, enabled, deferred }) => ({ id, title, enabled, deferred })),
+        limits: state.limits, roleProposal: state.roleProposal, outputs: state.outputs, minutes: state.minutes, events: state.events,
+      });
+      const sampleState = () => `<details class="sample-state"><summary>Sample state and event log (memory only)</summary><pre>${escapeHTML(JSON.stringify(stateSnapshot(), null, 2))}</pre><ol class="event-list">${state.events.length ? state.events.map(item => `<li>${escapeHTML(item)}</li>`).join('') : '<li>No sample actions yet.</li>'}</ol></details>`;
+      const topControls = () => `<header class="topbar"><div class="brand"><div class="mark" aria-hidden="true">TM</div><div class="brand-copy"><strong>Team Orchestrator · Sample team</strong><span>Project-owned team system · prototype only</span></div></div><div class="top-actions"><span class="pill offline">TRACKER ${state.tracker}</span><button type="button" data-action="reconnect-tracker">Reconnect tracker (demo)</button><button type="button" class="subtle" data-action="toggle-settings">Meeting settings</button><button type="button" class="primary" data-action="open-review">Start meeting</button></div></header>`;
+      const reviewDialog = () => `<div class="review-backdrop" ${state.reviewOpen ? '' : 'hidden'} role="presentation"><section class="review-dialog" role="dialog" aria-modal="true" aria-labelledby="review-title"><div class="panel-head"><div><div class="eyebrow">Before invitations</div><h2 id="review-title">Compact meeting review</h2><p>Opening this review sends no invitations. Only “Send mock invitations” does.</p></div><button type="button" data-action="close-review" aria-label="Close review">Close</button></div><div class="review-grid"><div class="review-item"><b>Selected attendees</b><span>${state.attendeeKeys.size} existing sample members; default is highest leader plus direct reports.</span></div><div class="review-item"><b>Callers</b><span>User and highest leader only. Adding attendees grants no caller authority.</span></div><div class="review-item"><b>Limits · draft</b><span>${escapeHTML(state.limits.linesPerMember)} lines/member; ${escapeHTML(state.limits.replyRounds)} reply rounds; one leader extension (amount unspecified).</span></div><div class="review-item"><b>Tracker / local control</b><span>Tracker ${state.tracker}; local controller ${state.localController}. Offline drafts remain local and pending.</span></div><div class="review-item"><b>Current work assignment</b><span>Lead A (sample) is finishing a current contribution. Do not interrupt; this assignment does not grant role-change authority.</span></div><div class="review-item"><b>Prior role approval scope</b><span>${escapeHTML(priorDelegationSummary())}</span></div><div class="review-item"><b>Output behavior</b><span>Proposals remain proposals. Reconnection does not approve or publish anything.</span></div></div><div class="review-callers"><strong>Attendee rule:</strong> only already-invited, verified members are eligible to join. Unknown identity stays UNKNOWN; a name match is not evidence.</div><div class="participant-list">${[...state.attendeeKeys].map(key => findPerson(key)).filter(Boolean).map(person => `<div class="person-row"><div class="person-main"><span class="person-name">${escapeHTML(person.name)}</span><span class="person-role">${escapeHTML(person.role)}</span><span class="person-cli">${escapeHTML(person.cli)}</span>${tag(statusFor(person)[0], statusFor(person)[1])}</div></div>`).join('')}</div><div class="participant-chooser"><select id="attendee-picker" aria-label="Add existing sample attendee"><option value="">Add an existing sample member…</option>${roster.filter(person => !state.attendeeKeys.has(person.key)).map(person => `<option value="${escapeHTML(person.key)}">${escapeHTML(person.name)} · ${escapeHTML(person.role)} · ${escapeHTML(person.binding)}</option>`).join('')}</select><button type="button" data-action="add-attendee" ${state.invitationsSent ? 'disabled' : ''}>Add attendee</button></div><div class="mock-note">${state.invitationsSent ? 'Attendee list locks after invitations; no late invite is implied.' : 'Adding an attendee does not create a session, grant caller rights, or verify identity.'}</div><div class="review-footer"><button type="button" data-action="close-review">Close without inviting</button><button type="button" class="primary" data-action="send-invitations" ${state.invitationsSent ? 'disabled' : ''}>${state.invitationsSent ? 'Invitations already sent' : 'Send mock invitations'}</button></div></section></div>`;
+      const settingsPanel = () => state.settingsOpen ? `<section class="settings-panel"><div class="panel-head"><div><h2>Meeting settings</h2><p>Sample edits exist only in memory; values are historical drafts, not settled policy.</p></div><button type="button" data-action="toggle-settings">Close settings</button></div><div class="settings-grid"><label class="field-label">Draft lines/member <input data-field="lines" type="text" value="${escapeHTML(state.limits.linesPerMember)}" aria-label="Draft lines per member"></label><label class="field-label">Draft reply rounds <input data-field="rounds" type="number" min="1" max="5" value="${escapeHTML(state.limits.replyRounds)}" aria-label="Draft reply rounds"></label><div class="review-item"><b>Leader extension · draft</b><span>One extension; amount unspecified.</span></div></div><p class="mock-note">Unsettled: line-count unit, extension amount, exact capacity metric, and any additional caller policy.</p></section>` : '';
+      const agendaHTML = () => `<div class="agenda-list">${state.agenda.map((topic, index) => `<div class="agenda-row ${topic.id === state.currentTopic ? 'is-current' : ''} ${topic.enabled ? '' : 'is-disabled'}"><span class="agenda-num">${String(index + 1).padStart(2, '0')}</span><label class="agenda-title"><input type="checkbox" data-action="toggle-topic" data-id="${escapeHTML(topic.id)}" ${topic.enabled ? 'checked' : ''}> ${escapeHTML(topic.title)}</label><span class="agenda-tools"><button type="button" class="tiny-button" data-action="move-topic" data-id="${escapeHTML(topic.id)}" data-dir="-1" aria-label="Move topic up">↑</button><button type="button" class="tiny-button" data-action="move-topic" data-id="${escapeHTML(topic.id)}" data-dir="1" aria-label="Move topic down">↓</button></span></div>`).join('')}</div><div class="participant-chooser"><input id="custom-topic" type="text" value="${escapeHTML(state.customTopicDraft)}" placeholder="Add a custom agenda topic" aria-label="Custom agenda topic"><button type="button" data-action="add-topic">Add topic</button></div><p class="mock-note">Agenda controls are simulated. Toggling, reordering and custom topics do not save outside this page.</p>`;
+      const participantHTML = (person, compact = true) => {
+        const [status, statusClass] = statusFor(person);
+        const invited = state.invitedKeys.has(person.key);
+        const joined = state.joinedKeys.has(person.key);
+        const canFinish = invited && person.work === 'working' && !state.finishedKeys.has(person.key) && person.binding === 'VERIFIED';
+        const canContribute = state.started && joined && !state.contributionKeys.has(person.key) && person.binding === 'VERIFIED';
+        return `<article class="person-row"><div class="person-main"><span class="person-name">${escapeHTML(person.name)}</span><span class="person-role">${escapeHTML(person.role)}</span><span class="person-cli">${escapeHTML(person.cli)}</span>${tag(status, statusClass)}</div><div class="person-controls">${state.started && invited && person.binding === 'VERIFIED' ? `<label class="check-line"><input type="checkbox" data-action="toggle-relevance" data-id="${escapeHTML(person.key)}" ${person.relevant ? 'checked' : ''}> Relevant to current topic</label>` : ''}${canFinish ? `<button type="button" class="tiny-button" data-action="finish-step" data-id="${escapeHTML(person.key)}">Finish current contribution</button>` : ''}${canContribute ? `<button type="button" class="tiny-button" data-action="record-contribution" data-id="${escapeHTML(person.key)}">Record sample contribution received</button>` : ''}<details class="identity"><summary>Expand sample identities</summary><div class="identity-grid"><div class="identity-item"><b>Project</b><span class="sample-id">${escapeHTML(person.project)}</span></div><div class="identity-item"><b>Worktree</b><span class="sample-id">${escapeHTML(person.worktree)}</span></div><div class="identity-item"><b>Host</b><span class="sample-id">${escapeHTML(person.host)}</span></div><div class="identity-item"><b>Member</b><span class="sample-id">${escapeHTML(person.id)}</span></div><div class="identity-item"><b>Binding status</b><span class="sample-id">${escapeHTML(person.binding)}</span></div><div class="identity-item"><b>Provider-history ID</b><span class="sample-id">${escapeHTML(person.providerHistory)}</span></div><div class="identity-item"><b>Orca session ID</b><span class="sample-id">${escapeHTML(person.orcaSession)}</span></div><div class="identity-item"><b>Terminal / tab / pane</b><span class="sample-id">${escapeHTML(person.terminalHandle)} · ${escapeHTML(person.tab)} · ${escapeHTML(person.pane)}</span></div></div><p class="mock-note">All values are fabricated SAMPLE identifiers. Provider-history ID and verified member binding are separate facts.</p></details></div></article>`;
+      };
+      const roleHTML = () => {
+        const proposal = state.roleProposal;
+        const delegation = proposal.priorDelegation;
+        const approval = proposal.approval;
+        const exactChange = `${proposal.member}: ${proposal.from} → ${proposal.to}`;
+        return `<section class="role-proposal"><div class="panel-head"><div><div class="eyebrow">Role authority · sample</div><h3>Role change proposal</h3><p>${escapeHTML(exactChange)} · Reason: ${escapeHTML(proposal.reason)} · Proposal: ${escapeHTML(proposal.proposalRef)}</p></div>${tag(proposal.applied ? 'APPLIED IN MOCK' : proposal.state, proposal.applied ? 'online' : 'pending')}</div><p>User approval is the default. Highest leader may approve and apply only under a prior user-issued scope covering this exact change. Urgency, offline state, or attendance grants no authority. File-write grants remain separate.</p><details><summary>Prior user-issued delegation (sample only)</summary><p class="mock-note">No real authority is created. Load a clearly scoped fixture to demonstrate the permitted path.</p><button type="button" class="tiny-button" data-action="sample-delegation" ${delegation || approval ? 'disabled' : ''}>Load sample user-issued delegation for this exact change</button>${delegation ? `<dl class="delegation-grid"><div><dt>Issuer</dt><dd>${escapeHTML(delegation.issuer)}</dd></div><div><dt>Grantee</dt><dd>${escapeHTML(delegation.grantee)}</dd></div><div><dt>Exact change</dt><dd>${escapeHTML(delegation.exactChange)}</dd></div><div><dt>Scope</dt><dd>${escapeHTML(delegation.scope)}</dd></div><div><dt>Approval reference</dt><dd class="sample-id">${escapeHTML(delegation.reference)}</dd></div></dl>` : '<p class="mock-note">No prior scoped delegation attached.</p>'}<button type="button" class="tiny-button" data-action="approve-delegated" ${delegation && !approval ? '' : 'disabled'}>Record highest-leader decision under this prior scope</button></details><div class="review-item" style="margin-top:9px"><b>Approval record</b><span>${approval ? `${escapeHTML(approval.actor)} · ${escapeHTML(approval.scope)} · ${escapeHTML(approval.reference)}${approval.priorDelegationRef ? ` · prior delegation ${escapeHTML(approval.priorDelegationRef)}` : ''}` : 'No approval recorded; role change remains pending.'}</span></div><div class="role-actions"><button type="button" class="tiny-button" data-action="approve-user" ${!approval && !proposal.applied ? '' : 'disabled'}>Record direct sample user approval</button><button type="button" class="tiny-button" data-action="apply-role" ${approval && !proposal.applied ? '' : 'disabled'}>Apply approved role change (mock only)</button></div><p class="mock-note">Current work assignment is separate from role authority. Proposal, approval, application and minutes remain distinct sample states.</p></section>`;
+      };
+      const renderOutputs = () => `<div class="output-grid"><section class="panel"><div class="panel-head"><div><h2>Outputs</h2><p>Sample drafts only; no repository, issue tracker, or service writes.</p></div><label class="field-label" style="max-width:180px">Add sample draft<select id="output-kind"><option value="work">Action item · team:work</option><option value="question">Wayfinder question proposal</option><option value="handbook">Handbook proposal</option></select></label><button type="button" class="tiny-button" data-action="add-output">Add draft</button></div><div class="draft-list">${state.outputs.map(item => `<article class="draft-row"><div><div class="draft-title">${escapeHTML(item.title)}</div><div class="draft-meta">${escapeHTML(item.kind)} · Owner: ${escapeHTML(item.owner)} · ${escapeHTML(item.id)}</div></div>${tag(item.state, item.state.includes('PENDING') ? 'pending' : 'sample')}</article>`).join('')}</div><div class="role-proposal" style="margin-top:10px"><h3>Offline publishing rule</h3><p>Reconnect restores connectivity only. No draft is auto-approved or auto-published. Only an output with prior explicit authorization could become eligible; none is authorized in this sample.</p><button type="button" class="tiny-button" data-action="reconnect-tracker">Reconnect tracker (demo)</button><button type="button" class="tiny-button" disabled>Publish previously authorized output — none eligible</button></div>${roleHTML()}</section><section class="panel"><div class="panel-head"><div><h2>Minutes</h2><p>Meeting issue would hold minutes and link outputs. This is an in-memory sample.</p></div>${tag(state.started ? 'DRAFT MINUTES' : 'NOT STARTED', state.started ? 'pending' : 'sample')}</div><ul class="minutes-list">${state.minutes.length ? state.minutes.map(item => `<li>${escapeHTML(item)}</li>`).join('') : '<li>No meeting minutes yet. Sample start and decision records will appear here.</li>'}</ul><div class="section-rule">Recent sample actions</div><ol class="event-list">${state.events.length ? state.events.map(item => `<li>${escapeHTML(item)}</li>`).join('') : '<li>No actions yet.</li>'}</ol></section></div>`;
+      const renderReview = () => reviewDialog();
+      const topicGateHTML = () => {
+        const topic = activeTopic();
+        const required = topic.essentialKey ? findPerson(topic.essentialKey) : null;
+        if (!required) return `<div class="gate-box"><strong>No essential input configured for this sample topic.</strong><p>Attendance and topic input remain separate states.</p></div>`;
+        if (topic.deferred) return `<div class="gate-box"><strong>Topic deferred in sample minutes.</strong><p>Other enabled topics may proceed. Deferred decision remains unresolved.</p></div>`;
+        if (state.contributionKeys.has(required.key)) return `<div class="gate-box"><strong>Essential sample input received.</strong><p>${escapeHTML(required.name)} has a recorded contribution; presence alone did not satisfy this gate.</p></div>`;
+        if (!state.started) return `<div class="gate-box"><strong>Essential input pending before discussion.</strong><p>${escapeHTML(required.name)} must finish current work before joining. Joining before the meeting starts does not count as topic input.</p></div>`;
+        return `<div class="gate-box"><strong>Essential input pending — wait or defer this topic.</strong><p>${escapeHTML(required.name)} has not provided the required sample contribution. Other topics can proceed after this topic is explicitly deferred. Joining alone is not input.</p><div class="button-row"><button type="button" data-action="wait-topic">Wait for input</button><button type="button" data-action="defer-topic">Defer this topic (mock)</button></div></div>`;
+      };
+      const startMeetingControls = () => {
+        if (!state.invitationsSent) return `<button type="button" class="primary" data-action="open-review">Review before invitations</button>`;
+        if (state.started) return `<button type="button" data-action="open-review">Review meeting</button>`;
+        return `<button type="button" data-action="open-review">Review invitations</button><button type="button" data-action="start-all" ${allInviteesJoined() ? '' : 'disabled'}>Start when all invited members join</button><button type="button" data-action="start-with-joined">Start with joined participants (explicit override)</button>`;
+      };
+      function renderB() {
+        const topic = activeTopic();
+        const inputReady = !topic.essentialKey || state.contributionKeys.has(topic.essentialKey) || topic.deferred;
+        const gate = topicGateHTML();
+        const activeWorkAssignments = roster.filter(person => person.work === 'working' && !state.finishedKeys.has(person.key)).map(person => `${person.name} · finishing current contribution (sample)`);
+        const everyInviteeJoined = allInviteesJoined();
+        return `${topControls()}<div class="page-head"><div><div class="eyebrow">Direction B · Dedicated meeting workspace · default</div><h1>Meeting workspace</h1><p class="lede">A full meeting view with separate agenda, participants and outputs. Every label and identity below is sample data.</p></div><div class="status-row">${tag(state.meetingState, state.started ? 'online' : 'sample')}${tag(`${state.attendeeKeys.size} selected attendees`, 'sample')}</div></div>${settingsPanel()}<div class="intro-strip"><p><strong>Start opens review only.</strong> No invite is sent until the caller confirms in the review step.</p><div class="status-row">${tag(`TRACKER ${state.tracker}`, state.tracker === 'ONLINE' ? 'online' : 'offline')}${tag(`LOCAL CONTROLLER ${state.localController}`, 'sample')}</div></div><div class="meeting-grid"><section class="panel"><div class="panel-head"><div><h2>Agenda</h2><p>Toggle, reorder or add sample entries.</p></div><span class="tag">${state.agenda.filter(item => item.enabled).length} enabled</span></div>${agendaHTML()}</section><section class="panel"><div class="panel-head"><div><div class="eyebrow">Current topic</div><h2>${escapeHTML(topic.title)}</h2><p>${state.started ? 'Topic-aware attendance; no one is interrupted.' : 'Meeting not started. Review settings before sending invitations.'}</p></div>${tag(state.started ? 'LIVE · MOCK' : 'SETUP', state.started ? 'online' : 'sample')}</div><div class="topic-body"><h3>Meeting progress</h3><p>${state.started ? 'Authorized caller started with an explicit participant set. Unavailable invitees are recorded in minutes.' : 'Default attendees are the highest leader plus direct reports. Add more existing members if needed; this grants no caller rights.'}</p><div class="button-row"><button type="button" class="primary" data-action="open-review">${state.invitationsSent ? 'Review invitations' : 'Start meeting · review first'}</button>${state.invitationsSent && !state.started ? `<button type="button" data-action="start-with-joined">Start with joined participants (explicit override)</button><button type="button" data-action="start-all" ${everyInviteeJoined ? '' : 'disabled'}>Start when all invitees joined</button>` : ''}${state.started ? `<button type="button" data-action="advance-topic" ${(!inputReady) ? 'disabled' : ''}>Next topic</button>` : ''}</div><p class="mock-note">Only User and Highest leader may call (approved meeting spec). Invited, verified, topic-relevant members join after their current contribution finishes. Other late arrivals join next topic.</p></div>${gate}<div class="section-rule">Participants</div><p class="mock-note">Compact rows always show name, role, CLI and join status. Expand a row to inspect sample project/worktree/host/member/provider/Orca identity fields.</p><div class="participant-list">${roster.map(person => participantHTML(person)).join('')}</div></section><aside class="panel people-panel"><div class="panel-head"><div><h2>Review before invite</h2><p>Call authority and live dependencies.</p></div>${tag(state.invitationsSent ? 'INVITED' : 'NO INVITES SENT', state.invitationsSent ? 'pending' : 'sample')}</div><div class="review-item"><b>Allowed callers</b><span>User; highest leader. Added attendees do not gain call rights.</span></div><div class="review-item" style="margin-top:8px"><b>Current work assignment</b><span>${activeWorkAssignments.length ? activeWorkAssignments.map(escapeHTML).join('<br>') : 'No active sample work assignment.'} Ongoing work does not grant role-change authority.</span></div><div class="review-item" style="margin-top:8px"><b>Prior role approval scope</b><span>${escapeHTML(priorDelegationSummary())}</span></div><div class="review-item" style="margin-top:8px"><b>Tracker / offline</b><span>${state.tracker === 'OFFLINE' ? 'Offline: local mock drafts may continue; reconnection grants no approval and flushes nothing.' : 'Online in mock: only pre-authorized outputs could be eligible; none are pre-authorized.'}</span></div><div class="review-item" style="margin-top:8px"><b>Draft limits</b><span>~${escapeHTML(state.limits.linesPerMember)} lines/member; ${escapeHTML(state.limits.replyRounds)} rounds; one leader extension, amount unspecified. Historical draft only.</span></div><div class="section-rule">Joined vs input</div><p class="mock-note">A joined participant has not necessarily contributed. The required sample input gate is explicit; missing essential input means wait or defer that topic/decision.</p><div class="button-row"><button type="button" data-action="open-review">Open compact review</button><button type="button" data-action="toggle-settings">Edit sample settings</button></div></aside></div>${renderOutputs()}${sampleState()}${renderReview()}`;
+      }
+      function renderA() {
+        const topic = activeTopic();
+        const inputReady = !topic.essentialKey || state.contributionKeys.has(topic.essentialKey) || topic.deferred;
+        const activeWorkAssignments = roster.filter(person => person.work === 'working' && !state.finishedKeys.has(person.key));
+        return `${topControls()}<div class="page-head"><div><div class="eyebrow">Direction A · Roster-first</div><h1>Team roster</h1><p class="lede">Keep member presence in view; open a compact meeting drawer beside it.</p></div><div class="status-row">${tag(state.meetingState, state.started ? 'online' : 'sample')}${tag(`${state.attendeeKeys.size} selected`, 'sample')}</div></div><div class="variant-a-layout"><section class="panel"><div class="panel-head"><div><h2>Roster</h2><p>Identity, tool and meeting status stay attached to each member.</p></div></div><div class="participant-list">${roster.map(person => participantHTML(person)).join('')}</div></section><aside class="a-menu"><div><div class="eyebrow">Meeting drawer</div><h2>Review and run</h2><p class="mock-note">Default attendees: highest leader and direct reports. Add existing members in preflight; this never grants caller rights.</p></div><div class="review-item"><b>Allowed callers</b><span>User and highest leader only. Current caller: ${escapeHTML(state.caller)}.</span></div><div class="review-item"><b>Current work assignment</b><span>${activeWorkAssignments.length ? activeWorkAssignments.map(person => `${escapeHTML(person.name)} · finishing current contribution`).join('<br>') : 'No active sample work assignment.'} Work readiness is separate from role authority.</span></div><div class="review-item"><b>Prior role approval scope</b><span>${escapeHTML(priorDelegationSummary())}</span></div><div class="button-row">${startMeetingControls()}</div><section class="topic-body"><div class="eyebrow">Current topic</div><h3>${escapeHTML(topic.title)}</h3>${topicGateHTML()}${state.started ? `<div class="button-row"><button type="button" data-action="advance-topic" ${inputReady ? '' : 'disabled'}>Next enabled topic</button></div>` : '<p class="mock-note">Start after invitations and join readiness. No automatic start.</p>'}</section><div class="review-item"><b>Offline status</b><span>Tracker ${state.tracker}; local mock drafts stay pending. Reconnection does not publish.</span></div></aside></div><section class="panel" style="margin-top:12px"><div class="panel-head"><div><h2>Agenda</h2><p>Roster-first direction keeps agenda controls below the roster and meeting drawer.</p></div>${tag(`${state.agenda.filter(item => item.enabled).length} enabled`, 'sample')}</div>${agendaHTML()}</section>${renderOutputs()}${sampleState()}${renderReview()}`;
+      }
+      function renderC() {
+        const steps = ['Review', 'Invitations', 'Join readiness', 'Topic discussion', 'Outputs and approvals'];
+        const topic = activeTopic();
+        const inputReady = !topic.essentialKey || state.contributionKeys.has(topic.essentialKey) || topic.deferred;
+        const stageStates = [state.invitationsSent ? 'Reviewed' : 'Needs review', state.invitationsSent ? `${state.invitedKeys.size} invited` : 'Not sent', state.started ? 'Meeting started' : state.invitationsSent ? 'Waiting' : 'Pending', state.started ? 'In progress' : 'Pending', `${state.outputs.length} sample drafts`];
+        let stageBody = '';
+        if (state.guidedStage === 0) {
+          stageBody = `<p class="placeholder-copy">Check caller, attendees, tracker, current work and role-approval scope before sending any invitation.</p><div class="review-grid"><div class="review-item"><b>Default attendees</b><span>Highest leader plus direct reports; selected ${state.attendeeKeys.size}.</span></div><div class="review-item"><b>Allowed callers</b><span>User and highest leader only. Added attendees do not gain caller rights.</span></div><div class="review-item"><b>Current work assignment</b><span>Lead A (sample) is finishing current contribution. Do not interrupt; work readiness is not role authority.</span></div><div class="review-item"><b>Prior role approval scope</b><span>${escapeHTML(priorDelegationSummary())}</span></div><div class="review-item"><b>Tracker / local control</b><span>${state.tracker} · ${state.localController}. Drafts remain in memory and pending.</span></div><div class="review-item"><b>Draft limits</b><span>~${escapeHTML(state.limits.linesPerMember)} lines/member; ${escapeHTML(state.limits.replyRounds)} reply rounds; one leader extension, amount unspecified.</span></div></div><button type="button" class="primary" data-action="open-review">Open preflight review</button>`;
+        } else if (state.guidedStage === 1) {
+          stageBody = `<p class="placeholder-copy">Invitations go only to selected, verified existing members. Unknown identity stays UNKNOWN; no session is created.</p><div class="review-grid"><div class="review-item"><b>Invitation state</b><span>${state.invitationsSent ? `${state.invitedKeys.size} verified sample invitees recorded.` : 'No invitations sent.'}</span></div><div class="review-item"><b>Explicit action</b><span>Preflight must be reviewed before “Send mock invitations.”</span></div></div><div class="button-row"><button type="button" data-action="open-review">Review and send mock invitations</button></div><div class="participant-list">${roster.map(person => participantHTML(person)).join('')}</div>`;
+        } else if (state.guidedStage === 2) {
+          const activeWorkAssignments = roster.filter(person => person.work === 'working' && !state.finishedKeys.has(person.key));
+          stageBody = `<p class="placeholder-copy">Invitees finish their current step before joining. The default start waits for all verified invitees; partial start remains an explicit caller choice.</p><div class="review-item"><b>Current work assignments</b><span>${activeWorkAssignments.length ? activeWorkAssignments.map(person => `${escapeHTML(person.name)} · finish before joining`).join('<br>') : 'No active sample work assignment.'}</span></div><div class="button-row">${startMeetingControls()}</div><div class="participant-list">${roster.map(person => participantHTML(person)).join('')}</div>`;
+        } else if (state.guidedStage === 3) {
+          stageBody = `<p class="placeholder-copy">Track current-topic relevance separately from own-work readiness. A joined attendee still needs a recorded contribution to satisfy essential input.</p><section class="topic-body"><div class="eyebrow">Current topic</div><h3>${escapeHTML(topic.title)}</h3>${topicGateHTML()}${state.started ? `<div class="button-row"><button type="button" data-action="advance-topic" ${inputReady ? '' : 'disabled'}>Next enabled topic</button></div>` : '<p class="mock-note">Start the meeting before discussion controls become active.</p>'}</section><section class="panel"><div class="panel-head"><div><h3>Agenda</h3><p>Review enabled topics before moving forward.</p></div></div>${agendaHTML()}</section><div class="participant-list">${roster.map(person => participantHTML(person)).join('')}</div>`;
+        } else {
+          stageBody = `${renderOutputs()}`;
+        }
+        return `${topControls()}<div class="page-head"><div><div class="eyebrow">Direction C · Guided stages</div><h1>Meeting steps</h1><p class="lede">Move through a visible sequence. Stage navigation changes the view only; it never sends an invitation or performs a meeting action.</p></div>${tag(`STAGE ${state.guidedStage + 1} OF ${steps.length}`, 'sample')}</div><div class="stage-layout"><nav class="stage-rail" aria-label="Meeting stages">${steps.map((step, index) => `<button type="button" class="stage-step ${index === state.guidedStage ? 'current' : ''}" data-action="select-stage" data-stage="${index}" ${index === state.guidedStage ? 'aria-current="step"' : ''}><span class="sample-id">STEP 0${index + 1} · ${escapeHTML(stageStates[index])}</span><br>${escapeHTML(step)}</button>`).join('')}</nav><section class="panel stage-main"><div class="panel-head"><div><div class="eyebrow">Stage ${state.guidedStage + 1} · ${escapeHTML(steps[state.guidedStage])}</div><h2>${escapeHTML(steps[state.guidedStage])}</h2><p>All controls use the same in-memory sample state as directions A and B.</p></div></div>${stageBody}<div class="review-footer"><button type="button" data-action="previous-stage" ${state.guidedStage === 0 ? 'disabled' : ''}>Previous stage</button><span class="mock-note">Navigation does not execute the next action.</span><button type="button" data-action="next-stage" ${state.guidedStage === steps.length - 1 ? 'disabled' : ''}>Next stage</button></div></section></div>${settingsPanel()}${sampleState()}${renderReview()}`;
+      }
+      function render() {
+        app.innerHTML = currentVariant === 'A' ? renderA() : currentVariant === 'C' ? renderC() : renderB();
+        variantLabel.textContent = `${currentVariant} · ${variantNames[currentVariant]}`;
+      }
+      function setVariant(next) {
+        currentVariant = validVariants.includes(next) ? next : 'B';
+        const url = new URL(window.location.href);
+        url.searchParams.set('variant', currentVariant);
+        history.replaceState(null, '', url.toString());
+        log(`Switched to ${currentVariant} · ${variantNames[currentVariant]}. In-memory sample state retained.`);
+        render();
+      }
+      function openReview() {
+        state.reviewOpen = true;
+        log('Opened pre-invitation review. No invitation was sent.');
+        render();
+      }
+      function sendInvitations() {
+        if (state.invitationsSent) { log('Invitations already recorded in this sample.'); render(); return; }
+        state.invitationsSent = true;
+        for (const key of state.attendeeKeys) {
+          const person = findPerson(key);
+          if (!person) continue;
+          if (person.binding !== 'VERIFIED') { log(`${person.name}: identity UNKNOWN; no sample invite sent.`); continue; }
+          state.invitedKeys.add(key);
+          if (key === 'head' || person.work === 'ready') state.joinedKeys.add(key);
+        }
+        state.meetingState = 'WAITING FOR INVITEES';
+        log('Sent mock invitations to selected, verified existing members only. No session was created.');
+        render();
+      }
+      function startWithJoined() {
+        if (!state.invitationsSent || !state.joinedKeys.has('head')) { log('Start blocked: send invitations and have the highest leader joined.'); render(); return; }
+        const absent = [...state.invitedKeys].filter(key => !state.joinedKeys.has(key)).map(key => findPerson(key)?.name || 'UNKNOWN');
+        state.started = true;
+        state.meetingState = 'IN PROGRESS';
+        const note = `Explicit override: started with joined sample members; absentees/unfinished: ${absent.length ? absent.join(', ') : 'none'}.`;
+        minute(note);
+        log(note);
+        render();
+      }
+      function startAll() {
+        if (!allInviteesJoined() || !state.invitedKeys.has('head')) { log('Wait: every invited, verified member must join before the default start.'); render(); return; }
+        state.started = true;
+        state.meetingState = 'IN PROGRESS';
+        minute('Started with all invited, verified attendees.');
+        log('Started with all invited, verified attendees.');
+        render();
+      }
+      function finishStep(key) {
+        const person = findPerson(key);
+        if (!person || !state.invitedKeys.has(key) || person.binding !== 'VERIFIED') { log(`${person?.name || 'UNKNOWN member'} cannot join: invitation or identity verification is missing.`); render(); return; }
+        state.finishedKeys.add(key);
+        if (!state.started) {
+          state.joinedKeys.add(key);
+          state.joinedNextKeys.delete(key);
+          log(`${person.name} finished the current contribution and joined before discussion; waiting for explicit meeting start.`);
+        } else if (person.relevant) {
+          state.joinedKeys.add(key);
+          state.joinedNextKeys.delete(key);
+          minute(`${person.name} finished the current contribution and joined the relevant current topic.`);
+          log(`${person.name} finished the current contribution and joined this topic.`);
+        } else {
+          state.joinedNextKeys.add(key);
+          log(`${person.name} finished the current step; queued for the next topic, not this one.`);
+        }
+        render();
+      }
+      function recordContribution(key) {
+        const person = findPerson(key);
+        if (!person || !state.started || !state.joinedKeys.has(key) || person.binding !== 'VERIFIED') { log('Contribution blocked: discussion must be started; joining alone or an unverified identity is not input.'); render(); return; }
+        state.contributionKeys.add(key);
+        minute(`${person.name} recorded a sample contribution to ${activeTopic().title}.`);
+        log(`Recorded a sample contribution from ${person.name}; this is distinct from joined presence.`);
+        render();
+      }
+      function changeTopic(action, id, dir) {
+        if (action === 'toggle-topic') {
+          const item = state.agenda.find(topic => topic.id === id);
+          if (item) { item.enabled = !item.enabled; log(`${item.title} ${item.enabled ? 'enabled' : 'disabled'} in sample agenda.`); }
+          render(); return;
+        }
+        if (action === 'move-topic') {
+          const index = state.agenda.findIndex(topic => topic.id === id);
+          const next = index + Number(dir);
+          if (index >= 0 && next >= 0 && next < state.agenda.length) [state.agenda[index], state.agenda[next]] = [state.agenda[next], state.agenda[index]];
+          log('Reordered sample agenda.'); render(); return;
+        }
+        if (action === 'add-topic') {
+          const title = state.customTopicDraft.trim();
+          if (!title) { log('Custom topic needs a name.'); render(); return; }
+          const id = `custom-${state.customIndex++}`;
+          state.agenda.push({ id, title, enabled: true, deferred: false });
+          state.customTopicDraft = '';
+          log(`Added sample topic “${title}”.`); render(); return;
+        }
+      }
+      function outputTemplate(kind) {
+        const id = `SAMPLE-OUTPUT-${String(state.outputs.length + 1).padStart(2, '0')}`;
+        if (kind === 'work') return { id, kind: 'team:work action item', title: 'Review the agreed sample action', owner: 'Lead A (sample)', state: 'DRAFT — NOT PUBLISHED', authorized: false };
+        if (kind === 'question') return { id, kind: 'Wayfinder question proposal', title: 'Clarify an open sample decision', owner: 'Highest leader (sample)', state: 'PROPOSAL — top and user OK required before ticketing', authorized: false };
+        return { id, kind: 'Handbook proposal', title: 'Add a sample lesson', owner: 'Highest leader (sample)', state: 'PROPOSAL — approval/application policy undecided', authorized: false };
+      }
+      function handleAction(button) {
+        const action = button.dataset.action;
+        const id = button.dataset.id;
+        if (action === 'open-review') { openReview(); return; }
+        if (action === 'close-review') { state.reviewOpen = false; log('Closed review without inviting anyone.'); render(); return; }
+        if (action === 'send-invitations') { sendInvitations(); state.reviewOpen = false; render(); return; }
+        if (action === 'start-with-joined') { startWithJoined(); return; }
+        if (action === 'start-all') { startAll(); return; }
+        if (action === 'toggle-settings') { state.settingsOpen = !state.settingsOpen; log(`Meeting settings ${state.settingsOpen ? 'opened' : 'closed'} in mock.`); render(); return; }
+        if (action === 'reconnect-tracker') { state.tracker = 'ONLINE'; log('Tracker connectivity restored in mock. Drafts remain pending; no approval or automatic publication occurred.'); render(); return; }
+        if (action === 'finish-step') { finishStep(id); return; }
+        if (action === 'record-contribution') { recordContribution(id); return; }
+        if (action === 'toggle-relevance') { const person = findPerson(id); if (person) { person.relevant = !person.relevant; log(`${person.name} is ${person.relevant ? 'relevant' : 'not marked relevant'} to the current sample topic.`); } render(); return; }
+        if (action === 'toggle-topic' || action === 'move-topic' || action === 'add-topic') { changeTopic(action, id, button.dataset.dir); return; }
+        if (action === 'add-attendee') {
+          const select = document.getElementById('attendee-picker');
+          const person = findPerson(select?.value || '');
+          if (!person) { log('Choose an existing sample member; no new session can be created here.'); render(); return; }
+          state.attendeeKeys.add(person.key);
+          log(`${person.name} added as an attendee in memory; caller permissions unchanged.`);
+          render(); return;
+        }
+        if (action === 'wait-topic') { log(`Waiting for essential sample input on ${activeTopic().title}; no interruption or automatic skip.`); render(); return; }
+        if (action === 'defer-topic') { activeTopic().deferred = true; minute(`Deferred ${activeTopic().title}: required sample input is missing.`); log(`Deferred ${activeTopic().title}; other topics may continue.`); render(); return; }
+        if (action === 'advance-topic') {
+          const current = activeTopic();
+          if (current.essentialKey && !state.contributionKeys.has(current.essentialKey) && !current.deferred) { log('Topic cannot advance: wait for essential input or defer it explicitly.'); render(); return; }
+          const currentIndex = state.agenda.indexOf(current);
+          const next = state.agenda.slice(currentIndex + 1).find(topic => topic.enabled);
+          if (!next) { log('No later enabled sample topic.'); render(); return; }
+          state.currentTopic = next.id;
+          for (const key of [...state.joinedNextKeys]) { state.joinedKeys.add(key); state.joinedNextKeys.delete(key); }
+          minute(`Advanced to ${next.title}. Previously non-relevant late arrivals join at the next topic.`);
+          log(`Moved to ${next.title}; eligible next-topic arrivals joined in the mock.`);
+          render(); return;
+        }
+        if (action === 'add-output') { const kind = document.getElementById('output-kind')?.value || 'work'; const item = outputTemplate(kind); state.outputs.push(item); log(`Created ${item.kind} draft ${item.id}; not published.`); render(); return; }
+        if (action === 'sample-delegation') {
+          const proposal = state.roleProposal;
+          proposal.priorDelegation = {
+            issuer: 'User (sample)',
+            grantee: 'Highest leader (sample)',
+            exactChange: `${proposal.member}: ${proposal.from} → ${proposal.to}`,
+            scope: 'May approve and apply this exact role change for this meeting only.',
+            reference: 'SAMPLE-USER-DELEGATION-01',
+          };
+          log('Loaded a sample prior user-issued delegation with exact grantee, change, scope and reference; no real authority created.');
+          render(); return;
+        }
+        if (action === 'approve-user') {
+          const proposal = state.roleProposal;
+          if (proposal.approval || proposal.applied) { log('Direct user approval is unavailable after a decision or application.'); render(); return; }
+          proposal.approval = { actor: 'User (sample)', scope: `Approve this exact change only: ${proposal.member}: ${proposal.from} → ${proposal.to}`, reference: 'SAMPLE-USER-APPROVAL-01', priorDelegationRef: '' };
+          proposal.state = 'APPROVED BY USER (MOCK)';
+          minute(`Role proposal approved by User (sample); exact change: ${proposal.member}; before: ${proposal.from}; after: ${proposal.to}; reason: ${proposal.reason}; approval reference: ${proposal.approval.reference}; not applied yet.`);
+          log('Recorded a simulated direct user approval; role change remains unapplied.');
+          render(); return;
+        }
+        if (action === 'approve-delegated') {
+          const proposal = state.roleProposal;
+          const delegation = proposal.priorDelegation;
+          if (!delegation || proposal.approval || proposal.applied) { log('Delegated decision blocked: no unused prior user-issued scope covers this exact change.'); render(); return; }
+          proposal.approval = { actor: delegation.grantee, scope: delegation.scope, reference: 'SAMPLE-LEADER-DECISION-01', priorDelegationRef: delegation.reference };
+          proposal.state = 'APPROVED UNDER PRIOR SCOPE (MOCK)';
+          minute(`Role proposal decision by ${proposal.approval.actor}; exact change: ${proposal.member}; before: ${proposal.from}; after: ${proposal.to}; reason: ${proposal.reason}; approval reference: ${proposal.approval.reference}; prior user delegation reference: ${delegation.reference}; not applied yet.`);
+          log('Recorded a simulated highest-leader decision under explicit prior user scope; role change remains unapplied.');
+          render(); return;
+        }
+        if (action === 'apply-role') {
+          const proposal = state.roleProposal;
+          const approval = proposal.approval;
+          if (!approval || proposal.applied) { log('Role change blocked: a separate valid sample approval is required.'); render(); return; }
+          proposal.applied = true;
+          proposal.state = 'APPLIED IN MOCK';
+          minute(`Role change applied in memory: ${proposal.member}; before: ${proposal.from}; after: ${proposal.to}; reason: ${proposal.reason}; approval reference: ${approval.reference}; prior delegation reference: ${approval.priorDelegationRef || 'none'}.`);
+          log('Applied the approved sample role change in memory only.');
+          render(); return;
+        }
+        if (action === 'select-stage' || action === 'previous-stage' || action === 'next-stage') {
+          const requestedStage = action === 'select-stage' ? Number(button.dataset.stage) : state.guidedStage + (action === 'next-stage' ? 1 : -1);
+          state.guidedStage = Math.max(0, Math.min(4, Number.isFinite(requestedStage) ? requestedStage : 0));
+          log(`Opened guided stage ${state.guidedStage + 1}; no meeting action was executed.`);
+          render(); return;
+        }
+        if (action === 'set-variant') { setVariant(button.dataset.variant); return; }
+      }
+      app.addEventListener('click', event => { const button = event.target.closest('[data-action]'); if (button && !button.disabled) handleAction(button); });
+      app.addEventListener('input', event => { if (event.target.id === 'custom-topic') state.customTopicDraft = event.target.value; });
+      app.addEventListener('change', event => {
+        const field = event.target.dataset.field;
+        if (!field) return;
+        if (field === 'lines') state.limits.linesPerMember = event.target.value.trim() || '~25';
+        if (field === 'rounds') state.limits.replyRounds = Math.max(1, Math.min(5, Number(event.target.value) || 2));
+        log(`Updated draft ${field} in memory only.`); render();
+      });
+      document.getElementById('previous-variant').addEventListener('click', () => setVariant(validVariants[(validVariants.indexOf(currentVariant) + validVariants.length - 1) % validVariants.length]));
+      document.getElementById('next-variant').addEventListener('click', () => setVariant(validVariants[(validVariants.indexOf(currentVariant) + 1) % validVariants.length]));
+      document.addEventListener('keydown', event => {
+        const target = event.target;
+        if (target && (target.matches('input, textarea, select') || target.isContentEditable || target.closest('[contenteditable="true"]'))) return;
+        if (event.key === 'ArrowLeft') { event.preventDefault(); document.getElementById('previous-variant').click(); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); document.getElementById('next-variant').click(); }
+      });
+      window.addEventListener('popstate', () => {
+        const requested = new URLSearchParams(window.location.search).get('variant');
+        if (validVariants.includes(requested) && requested !== currentVariant) { currentVariant = requested; log(`Returned to ${currentVariant} · ${variantNames[currentVariant]}.`); render(); }
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installAdapter } from '../src/local/adapter.mjs';
@@ -12,8 +13,9 @@ import { DEFAULT_FORM } from '../src/team.mjs';
 async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand', form = {} } = {}) {
  const profile = await mkdtemp(join(tmpdir(), 'native-launch-'));
  let store = await openTeamStore({ userData: profile });
+ const extraDatabases = [];
  const calls = [], cliCalls = []; const internalKey = 'private-launch-key';
- const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', displayName: 'Saved' } }; };
+ const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', path: profile, displayName: 'Saved' } }; };
  let executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile });
  const selected = await executor.execute({ op: 'context', workspaceId: 'folder:/saved' });
  const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, ...form, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
@@ -55,9 +57,9 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
   }]
  ]);
  await installAdapter({ ipcMain: { _invokeHandlers: handlers, removeHandler: name => handlers.delete(name), handle: (name, fn) => handlers.set(name, fn) } }, { identity: profile, internalKey, version: 'test' });
- t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); store.close(); await rm(profile, { recursive: true, force: true }); });
+ t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); executor.stopWork(); for(const db of extraDatabases)if(db.isOpen)db.close(); store.close(); await rmTemp(profile); });
  const send = (op, params = input) => handlers.get('plugins:panelAction')(event, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'nonce', commandId: 'team.control', args: { op, params } } } });
- return { send, calls, cliCalls, input, team, profile, handlers, recordNative, budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
+ return { closeWithFixture: db => extraDatabases.push(db), send, calls, cliCalls, input, team, profile, handlers, recordNative, budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
 }
 test('saved supervisor launches through genuine native IPC after durable intent, inherits configuration and persists identity before followups', async t => {
  const f = await fixture(t);
@@ -119,7 +121,7 @@ test('native intent preserves omitted versus explicit-null arguments and per-mem
 });
 test('SQLite failure before intent prevents effects and rolls back the member reservation', async t => {
  const f = await fixture(t); const { DatabaseSync } = await import('node:sqlite');
- const db = new DatabaseSync(join(f.profile, 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite')); t.after(() => db.close());
+ const db = new DatabaseSync(join(f.profile, 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite')); f.closeWithFixture(db);
  db.exec("CREATE TRIGGER deny_intent BEFORE INSERT ON receipts WHEN NEW.id LIKE 'operation:%' BEGIN SELECT RAISE(ABORT,'intent disk full'); END");
  const failed = await f.send('launchSupervisor'); assert.equal(failed.ok, false); assert.match(failed.error, /disk full/);
  assert.equal(f.calls.some(row => row.method === 'agent.launchReplay'), false); assert.equal(f.store().readSnapshot().teams[0].launch, undefined);
@@ -127,7 +129,7 @@ test('SQLite failure before intent prevents effects and rolls back the member re
 });
 test('receipt persistence failure keeps an unknown reservation and prevents naming until exact replay recovers', async t => {
  const f = await fixture(t); const { DatabaseSync } = await import('node:sqlite');
- const db = new DatabaseSync(join(f.profile, 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite')); t.after(() => db.close());
+ const db = new DatabaseSync(join(f.profile, 'plugins-data/herman925.team-orchestrator/team-orchestrator.sqlite')); f.closeWithFixture(db);
  db.exec("CREATE TRIGGER deny_receipt BEFORE UPDATE ON receipts WHEN NEW.id LIKE 'operation:%' AND json_extract(NEW.json,'$.status')='created' BEGIN SELECT RAISE(ABORT,'receipt disk full'); END");
  const failed = await f.send('launchSupervisor'); assert.equal(failed.ok, false); assert.equal(f.store().readOperation(f.input.requestId).status, 'unknown');
  assert.equal(f.calls.some(row => row.method === 'terminal.rename'), false);
@@ -174,7 +176,7 @@ test('missing runtime identity refuses launch before reserving a member', async 
 test('missing, pending, wrong-namespace and mismatched native rows never trigger a second launch even in the same runtime', async t => {
  const f = await fixture(t); f.effect(async () => { throw Error('response lost before native evidence could be read'); });
  await f.send('launchSupervisor');
- const db = new DatabaseSync(join(f.profile, 'agent-session-journal.db')); t.after(() => db.close());
+ const db = new DatabaseSync(join(f.profile, 'agent-session-journal.db')); f.closeWithFixture(db);
  db.exec('PRAGMA user_version=4; CREATE TABLE agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
  for (const outcome of [null, { status: 'pending' }, { status: 'unknown' }]) {
   const request = f.store().readOperation(f.input.requestId).nativeRequest;
@@ -222,7 +224,6 @@ test('late conflicting structured settlement cannot replace the saved session id
  assert.throws(() => f.store().settleOperation(saved.requestId, saved.nativeRequest.operationId, { status: 'created', kind: 'structured', handle: 'other-handle', sessionId: 'other-session' }), /conflict/);
  assert.equal(f.store().readOperation(saved.requestId).sessionId, saved.sessionId);
 });
-
 test('all-at-start prepares precisely four saved members and preserves independent launches after one unknown', async t => {
  const f=await fixture(t,{launchMode:'all',kind:'structured'}); let count=0;
  f.effect(async()=>{count++;if(count===2)throw Error('member refused');return {worktreeId:'folder:/saved',outcome:{kind:'structured',handle:'chat-'+count,sessionId:'session-'+count},receipt:{mode:'structured',preferred:'structured',reason:'user_default',detail:'Native configured surface'},prompt:{delivery:'submit',outcome:'journaled',messageId:'message-'+count}};});
@@ -250,7 +251,6 @@ test('queued goal launch uses actual panel broker and new native identity, never
  await f.send('startNextGoal',{teamId:f.team.id});assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,2);
  f.executor().stopWork();
 });
-
 test('four-member on-demand hierarchy prepares root and department manager, retaining workers for first assignment',async t=>{
  const f=await fixture(t,{kind:'structured',form:{structure:'organisation',groups:'Development',fan:2}});let count=0;
  f.effect(async()=>{count++;return {worktreeId:'folder:/saved',outcome:{kind:'structured',handle:'manager-'+count,sessionId:'session-'+count},receipt:{mode:'structured',preferred:'structured',reason:'user_default',detail:'Native'},prompt:{delivery:'submit',outcome:'journaled',messageId:'role-'+count}};});
@@ -276,13 +276,11 @@ test('staffing validates explicit model against the fixed Work host before savin
  const result=await f.send('saveStaffing',{requestId:'invalid-model-add',workId:work.id,expectedRevision:store.readSnapshot().revision,configVersion:1,member:{name:'Reviewer',boss:f.team.members[0].id,brief:'Review',habits:'',collaboration:'Report',agent:'claude',model:'unverified-model',effort:'default'}});
  assert.equal(result.ok,false);assert.match(result.error,/model|overrides/i);assert.equal(store.readSnapshot().teams[0].members.length,4);assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,1);
 });
-
 test('public launch observation keeps private PTY process identity out of the panel projection',async()=>{
  const {publicOperation}=await import('../src/local/native-launch.mjs');
  const observed=publicOperation({requestId:'launch',observation:{state:'idle',incarnationId:'raw-incarnation',ptyId:'repo::/private/work@@pty',processIncarnation:'repo::/private/work@@pty:raw-incarnation'}});
  assert.deepEqual(observed.observation,{state:'idle',incarnationId:'raw-incarnation'});
 });
-
 test('successful native launch clears an absent-ledger warning observed while its receipt was still in flight',async t=>{
  const f=await fixture(t);
  const db=new DatabaseSync(join(f.profile,'agent-session-journal.db'));db.exec('PRAGMA user_version=4; CREATE TABLE agent_session_operations(operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');db.close();
@@ -295,7 +293,6 @@ test('successful native launch clears an absent-ledger warning observed while it
  assert.equal(f.store().readOperation(f.input.requestId).error,undefined);
  assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,1);
 });
-
 test('matching launch settlement retains a current incomplete recovery warning instead of claiming liveness',async t=>{
  const f=await fixture(t);let release,entered;const pending=new Promise(resolve=>{release=resolve;}),inFlight=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  const nativeResult={worktreeId:'folder:/saved',outcome:{kind:'terminal',handle:'native-handle',paneKey:'native-tab:native-leaf'},receipt:{mode:'terminal',preferred:'terminal',reason:'user_default',detail:'Created'},prompt:{delivery:'submit',outcome:'unconfirmed'}};

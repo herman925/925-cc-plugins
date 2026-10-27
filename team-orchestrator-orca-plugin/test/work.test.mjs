@@ -1,6 +1,8 @@
+import { endpointFor } from './endpoint.mjs';
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -11,7 +13,7 @@ const baseScope = { workspaceId: 'folder:/work', executionHostId: 'local', kind:
 export async function fixture(t, kind = 'structured', executionHostId = 'local') {
  const scope={...baseScope,executionHostId,workspaceKey:createHash('sha256').update(JSON.stringify([baseScope.workspaceId,executionHostId])).digest('hex')};
  const profile = await mkdtemp(join(tmpdir(), 'team-work-')); let store = await openTeamStore({ userData: profile });
- t.after(async () => { store.close(); await rm(profile, { recursive:true, force:true }); });
+ t.after(async () => { store.close(); await rmTemp(profile); });
  const team = store.createTeam({ requestId:'team', expectedRevision:0, form:DEFAULT_FORM }, scope).teams[0]; const head = team.members[0];
  const launch = { teamId:team.id,memberId:head.id,configVersion:1,requestId:'launch' };
  const operation = store.prepareOperation(launch, { scope, nativeRequest:nativeLaunchIntent(team,head,scope), roleVersion:1,title:'Squad/Head',executionHostId,runtimeId:'runtime-one' }).operation;
@@ -162,8 +164,8 @@ test('conditional retirement and late receipts preserve the new active member ge
 });
 test('TeamWork observation cannot span runtime metadata rotation under the same parent PID',async t=>{
  const {createWorkService}=await import('../src/local/teamwork.mjs'),{createNativeRpc}=await import('../src/local/native-runtime.mjs'),{createServer}=await import('node:net'),{writeFile}=await import('node:fs/promises');const f=await fixture(t);
- const endpoint=join(f.profile,'runtime.sock');let epoch='runtime-one';const methods=[];
- const metadata=()=>writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({runtimeId:epoch,pid:process.pid,authToken:'fixture-only',transports:[{kind:'unix',endpoint}]}));
+ const ep = endpointFor(f.profile), endpoint = ep.endpoint;let epoch='runtime-one';const methods=[];
+ const metadata=()=>writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({runtimeId:epoch,pid:process.pid,authToken:'fixture-only',transports:[ep]}));
  const server=createServer(socket=>socket.once('data',chunk=>{const request=JSON.parse(chunk.toString().trim());methods.push(request.method);socket.end(JSON.stringify({id:request.id,ok:true,result:{runtimeId:epoch,capabilities:['orchestration.contract.v1','agent-session.structured.v1']},_meta:{runtimeId:epoch}})+'\n');}));
  await new Promise(resolve=>server.listen(endpoint,resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));await metadata();let checks=0;
  const rpc=createNativeRpc({userData:f.profile,parentPid:process.pid,consent:async()=>{if(++checks===4){epoch='runtime-two';await metadata();}}});

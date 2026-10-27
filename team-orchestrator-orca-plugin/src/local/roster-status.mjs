@@ -1,7 +1,10 @@
+import {join} from 'node:path';
 import {withNativeRuntime} from './native-runtime.mjs';
 import {matchesTerminalObservation,terminalIdentity} from './terminal-identity.mjs';
 import {createTerminalContextReader} from './terminal-context.mjs';
 import {claudeContextDirectory} from './claude-context.mjs';
+import {STORE,identityEntry,writeGuardIdentity} from './guard-identity.mjs';
+import {guardFilesPresent} from './guard.mjs';
 
 const text=v=>typeof v==='string'&&v.trim()&&v.length<=200?v:null;
 const finite=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0;
@@ -24,19 +27,33 @@ async function pendingRequests(rpc,page){
  }
  throw Error('Question snapshot is incomplete.');
 }
-export function createRosterStatusService({store,rpc,consent,userData,claudeContext}){
+export function createRosterStatusService({store,rpc,consent,userData,claudeContext,projectRoot,log=()=>{}}){
  let inFlight;
  const terminalContext=createTerminalContextReader();
+ // Row 77: presence means the wrapper and its script are both there, because a config entry alone fails open.
+ async function presence(root){
+  const files=await guardFilesPresent(join(root,STORE,'guard')).catch(()=>({present:false}));
+  return files.present?{installed:true}:{installed:false,reason:'The team store guard is not installed, so a member cannot change its own notes.'};
+ }
  async function read(){
   await consent();const snapshot=store.readSnapshot(),status=await rpc('status.get');
   if(!status?.runtimeId)throw Error('Runtime status is unavailable.');
   const output={observedAt:new Date().toISOString(),members:{}},snapshots=new Map();
   const statuslineEnabled=await claudeContext?.status().then(s=>s.enabled).catch(()=>false)??false;
   const jobs=snapshot.teams.flatMap(team=>team.members.map(member=>({team,member})));let index=0;
-  await Promise.all(Array.from({length:Math.min(4,jobs.length)},async()=>{while(index<jobs.length){const {team,member}=jobs[index++];output.members[member.id]=await observe(team,member,status.runtimeId,snapshots,statuslineEnabled);}}));
+  // Every verified provider session this pass, and nothing carried over from an earlier pass.
+  const identities=[];
+  await Promise.all(Array.from({length:Math.min(4,jobs.length)},async()=>{while(index<jobs.length){const {team,member}=jobs[index++];output.members[member.id]=await observe(team,member,status.runtimeId,snapshots,statuslineEnabled,identities);}}));
+  // Written only after the whole pass, and it replaces the file: a member with no verified session loses its entry.
+  // A guard that cannot be written is reported, never thrown: the roster stays readable, and its absence is the safe state.
+  const root=typeof projectRoot==='function'?projectRoot():projectRoot;
+  if(root){
+   try{const result=await writeGuardIdentity(root,identities);output.guard=result.written?await presence(root):{installed:false,reason:result.reason};}
+   catch(error){log(`The team store guard identity was not written: ${error.message}`);output.guard={installed:false,reason:String(error.message).slice(0,200)};}
+  }
   return output;
  }
- async function observe(team,member,runtimeId,snapshots,statuslineEnabled){
+ async function observe(team,member,runtimeId,snapshots,statuslineEnabled,identities){
   const operation=store.readMemberOperation(member.id),attempt=store.readMemberDispatch(member.id);
   const binding=operation?.status==='created'?operation:attempt?.binding?{...attempt.binding,scope:attempt.scope,sessionId:attempt.binding.liveSessionId??attempt.binding.sessionId,paneKey:attempt.binding.paneKey,observation:{processIncarnation:attempt.binding.incarnationId},nativeRequest:{agent:attempt.reuse?.preferences?.agent??attempt.startParams?.agent??member.agent,sessionOptions:{model:attempt.reuse?.preferences?.model??attempt.startParams?.model??member.model,effort:attempt.reuse?.preferences?.effort??attempt.startParams?.effort??member.effort}}}:null;
   const row={state:operation?.status==='unknown'?'unknown':binding?'unknown':team.launch?.members?.[member.id]?'offline':'not-started',agent:binding?.nativeRequest?.agent??member.agent,model:null,effort:null,context:null,requestedModel:binding?.nativeRequest?.sessionOptions?.model??member.model,requestedEffort:binding?.nativeRequest?.sessionOptions?.effort??member.effort,observedAt:new Date().toISOString()};
@@ -52,7 +69,7 @@ export function createRosterStatusService({store,rpc,consent,userData,claudeCont
     const expected=terminalIdentity(shown),activity=(await rpc('terminal.agentStatus',{terminal:binding.handle}))?.agentStatus;
     if(activity?.handle!==binding.handle||!shown.connected||activity.isRunningAgent&&shown.agentIdentity!==row.agent)throw Error('Member session is unavailable.');
     row.state=activity.isRunningAgent===false?'offline':activity.status==='working'?'working':activity.status==='permission'?'asking':activity.status==='idle'?'idle':'unknown';
-    if(activity.isRunningAgent){try{row.context=await terminalContext({rpc,shown,agent:row.agent,scope,snapshots,contextDirectory:claudeContextDirectory(userData),statuslineEnabled});}catch{row.context=null;}}
+    if(activity.isRunningAgent){try{row.context=await terminalContext({rpc,shown,agent:row.agent,scope,snapshots,contextDirectory:claudeContextDirectory(userData),statuslineEnabled,onProvider:provider=>{try{identities.push(identityEntry(team,member,provider.sessionId));}catch{log(`Member ${member.id} of team ${team.id} has no valid role-file identity, so the team store guard does not certify it.`);}}});}catch{row.context=null;}}
     const final=(await rpc('terminal.show',{terminal:binding.handle}))?.terminal;if(!matchesTerminalObservation(final,expected)||final.handle!==binding.handle)throw Error('Member session changed during observation.');
    }else{
     const address=(await rpc('orchestration.sessionAddress',{sessionId:binding.sessionId}))?.orcaSessionId,location=address&&(await rpc('orchestration.partyLocation',{address}))?.location;

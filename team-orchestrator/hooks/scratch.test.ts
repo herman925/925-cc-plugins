@@ -87,7 +87,7 @@ const ids = (rows: typeof HUALONG) =>
 const setup = async ($: any, on: any, dirs: Record<string, ListEntry[]>) => {
   world(on, [], [], undefined, { env: { TEMP }, dirs: dirs as any })
   on('session.id', async () => ({ value: ID3 }) as any)
-  on('session.cwd', async () => ({ value: 'C:/proj' }) as any)
+  // the shared world fixture answers session.cwd
   for (const tool of ['Bash', 'PowerShell']) on('tool.check', { tool } as any, async () => ({ decision: 'ask', reason: 'engine asks' }) as any)
   await adopt($, ids(HUALONG))
 }

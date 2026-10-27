@@ -1,8 +1,9 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectorFuse, packageType } from '../src/local/bootstrap.mjs';
@@ -58,9 +59,12 @@ test('adapter binds only its panel, preserves consent/owner gates, captures desk
 test('POSIX startup quoting keeps hostile text in one inert prompt argument and detects Windows quoting', () => {
   const brief = 'quote \' " `danger` $(touch /tmp/should-never-exist) ; $HOME';
   const command = startupCommand({ agent: 'codex', model: 'test', brief });
-  const replaced = command.replace(/^'codex'/, "printf '%s\\n'");
-  const output = execFileSync('/bin/sh', ['-c', replaced], { encoding: 'utf8' });
-  assert.equal(output.trim().split('\n').at(-1), brief);
+  // the command is run for real through a POSIX shell, which Windows does not have
+  if (process.platform !== 'win32') {
+    const replaced = command.replace(/^'codex'/, "printf '%s\\n'");
+    const output = execFileSync('/bin/sh', ['-c', replaced], { encoding: 'utf8' });
+    assert.equal(output.trim().split('\n').at(-1), brief);
+  }
   assert.match(startupCommand({ agent: 'claude', brief: "a'b" }, 'powershell'), /^& 'claude' '--' 'a''b'$/);
   assert.throws(() => startupCommand({ agent: 'claude', effort: 'xhigh', brief: 'b' }), /xhigh/);
 });
@@ -72,7 +76,7 @@ test('CLI locates its installed entry and keeps newline prompt argv without shel
     const run = createCliRunner(await locateCli(join(root, 'out/main/plugin-host-entry.js'), process.execPath));
     assert.deepEqual(await run(['prompt', 'two\nlines $(nothing)']), ['prompt', 'two\nlines $(nothing)', '--json']);
     await assert.rejects(run(['fail']), /permission denied/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rmTemp(root); }
 });
 test('worker bridge verifies nonce and sends one supervisor operation without retrying uncertain transport', async () => {
   const calls = [];
@@ -87,7 +91,6 @@ test('worker bridge verifies nonce and sends one supervisor operation without re
   const bad = createWorkerBridge(async () => ({ ready: true, platform: 'linux', workerPid: 7 }), { nonce: () => 'nonce', spacingMs: 0 });
   await assert.rejects(bad.connect(), /not verified/);
 });
-
 test('adapter binds an already open panel without triggering the refresh that revokes worker calls', async () => {
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore();
   let refreshes = 0; let invocations = 0;
@@ -109,7 +112,6 @@ test('adapter binds an already open panel without triggering the refresh that re
   assert.equal(refreshes, 0);
   globalThis[Symbol.for('herman925.team-orchestrator.adapter')].restore();
 });
-
 test('Windows CLI environment restores actual redirected data paths without guessing a USERPROFILE directory', () => {
   const scrubbed = { USERPROFILE: 'C:\\Users\\Herman', PATH: 'agent-path', ELECTRON_RUN_AS_NODE: '1' };
   const paths = { appData: 'D:\\Redirected\\Roaming', userData: 'E:\\Orca Profiles\\active' };
@@ -124,7 +126,6 @@ test('Windows CLI environment restores actual redirected data paths without gues
   assert.throws(() => cliEnvironment({ userData: 'x', appData: 'bad\0path' }, scrubbed, 'win32'), /runtime data paths/);
   assert.equal(cliEnvironment(paths, { XDG_CONFIG_HOME: '/custom-config' }, 'linux').ORCA_USER_DATA_PATH, paths.userData);
 });
-
 test('child CLI resolves the exact desktop runtime profile when worker APPDATA is absent', async () => {
   const root = await mkdtemp(join(tmpdir(), 'orca-env-regression-'));
   try {
@@ -134,10 +135,9 @@ test('child CLI resolves the exact desktop runtime profile when worker APPDATA i
     const command = await locateCli(join(root, 'out/main/plugin-host-entry.js'), process.execPath, paths);
     delete command.env.APPDATA;
     assert.equal((await createCliRunner(command)(['worktree', 'show'])).profile, paths.userData);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rmTemp(root); }
 });
-
-test('bootstrap resolves macOS framework fuses and reports missing/disabled files before debugger activation', async () => {
+test('bootstrap resolves macOS framework fuses and reports missing/disabled files before debugger activation', { skip: process.platform !== 'darwin' ? 'macOS framework fuses exist only on macOS' : false }, async () => {
   const { bootstrap } = await import('../src/local/bootstrap.mjs');
   const root = await mkdtemp(join(tmpdir(), 'orca-fuse-'));
   try {
@@ -151,9 +151,8 @@ test('bootstrap resolves macOS framework fuses and reports missing/disabled file
     await writeFile(framework, Buffer.concat([Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'), Buffer.from([1, 4, 49, 49, 49, 48])]));
     assert.equal((await bootstrap(options)).code, 'fuse_disabled');
     assert.equal((await bootstrap({ ...options, executable: join(root, 'Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper') })).code, 'fuse_disabled');
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await rmTemp(root); }
 });
-
 test('connection reports worker activation separately from an unavailable adapter and retries its own initialisation command', async () => {
   const calls = [];
   const bridge = createWorkerBridge(async (_, { teamWorker: message }) => {
@@ -164,7 +163,6 @@ test('connection reports worker activation separately from an unavailable adapte
   await assert.rejects(bridge.connect({ retry: true }), error => error.report?.workerPid === 123 && error.message === 'Orca is missing a required interface.');
   assert.deepEqual(calls, ['team.initialise', 'team.control']);
 });
-
 test('bootstrap refuses an occupied non-inspector port without activating any process', async () => {
   const { bootstrap } = await import('../src/local/bootstrap.mjs');
   const { createServer } = await import('node:http');
@@ -177,9 +175,8 @@ test('bootstrap refuses an occupied non-inspector port without activating any pr
     let activated = false;
     const report = await bootstrap({ platform: 'win32', executable, parentPid: 98765, port: server.address().port, activate: async () => { activated = true; } });
     assert.equal(report.code, 'port_conflict'); assert.equal(activated, false);
-  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }); }
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rmTemp(root); }
 });
-
 test('public worker aliases remain available while private and removed operations are refused at both panel boundaries',async()=>{
  const seen=[],bridge=createWorkerBridge(async(_, {teamWorker:m})=>{seen.push(m.args);return m.args.op==='ping'?{nonce:m.nonce,ready:true,platform:'darwin',workerPid:7}:m.args;},{nonce:()=> 'allowlist-test',spacingMs:0});
  await bridge.connect();assert.equal((await bridge.call('workspace.readContext',{teamId:'team'})).op,'context');assert.deepEqual(await bridge.call('storage.get',{ignored:true}),{op:'load',params:{}});assert.equal((await bridge.call('receipt',{requestId:'saved'})).op,'receipt');

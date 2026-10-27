@@ -151,35 +151,22 @@ test('a codex tab adopted today is marked "not managed": never messaged, reopene
   expect(files.calls.filter(a => a[1] === 'terminal' && a[2] === 'create').length).toBe(0)
 })
 
-test('a reopen uses the member\'s last requested model as typed, and replaces a workspace that no longer holds the project', async ($, on) => {
-  const transcript = [
-    JSON.stringify({ type: 'assistant', requestedModel: 'claude-opus-5-5[1m]', message: { model: 'claude-opus-5-5', usage: { input_tokens: 5000 } } }),
-    // a subagent's own model is not the member's
-    JSON.stringify({ type: 'assistant', isSidechain: true, requestedModel: 'haiku', message: { model: 'claude-haiku-5-5', usage: { input_tokens: 10 } } }),
-  ].join('\n')
-  const files = world(on, [], [{ id: ID2 }], (e: any) => {
+test('a reopen preserves the registered home when its saved workspace is unavailable', async ($, on) => {
+  const files = world(on, [], [], (e: any) => {
     const a: string[] = e.argv
-    if (a[0] === 'powershell.exe') return String(e.init.env.TO_FILES).split('|').map(() => `\0${transcript}`).join('')
-    if (a[1] === 'worktree' && a[2] === 'current') return ok('{"result":{"worktree":{"id":"r1::C:/proj"}}}')
-    if (a[1] === 'terminal' && a[2] === 'create') return ok('{"result":{"terminal":{"handle":"term_ae1"}}}')
-    if (a[1] === 'terminal' && a[2] === 'wait') return ok('{"result":{"satisfied": true}}')
+    if (a[1] === 'worktree' && a[2] === 'show' && a.includes('id:gone::C:/proj')) return '{}'
     return undefined
-  }, { env: { ORCA_WORKTREE_ID: 'r0::C:/moved-away' } })
+  })
   const seen = engine(on, ID1)
   await adopt($, withIds(HUALONG))
-  // saved in a workspace Orca no longer has; closed by auto-close
   files.set(ROSTER, JSON.stringify(rawSaved(files).map((x: any) => (x.name === 'Hualong Workers' ? { ...x, worktree: 'gone::C:/proj', model: 'sonnet' } : x))))
   files.set(`${STATUS}/Hualong_Workers.json`, JSON.stringify({ name: 'Hualong Workers', sessionId: ID2, state: 'closed', heartbeat: Date.now() }))
   const r: any = await message($, 'Hualong Workers')
-  const create = files.calls.find(a => a[1] === 'terminal' && a[2] === 'create')!
-  const cmd = String(create[create.indexOf('--command') + 1])
-  expect(cmd).toContain(`--resume ${ID2}`)
-  expect(cmd).toContain('--model "claude-opus-5-5[1m]"')
-  // ORCA_WORKTREE_ID names a folder that does not hold the project: Orca's current workspace is used, and recorded
-  expect(create[create.indexOf('--worktree') + 1]).toBe('id:r1::C:/proj')
-  expect(saved(files).find((x: any) => x.name === 'Hualong Workers')).toMatchObject({ worktree: 'r1::C:/proj', model: 'claude-opus-5-5[1m]', location: 'local' })
-  expect(String(r.result)).toBe('Sent to Hualong Workers.')
-  expect(JSON.stringify(seen.sends[0].to)).toContain(ID2)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close')).toBe(false)
+  expect(saved(files).find((x: any) => x.name === 'Hualong Workers').worktree).toBe('gone::C:/proj')
+  expect(seen.sends.length).toBe(0)
+  expect(String(r.result)).toContain('could not be started')
 })
 
 test('a member writes its own context window into its status file; the roster counts against it', async ($, on) => {

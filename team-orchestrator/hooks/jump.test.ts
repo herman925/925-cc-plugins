@@ -1,11 +1,12 @@
 import { expect, test } from 'claude-code/testing'
-import { adopt, mountBand, world } from './test-world'
+import { adopt, mountBand, sessionAs, world } from './test-world'
 
 // A small marker beside each name jumps to that session's Orca tab: in the roster rows and in the org chart.
 // Names and dots keep their colours (a Button cannot carry one), so the marker is its own cell.
 test('pressing the marker on a roster row or on a chart node opens that member tab, and says so in its card', async ($, on) => {
   // Orca answers a switch with success (the stand-in world answers nothing it was not told about)
   const files = world(on, [{ handle: 'term_a1', title: '✳ Hualong Workers' }, { handle: 'term_a2', title: '◑ Hualong CEO' }], [], e => (e.argv.includes('switch') ? '{}' : undefined))
+  sessionAs(on)
   await adopt($, [
     { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_a2' },
     { name: 'Hualong Workers', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_a1' },
@@ -28,6 +29,7 @@ test('pressing the marker on a roster row or on a chart node opens that member t
 
 test('the chart marker is a button of its own; the dot and the name stay coloured text', async ($, on) => {
   world(on, [{ handle: 'term_b1', title: '✳ Hualong CEO' }], [])
+  sessionAs(on)
   await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_b1' }])
   const band = await mountBand($, 120)
   expect(await band.find({ key: 'node-Hualong|Hualong CEO' })).toBeDefined()

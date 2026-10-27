@@ -224,7 +224,7 @@ test('the team top and a session not on the roster may change the team files', a
 
 test('a session that is not on the roster is not judged on the team files', async ($, on) => {
   const toasts: string[] = []
-  world(on)
+  world(on, [], [], undefined, { sessionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' })
   engine(on, toasts, 'ffffffff-ffff-4fff-8fff-ffffffffffff')
   await adopt($, ids(HUALONG))
   expect(ok(await write($, ROSTER))).toBe(true)

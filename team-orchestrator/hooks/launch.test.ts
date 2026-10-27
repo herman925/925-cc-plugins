@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { saved, world } from './test-world'
+import { saved, sessionAs, world } from './test-world'
 
 // 0.5.03: Create writes the whole roster, then starts only the CEO and the team heads; workers start on demand.
 test('Create starts the CEO and the heads, briefs them, and leaves the workers for their first message', async ($, on) => {
@@ -20,6 +20,7 @@ test('Create starts the CEO and the heads, briefs them, and leaves the workers f
     if (a.includes('"send"')) return (typed++, '{}')
     return undefined
   })
+  sessionAs(on)
   const r: any = await $.tool.call({
     tool: 'mcp__team-orchestrator__team_launch',
     team: 'Org',

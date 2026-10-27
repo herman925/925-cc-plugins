@@ -25,6 +25,7 @@ export function leadNameIssue(form) {
 }
 export function planTeam(form) {
   if(form.sessionMode!==undefined&&typeof form.sessionMode!=='boolean')throw Error('Invalid team conversation mode.');
+  if(form.projectRoleFiles!==undefined&&form.projectRoleFiles!==1)throw Error('Invalid project role file format.');
   if (form.launchMode !== undefined && !['on-demand','all'].includes(form.launchMode)) throw Error('Choose a supported launch mode.');
   for (const key of ['leadCount', 'workersPerLead']) if (form[key] !== undefined && (!Number.isInteger(form[key]) || form[key] < 1 || form[key] > 5)) throw Error('Choose 1–5 leads and 1–5 workers per lead.');
   const name = cleanName(form.name);

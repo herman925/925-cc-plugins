@@ -1,3 +1,4 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {createHash} from 'node:crypto';import {DatabaseSync} from 'node:sqlite';
 import {openTeamStore} from '../src/local/store.mjs';import {DEFAULT_FORM} from '../src/team.mjs';import {nativeLaunchIntent,publicOperation} from '../src/local/native-launch.mjs';import {createWorkService} from '../src/local/teamwork.mjs';import {dispatchInstructions} from '../src/local/dispatch.mjs';
@@ -18,7 +19,7 @@ async function setup(t,{lost=false,permission=false}={}){
   if(method==='orchestration.taskList')return {tasks:[]};throw Error('Unexpected effect '+method);
  };
  const service=()=>createWorkService({store,rpc,userData:profile,consent:async()=>{}});
- t.after(async()=>{db.close();store.close();await rm(profile,{recursive:true,force:true});});
+ t.after(async()=>{db.close();store.close();await rmTemp(profile);});
  return {team,sent,service,get store(){return store;},async restart(){store.close();store=await openTeamStore({userData:profile});}};
 }
 test('launching a team initializes persistent supervisor coordination without a panel objective, exactly once',async t=>{

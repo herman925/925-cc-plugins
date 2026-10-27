@@ -311,6 +311,7 @@ function parseLeadNames(form) {
 }
 function planTeam(form) {
   if (form.sessionMode !== void 0 && typeof form.sessionMode !== "boolean") throw Error("Invalid team conversation mode.");
+  if (form.projectRoleFiles !== void 0 && form.projectRoleFiles !== 1) throw Error("Invalid project role file format.");
   if (form.launchMode !== void 0 && !["on-demand", "all"].includes(form.launchMode)) throw Error("Choose a supported launch mode.");
   for (const key of ["leadCount", "workersPerLead"]) if (form[key] !== void 0 && (!Number.isInteger(form[key]) || form[key] < 1 || form[key] > 5)) throw Error("Choose 1\u20135 leads and 1\u20135 workers per lead.");
   const name = cleanName(form.name);
@@ -566,6 +567,20 @@ function validateDatabase(db) {
   return { schema, revision: snapshot.revision, digest: storageDigest(db) };
 }
 async function syncFile(path) {
+  if (process.platform === "win32") {
+    let file2;
+    try {
+      file2 = await open(path, "r+");
+    } catch {
+      return;
+    }
+    try {
+      await file2.sync();
+    } finally {
+      await file2.close();
+    }
+    return;
+  }
   const file = await open(path, "r");
   try {
     await file.sync();
@@ -581,7 +596,7 @@ async function privateDirectory(path, parent) {
   }
   const real = await realpath(path), rel = relative(parent, real);
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw Error("Backup directory escapes plugin storage");
-  if ((await stat(real)).mode & 63) throw Error("Backup directory must be private (owner access only)");
+  if (process.platform !== "win32" && (await stat(real)).mode & 63) throw Error("Backup directory must be private (owner access only)");
   return real;
 }
 async function prepareStorage({ path, directory, DatabaseSync, backup }) {
@@ -606,7 +621,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.22" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.23" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -1038,7 +1053,8 @@ async function targets(port) {
   }
 }
 var failure = (code, message) => Object.assign(new Error(message), { code });
-async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = fileURLToPath(new URL("./runtime-adapter.cjs", import.meta.url)), version = "0.1.12", internalKey, consent = async () => {
+var adapterBeside = (base) => base.startsWith("file:") ? fileURLToPath(new URL("./runtime-adapter.cjs", base)) : "";
+async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? "", port = 9229, activate: activate2 = activateParent, adapterPath = adapterBeside(import.meta.url), version = "0.1.12", internalKey, consent = async () => {
 } } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client;
@@ -1078,6 +1094,7 @@ async function bootstrap({ platform = process.platform, parentPid = process.ppid
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure("profile_missing", "Orca did not resolve its actual runtime profile.");
     const rpc = createNativeRpc({ userData: runtime.cliPaths.userData, parentPid, consent });
     Object.assign(report, await probeHostCompatibility({ rpc, userData: runtime.cliPaths.userData, appVersion: runtime.appVersion }));
+    if (!adapterPath) throw failure("adapter_missing", "This build has no local adapter file beside it. Load the plugin from its folder.");
     const source = await readFile3(adapterPath, "utf8");
     const digest5 = createHash4("sha256").update(source).digest("hex");
     const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);const transport=m.exports.inspectAdapterContract(electron);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest5)},internalKey:${JSON.stringify(internalKey)}}),transport};})()`;
@@ -1151,6 +1168,158 @@ function createCliRunner(command) {
   };
 }
 
+// src/local/keyed-serializer.mjs
+function createKeyedSerializer() {
+  const queues = /* @__PURE__ */ new Map();
+  return (key, action) => {
+    const pending = (queues.get(key) ?? Promise.resolve()).catch(() => {
+    }).then(action);
+    queues.set(key, pending);
+    pending.finally(() => {
+      if (queues.get(key) === pending) queues.delete(key);
+    }).catch(() => {
+    });
+    return pending;
+  };
+}
+
+// src/local/project-roles.mjs
+import { lstat, mkdir as mkdir2, open as open2, readFile as readFile4, realpath as realpath5, rename as rename2, unlink } from "node:fs/promises";
+import { isAbsolute as isAbsolute4, join as join6, relative as relative4, sep as sep4 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+
+// src/role-files.mjs
+var ROLE_MARKER = "<!-- END OF GENERATED ROLE. Personal notes below this line are preserved. -->";
+function roleFilePath(team, member) {
+  for (const id2 of [team.id, member.id]) if (!/^[a-f0-9-]{36}$/.test(id2)) throw Error("Invalid role file identity.");
+  return `.orca/team-orchestrator/${team.id}/roles/${member.id}.md`;
+}
+function rolePointer(team, member) {
+  return `Your persistent role file is ${roleFilePath(team, member)}. Read it before your first action, after any conversation summary or compaction, and when notified of a roster change. Personal notes are advisory; saved roles, native permissions and your manager's admitted tasks remain authoritative.`;
+}
+function roleText(team, member) {
+  const boss = team.members.find((row) => row.id === member.boss);
+  const reports = team.members.filter((row) => row.boss === member.id);
+  return `# ${member.name}
+
+Team: ${team.name}
+Member ID: ${member.id}
+Role: ${member.role}
+Boss: ${boss?.name ?? "the user"}
+Direct reports: ${reports.map((row) => row.name).join(", ") || "none"}
+Configuration version: ${team.configVersion}; role version: ${member.roleVersion}
+
+## Purpose and duties
+
+${team.purpose || "Take assignments from the user in the highest supervisor session."}
+
+${member.brief}
+
+${reports.length ? "Plan, delegate to your direct reports and review their results. Do not bypass another manager or do their assigned work yourself." : "Execute only admitted assignments from your direct manager and report results to that manager."}
+
+Work habits: ${member.habits || "None specified"}
+Collaboration: ${member.collaboration || "None specified"}
+
+## Coordination
+
+Use the plugin-supplied native Orca coordination protocol and version-matched orchestration guide. Do not independently create teammates or provider-native subagents. Never type into another member's terminal to message it. Preserve native task, review and permission checks. If instructions or access are missing, report the blocker to your manager. Only the highest supervisor presents user decisions and overall delivery.
+
+After a task, clean up only your own temporary files and processes that are no longer needed, within your granted permissions, and report remaining work or blockers.
+
+## Roster
+
+${team.members.map((row) => `- ${row.name} (${row.id}): ${row.role}; reports to ${team.members.find((parent) => parent.id === row.boss)?.name ?? "the user"}. ${row.brief}`).join("\n")}
+
+## Files and authority
+
+These files are generated views of the plugin's SQLite records. Never edit the generated section, roster.json or configuration.json to change authoritative configuration. Use the highest supervisor conversation for changes. Do not edit another member's notes. Reread this file after compaction or a roster-change notice; compare the configuration version with the native task protocol, and report stale files rather than overriding it.
+
+`;
+}
+function mergeRole(existing, generated) {
+  if (existing !== void 0 && !existing.includes(ROLE_MARKER)) throw Error("Existing role file has no generated-section marker; preserve it and resolve the conflict before launching.");
+  const notes = existing === void 0 ? "\n\n## Personal notes\n\n" : existing.slice(existing.indexOf(ROLE_MARKER) + ROLE_MARKER.length);
+  return generated + ROLE_MARKER + notes;
+}
+
+// src/local/project-roles.mjs
+var serialize = createKeyedSerializer();
+async function projectRoot(workspace, scope) {
+  if (scope.executionHostId !== "local") throw Error("Persistent team role files require a local execution host; remote project writes are unsupported.");
+  if (workspace.id !== scope.workspaceId || (workspace.hostId ?? workspace.identity?.executionHostId) !== scope.executionHostId || typeof workspace.path !== "string" || !isAbsolute4(workspace.path)) throw Error("The native project path or execution host is unverified; no role files were written.");
+  const root = await realpath5(workspace.path);
+  if (!(await lstat(root)).isDirectory()) throw Error("The project path is not a directory.");
+  if (scope.projectPath && root !== scope.projectPath) throw Error("The saved project path changed; no role files were written.");
+  return root;
+}
+async function syncProjectRoles(team, root) {
+  return serialize(root, async () => {
+    if (await realpath5(root) !== root) throw Error("The project path changed.");
+    const inside = (path) => {
+      const rel = relative4(root, path);
+      if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute4(rel)) throw Error("Role path escaped the project.");
+    };
+    async function directory(parent, name) {
+      const path = join6(parent, name);
+      inside(path);
+      try {
+        await mkdir2(path, { mode: 448 });
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+      const info = await lstat(path);
+      if (!info.isDirectory() || info.isSymbolicLink() || await realpath5(path) !== path) throw Error("Team role directories must not be symlinks or junctions.");
+      return path;
+    }
+    async function existing(path) {
+      try {
+        const info = await lstat(path);
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 1024 * 1024) throw Error("Unsafe or oversized existing team file; no overwrite permitted.");
+        return await readFile4(path, "utf8");
+      } catch (error) {
+        if (error.code === "ENOENT") return void 0;
+        throw error;
+      }
+    }
+    async function write(path, text9, before) {
+      if (text9 === before) return;
+      const temp = `${path}.${randomUUID3()}.tmp`;
+      try {
+        const handle = await open2(temp, "wx", 384);
+        try {
+          await handle.writeFile(text9, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        if (await existing(path) !== before) throw Error("Team file changed during generation; retry before launching.");
+        await rename2(temp, path);
+      } finally {
+        await unlink(temp).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      }
+    }
+    const base = await directory(await directory(root, ".orca"), "team-orchestrator");
+    const ignore = join6(base, ".gitignore"), oldIgnore = await existing(ignore);
+    if (!oldIgnore?.split(/\r?\n/).includes("*")) await write(ignore, `${oldIgnore ?? ""}
+# Local generated team views and personal notes
+*
+`, oldIgnore);
+    if (!/^[a-f0-9-]{36}$/.test(team.id)) throw Error("Invalid team file identity.");
+    const teamDir = await directory(base, team.id), roles = await directory(teamDir, "roles");
+    for (const member of team.members) {
+      if (!/^[a-f0-9-]{36}$/.test(member.id)) throw Error("Invalid member file identity.");
+      const path = join6(roles, `${member.id}.md`), before = await existing(path);
+      await write(path, mergeRole(before, roleText(team, member)), before);
+    }
+    for (const [name, value] of [["configuration.json", { generated: true, teamId: team.id, configVersion: team.configVersion, configuration: team.configuration }], ["roster.json", { generated: true, teamId: team.id, name: team.name, configVersion: team.configVersion, members: team.members.map(({ id: id2, name: name2, boss, role, roleVersion, brief, habits, collaboration, agent, model, effort }) => ({ id: id2, name: name2, boss, role, roleVersion, brief, habits, collaboration, agent, model, effort })) }]]) {
+      const path = join6(teamDir, name);
+      await write(path, JSON.stringify(value, null, 2) + "\n", await existing(path));
+    }
+  });
+}
+
 // src/local/terminal-identity.mjs
 function terminalIdentity(terminal) {
   const { ptyId, incarnationId } = terminal ?? {};
@@ -1164,20 +1333,20 @@ function matchesTerminalObservation(terminal, saved) {
 }
 
 // src/local/terminal-context.mjs
-import { open as open3 } from "node:fs/promises";
+import { open as open4 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
-import { isAbsolute as isAbsolute5, resolve as resolve2 } from "node:path";
+import { isAbsolute as isAbsolute6, resolve as resolve2 } from "node:path";
 
 // src/local/claude-context.mjs
-import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID4 } from "node:crypto";
 import { constants } from "node:fs";
-import { open as open2, mkdir as mkdir2, rename as rename2, unlink } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, join as join6, resolve } from "node:path";
+import { open as open3, mkdir as mkdir3, rename as rename3, unlink as unlink2 } from "node:fs/promises";
+import { isAbsolute as isAbsolute5, join as join7, resolve } from "node:path";
 var count = (value) => Number.isSafeInteger(value) && value >= 0;
-var samePath = (a, b) => typeof a === "string" && typeof b === "string" && isAbsolute4(a) && isAbsolute4(b) && resolve(a) === resolve(b);
-var claudeContextDirectory = (userData) => userData && join6(userData, "plugins-data", "herman925.team-orchestrator", "claude-context");
-var claudeContextFile = (directory, { sessionId, path, paneKey }) => join6(directory, createHash5("sha256").update(JSON.stringify([sessionId, path, paneKey])).digest("hex") + ".json");
-var claudeBindingFile = (directory, paneKey) => join6(directory, "binding-" + createHash5("sha256").update(paneKey).digest("hex") + ".json");
+var samePath = (a, b) => typeof a === "string" && typeof b === "string" && isAbsolute5(a) && isAbsolute5(b) && resolve(a) === resolve(b);
+var claudeContextDirectory = (userData) => userData && join7(userData, "plugins-data", "herman925.team-orchestrator", "claude-context");
+var claudeContextFile = (directory, { sessionId, path, paneKey }) => join7(directory, createHash5("sha256").update(JSON.stringify([sessionId, path, paneKey])).digest("hex") + ".json");
+var claudeBindingFile = (directory, paneKey) => join7(directory, "binding-" + createHash5("sha256").update(paneKey).digest("hex") + ".json");
 var statuslineBinding = (provider, shown) => ({ ...provider, paneKey: `${shown.tabId}:${shown.leafId}`, handle: shown.handle, ptyId: shown.ptyId, incarnationId: shown.incarnationId });
 async function registerStatuslineBinding(directory, binding) {
   if (!directory) return;
@@ -1186,11 +1355,11 @@ async function registerStatuslineBinding(directory, binding) {
     if ((await readSmallFile(path)).text === text9) return;
   } catch {
   }
-  await mkdir2(directory, { recursive: true, mode: 448 });
+  await mkdir3(directory, { recursive: true, mode: 448 });
   await atomicFile(path, text9);
 }
 async function readSmallFile(path, limit = 65536) {
-  const file = await open2(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const file = await open3(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat4 = await file.stat();
     if (!stat4.isFile() || stat4.size > limit) throw Error("Context data is not a bounded regular file.");
@@ -1202,18 +1371,18 @@ async function readSmallFile(path, limit = 65536) {
   }
 }
 async function atomicFile(path, text9, mode = 384) {
-  const temporary = path + "." + randomUUID3() + ".tmp";
+  const temporary = path + "." + randomUUID4() + ".tmp";
   try {
-    const file = await open2(temporary, "wx", mode);
+    const file = await open3(temporary, "wx", mode);
     try {
       await file.writeFile(text9);
       await file.sync();
     } finally {
       await file.close();
     }
-    await rename2(temporary, path);
+    await rename3(temporary, path);
   } finally {
-    await unlink(temporary).catch(() => {
+    await unlink2(temporary).catch(() => {
     });
   }
 }
@@ -1241,7 +1410,7 @@ async function readStatuslineContext({ directory, provider, shown, transcript, t
 var HEAD_BYTES = 256 * 1024;
 var TAIL_BYTES = 512 * 1024;
 var count2 = (value) => Number.isSafeInteger(value) && value >= 0;
-var samePath2 = (a, b) => typeof a === "string" && typeof b === "string" && isAbsolute5(a) && isAbsolute5(b) && resolve2(a) === resolve2(b);
+var samePath2 = (a, b) => typeof a === "string" && typeof b === "string" && isAbsolute6(a) && isAbsolute6(b) && resolve2(a) === resolve2(b);
 function records(text9, partialStart = false) {
   const lines = text9.split("\n");
   if (partialStart) lines.shift();
@@ -1287,7 +1456,7 @@ function terminalProviderSession(snapshot, shown, agent) {
   const rows = snapshot.tabs?.filter((tab2) => tab2.type === "terminal" && tab2.parentTabId === shown.tabId && tab2.leafId === shown.leafId);
   if (rows?.length !== 1) return null;
   const tab = rows[0], status = tab.agentStatus, provider = status?.providerSession;
-  if (tab.ptyId !== shown.ptyId || tab.incarnationId !== shown.incarnationId || status?.terminalHandle !== shown.handle || status.agentType !== agent || status.restoredUnconfirmed || status.sessionBoundary || provider?.key !== "session_id" || typeof provider.id !== "string" || !provider.id || typeof provider.transcriptPath !== "string" || !isAbsolute5(provider.transcriptPath) || !provider.transcriptPath.endsWith(".jsonl")) return null;
+  if (tab.ptyId !== shown.ptyId || tab.incarnationId !== shown.incarnationId || status?.terminalHandle !== shown.handle || status.agentType !== agent || status.restoredUnconfirmed || status.sessionBoundary || provider?.key !== "session_id" || typeof provider.id !== "string" || !provider.id || typeof provider.transcriptPath !== "string" || !isAbsolute6(provider.transcriptPath) || !provider.transcriptPath.endsWith(".jsonl")) return null;
   return { sessionId: provider.id, path: provider.transcriptPath };
 }
 function createTerminalContextReader() {
@@ -1300,7 +1469,7 @@ function createTerminalContextReader() {
     if (!provider) return null;
     if (agent === "claude" && contextDirectory) await registerStatuslineBinding(contextDirectory, statuslineBinding(provider, shown)).catch(() => {
     });
-    const file = await open3(provider.path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
+    const file = await open4(provider.path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
     let context, transcriptStat;
     try {
       const before = await file.stat();
@@ -1477,8 +1646,8 @@ function createRosterStatusService({ store, rpc, consent, userData, claudeContex
 }
 
 // src/local/claude-statusline-settings.mjs
-import { mkdir as mkdir3, readFile as readFile4, open as open4, unlink as unlink2 } from "node:fs/promises";
-import { join as join7, isAbsolute as isAbsolute6 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile5, open as open5, unlink as unlink3 } from "node:fs/promises";
+import { join as join8, isAbsolute as isAbsolute7 } from "node:path";
 import { homedir } from "node:os";
 var quote2 = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 async function optional(path) {
@@ -1490,10 +1659,10 @@ async function optional(path) {
   }
 }
 var object = (value) => value && typeof value === "object" && !Array.isArray(value);
-function createClaudeStatuslineSettings({ userData, helperPath, configDir = process.env.CLAUDE_CONFIG_DIR || join7(homedir(), ".claude"), executable = process.execPath, electron = Boolean(process.versions.electron), platform = process.platform, consent }) {
-  const directory = claudeContextDirectory(userData), root = join7(configDir, "team-orchestrator-orca"), settingsPath = join7(configDir, "settings.json"), configPath = join7(root, "bridge.json"), installedHelper = join7(root, "statusline.cjs");
+function createClaudeStatuslineSettings({ userData, helperPath, configDir = process.env.CLAUDE_CONFIG_DIR || join8(homedir(), ".claude"), executable = process.execPath, electron = Boolean(process.versions.electron), platform = process.platform, consent }) {
+  const directory = claudeContextDirectory(userData), root = join8(configDir, "team-orchestrator-orca"), settingsPath = join8(configDir, "settings.json"), configPath = join8(root, "bridge.json"), installedHelper = join8(root, "statusline.cjs");
   const installedCommand = (electron ? "ELECTRON_RUN_AS_NODE=1 " : "") + quote2(executable) + " " + quote2(installedHelper) + " " + quote2(configPath);
-  const supported = platform === "darwin" && isAbsolute6(userData || "") && isAbsolute6(helperPath || "");
+  const supported = platform === "darwin" && isAbsolute7(userData || "") && isAbsolute7(helperPath || "");
   const read = async () => {
     const file = await optional(settingsPath), settings = file ? JSON.parse(file.text) : {};
     if (!object(settings)) throw Error("Claude settings must be a JSON object.");
@@ -1512,11 +1681,11 @@ function createClaudeStatuslineSettings({ userData, helperPath, configDir = proc
     await consent();
     if (!supported) throw Error("Claude context setup is unavailable on this host.");
     if (typeof enabled !== "boolean") throw Error("Choose whether to connect Claude context.");
-    await mkdir3(root, { recursive: true, mode: 448 });
-    const lockPath = join7(root, "configuration.lock");
+    await mkdir4(root, { recursive: true, mode: 448 });
+    const lockPath = join8(root, "configuration.lock");
     let lock;
     try {
-      lock = await open4(lockPath, "wx", 384);
+      lock = await open5(lockPath, "wx", 384);
     } catch (error) {
       if (error.code === "EEXIST") throw Error("Another Claude context configuration is in progress.");
       throw error;
@@ -1529,7 +1698,7 @@ function createClaudeStatuslineSettings({ userData, helperPath, configDir = proc
         const originalStatusLine = ours ? config.originalStatusLine : settings.statusLine ?? null;
         if (originalStatusLine !== null && (!object(originalStatusLine) || originalStatusLine.type !== "command" || typeof originalStatusLine.command !== "string")) throw Error("This status line format cannot be preserved by the bridge.");
         if (!ours && originalStatusLine?.command.includes("team-orchestrator-orca")) throw Error("Another Claude context bridge already owns this status line.");
-        const helper = await readFile4(helperPath, "utf8");
+        const helper = await readFile5(helperPath, "utf8");
         await consent();
         await atomicFile(installedHelper, helper);
         const next = { schema: 1, enabled: false, directory, installedCommand, originalStatusLine };
@@ -1548,7 +1717,7 @@ function createClaudeStatuslineSettings({ userData, helperPath, configDir = proc
       return await status();
     } finally {
       await lock.close();
-      await unlink2(lockPath).catch(() => {
+      await unlink3(lockPath).catch(() => {
       });
     }
   } };
@@ -1573,21 +1742,6 @@ function memberControlRuntime(work, operation) {
     );
   }
   return control.runtimeId;
-}
-
-// src/local/keyed-serializer.mjs
-function createKeyedSerializer() {
-  const queues = /* @__PURE__ */ new Map();
-  return (key, action) => {
-    const pending = (queues.get(key) ?? Promise.resolve()).catch(() => {
-    }).then(action);
-    queues.set(key, pending);
-    pending.finally(() => {
-      if (queues.get(key) === pending) queues.delete(key);
-    }).catch(() => {
-    });
-    return pending;
-  };
 }
 
 // src/local/native-worker-report.mjs
@@ -1661,13 +1815,13 @@ function verifiedReportOrigin(db, { work, attempts, spec }) {
 import { createHash as createHash10 } from "node:crypto";
 
 // src/local/orchestration-snapshot.mjs
-import { realpath as realpath5 } from "node:fs/promises";
-import { join as join8, relative as relative4, isAbsolute as isAbsolute7, sep as sep4 } from "node:path";
+import { realpath as realpath6 } from "node:fs/promises";
+import { join as join9, relative as relative5, isAbsolute as isAbsolute8, sep as sep5 } from "node:path";
 async function withOrchestrationSnapshot(userData, { pathError, schemaError }, read) {
   let db;
   try {
-    const root = await realpath5(userData), file = await realpath5(join8(root, "orchestration.db")), rel = relative4(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep4}`) || isAbsolute7(rel)) throw Error(pathError);
+    const root = await realpath6(userData), file = await realpath6(join9(root, "orchestration.db")), rel = relative5(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute8(rel)) throw Error(pathError);
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     db.exec("BEGIN");
@@ -1891,7 +2045,7 @@ async function nameDispatchedMember({ store, rpc, consent, work, attempt, team }
 }
 
 // src/local/dispatch.mjs
-import { createHash as createHash9, randomBytes as randomBytes2, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash9, randomBytes as randomBytes2, randomUUID as randomUUID6 } from "node:crypto";
 
 // src/local/runtime-reconnect.mjs
 var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
@@ -2049,15 +2203,15 @@ async function readNativeParentEvidence(userData, { parentWork, attempt, active 
 }
 
 // src/local/teamwork.mjs
-import { createHash as createHash8, randomBytes, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash8, randomBytes, randomUUID as randomUUID5 } from "node:crypto";
 
 // src/local/native-run.mjs
-import { isAbsolute as isAbsolute8 } from "node:path";
+import { isAbsolute as isAbsolute9 } from "node:path";
 var columns = ["id", "objective", "home_database", "coordinator_handle", "coordinator_pane_key", "coordinator_orca_session_id", "coordinator_orca_session_id_generation", "consumer_generation", "legacy"];
 async function readNativeRunEvidence(userData, { objective, owner, runId } = {}) {
   const unknown = (detail2) => ({ state: "unverified", detail: detail2 });
   try {
-    if (!isAbsolute8(userData || "") || typeof objective !== "string" || !owner) throw Error();
+    if (!isAbsolute9(userData || "") || typeof objective !== "string" || !owner) throw Error();
     return await withOrchestrationSnapshot(userData, { pathError: "", schemaError: "" }, (db) => {
       const names = new Set(db.prepare("PRAGMA table_info(runs)").all().map((row) => row.name));
       if (columns.some((name) => !names.has(name))) throw Error();
@@ -2094,8 +2248,8 @@ Total objective: ${work.objective}
 Use your own inherited Orca session identity and the matching installed Orca CLI. Read its skills get orchestration --full guide. Create your own native Run exactly once with this exact objective string: ${JSON.stringify(work.nativeObjective)}. This shown string is JSON-encoded: decode it, including escaped newlines, before passing it as one CLI argument. Verify the actual stored objective string. If that exact Run already exists for this work, inspect it and continue it; do not create another. Never override --from with another session or fabricate caller/consumer credentials. Return the Run ID as a lookup hint; the plugin verifies native owner evidence. Report exact CLI/runtime/authentication prerequisites when unavailable. Do not dispatch roster workers yet; wait for the plugin's versioned admission protocol. Session creation, input acceptance and delivery of the total result are distinct. The user must accept the completed total objective.`;
 }
 function createWorkService({ store, rpc, userData, consent }) {
-  const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
+  const serialize2 = createKeyedSerializer();
+  const serial = (id2, fn) => serialize2(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const save = (work, patch) => store.updateWork(work.id, work.version, patch);
   async function verifyHost(work, expected = work.binding.hostGeneration) {
     if (!work.scope.executionHostId.startsWith("ssh:")) return null;
@@ -2195,7 +2349,7 @@ function createWorkService({ store, rpc, userData, consent }) {
       if (work.binding.kind === "structured") {
         const sessionId = work.binding.sessionId;
         nativeSend = { method: "agentSession.send", params: { envelope: { sessionId, clientOperationId: `${Date.now()}-${randomBytes(16).toString("hex")}`, expectedRuntimeFence: verified.instance.fence, payloadFingerprint: sendFingerprint(sessionId, body) }, body }, envelope: {} };
-      } else nativeSend = { method: "terminal.send", params: { terminal: work.binding.handle, text: body.blocks[0].text, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID4() } };
+      } else nativeSend = { method: "terminal.send", params: { terminal: work.binding.handle, text: body.blocks[0].text, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID5() } };
       await consent();
       work = save(work, { nativeSend, instance: verified.instance, input: { state: "sending" }, status: "awaiting_input" });
       attempted = true;
@@ -2228,7 +2382,7 @@ function createWorkService({ store, rpc, userData, consent }) {
   }
   return {
     async reconnect(input) {
-      return serialize(input?.workId, async () => publicWork(await reconnectRuntime({ store, rpc, userData, consent }, input)));
+      return serialize2(input?.workId, async () => publicWork(await reconnectRuntime({ store, rpc, userData, consent }, input)));
     },
     async startManager(id2) {
       return serial(id2, async () => {
@@ -2380,6 +2534,7 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
   if (spec.writeScope !== void 0) declaredWriteScope(spec.writeScope);
   const member = team.members.find((row) => row.id === spec.memberId);
   if (!member || member.boss !== work.supervisorMemberId || member.roleVersion !== spec.roleVersion || !same4(spec.role, { brief: member.brief, habits: member.habits, collaboration: member.collaboration })) throw Error("Task member, direct supervisor or frozen role version does not match.");
+  if (team.configuration?.projectRoleFiles === 1 && !spec.instruction.includes(rolePointer(team, member))) throw Error("Native Task must include the saved member role-file instruction.");
   const expected = nativeMutationFingerprint("orchestration.taskCreate", { spec: task.spec, run: work.run.id, callerTerminalHandle: caller3(owner) }, owner);
   if (receipt.payload_hash !== expected || receipt.value?.task?.id !== task.id || receipt.value.task.spec !== task.spec || receipt.value.task.run_id !== work.run.id) throw Error("Native Task author proof is unavailable. Use the exact task-create protocol without extra flags.");
   if (owner.kind === "terminal" && (task.created_by_terminal_handle !== owner.handle || task.created_by_pane_key !== owner.paneKey || task.created_by_process_incarnation !== owner.processIncarnation || task.created_by_run_generation !== protocol.generation)) throw Error("Native terminal Task creator instance is unverified.");
@@ -2649,8 +2804,9 @@ async function discoverCapabilities(rpc, scope) {
 
 // src/local/dispatch.mjs
 function dispatchInstructions(work, team, protocol, attempts = []) {
-  const children = team.members.filter((row) => row.boss === work.supervisorMemberId).map((row) => ({ memberId: row.id, name: row.name, agent: row.agent, model: row.model, effort: row.effort, roleVersion: row.roleVersion, role: { brief: row.brief, habits: row.habits, collaboration: row.collaboration } }));
-  const packet = { protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, sessionDecisions: sessionDecisionInstructions(work), workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. For a highest-Head decision based on a native worker_done completion instead, origin may contain ONLY {attemptId,dispatchId,nativeTaskId,messageId} and evidence must include its exact worker_report:messageId. The plugin verifies this as sourceReport; it is not a native ask and requires no orchestration reply or requester resume. Ordinary message IDs are not completion proof. Keep every originating member and owning Run; never use ordinary message labels as proof. Ask the user in your own highest-supervisor session and record their answer with session-answer as described in sessionDecisions. Legacy saved panel answers may still arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. Lower managers relay this proposal to the highest supervisor. The highest supervisor asks the user in its own session, then records staffing-decision as described in sessionDecisions. Never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. If you omitted workerRules from a never-admitted, never-dispatched Task, preserve that original. Create one corrected Task whose parsed spec is identical except for adding the exact workerRules. You may then task-update the original --status failed --result JSON --run this Run --json, with no forged --from. The exact result fields are protocol=team-intent-withdrawal/v1, workId, token, generation, supervisorMemberId (your member ID), nativeTaskId (original), taskKey, memberId, replacementNativeTaskId (corrected), reason=missing-worker-rules. Never use withdrawal for a Task with any admission, permit, Dispatch or uncertain execution; it is not a worker failure or a retry. Wait for normal permits for the corrected Task.  Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:MESSAGE_ID, where MESSAGE_ID is the id of that attempt's actual native worker_done message, and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (use the attemptId delivered in each latest TEAM_DISPATCH_PERMIT). The execution evidenceId for an accepted attempt is exactly worker_report:MESSAGE_ID for its actual native worker_done message; use the same reference you included in its native acceptance review. Never invent a message ID or include a superseded attempt. After completing your genuine native acceptance reviews for every latest required attempt, publish the delivery proposal using those IDs and real validation references. Do not wait for a separate plugin acceptance notification. The plugin independently verifies reviews and gates user acceptance; proposing a delivery does not assert plugin or user acceptance. Never approve the overall delivery as the user." };
+  const children = team.members.filter((row) => row.boss === work.supervisorMemberId).map((row) => ({ memberId: row.id, name: row.name, agent: row.agent, model: row.model, effort: row.effort, roleVersion: row.roleVersion, ...team.configuration?.projectRoleFiles === 1 ? { roleFileInstruction: rolePointer(team, row) } : {}, role: { brief: row.brief, habits: row.habits, collaboration: row.collaboration } }));
+  const roleFileInstructions = team.configuration?.projectRoleFiles === 1 ? "For each native Task, include the child roleFileInstruction verbatim in its instruction, before the assignment. After a roster delta, reread your own role file and tell participating direct reports to reread theirs." : "";
+  const packet = { roleFileInstructions, protocol: "team-dispatch/v1", workId: work.id, token: protocol.token, generation: protocol.generation, configVersion: team.configVersion, runId: work.run.id, teamWorkId: work.teamWorkId ?? work.id, parent: work.parent, sessionDecisions: sessionDecisionInstructions(work), workerRules: WORKER_RULES, children, recoveryReviews: attempts.filter((a) => a.reviewAuthority).map((a) => ({ attemptId: a.id, nativeTaskId: a.nativeTaskId, dispatchId: a.dispatchId, taskKey: a.taskKey, reviewToken: a.reviewAuthority.reviewToken, evidenceId: a.evidenceId, recoveryRequestId: a.reviewAuthority.recoveryRequestId })), questions: { protocol: "team-questions/v1", instructions: "Members ask their direct owning Run using native orchestration ask, with inherited identity and the same message ID on resume. Ordinary messages follow direct reporting lines. Managers may coordinate explicit real Runs. Worker-to-worker collaboration requires your native Task kind=collaboration-directive with appQuestionId as stable directive ID, fromMemberId, toMemberId, fromAttemptId, toAttemptId, workId, token, generation; both must be your admitted direct children. They still report to their original supervisor. For recovery publish a genuine recovery-handoff Task with appQuestionId=recovery request ID,memberId,oldRequestId,decision=replace,checked summary,evidence[]. Only your actual direct child is eligible. Do not start another session before the plugin permit. To retain an ordinary structured native send as verified panel evidence, publish kind=message-evidence with appQuestionId, fromAttemptId, toMemberId, optional toAttemptId, and nativeMessage {messageId,requestId,params}; params must exactly match the original native parsed send. Terminal ordinary from labels remain unverified and cannot authorize application changes. Only the highest supervisor may publish user-question Task intents. Lower managers publish kind=relay-question with the same fields, escalate using native ask from their original parent Dispatch to the original parent Run, and give the parent their relay record {workId,appQuestionId}. The parent question includes relay {workId,appQuestionId}; repeat through each real manager. Never answer or ask as another manager. Highest supervisor user-question Task intents: use exactly task-create --spec JSON --run this Run --json with protocol,kind=user-question,workId,token,generation,appQuestionId,summary,options[],blockingTaskKeys[],evidence[]. Include origin {attemptId,dispatchId,nativeTaskId,messageId,askRequestId,askParams} for a native worker ask; askParams must be the exact native parsed input including from and compatibility CLI fields. For a highest-Head decision based on a native worker_done completion instead, origin may contain ONLY {attemptId,dispatchId,nativeTaskId,messageId} and evidence must include its exact worker_report:messageId. The plugin verifies this as sourceReport; it is not a native ask and requires no orchestration reply or requester resume. Ordinary message IDs are not completion proof. Keep every originating member and owning Run; never use ordinary message labels as proof. Ask the user in your own highest-supervisor session and record their answer with session-answer as described in sessionDecisions. Legacy saved panel answers may still arrive as TEAM_USER_ANSWER. Reply only as the actual native owning Run consumer, relay through actual lower managers for nested asks, then publish kind=answer-ack with appQuestionId,answerId and same protocol authority. An ack may include nextNativeTaskId to authorize exactly one next step after two failures. Only native execution success resets the consecutive failure count. Awaiting one question never pauses independent tasks. For staffing publish a native Task with protocol team-questions/v1, kind staffing-proposal, appQuestionId, workId, token, generation, proposingManagerId equal to your member ID, current configVersion, roleVersion 1 for the new role, member {name,boss,brief,habits,collaboration,agent,model,effort}, rationale and affectedTaskKeys. Lower managers relay this proposal to the highest supervisor. The highest supervisor asks the user in its own session, then records staffing-decision as described in sessionDecisions. Never allocate a member/session yourself. TEAM_ROSTER_DELTA carries user-approved effective configuration and current direct children; use its configVersion for future tasks and publish native kind roster-ack with appQuestionId, deltaId, configVersion and same protocol authority after incorporation." }, instructions: "You are the real supervisor. For a direct child create exactly one native Task with task-create --spec JSON --run this Run --json, no extra task flags or forged --from. Spec fields: protocol,workId,token,generation,taskKey (stable alphanumeric/hyphen ID),memberId,configVersion,roleVersion,role (exact saved role object),instruction,workerRules (copy the exact workerRules string above into the native Task spec so the actual worker receives it). Do not worker-start yet. Finish your turn and wait for TEAM_DISPATCH_PERMIT. Repeating an unknown request requires the native reported retry-request UUID, never a fresh creation. If you omitted workerRules from a never-admitted, never-dispatched Task, preserve that original. Create one corrected Task whose parsed spec is identical except for adding the exact workerRules. You may then task-update the original --status failed --result JSON --run this Run --json, with no forged --from. The exact result fields are protocol=team-intent-withdrawal/v1, workId, token, generation, supervisorMemberId (your member ID), nativeTaskId (original), taskKey, memberId, replacementNativeTaskId (corrected), reason=missing-worker-rules. Never use withdrawal for a Task with any admission, permit, Dispatch or uncertain execution; it is not a worker failure or a retry. Wait for normal permits for the corrected Task.  Only after the permit, execute worker-start with exactly the supplied startParams using your own inherited native identity. Record native Task/Dispatch receipts; never claim completion from accepted input. Tell each actual worker to use the native worker_done report with its real Task/Dispatch and succeeded/failed outcome. Members stay open while idle. Spec must include writeScope: an array of {path: relative file/directory path, kind: file or directory}; use [] for no writes. All members share the exact selected directory; do not create worktrees. Declared scopes are cooperative coordination, not tool-level isolation. Overlapping scopes wait until acceptance; unknown attempts retain their scope. Spec may include dependencies (application taskKey array). They wait for supervisor acceptance, not native completed. After a native worker_done result, inspect evidence and task-update that same native Task with its unchanged completed/failed status and exact JSON result: protocol team-review/v1, workId,token,generation,taskKey,attemptId,nativeTaskId,dispatchId,reviewToken (from permit),reviewerMemberId (your member),decision accept or rework,evidenceRefs (include worker_report:MESSAGE_ID, where MESSAGE_ID is the id of that attempt's actual native worker_done message, and validation references),summary. Use --run this Run, no extra flags or forged caller. The plugin verifies the native taskUpdate receipt; JSON alone is not acceptance. Rework creates a NEW native Task with the SAME taskKey and dependencies plus previousAttemptId equal to the rejected attempt. Wait for a fresh permit; never relaunch the member yourself. Lower managers must keep their original parent Dispatch active until all descendants are accepted and relay questions answered, then themselves report native worker_done for that original Dispatch and original parent Run. Do not create a total delivery from a child Run. Only the highest supervisor, when the overall objective is ready, creates a separate native Task using task-create --spec JSON --run this Run --json, no extra flags. Its exact spec: protocol team-delivery/v1,workId,token,generation,supervisorMemberId (your member ID),previousDeliveryId (null initially, then prior delivery Task ID),summary (overall result),evidenceRefs (validation/artifact references including every latest accepted attempt evidenceId),attemptIds (use the attemptId delivered in each latest TEAM_DISPATCH_PERMIT). The execution evidenceId for an accepted attempt is exactly worker_report:MESSAGE_ID for its actual native worker_done message; use the same reference you included in its native acceptance review. Never invent a message ID or include a superseded attempt. After completing your genuine native acceptance reviews for every latest required attempt, publish the delivery proposal using those IDs and real validation references. Do not wait for a separate plugin acceptance notification. The plugin independently verifies reviews and gates user acceptance; proposing a delivery does not assert plugin or user acceptance. Never approve the overall delivery as the user." };
   if (work.mode === "supervisor-session") packet.instructions = packet.instructions.split("Only the highest supervisor, when the overall objective is ready,")[0] + "The highest supervisor reports outcomes directly to the user in this session and continues with their next instruction. Do not publish team-delivery proposals, close this team coordination Run between user tasks, queue total objectives, or send the user to panel acceptance controls.";
   return "TEAM_DISPATCH_PROTOCOL\n" + JSON.stringify(packet);
 }
@@ -2659,15 +2815,15 @@ function userMessage(work, instance, text9, status) {
     const body = { kind: "message", role: "user", blocks: [{ type: "text", text: text9 }] }, sessionId = work.binding.sessionId, delivery = status?.capabilities?.includes("agent-session.queued-messages.v1") ? "queue-if-active" : void 0;
     return { method: "agentSession.send", params: { envelope: { sessionId, clientOperationId: `${Date.now()}-${randomBytes2(16).toString("hex")}`, expectedRuntimeFence: instance.fence, payloadFingerprint: sendFingerprint(sessionId, body, delivery) }, body, ...delivery ? { delivery } : {} }, envelope: {} };
   }
-  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text9, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID5() } };
+  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text9, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID6() } };
 }
 function accepted(receipt, send, instance) {
   if (send.method === "agentSession.send") return receipt?.ok === true && receipt.value?.clientMessageId === send.params.envelope.clientOperationId && (receipt.value.queued ? send.params.delivery === "queue-if-active" && typeof receipt.value.queued.messageId === "string" && ["waiting", "dispatched"].includes(receipt.value.queued.state) : ["pending", "accepted"].includes(receipt.value.submission?.dispatchState));
   return receipt?.send?.accepted === true && receipt.send.handle === instance.handle && receipt.send.prompt?.requestId === send.envelope.orchestrationRequestId && receipt.send.prompt.processIncarnation === instance.incarnationId;
 }
 function createDispatchService({ store, rpc, userData, consent, works, beforeAdmission, onNativeWait, onClosedMember }) {
-  const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
+  const serialize2 = createKeyedSerializer();
+  const serial = (id2, fn) => serialize2(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const project = (id2) => store.dispatchProjection(id2);
   const teamFor = (work) => store.effectiveTeamForWork?.(work.id) ?? store.readTeamVersion(work.teamId, work.configVersion);
   async function evidence(work, protocol, team, verified) {
@@ -2894,8 +3050,8 @@ async function notifyQuestionEvent(store, notify, { workId, id: id2, kind, title
   return store.updateQuestionEvent(workId, id2, { state });
 }
 function createQuestionService({ store, rpc, userData, consent, works, notify }) {
-  const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
+  const serialize2 = createKeyedSerializer();
+  const serial = (id2, fn) => serialize2(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   const matchingIntent = (question, native) => native.intents.find((intent) => intent.nativeTaskId === question.proof?.nativeTaskId && JSON.stringify(intent) === JSON.stringify(question.proof) && JSON.stringify(intent.spec.origin ?? null) === JSON.stringify(question.origin ?? null));
   const reportFor = (question, native) => {
     const intent = matchingIntent(question, native), source = intent && (native.sourceReports ?? []).find((row) => row.nativeTaskId === intent.nativeTaskId && row.appQuestionId === question.id)?.sourceReport;
@@ -3100,8 +3256,8 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
 // src/local/staffing.mjs
 function createStaffingService({ store, rpc, userData, works, consent, notify }) {
   const current = (id2) => store.readCurrentWork?.(id2) ?? store.readWork(id2);
-  const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(current(id2)), fn));
+  const serialize2 = createKeyedSerializer();
+  const serial = (id2, fn) => serialize2(id2, () => withNativeRuntime(rpc, controlRuntime(current(id2)), fn));
   async function check(id2) {
     const root = current(id2);
     if (!root || root.status === "completed") return;
@@ -3167,8 +3323,8 @@ function createStaffingService({ store, rpc, userData, works, consent, notify })
         await consent();
         const verified = await works.verifyWork(target.id, true), work = current(target.id), protocol = store.readDispatchProtocol(work.id);
         if (!protocol || protocol.generation !== work.run.consumerGeneration) continue;
-        const team = store.readTeamVersion(work.teamId, delta.configVersion), children = team.members.filter((m) => m.boss === delta.supervisorMemberId).map((m) => ({ memberId: m.id, name: m.name, agent: m.agent, model: m.model, effort: m.effort, roleVersion: m.roleVersion, role: { brief: m.brief, habits: m.habits, collaboration: m.collaboration } }));
-        const text9 = "TEAM_ROSTER_DELTA\n" + JSON.stringify({ protocol: "team-questions/v1", kind: "roster-delta", workId: work.id, teamWorkId: delta.workId, deltaId: delta.id, configVersion: delta.configVersion, supervisorMemberId: delta.supervisorMemberId, memberIds: delta.memberIds, children, token: protocol.token, generation: protocol.generation, instruction: "The user saved this configuration. Use registered direct children and this configVersion for future task-create admission. Prior Tasks retain their versions. Do not create sessions or bypass dependencies, write scopes, host checks or TEAM_DISPATCH_PERMIT. Confirm incorporation with native task-create --spec JSON --run your actual Run --json, protocol team-questions/v1, kind roster-ack, workId, token, generation, appQuestionId, deltaId and configVersion. Native input acceptance alone is not your acknowledgement." });
+        const team = store.readTeamVersion(work.teamId, delta.configVersion), children = team.members.filter((m) => m.boss === delta.supervisorMemberId).map((m) => ({ memberId: m.id, name: m.name, agent: m.agent, model: m.model, effort: m.effort, roleVersion: m.roleVersion, ...team.configuration?.projectRoleFiles === 1 ? { roleFileInstruction: rolePointer(team, m) } : {}, role: { brief: m.brief, habits: m.habits, collaboration: m.collaboration } }));
+        const text9 = "TEAM_ROSTER_DELTA\n" + JSON.stringify({ protocol: "team-questions/v1", kind: "roster-delta", workId: work.id, teamWorkId: delta.workId, deltaId: delta.id, configVersion: delta.configVersion, supervisorMemberId: delta.supervisorMemberId, memberIds: delta.memberIds, children, token: protocol.token, generation: protocol.generation, instruction: "The user saved this configuration. Reread your persistent role file, tell participating direct children to reread theirs, and include each child roleFileInstruction verbatim in future native Task instructions when provided. Use registered direct children and this configVersion for future task-create admission. Prior Tasks retain their versions. Do not create sessions or bypass dependencies, write scopes, host checks or TEAM_DISPATCH_PERMIT. Confirm incorporation with native task-create --spec JSON --run your actual Run --json, protocol team-questions/v1, kind roster-ack, workId, token, generation, appQuestionId, deltaId and configVersion. Native input acceptance alone is not your acknowledgement." });
         const nativeSend = userMessage(work, verified.instance, text9, verified.status);
         if (!store.claimRosterDelta(delta.id, { nativeSend, contextId: work.id, runId: work.run.id, generation: work.run.consumerGeneration, supervisorMemberId: work.supervisorMemberId })) continue;
         await works.verifyHost(work.id, verified.hostGeneration);
@@ -3190,7 +3346,7 @@ function createStaffingService({ store, rpc, userData, works, consent, notify })
 
 // src/local/hierarchy.mjs
 function createHierarchyService({ store, userData, works }) {
-  const serialize = createKeyedSerializer();
+  const serialize2 = createKeyedSerializer();
   async function check(id2) {
     const root = (store.readCurrentWork ?? store.readWork)(id2);
     if (!root || root.status === "completed") return;
@@ -3211,13 +3367,13 @@ function createHierarchyService({ store, userData, works }) {
       }
     }
   }
-  return { check: (id2) => serialize(id2, () => check(id2)), async reconcile() {
+  return { check: (id2) => serialize2(id2, () => check(id2)), async reconcile() {
     for (const w of store.listWorks()) await this.check(w.id);
   } };
 }
 
 // src/local/stop-store.mjs
-import { randomUUID as randomUUID6, createHash as createHash11 } from "node:crypto";
+import { randomUUID as randomUUID7, createHash as createHash11 } from "node:crypto";
 var canonical3 = (v) => Array.isArray(v) ? v.map(canonical3) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical3(v[k])])) : v;
 var sameStopIdentity = (a, b) => JSON.stringify(canonical3(a)) === JSON.stringify(canonical3(b));
 function stopStore({ db, readPrivate, putPrivate, atomic }) {
@@ -3259,7 +3415,7 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
         }
         const duplicate = listStops().findLast((row2) => sameStopIdentity(row2.target, target));
         if (duplicate) return duplicate;
-        const row = { requestId: input.requestId, nativeRequestId: randomUUID6(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const row = { requestId: input.requestId, nativeRequestId: randomUUID7(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         putPrivate(`stop:${row.requestId}`, row);
         return row;
       });
@@ -3282,13 +3438,13 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
 }
 
 // src/local/wake-evidence.mjs
-import { realpath as realpath6 } from "node:fs/promises";
-import { join as join9, relative as relative5, isAbsolute as isAbsolute9, sep as sep5 } from "node:path";
+import { realpath as realpath7 } from "node:fs/promises";
+import { join as join10, relative as relative6, isAbsolute as isAbsolute10, sep as sep6 } from "node:path";
 async function resumedOwner(userData, operation, oldFence) {
   let db;
   try {
-    const root = await realpath6(userData), path = await realpath6(join9(root, "agent-session-journal.db")), rel = relative5(root, path);
-    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute9(rel)) return null;
+    const root = await realpath7(userData), path = await realpath7(join10(root, "agent-session-journal.db")), rel = relative6(root, path);
+    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute10(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3369,6 +3525,8 @@ function memberLaunch(team, member, workspaceKey) {
   const boss = team.members.find((row) => row.id === member.boss);
   const reports = team.members.filter((row) => row.boss === member.id);
   const roster = team.members.map((row) => `${row.id}: ${row.name} (${row.role}, ${row.agent}), boss=${row.boss ?? "user"}`).join("\n");
+  const pointer = team.configuration?.projectRoleFiles === 1 ? `${rolePointer(team, member)}
+` : "";
   return {
     requestId: `${team.id}-${member.id}`,
     teamId: team.id,
@@ -3378,7 +3536,7 @@ function memberLaunch(team, member, workspaceKey) {
     agent: member.agent,
     ...member.model !== "default" ? { model: member.model } : {},
     ...member.effort !== "default" ? { effort: member.effort } : {},
-    brief: `You are ${member.name}, the ${member.role} of @${team.name}. Your session name is ${team.name}/${member.name}.
+    brief: `${pointer}You are ${member.name}, the ${member.role} of @${team.name}. Your session name is ${team.name}/${member.name}.
 Team purpose/function: ${team.purpose || "Take assignments from the user in the highest supervisor session."}
 Report to: ${boss?.name ?? "the user"}. Direct reports: ${reports.map((row) => row.name).join(", ") || "none"}.
 ${member.brief}
@@ -3441,7 +3599,7 @@ function publicOperation(operation) {
 }
 
 // src/local/wake-store.mjs
-import { randomUUID as randomUUID7, createHash as createHash12 } from "node:crypto";
+import { randomUUID as randomUUID8, createHash as createHash12 } from "node:crypto";
 var digest2 = (v) => createHash12("sha256").update(JSON.stringify(v)).digest("hex");
 var publicWake = (row) => {
   if (!row) return null;
@@ -3497,7 +3655,7 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
           if (attempt.workId !== workId || attempt.supervisorMemberId !== row.memberId) continue;
           if (attempt.review && attempt.originalSupervisorInstance) continue;
           attempt.originalSupervisorInstance ??= work.instance;
-          if (!attempt.review) attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID7(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
+          if (!attempt.review) attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID8(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
           attempt.version++;
           putPrivate(saved.id, attempt);
         }
@@ -3609,13 +3767,13 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
 }
 
 // src/local/recovery.mjs
-import { realpath as realpath8 } from "node:fs/promises";
-import { join as join11, relative as relative7, isAbsolute as isAbsolute11, sep as sep7 } from "node:path";
+import { realpath as realpath9 } from "node:fs/promises";
+import { join as join12, relative as relative8, isAbsolute as isAbsolute12, sep as sep8 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
 import { createHash as createHash13 } from "node:crypto";
-import { realpath as realpath7 } from "node:fs/promises";
-import { join as join10, relative as relative6, isAbsolute as isAbsolute10, sep as sep6 } from "node:path";
+import { realpath as realpath8 } from "node:fs/promises";
+import { join as join11, relative as relative7, isAbsolute as isAbsolute11, sep as sep7 } from "node:path";
 var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
 var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
@@ -3624,10 +3782,10 @@ function nativeLaunchFingerprint(input) {
 async function readNativeLaunchLedger(userData, request) {
   let db;
   try {
-    if (!isAbsolute10(userData || "")) throw Error();
-    const profile = await realpath7(userData), file = await realpath7(join10(profile, "agent-session-journal.db"));
-    const rel = relative6(profile, file);
-    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute10(rel)) throw Error();
+    if (!isAbsolute11(userData || "")) throw Error();
+    const profile = await realpath8(userData), file = await realpath8(join11(profile, "agent-session-journal.db"));
+    const rel = relative7(profile, file);
+    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute11(rel)) throw Error();
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) throw Error();
@@ -3653,9 +3811,9 @@ var detail = (error) => String(error?.message ?? error).slice(0, 1200);
 async function readSessionDeath(userData, sessionId, ownerFence, scope) {
   let db;
   try {
-    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute11(userData || "")) return null;
-    const profile = await realpath8(userData), path = await realpath8(join11(profile, "agent-session-journal.db")), rel = relative7(profile, path);
-    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute11(rel)) return null;
+    if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute12(userData || "")) return null;
+    const profile = await realpath9(userData), path = await realpath9(join12(profile, "agent-session-journal.db")), rel = relative8(profile, path);
+    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute12(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3671,8 +3829,8 @@ async function readSessionDeath(userData, sessionId, ownerFence, scope) {
   }
 }
 function createRecoveryService({ store, rpc, userData, consent }) {
-  const serialize = createKeyedSerializer();
-  const serial = serialize;
+  const serialize2 = createKeyedSerializer();
+  const serial = serialize2;
   async function host(scope) {
     if (!scope.executionHostId.startsWith("ssh:")) return null;
     const state = (await rpc("ssh.getState", { targetId: decodeURIComponent(scope.executionHostId.slice(4)) }))?.state;
@@ -4078,13 +4236,13 @@ Member ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id ?
 }
 
 // src/local/native-stop.mjs
-import { realpath as realpath9 } from "node:fs/promises";
-import { join as join12, relative as relative8, isAbsolute as isAbsolute12, sep as sep8 } from "node:path";
+import { realpath as realpath10 } from "node:fs/promises";
+import { join as join13, relative as relative9, isAbsolute as isAbsolute13, sep as sep9 } from "node:path";
 async function readStopReceipt(userData, row) {
   let db;
   try {
-    const root = await realpath9(userData), file = await realpath9(join12(root, "orchestration.db")), rel = relative8(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute12(rel)) return null;
+    const root = await realpath10(userData), file = await realpath10(join13(root, "orchestration.db")), rel = relative9(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute13(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 43) return null;
@@ -4249,8 +4407,8 @@ function createStopService({ store, rpc, userData, consent }) {
 
 // src/local/lifecycle.mjs
 function createLifecycleService({ store, rpc, userData, consent, works, notify }) {
-  const serialize = createKeyedSerializer();
-  const serial = (id2, fn) => serialize(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
+  const serialize2 = createKeyedSerializer();
+  const serial = (id2, fn) => serialize2(id2, () => withNativeRuntime(rpc, controlRuntime(store.readCurrentWork(id2)), fn));
   async function evidence(id2) {
     const work = store.readCurrentWork(id2);
     if (!work || work.status === "completed") return null;
@@ -4323,7 +4481,7 @@ function createLifecycleService({ store, rpc, userData, consent, works, notify }
 
 // src/local/executor.mjs
 import { timingSafeEqual } from "node:crypto";
-import { createHash as createHash14, randomUUID as randomUUID8 } from "node:crypto";
+import { createHash as createHash14, randomUUID as randomUUID9 } from "node:crypto";
 var hash3 = (value) => createHash14("sha256").update(value).digest("hex");
 function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
   const consent = () => host.call("storage.get", { key: "team-work-consent-v1" });
@@ -4333,7 +4491,10 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing = createStaffingService({ store, userData, consent, rpc, works, notify: (params) => host.call("notifications.show", params) });
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: (params) => host.call("notifications.show", params) });
-  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: (id2) => questions.check(id2), onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: (input) => wake.wake(input) });
+  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: async (id2) => {
+    await questions.check(id2);
+    await syncTeamRoles(store.readWork(id2).teamId);
+  }, onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: (input) => wake.wake(input) });
   const hierarchy = createHierarchyService({ store, userData, works });
   const stops = createStopService({ store, rpc, userData, consent });
   const lifecycle = createLifecycleService({ store, rpc, userData, consent, works, notify: (params) => host.call("notifications.show", params) });
@@ -4364,6 +4525,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
         await wake.check(row.requestId);
         await wake.bind(row.requestId);
       }
+      for (const team of store.readSnapshot().teams.filter((t) => t.launch)) await syncTeamRoles(team.id);
       for (const team of store.readSnapshot().teams.filter((t) => t.launch && t.configuration.sessionMode !== false)) try {
         await works.ensureSession(team.id);
       } catch {
@@ -4408,11 +4570,21 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
     if (typeof executionHostId !== "string" || !/^(local|ssh:[^\s|]+)$/.test(executionHostId)) throw new Error("Orca did not verify a supported local or SSH execution host for this workspace.");
     return { workspaceId: workspace.id, executionHostId, kind: workspace.kind, displayName: workspace.displayName || workspace.branch || "Workspace", branch: workspace.branch || "", workspaceKey: hash3(JSON.stringify([workspace.id, executionHostId])) };
   }
-  const publicScope2 = ({ workspaceId, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
+  const serializeRoleSync = createKeyedSerializer();
+  async function syncTeamRoles(teamId) {
+    return serializeRoleSync(teamId, async () => {
+      const team = store.readSnapshot().teams.find((row) => row.id === teamId);
+      if (team?.configuration.projectRoleFiles !== 1) return;
+      const scope = store.readScope(teamId), workspace = await workspaceRecord(scope.workspaceId);
+      await syncProjectRoles(team, await projectRoot(workspace, scope));
+      if (store.readSnapshot().teams.find((row) => row.id === teamId)?.configVersion !== team.configVersion) throw Error("Team configuration changed while generating role files; retry before launching.");
+    });
+  }
+  const publicScope2 = ({ workspaceId, projectPath, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
   async function context(workspaceId, teamId) {
     if (teamId) return publicScope2(store.readScope(teamId));
     const scope = verifiedScope(await workspaceRecord(workspaceId));
-    const selectionToken = randomUUID8();
+    const selectionToken = randomUUID9();
     if (selections.size >= 128) selections.delete(selections.keys().next().value);
     selections.set(selectionToken, scope);
     return { ...publicScope2(scope), selectionToken };
@@ -4428,7 +4600,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   }
   function plan(operation) {
     if (launchPlans.size >= 128) launchPlans.delete(launchPlans.keys().next().value);
-    const phaseId = randomUUID8();
+    const phaseId = randomUUID9();
     launchPlans.set(phaseId, { requestId: operation.requestId, operationId: operation.nativeRequest.operationId });
     return { phaseId, operation };
   }
@@ -4477,6 +4649,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           if (latestObservation.get(row.oldBinding.scope.workspaceKey) !== params.observationId || !observed || Date.now() - observed.observedAt > 3e4 || observed.runtimeId !== row.proof.runtimeId) throw Error("Fresh authenticated recovery capability admission is required.");
           const issue = preferenceIssue(member, observed, { requireCore: true });
           if (issue) throw Error(issue);
+          await syncTeamRoles(row.teamId);
           const result = await wake.prepareFresh(row.requestId);
           return result.fresh ? plan(result.operation) : { receipt: publicOperation(result.operation) };
         }
@@ -4535,6 +4708,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error("The bound workspace or execution host changed.");
           if (latestObservation.get(scope.workspaceKey) !== params.observationId) throw Error("Launch capability admission was superseded.");
+          await syncTeamRoles(team.id);
           const prepared = store.prepareOperation(input, { scope, nativeRequest: nativeLaunchIntent(team, member, scope), roleVersion: member.roleVersion, title: `${team.name}/${member.name}`, executionHostId: scope.executionHostId, runtimeId: observed.runtimeId, hostGeneration: observed.hostGeneration });
           return prepared.fresh ? plan(prepared.operation) : { receipt: publicOperation(prepared.operation) };
         }
@@ -4548,6 +4722,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error("The saved execution scope changed before launch.");
           if (saved.wakeRequestId) await wake.validateFresh(saved.wakeRequestId);
+          await syncTeamRoles(saved.teamId);
           settled(saved, { effectState: "submitted", recovery: void 0 });
           return { valid: true };
         }
@@ -4595,7 +4770,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
         if (op === "_capabilityScope") {
           const scope = params.teamId ? store.readScope(params.teamId) : selections.get(params.selectionToken);
           if (!scope) throw Error("Confirm a saved team or selected project before reading capabilities.");
-          const observationId = randomUUID8();
+          const observationId = randomUUID9();
           latestObservation.set(scope.workspaceKey, observationId);
           capabilities.delete(scope.workspaceKey);
           const verified = verifiedScope(await workspaceRecord(scope.workspaceId));
@@ -4707,10 +4882,14 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
       }
       if (op === "createTeam") {
         const previous = store.replay("createTeam", params);
-        if (previous) return { value: previous };
+        if (previous) {
+          await syncTeamRoles(previous.teams.at(-1).id);
+          return { value: previous };
+        }
         const selected = selections.get(params.selectionToken);
         if (!selected) throw new Error("The detected project expired. Try launching again to read the current project.");
-        const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
+        const workspace = await workspaceRecord(selected.workspaceId);
+        const verified = verifiedScope(workspace);
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error("The execution host changed. Try launching again to read the current project.");
         if (params.form.sessionMode === true) {
           const issue = sessionIssue(capabilities.get(selected.workspaceKey));
@@ -4720,9 +4899,20 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? "codex", model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);
         }
-        return { value: store.createTeam(params, selected) };
+        const root = await projectRoot(workspace, selected);
+        const value = store.createTeam(params, { ...selected, projectPath: root });
+        try {
+          await syncTeamRoles(value.teams.at(-1).id);
+        } catch (error) {
+          throw Error(`Team saved, but role files could not be prepared: ${error.message} No members were launched. Retry the same creation request to repair files without creating another team.`);
+        }
+        return { value };
       }
-      if (op === "updateRole") return { value: store.updateRole(params) };
+      if (op === "updateRole") {
+        const value = store.updateRole(params);
+        await syncTeamRoles(params.teamId);
+        return { value };
+      }
       if (op === "updateSettings") return { value: store.updateSettings(params) };
       if (op === "receipt") return publicOperation(store.readOperation(params.requestId));
       throw new Error("Unknown team operation.");
@@ -4956,7 +5146,7 @@ function staffingExpiryProof(proposal, read) {
 }
 
 // src/local/history-cleanup.mjs
-import { randomUUID as randomUUID9, createHash as createHash17 } from "node:crypto";
+import { randomUUID as randomUUID10, createHash as createHash17 } from "node:crypto";
 var CLEARED = "[History manually cleared]";
 var hash4 = (v) => createHash17("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
@@ -5138,7 +5328,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
     previewHistoryCleanup(input) {
       if (!input || Object.keys(input).some((k) => k !== "selectedWorkIds") || !Array.isArray(input.selectedWorkIds) || input.selectedWorkIds.length < 1 || input.selectedWorkIds.length > 100 || input.selectedWorkIds.some((id2) => typeof id2 !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(id2))) throw Error("Select 1\u2013100 saved Work histories.");
       return atomic(() => {
-        const ids = [...new Set(input.selectedWorkIds)].sort(), p = plan(ids), previewToken = randomUUID9(), storageRevision = p.storageRevision, expiresAt = Date.now() + 3e5;
+        const ids = [...new Set(input.selectedWorkIds)].sort(), p = plan(ids), previewToken = randomUUID10(), storageRevision = p.storageRevision, expiresAt = Date.now() + 3e5;
         if (previews.size >= 64) previews.delete(previews.keys().next().value);
         previews.set(previewToken, { ...p, storageRevision, expiresAt });
         return { previewToken, storageRevision, expiresAt, selectedWorkIds: ids, eligibleWorkIds: p.eligibleWorkIds, retained: p.retained, changes: p.changes.map(({ id: id2, workId, fields: fields2, logicalBytes }) => ({ recordId: id2, workId, fields: fields2, logicalBytes })), snapshotCount: p.snapshots.length, logicalBytes: p.changes.reduce((n, r) => n + r.logicalBytes, 0), notice: "Clears displayed delivery summaries, task results, review summaries and cached public snapshots. Keeps objectives, native request/proof bodies (which may contain copies), questions, notification evidence, closure decisions, identities, replay barriers, configuration and role versions. Migration backups may still contain history. Project files, login data, native sessions and provider conversations are outside this cleanup. No secure erasure or immediate file shrink is promised." };
@@ -5273,7 +5463,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
 }
 
 // src/local/staffing-store.mjs
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 var text8 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 var id = (v) => text8(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
 function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, readSnapshot, write, archive, atomic }) {
@@ -5299,11 +5489,11 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     if (!db.isTransaction) throw Error("Configuration amendment must share its validated save transaction.");
     const work = active(workId), previous = effectiveTeamForWork(work.id);
     if (team.id !== work.teamId || team.configVersion <= previous.configVersion || !memberIds.length || memberIds.some((id2) => !team.members.some((m) => m.id === id2))) throw Error("Invalid Work configuration amendment.");
-    const amendment = { id: randomUUID10(), workId: work.id, teamId: team.id, previousConfigVersion: previous.configVersion, configVersion: team.configVersion, requestId, kind, memberIds, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+    const amendment = { id: randomUUID11(), workId: work.id, teamId: team.id, previousConfigVersion: previous.configVersion, configVersion: team.configVersion, requestId, kind, memberIds, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
     putPrivate(`configuration-amendment:${amendment.id}`, amendment);
     putPrivate(`work-configuration:${work.id}`, amendment);
     for (const supervisorMemberId of new Set(team.members.filter((m) => team.members.some((child) => child.boss === m.id)).map((m) => m.id))) {
-      const delta = { id: randomUUID10(), workId: work.id, teamId: team.id, amendmentId: amendment.id, supervisorMemberId, configVersion: team.configVersion, memberIds: memberIds.filter((id2) => team.members.find((m) => m.id === id2).boss === supervisorMemberId), state: "queued", processed: "unconfirmed", createdAt: amendment.createdAt };
+      const delta = { id: randomUUID11(), workId: work.id, teamId: team.id, amendmentId: amendment.id, supervisorMemberId, configVersion: team.configVersion, memberIds: memberIds.filter((id2) => team.members.find((m) => m.id === id2).boss === supervisorMemberId), state: "queued", processed: "unconfirmed", createdAt: amendment.createdAt };
       putPrivate(`roster-delta:${delta.id}`, delta);
     }
     return amendment;
@@ -5454,7 +5644,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         if (!["claude", "codex"].includes(source.agent) || !text8(source.model, 120) || !text8(source.effort, 120) || source.model === "default" && source.effort !== "default") throw Error("Choose valid agent, model and effort preferences.");
         if (team.members.some((m) => m.name.toLowerCase() === source.name.toLowerCase())) throw Error("Member name already exists.");
         if (team.scope.workspaceKey !== work.scope.workspaceKey || team.scope.executionHostId !== work.scope.executionHostId) throw Error("TeamWork execution scope changed.");
-        const member = { ...source, id: randomUUID10(), team: boss.team, role: boss.role === "ceo" ? "head" : boss.level === 1 && team.configuration.levels === 3 ? "lead" : "worker", level: boss.level + 1, roleVersion: 1, state: "unassigned", preferenceOverride: true };
+        const member = { ...source, id: randomUUID11(), team: boss.team, role: boss.role === "ceo" ? "head" : boss.level === 1 && team.configuration.levels === 3 ? "lead" : "worker", level: boss.level + 1, roleVersion: 1, state: "unassigned", preferenceOverride: true };
         team.members.push(member);
         team.configVersion++;
         archive(team);
@@ -5462,7 +5652,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         state.revision++;
         validatePersistentState(state);
         write(state);
-        const result = { requestId: input.requestId, workId: work.id, from: "user", source: sessionDecision ? "supervisor-session" : proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" && !sessionDecision ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID10() } } : {} };
+        const result = { requestId: input.requestId, workId: work.id, from: "user", source: sessionDecision ? "supervisor-session" : proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" && !sessionDecision ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID11() } } : {} };
         return decide(result);
       });
     }
@@ -5471,7 +5661,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
 }
 
 // src/local/lifecycle-store.mjs
-import { randomUUID as randomUUID11, createHash as createHash19 } from "node:crypto";
+import { randomUUID as randomUUID12, createHash as createHash19 } from "node:crypto";
 var digest4 = (value) => createHash19("sha256").update(JSON.stringify(value)).digest("hex");
 var fail2 = (message) => {
   throw Error(message);
@@ -5581,8 +5771,8 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
           if (goal) {
             goal.status = "reserved";
             goal.previousWorkId = w.id;
-            goal.launchRequests = Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID11()]));
-            goal.workRequestId = randomUUID11();
+            goal.launchRequests = Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID12()]));
+            goal.workRequestId = randomUUID12();
             goal.configVersion = team.configVersion;
             goal.supervisorMemberId = team.members.find((m) => m.boss === null).id;
             goal.handoff = boundedHandoff(w.handoff);
@@ -5618,7 +5808,7 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
         if (Object.keys(team.launch?.members ?? {}).length) fail2("Existing preparation bindings must be resolved before a fresh queued goal.");
         const old = db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%' ORDER BY rowid DESC").all().map((r) => JSON.parse(r.json)).find((w) => w.teamId === teamId && w.status === "completed");
         if (!old) fail2("Submit the first total objective with its prepared supervisor before advancing later goals.");
-        Object.assign(goal, { status: "reserved", previousWorkId: old.id, handoff: boundedHandoff(old.handoff), launchRequests: Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID11()])), workRequestId: randomUUID11(), configVersion: team.configVersion, supervisorMemberId: team.members.find((m) => m.boss === null).id });
+        Object.assign(goal, { status: "reserved", previousWorkId: old.id, handoff: boundedHandoff(old.handoff), launchRequests: Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID12()])), workRequestId: randomUUID12(), configVersion: team.configVersion, supervisorMemberId: team.members.find((m) => m.boss === null).id });
         putPrivate(`goal:${goal.id}`, goal);
         putPrivate(`next-goal:${teamId}`, { goalId: goal.id });
         state.revision++;
@@ -5635,9 +5825,9 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 }
 
 // src/local/store.mjs
-import { mkdir as mkdir4, realpath as realpath10, stat as stat3, open as open5 } from "node:fs/promises";
-import { join as join13, isAbsolute as isAbsolute13, relative as relative9, sep as sep9 } from "node:path";
-import { randomUUID as randomUUID12, createHash as createHash20 } from "node:crypto";
+import { mkdir as mkdir5, realpath as realpath11, stat as stat3, open as open6 } from "node:fs/promises";
+import { join as join14, isAbsolute as isAbsolute14, relative as relative10, sep as sep10 } from "node:path";
+import { randomUUID as randomUUID13, createHash as createHash20 } from "node:crypto";
 var FORMAT = "orca-team-store";
 var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
 var fingerprint = (value) => createHash20("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
@@ -5655,7 +5845,7 @@ async function openTeamStore(options) {
   }
 }
 async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}) {
-  if (typeof userData !== "string" || !isAbsolute13(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
+  if (typeof userData !== "string" || !isAbsolute14(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
   let DatabaseSync, backup;
   try {
     ({ DatabaseSync, backup } = await sqlite());
@@ -5663,27 +5853,27 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
   }
   if (typeof DatabaseSync !== "function") fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
-  const profile = await realpath10(userData);
-  const directory = join13(profile, "plugins-data", "herman925.team-orchestrator");
+  const profile = await realpath11(userData);
+  const directory = join14(profile, "plugins-data", "herman925.team-orchestrator");
   const inside = (path2) => {
-    const rel = relative9(profile, path2);
-    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute13(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
+    const rel = relative10(profile, path2);
+    if (rel === ".." || rel.startsWith(`..${sep10}`) || isAbsolute14(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
   };
-  for (const target of [join13(profile, "plugins-data"), directory]) {
+  for (const target of [join14(profile, "plugins-data"), directory]) {
     try {
-      inside(await realpath10(target));
+      inside(await realpath11(target));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
-      await mkdir4(target, { mode: 448 });
-      inside(await realpath10(target));
+      await mkdir5(target, { mode: 448 });
+      inside(await realpath11(target));
     }
   }
-  const path = join13(directory, "team-orchestrator.sqlite");
+  const path = join14(directory, "team-orchestrator.sqlite");
   let exists = false;
   try {
     await stat3(path);
     exists = true;
-    inside(await realpath10(path));
+    inside(await realpath11(path));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -5696,7 +5886,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter((b) => b.status === "verified-backup").length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);
   }
   if (!exists) {
-    const fresh = await open5(path, "wx", 384);
+    const fresh = await open6(path, "wx", 384);
     await fresh.close();
   }
   const db = new DatabaseSync(path);
@@ -5987,7 +6177,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           }
           const state = readSnapshot(), team = state.teams.find((row) => row.id === input.teamId);
           if (!team || state.revision !== input.expectedRevision) fail3("Team changed; reload before queueing a goal.");
-          const goal = { id: randomUUID12(), teamId: team.id, objective: input.objective, status: "queued", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const goal = { id: randomUUID13(), teamId: team.id, objective: input.objective, status: "queued", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           putPrivate(`goal:${goal.id}`, goal);
           putPrivate(key, { id: goal.id, fingerprint: digest5 });
           state.revision++;
@@ -6030,7 +6220,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           const root = readCurrentWork(parentWork.teamWorkId ?? parentWork.id);
           const team = this.effectiveTeamForWork?.(root.id) ?? JSON.parse(db.prepare("SELECT json FROM team_versions WHERE team_id=? AND version=?").get(root.teamId, root.configVersion).json), member = team.members.find((m) => m.id === attempt?.memberId);
           if (root.status === "completed" || parentWork.run.state !== "verified" || attempt?.status !== "running" || attempt.admission !== "committed" || !attempt.dispatchId || !attempt.binding || attempt.supervisorMemberId !== parentWork.supervisorMemberId || !team.members.some((m) => m.boss === member?.id) || listDispatches(parentWorkId).filter((a) => a.taskKey === attempt.taskKey).at(-1)?.id !== attempt.id) fail3("A current genuine manager parent assignment is required.");
-          const id2 = randomUUID12(), protocolToken = randomUUID12(), b = attempt.binding;
+          const id2 = randomUUID13(), protocolToken = randomUUID13(), b = attempt.binding;
           const binding = { status: "created", requestId: attempt.id, sourceAttemptId: attempt.id, memberId: member.id, teamId: root.teamId, kind: b.kind, handle: b.handle, ...b.sessionId ? { sessionId: b.liveSessionId ?? b.sessionId } : {}, paneKey: b.paneKey, runtimeId: b.runtimeId, scope: root.scope, nativeRequest: { agent: member.agent, sessionOptions: { model: member.model, effort: member.effort } } };
           const work = { format: "team-work-v1", id: id2, teamWorkId: root.id, teamId: root.teamId, requestId: attempt.id, objective: attempt.instruction, configVersion: team.configVersion, roleVersion: attempt.roleVersion, supervisorMemberId: member.id, scope: root.scope, binding, protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
 ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), version: 1, status: "preparing", input: { state: "not_sent" }, processing: { state: "unknown" }, run: { state: "unverified" }, parent: { workId: parentWork.id, runId: attempt.runId, taskId: attempt.nativeTaskId, dispatchId: attempt.dispatchId, attemptId: attempt.id, generation: attempt.generation } };
@@ -6048,7 +6238,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
             if (prior.generation !== work.run.consumerGeneration) fail3("Dispatch protocol belongs to an older Run generation.");
             return prior;
           }
-          const protocol = { format: "team-dispatch-protocol-v1", workId, generation: work.run.consumerGeneration, token: randomUUID12(), state: "not_sent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const protocol = { format: "team-dispatch-protocol-v1", workId, generation: work.run.consumerGeneration, token: randomUUID13(), state: "not_sent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           putPrivate(`dispatch-protocol:${workId}`, protocol);
           return protocol;
         });
@@ -6108,7 +6298,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           if (reservation && !recoveredMember && (!reuse || retained?.id !== reuse.attemptId || !["accepted", "rework"].includes(retained.status) || JSON.stringify(retained.binding) !== JSON.stringify(reuse.binding) || startParams.terminal !== reuse.terminal)) fail3("This member already has a reserved or active binding. Reconcile it before another dispatch.");
           if (reuse && reuse.kind !== "prepared" && !reservation) fail3("Retained member reservation changed.");
           const instanceGeneration = reuse?.instanceGeneration ?? retained?.instanceGeneration ?? (readPrivate(`binding-generation:${member.id}`)?.generation ?? 0) + 1;
-          const id2 = randomUUID12(), attempt = { format: "team-dispatch-v1", id: id2, attemptId: id2, instanceGeneration, workId, teamWorkId: work.teamWorkId ?? work.id, runId: work.run.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, memberId: member.id, memberName: member.name, nativeTaskId: intent.nativeTaskId, taskKey: intent.spec.taskKey, taskSpec: intent.taskSpec, dependencies, writeScope, reviewToken: randomUUID12(), ...previous ? { previousAttemptId: previous.id } : {}, configVersion: team.configVersion, roleVersion: member.roleVersion, role: intent.spec.role, instruction: intent.spec.instruction, token: protocol.token, generation: protocol.generation, scope: work.scope, startParams, ...reuse ? { reuse } : {}, createRequestId: intent.requestId, createPayloadHash: intent.payloadHash, admission: intent.unadmitted ? "unadmitted" : "committed", status: intent.unadmitted ? "unknown" : "admitted", permit: { state: intent.unadmitted ? "unknown" : "not_sent" }, ...intent.unadmitted ? { detail: "Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent." } : {}, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const id2 = randomUUID13(), attempt = { format: "team-dispatch-v1", id: id2, attemptId: id2, instanceGeneration, workId, teamWorkId: work.teamWorkId ?? work.id, runId: work.run.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, memberId: member.id, memberName: member.name, nativeTaskId: intent.nativeTaskId, taskKey: intent.spec.taskKey, taskSpec: intent.taskSpec, dependencies, writeScope, reviewToken: randomUUID13(), ...previous ? { previousAttemptId: previous.id } : {}, configVersion: team.configVersion, roleVersion: member.roleVersion, role: intent.spec.role, instruction: intent.spec.instruction, token: protocol.token, generation: protocol.generation, scope: work.scope, startParams, ...reuse ? { reuse } : {}, createRequestId: intent.requestId, createPayloadHash: intent.payloadHash, admission: intent.unadmitted ? "unadmitted" : "committed", status: intent.unadmitted ? "unknown" : "admitted", permit: { state: intent.unadmitted ? "unknown" : "not_sent" }, ...intent.unadmitted ? { detail: "Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent." } : {}, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           validateDispatch(attempt);
           db.prepare("DELETE FROM receipts WHERE id=?").run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);
           putPrivate(`dispatch:${id2}`, attempt);
@@ -6203,7 +6393,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? "default") || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? "default")) fail3("The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.");
           if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`session-work:${requestId}`)) fail3("This preparation session has already accepted a total objective.");
           const scope = JSON.parse(db.prepare("SELECT json FROM scopes WHERE team_id=?").get(team.id).json);
-          const id2 = randomUUID12(), protocolToken = randomUUID12();
+          const id2 = randomUUID13(), protocolToken = randomUUID13();
           const work = { format: "team-work-v1", ...sessionMode ? { mode: "supervisor-session" } : {}, id: id2, teamId: team.id, requestId: input.requestId, objective: input.objective, configVersion: team.configVersion, roleVersion: supervisor.roleVersion, supervisorMemberId: supervisor.id, scope, binding, recipientBindings: Object.values(team.launch?.members ?? {}).map((r) => readOperation(r.requestId)).filter(Boolean), protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
 ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), version: 1, status: "preparing", input: { state: "not_sent" }, processing: { state: "unknown" }, run: { state: "unverified" } };
           if (nextGoal) {
@@ -6321,8 +6511,9 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         return mutate("createTeam", input, (next) => {
           if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("A verified current project and execution host are required before saving.");
           const team = planTeam(input.form);
-          const ids = new Map(team.members.map((member) => [member.id, randomUUID12()]));
-          team.id = randomUUID12();
+          const ids = new Map(team.members.map((member) => [member.id, randomUUID13()]));
+          if (scope.projectPath) team.configuration.projectRoleFiles = 1;
+          team.id = randomUUID13();
           team.createdAt = (/* @__PURE__ */ new Date()).toISOString();
           team.configVersion = 1;
           team.scope = publicScope(scope);
@@ -6451,7 +6642,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.22", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.23", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

@@ -17,7 +17,11 @@ const NOTES =
   '## Personality and notes\r\n\r\n' +
   '(Optional. Add a voice, a working style or extra rules for this member here. The Team Orchestrator never changes this part.)\r\n'
 
-const kind = (x: Member, list: Member[]) => (x.boss === 'user' || x.level === 1 ? 'head' : list.some(k => k.boss === x.name) ? 'lead' : 'worker')
+/**
+ * What a member is in the roster's words: the top (nobody above it), a lead (others report to it), or a worker.
+ * A member's level is a hint for the panel's layout, never a right: only actual reports make a manager.
+ */
+export const rankOf = (x: Member, list: Member[]) => (x.boss === 'user' ? 'head' : list.some(k => k.boss === x.name) ? 'lead' : 'worker')
 const bossLine = (m: Member) => (m.boss === 'user' ? 'the user (the person at the keyboard)' : m.boss)
 
 /** The generated part of a member's role file. list: the member's team and every boss above it. */
@@ -55,7 +59,7 @@ export function roleText(m: Member, list: Member[]): string {
     '',
     '## The team',
     '',
-    ...list.map(x => `- ${x.name}: ${kind(x, list)}, reports to ${x.boss === 'user' ? 'the user' : x.boss}. ${x.role}`),
+    ...list.map(x => `- ${x.name}: ${rankOf(x, list)}, reports to ${x.boss === 'user' ? 'the user' : x.boss}. ${x.role}`),
     '',
     '## Team files',
     '',

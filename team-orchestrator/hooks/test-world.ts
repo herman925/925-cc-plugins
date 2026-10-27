@@ -13,7 +13,7 @@ export const mountBand = ($: any, bodyColumns?: number) =>
 
 export const no = { exitCode: 1, stdout: '', stderr: 'no orca in test', isStdoutTruncated: false, isStderrTruncated: false }
 
-export type Tab = { handle: string; title: string; worktreePath?: string; screen?: string }
+export type Tab = { handle: string; title: string; worktreePath?: string; worktreeId?: string; executionHostId?: string; screen?: string }
 export type Tr = { id: string; title?: string }
 export const ID1 = '11111111-1111-4111-8111-111111111111'
 export const ID2 = '22222222-2222-4222-8222-222222222222'
@@ -41,7 +41,7 @@ export const world = (
   tabs: Tab[] = [],
   trs: Tr[] = [],
   first?: (e: any) => string | undefined,
-  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string; refuse?: (path: string) => boolean } = {},
+  opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string; refuse?: (path: string) => boolean; worktreePath?: string; worktrees?: Record<string, string>; sessionId?: string; cwd?: string; sessionName?: string } = {},
 ) => {
   const registry = opts.registry ?? REG0
   const regDir = 'C:/home/.claude/sessions'
@@ -49,23 +49,54 @@ export const world = (
   const p = keyOf
   const dir = 'C:/home/.claude/projects/proj'
   const tail = (t: Tr) => (t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '')
+  const callerWorktreeId = opts.env?.ORCA_WORKTREE_ID ?? 'r1::C:/proj'
+  // The caller's own session id. The engine lets the mod's hook read it, but a test's fs handler may not call it
+  // (the host refuses it), so the fixture is told the id and puts it in the registry itself.
+  const callerSessionId = opts.sessionId ?? ID1
+  const callerHandle = async ($: any) => {
+    if (opts.env && Object.prototype.hasOwnProperty.call(opts.env, 'ORCA_TERMINAL_HANDLE')) return opts.env.ORCA_TERMINAL_HANDLE
+    const sid = callerSessionId
+    const title = trs.find(t => t.id === sid)?.title
+    const matched = title ? tabs.filter(t => String(t.title).replace(/^[^a-z0-9]+/i, '').trim() === title) : []
+    if (matched.length === 1) return matched[0].handle
+    return sid === ID1 ? 'term_c' : sid === ID2 ? 'term_w' : sid === ID3 ? 'term_5' : 'term_operator'
+  }
   on('session.root', async () => ({ value: 'C:/proj' }) as any)
-  on('env.get', async (_$: any, e: any) => ({ value: opts.env?.[e.name] ?? (e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : undefined) }) as any)
+  on('session.cwd', async () => ({ value: opts.cwd ?? 'C:/proj' }) as any)
+  on('env.get', async ($: any, e: any) => {
+    if (opts.env && Object.prototype.hasOwnProperty.call(opts.env, e.name)) return { value: opts.env[e.name] } as any
+    if (e.name === 'USERPROFILE') return { value: 'C:/home' } as any
+    if (e.name === 'OS') return { value: 'Windows_NT' } as any
+    if (e.name === 'ORCA_TERMINAL_HANDLE') return { value: await callerHandle($) } as any
+    if (e.name === 'ORCA_WORKTREE_ID') return { value: callerWorktreeId } as any
+    return { value: undefined } as any
+  })
   registry.forEach((r, i) => files.set(`${regDir}/${100 + i}.json`, JSON.stringify({ pid: 100 + i, sessionId: r.sessionId, cwd: r.cwd ?? 'C:/proj', name: r.name ?? '', kind: 'interactive' })))
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
   const manifest = (path: string) => (opts.version && path.endsWith('/.claude-plugin/plugin.json') ? JSON.stringify({ name: 'team-orchestrator', version: opts.version }) : undefined)
-  on('fs.read', async (_$: any, e: any) => ({ value: manifest(p(e.path)) ?? files.get(p(e.path)) }) as any)
+  on('fs.read', async ($: any, e: any) => {
+    const path = p(e.path)
+    // the caller's own registry record: the session's id, and the name it goes by (a name the roster does not know
+    // would make the mod rename the member it matches, so it is empty unless a test says otherwise)
+    if (path === `${regDir}/999.json`) return { value: JSON.stringify({ pid: 999, sessionId: callerSessionId, cwd: opts.cwd ?? 'C:/proj', name: opts.sessionName ?? '' }) } as any
+    return { value: manifest(path) ?? files.get(path) } as any
+  })
   on('fs.write', async (_$: any, e: any) => {
     if (opts.refuse?.(p(e.path))) return { deny: `$.fs.write(${e.path}) failed: EACCES` } as any
     return (files.set(p(e.path), e.text), { value: undefined }) as any
   })
-  on('fs.list', async (_$: any, e: any) => {
+  on('fs.list', async ($: any, e: any) => {
     const at = p(e.path)
     const fake = opts.dirs?.[at]
     if (fake) return { value: fake.map(x => ({ size: 0, mtimeMs: 0, ...x })) } as any
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
     if (at === dir) return { value: trs.map((t, i) => ({ name: `${t.id}.jsonl`, kind: 'file', size: 9, mtimeMs: 1000 - i, isLink: false })) } as any
-    if (at === regDir) return { value: [...files.keys()].filter(k => k.startsWith(`${regDir}/`)).map(k => ({ name: k.slice(regDir.length + 1), kind: 'file', size: 9, mtimeMs: 0, isLink: false })) } as any
+    if (at === regDir) {
+      const names = [...files.keys()].filter(k => k.startsWith(`${regDir}/`)).map(k => k.slice(regDir.length + 1))
+      const id = callerSessionId
+      if (id && !registry.some(r => r.sessionId === id) && !names.includes('999.json')) names.push('999.json')
+      return { value: names.map(name => ({ name, kind: 'file', size: 9, mtimeMs: 0, isLink: false })) } as any
+    }
     // any other folder: what the files in memory hold directly under it (change files, queue entries)
     const kids = new Map<string, string>()
     for (const k of files.keys()) {
@@ -84,15 +115,38 @@ export const world = (
     if (mine !== undefined) return out(mine)
     if (a[0] === 'powershell.exe')
       return out(String(e.init.env.TO_FILES).split('|').map(f => '\0' + tail(trs.find(t => p(f).endsWith(`${t.id}.jsonl`))!)).join(''))
+    if (a[1] === 'worktree' && a[2] === 'show') {
+      // the selector names the workspace: `id:<id>` for a worktree, the folder path for a folder context
+      const selector = a[a.indexOf('--worktree') + 1] ?? ''
+      const id = selector.startsWith('folder:') ? selector : selector.replace(/^id:/, '')
+      const path = id.startsWith('folder:') ? id.slice('folder:'.length) : (opts.worktrees?.[id] ?? opts.worktreePath ?? 'C:/proj')
+      // a repository-backed workspace names the repository it belongs to: that is what proves its kind
+      const repoId = id.startsWith('folder:') ? '' : `repo-${id}`
+      return out(JSON.stringify({ result: { worktree: { id, path, ...(repoId ? { repoId } : {}) } } }))
+    }
+    if (a[1] === 'repo' && a[2] === 'show') {
+      const id = (a[a.indexOf('--repo') + 1] ?? '').replace(/^id:/, '')
+      return out(JSON.stringify({ result: { repo: { id, kind: 'git' } } }))
+    }
     const h = a[a.indexOf('--terminal') + 1]
     const tab = tabs.find(t => t.handle === h)
     if (a[1] === 'terminal' && a[2] === 'list') return out(JSON.stringify({ result: { terminals: tabs.map(t => ({ ...t, connected: true, tabId: t.handle, leafId: 'l' })) } }))
-    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { title: tab.title, worktreePath: tab.worktreePath, connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { handle: tab.handle, title: tab.title, worktreePath: tab.worktreePath ?? 'C:/proj', worktreeId: tab.worktreeId ?? callerWorktreeId, executionHostId: tab.executionHostId ?? 'host-test', connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    if (a[1] === 'terminal' && a[2] === 'show' && await callerHandle(_$) === h) {
+      const title = h === 'term_c' ? 'Hualong CEO' : h === 'term_w' ? 'Hualong Workers' : h === 'term_5' ? 'Hualong Worker 5' : 'Operator'
+      return out(JSON.stringify({ result: { terminal: { handle: h, title, worktreePath: 'C:/proj', worktreeId: callerWorktreeId, executionHostId: 'host-test', connected: true, tabId: h, leafId: 'l' } } }))
+    }
     if (a[1] === 'terminal' && a[2] === 'read' && tab) return out(JSON.stringify({ result: { terminal: { tail: [tab.screen ?? ''], status: 'running' } } }))
     return { value: no } as any
   })
   return files
 }
+
+/**
+ * The id of the session the test speaks as. The engine lets the mod's hook read it, and the shared world puts it in
+ * the registry, so a test that registers this answers the mod's preflight.
+ */
+export const sessionAs = (on: any, sid: string = ID1) => on('session.id', async () => ({ value: sid }) as any)
 
 export const adopt = ($: any, members: any[], team = 'Hualong') => $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team, members } as any)
 export const TEAM = 'C:/proj/.claude/team-orchestrator'

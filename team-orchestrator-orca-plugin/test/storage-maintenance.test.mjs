@@ -1,6 +1,7 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync,backup} from 'node:sqlite';
@@ -8,7 +9,7 @@ import {openTeamStore} from '../src/local/store.mjs';
 import {DEFAULT_FORM} from '../src/team.mjs';
 import {createHash} from 'node:crypto';
 const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
-async function legacy(t){const profile=await mkdtemp(join(tmpdir(),'maintenance-'));t.after(()=>rm(profile,{recursive:true,force:true}));const store=await openTeamStore({userData:profile});store.createTeam({requestId:'original',expectedRevision:0,form:DEFAULT_FORM},scope);store.writeReceipt('future:unknown',{state:'unknown',evidence:'keep'});store.close();const dir=join(profile,'plugins-data/herman925.team-orchestrator'),path=join(dir,'team-orchestrator.sqlite');const db=new DatabaseSync(path);db.exec('PRAGMA user_version=1; DROP TABLE IF EXISTS maintenance');return {profile,dir,path,db};}
+async function legacy(t){const profile=await mkdtemp(join(tmpdir(),'maintenance-'));t.after(()=>rmTemp(profile));const store=await openTeamStore({userData:profile});store.createTeam({requestId:'original',expectedRevision:0,form:DEFAULT_FORM},scope);store.writeReceipt('future:unknown',{state:'unknown',evidence:'keep'});store.close();const dir=join(profile,'plugins-data/herman925.team-orchestrator'),path=join(dir,'team-orchestrator.sqlite');const db=new DatabaseSync(path);db.exec('PRAGMA user_version=1; DROP TABLE IF EXISTS maintenance');return {profile,dir,path,db};}
 test('schema upgrade publishes a verified private recoverable backup including committed WAL before migration',async t=>{const f=await legacy(t);f.db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');f.db.prepare('INSERT INTO receipts VALUES(?,?)').run('future:wal',JSON.stringify({evidence:'WAL only'}));const store=await openTeamStore({userData:f.profile});t.after(()=>store.close());f.db.close();const entries=await readdir(join(f.dir,'backups'));assert.equal(entries.length,1);const backupDir=join(f.dir,'backups',entries[0]);const manifest=JSON.parse(await readFile(join(backupDir,'manifest.json'),'utf8'));assert.equal(manifest.verified,true);assert.equal(manifest.sourceSchema,1);const restored=new DatabaseSync(join(backupDir,'database.sqlite'),{readOnly:true});assert.equal(restored.prepare("SELECT json FROM receipts WHERE id='future:wal'").get().json,'{"evidence":"WAL only"}');restored.close();assert.equal(store.readReceipt('future:unknown').evidence,'keep');assert.equal(store.storageInfo().schema,2);store.close();const again=await openTeamStore({userData:f.profile});again.close();assert.equal((await readdir(join(f.dir,'backups'))).length,1);});
 import {questionFixture} from './questions-fixture.mjs';
 async function closed(t){const f=await questionFixture(t);const w=f.store.listWorks()[0];f.store.recordDelivery(w.id,{id:'delivery',summary:'Sensitive delivered summary',evidenceRefs:['report'],attemptIds:[],generation:1,proof:{requestId:'native-proof',payloadHash:'a'.repeat(64)}});f.store.decideWork({requestId:'accept',workId:w.id,deliveryId:'delivery',expectedWorkVersion:f.store.readWork(w.id).version,decision:'accept'});return {...f,workId:w.id};}
@@ -71,14 +72,12 @@ async function closedAfterReplacement(t,{replacements=1,resumeBeforeReplacement=
   journal.prepare('UPDATE agent_session_records SET record_json=? WHERE session_id=?').run(JSON.stringify(record(false)),'claude_child');
   assert.equal((await wake.check('native-child-resume')).state,'resumed');
  }
-
  for(let index=1;index<=replacements;index++){
   const old=s.readMemberOperation(f.member.id),request={requestId:'idle-child-replacement-'+index,teamId:f.team.id,memberId:f.member.id,bindingRequestId:old.requestId,expectedRevision:s.readSnapshot().revision,agent:'claude',model:'default',effort:'default',summary:'Checked idle member and existing results',evidenceRefs:['idle-child']};
   await wake.requestReplacement(request);fresh=await wake.prepareFresh(request.requestId);const patch={status:'created',kind:'terminal',handle:'replacement-child-'+index,paneKey:'replacement-tab:replacement-leaf-'+index,briefAccepted:true,observation:{ptyId:'replacement-pty-'+index,incarnationId:'replacement-instance-'+index,processIncarnation:'replacement-pty-'+index+':replacement-instance-'+index}};
   terminals.set(patch.handle,{handle:patch.handle,tabId:'replacement-tab',leafId:'replacement-leaf-'+index,worktreeId:s.readScope(f.team.id).workspaceId,executionHostId:'local',connected:true,writable:true,ptyId:patch.observation.ptyId,incarnationId:patch.observation.incarnationId,agentIdentity:'claude'});
   s.settleOperation(fresh.operation.requestId,fresh.operation.nativeRequest.operationId,{...patch,public:publicOperation({...fresh.operation,...patch})});assert.equal((await wake.bind(request.requestId)).state,'bound');
  }
-
  f.onInput(text=>{if(!text.startsWith('TEAM_ROSTER_DELTA\n'))return;const delta=JSON.parse(text.slice(text.indexOf('\n')+1)),id='replacement-roster-ack-'+delta.configVersion,spec=JSON.stringify({protocol:'team-questions/v1',kind:'roster-ack',workId:f.work.id,token:delta.token,generation:delta.generation,appQuestionId:id,deltaId:delta.deltaId,configVersion:delta.configVersion}),task={id,run_id:'run-head',spec,status:'ready'};
   f.db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)').run(id,'run-head',spec,'ready',null,null,null,null,null);f.receipt('create-'+id,'orchestration.taskCreate',{spec,run:'run-head',callerTerminalHandle:f.from},{task});
  });
@@ -93,12 +92,10 @@ test('accepted closure can clean a settled replacement while preserving its froz
  const operation=s.readOperation(f.replacementId),wakes=s.listWakes(),calls=f.calls.length,preview=s.previewHistoryCleanup({selectedWorkIds:[f.work.id]});assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));
  s.applyHistoryCleanup({requestId:'clean-replacement-history',previewToken:preview.previewToken,expectedStorageRevision:preview.storageRevision});assert.deepEqual(s.readWork(f.work.id).currentRecipientBindings,before);assert.deepEqual(s.readOperation(f.replacementId),operation);assert.deepEqual(s.listWakes(),wakes);assert.equal(f.calls.length,calls);
 });
-
 test('accepted closure also retains and settles the exact chain of two idle replacements',async t=>{
  const f=await closedAfterReplacement(t,{replacements:2}),preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
  assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.listWakes().length,2);
 });
-
 test('unresolved or mismatched replacement evidence cannot release frozen recipient uncertainty',async t=>{
  for(const kind of ['missing-operation','unknown-operation','generation','native-request','version','unbound-wake','closure-time','unrelated-unknown','ancestor-operation'])await t.test(kind,async t=>{
   const f=await closedAfterReplacement(t,{replacements:kind==='ancestor-operation'?2:1}),s=f.store,work=s.readWork(f.work.id),op=s.readOperation(f.replacementId),key='operation:'+op.requestId;
@@ -120,7 +117,6 @@ test('cleanup preview fences every corroborated replacement ancestor receipt',as
  const middle=s.readOperation(s.readOperation(f.replacementId).replaces);s.writeReceipt('operation:'+middle.requestId,{...middle,version:middle.version+1});
  assert.throws(()=>s.applyHistoryCleanup({requestId:'changed-ancestor-preview',previewToken:p.previewToken,expectedStorageRevision:p.storageRevision}),/Storage changed/);assert.equal(s.readWork(f.work.id).handoff.summary,'Accepted replacement work');
 });
-
 test('genuine resumed owner followed by idle replacement and accepted closure remains eligible for cleanup',async t=>{
  const f=await closedAfterReplacement(t,{resumeBeforeReplacement:true}),before=f.store.readWork(f.work.id).currentRecipientBindings,preview=f.store.previewHistoryCleanup({selectedWorkIds:[f.work.id]});
  assert.deepEqual(preview.eligibleWorkIds,[f.work.id],JSON.stringify(preview.retained));assert.equal(f.store.readWake('native-child-resume').state,'resumed');

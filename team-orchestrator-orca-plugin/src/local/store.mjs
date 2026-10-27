@@ -24,36 +24,51 @@ const fingerprint = value => createHash('sha256').update(JSON.stringify(canonica
 const publicScope = ({ workspaceId, ...scope }) => scope;
 const empty = () => ({ format: FORMAT, version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
 const fail = message => { throw new Error(message); };
-export async function openTeamStore(options) {
+export async function openTeamStore(options = {}) {
+  const where = options.projectRoot === undefined ? 'the verified Orca profile' : 'the verified project folder';
   try { return await openStore(options); }
   catch (error) {
-    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
+    if (['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EROFS', 'EEXIST', 'ELOOP', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO'].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to ${where}; existing data has not been reset.`);
     throw error;
   }
 }
-async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}) {
+async function openStore({ userData, projectRoot, sqlite = () => import('node:sqlite') } = {}) {
   if (typeof userData !== 'string' || !isAbsolute(userData) || userData.includes('\0')) fail('Verified Orca profile is required for team storage.');
   let DatabaseSync, backup;
   try { ({ DatabaseSync, backup } = await sqlite()); } catch { fail('This worker does not support node:sqlite. Team persistence is unavailable.'); }
   if (typeof DatabaseSync !== 'function') fail('This worker does not support node:sqlite. Team persistence is unavailable.');
   const profile = await realpath(userData);
-  const directory = join(profile, 'plugins-data', 'herman925.team-orchestrator');
-  const inside = path => { const rel = relative(profile, path); if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) fail('Plugin data directory escapes the verified Orca profile.'); };
+  // A project-owned store lives with its project. Without projectRoot the store stays in the profile, which is the
+  // shape phase 1 leaves for a project this machine cannot open.
+  if (projectRoot !== undefined && (typeof projectRoot !== 'string' || !isAbsolute(projectRoot) || projectRoot.includes('\0'))) fail('A verified project folder is required for a project-owned team store.');
+  const scopeRoot = projectRoot === undefined ? profile : await realpath(projectRoot);
+  // The store and the profile are separate homes: neither may sit inside the other, or the two stores interleave.
+  if (projectRoot !== undefined) {
+    const within = (a, b) => { const rel = relative(a, b); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); };
+    if (within(profile, scopeRoot) || within(scopeRoot, profile)) fail('A project store and the Orca profile must be separate folders.');
+  }
+  const parent = projectRoot === undefined ? join(profile, 'plugins-data') : join(scopeRoot, '.orca');
+  const directory = projectRoot === undefined ? join(parent, 'herman925.team-orchestrator') : join(parent, 'team-orchestrator');
+  const inside = path => { const rel = relative(scopeRoot, path); if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) fail('Team store directory escapes its verified root.'); };
   // Check each existing ancestor before creating its child.
-  for (const target of [join(profile, 'plugins-data'), directory]) {
+  for (const target of [parent, directory]) {
     try { inside(await realpath(target)); } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       await mkdir(target, { mode: 0o700 });
       inside(await realpath(target));
     }
   }
-  const path = join(directory, 'team-orchestrator.sqlite');
+  // The project store uses the name the design and the guard wrapper both expect; the profile store keeps its name.
+  const path = join(directory, projectRoot === undefined ? 'team-orchestrator.sqlite' : 'team.sqlite');
   let exists = false;
   try { await stat(path); exists = true; inside(await realpath(path)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let prepared;
   if(exists)try{prepared=await prepareStorage({path,directory,DatabaseSync,backup});}catch(error){const backups=await recoveryInventory(directory,DatabaseSync);const reason=error instanceof SyntaxError?'Saved JSON evidence is damaged':/^(EACCES|EPERM|EROFS|ENOSPC|EIO|EMFILE|ENFILE)$/.test(error.code??'')?`Storage filesystem failure (${error.code})`:error.message;throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter(b=>b.status==='verified-backup').length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);}
   if(!exists){const fresh=await open(path,'wx',0o600);await fresh.close();}
   const db = new DatabaseSync(path);
+  // Measured default here is journal_mode=delete with no busy timeout; one writer today, but the wrapper and the panel
+  // both touch this folder, so wait rather than fail fast when they meet.
+  db.exec('PRAGMA busy_timeout = 5000');
   try {
     if (exists) {
       migrateStorage(db,prepared);
@@ -426,6 +441,7 @@ async function openStore({ userData, sqlite = () => import('node:sqlite') } = {}
           if (!scope?.workspaceId || !scope.executionHostId || !['git', 'folder'].includes(scope.kind)) fail('A verified current project and execution host are required before saving.');
           const team = planTeam(input.form);
           const ids = new Map(team.members.map(member => [member.id, randomUUID()]));
+          if (scope.projectPath) team.configuration.projectRoleFiles = 1;
           team.id = randomUUID(); team.createdAt = new Date().toISOString(); team.configVersion = 1; team.scope = publicScope(scope);
           team.members = team.members.map(member => ({ ...member, id: ids.get(member.id), boss: member.boss ? ids.get(member.boss) : null, roleVersion: 1, habits: '', collaboration: '' }));
           db.prepare('INSERT INTO scopes VALUES (?,?)').run(team.id, JSON.stringify(scope));

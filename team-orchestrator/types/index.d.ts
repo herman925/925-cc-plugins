@@ -15,6 +15,14 @@ export type Form = {
   m3: string
   e3: string
 }
+export type RegisteredHome = {
+  /** unknown until a supported native field proves the selector kind */
+  contextKind: 'worktree' | 'folder' | 'unknown'
+  /** stable id for the native execution host that owns this context */
+  executionHostId: string
+  /** the verified original folder returned by the native terminal */
+  originalPath: string
+}
 export type Member = {
   /** the team this session belongs to */
   team: string
@@ -48,6 +56,8 @@ export type Member = {
   worktree?: string
   /** the member's home machine (its computer name), set at launch, adopt, reopen and identity re-attach; empty: this one */
   machine?: string
+  /** native execution host and original folder; context kind stays unknown when the supported API does not prove it */
+  registeredHome?: RegisteredHome
   /** the status file this member's session writes, relative to <claude config dir>/team-orchestrator/<project>/ on its machine (status/<name>.json) */
   statusFile?: string
   /** on the roster since Create but never started: it starts, fresh and briefed, on its first message (team_message) */

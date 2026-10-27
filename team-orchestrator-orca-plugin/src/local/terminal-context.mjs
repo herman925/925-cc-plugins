@@ -57,7 +57,9 @@ export function terminalProviderSession(snapshot, shown, agent) {
 
 export function createTerminalContextReader() {
   const cache = new Map();
-  return async ({ rpc, shown, agent, scope, snapshots, contextDirectory, statuslineEnabled=false }) => {
+  // `onProvider` reports the verified provider session after the closing recheck, and never reports one whose read
+  // threw: the store guard certifies a session that the terminal still agrees with, not a context reading.
+  return async ({ rpc, shown, agent, scope, snapshots, contextDirectory, statuslineEnabled=false, onProvider }) => {
     // Paths belong to the execution host. Never read a remote path on this PC.
     if (scope.executionHostId !== 'local' || !['codex', 'claude'].includes(agent)) return null;
     const params = { worktree: scope.workspaceId.startsWith('folder:') ? scope.workspaceId : `id:${scope.workspaceId}` };
@@ -97,6 +99,9 @@ export function createTerminalContextReader() {
     }
     // A provider can reset/resume inside the same PTY; recheck the conversation too.
     const current = terminalProviderSession(await rpc('session.tabs.list', params), shown, agent);
-    return current?.sessionId === provider.sessionId && current.path === provider.path ? context : null;
+    if (current?.sessionId !== provider.sessionId || current.path !== provider.path) return null;
+    // Only a provider that survived the recheck is reported, so a reset inside the PTY never certifies an old session.
+    if (onProvider) onProvider(provider);
+    return context;
   };
 }

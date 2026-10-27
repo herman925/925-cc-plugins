@@ -10,14 +10,14 @@ export default function activate(orca) {
   let ready;
   let initialising = false;
   let executorPromise;
-  let storePromise;
   let storeProfile;
   const executorFor = async report => {
     if (storeProfile && storeProfile !== report.cliPaths.userData) throw new Error('Orca profile changed; restart the plugin worker before continuing.');
     storeProfile = report.cliPaths.userData;
-    storePromise ??= openTeamStore({ userData: storeProfile }).catch(error => { storePromise = null; throw error; });
-    executorPromise ??= Promise.all([locateCli(undefined, undefined, report.cliPaths), storePromise])
-      .then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid, claudeContextOptions:{electron:true,helperPath:import.meta.url.startsWith('file:')?fileURLToPath(new URL('./claude-statusline.cjs',import.meta.url)):undefined} }))
+    // the store is opened for whichever project a request names, not once for the whole profile
+    const openStoreFor = projectPath => openTeamStore({ userData: storeProfile, projectRoot: projectPath });
+    executorPromise ??= locateCli(undefined, undefined, report.cliPaths)
+      .then(command => createExecutor(orca.host, createCliRunner(command), { openStore: openStoreFor, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid, claudeContextOptions:{electron:true,helperPath:import.meta.url.startsWith('file:')?fileURLToPath(new URL('./claude-statusline.cjs',import.meta.url)):undefined} }))
       .catch(error => { executorPromise = null; throw error; });
     return executorPromise;
   };

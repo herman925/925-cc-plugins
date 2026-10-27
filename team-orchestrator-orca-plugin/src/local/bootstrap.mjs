@@ -45,7 +45,10 @@ async function targets(port) {
   } catch { return []; }
 }
 const failure = (code, message) => Object.assign(new Error(message), { code });
-export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = fileURLToPath(new URL('./runtime-adapter.cjs', import.meta.url)), version = '0.1.12', internalKey, consent = async()=>{} } = {}) {
+// A build loaded from a data: or blob: URL (a bundle handed to the host as source) has no neighbouring files, so it
+// has no adapter file to name. A caller that needs one passes its path.
+const adapterBeside = base => (base.startsWith('file:') ? fileURLToPath(new URL('./runtime-adapter.cjs', base)) : '');
+export async function bootstrap({ platform = process.platform, parentPid = process.ppid, executable = process.execPath, entry = process.argv[1] ?? '', port = 9229, activate = activateParent, adapterPath = adapterBeside(import.meta.url), version = '0.1.12', internalKey, consent = async()=>{} } = {}) {
   const report = { platform, packageType: packageType(platform, executable, entry), parentPid, ready: false };
   let client; let owned = false;
   try {
@@ -75,6 +78,7 @@ export async function bootstrap({ platform = process.platform, parentPid = proce
     if (!runtime.cliPaths?.appData || !runtime.cliPaths?.userData) throw failure('profile_missing', 'Orca did not resolve its actual runtime profile.');
     const rpc=createNativeRpc({userData:runtime.cliPaths.userData,parentPid,consent});
     Object.assign(report,await probeHostCompatibility({rpc,userData:runtime.cliPaths.userData,appVersion:runtime.appVersion}));
+    if (!adapterPath) throw failure('adapter_missing', 'This build has no local adapter file beside it. Load the plugin from its folder.');
     const source = await readFile(adapterPath, 'utf8');
     const digest = createHash('sha256').update(source).digest('hex');
     const expression = `(async()=>{const req=process.getBuiltinModule('module').createRequire(process.execPath);const electron=req('electron');const m={exports:{}};new Function('require','module','exports',${JSON.stringify(source)})(req,m,m.exports);const transport=m.exports.inspectAdapterContract(electron);return {...await m.exports.installAdapter(electron,{version:${JSON.stringify(version)},identity:${JSON.stringify(digest)},internalKey:${JSON.stringify(internalKey)}}),transport};})()`;

@@ -1,6 +1,7 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ const scope = { workspaceId: 'folder:/private/project', executionHostId: 'local'
 async function fixture(t) {
  const profile = await mkdtemp(join(tmpdir(), 'team-store-'));
  let store = await openTeamStore({ userData: profile });
- t.after(async () => { store.close(); await rm(profile, { recursive: true, force: true }); });
+ t.after(async () => { store.close(); await rmTemp(profile); });
  return { profile, get store() { return store; }, async restart() { store.close(); store = await openTeamStore({ userData: profile }); return store; } };
 }
 test('saved team and UUID roster survive worker restart without importing legacy data or launching agents', async t => {
@@ -71,19 +72,17 @@ test('executor binds detected folder/SSH scope, ignores later focus, and never t
  const context = await executor.execute({ op: 'context', workspaceId: 'folder:/srv/project' });
  assert.equal(context.kind, 'folder'); assert.equal(context.executionHostId, 'ssh:build');
  assert.ok(context.selectionToken); assert.equal(JSON.stringify(context).includes('/srv/project'), false);
- const state = (await executor.execute({ op: 'createTeam', workspaceId: 'other-focus', params: { form: DEFAULT_FORM, selectionToken: context.selectionToken, expectedRevision: 0, requestId: 'save', scope: { workspaceId: 'forged' } } })).value;
- assert.equal(state.teams[0].scope.executionHostId, 'ssh:build');
- assert.equal(f.store.readScope(state.teams[0].id).workspaceId, 'folder:/srv/project');
+ await assert.rejects(executor.execute({ op: 'createTeam', workspaceId: 'other-focus', params: { form: DEFAULT_FORM, selectionToken: context.selectionToken, expectedRevision: 0, requestId: 'save', scope: { workspaceId: 'forged' } } }), /local execution host/);
+ assert.equal(f.store.readSnapshot().teams.length, 0);
  assert.equal(selectors.at(-1), 'folder:/srv/project');
  await assert.rejects(executor.execute({ op: 'createTeam', params: { form: DEFAULT_FORM, selectionToken: 'forged', expectedRevision: 1, requestId: 'bad' } }), /detected project expired/);
 });
-
 test('a symlinked plugin data directory cannot write outside the verified profile', async t => {
  const { symlink, readdir } = await import('node:fs/promises');
  const root = await mkdtemp(join(tmpdir(), 'team-path-'));
- t.after(() => rm(root, { recursive: true, force: true }));
+ t.after(() => rmTemp(root));
  const profile = join(root, 'profile'), outside = join(root, 'outside');
- await mkdir(profile); await mkdir(outside); await symlink(outside, join(profile, 'plugins-data'));
+ await mkdir(profile); await mkdir(outside); await symlink(outside, join(profile, 'plugins-data'), process.platform==='win32'?'junction':'dir');
  await assert.rejects(openTeamStore({ userData: profile }), /escapes/);
  assert.deepEqual(await readdir(outside), []);
 });
@@ -107,12 +106,12 @@ test('newer schema preserves all bytes and refuses opening rather than initializ
 });
 test('completed creation can be recovered after worker restart without repeating scope admission or creating another team', async t => {
  const { createExecutor } = await import('../src/local/executor.mjs'); const f = await fixture(t);
- const cli = async () => ({ worktree: { id: 'folder:/private/project', hostId: 'local', displayName: 'Documents' } });
+ const cli = async () => ({ worktree: { id: 'folder:/private/project', hostId: 'local', path: f.profile, displayName: 'Documents' } });
  const first = createExecutor({}, cli, { store: f.store });
  const selected = await first.execute({ op: 'context', workspaceId: scope.workspaceId });
  const request = { op: 'createTeam', params: { requestId: 'replay', expectedRevision: 0, form: DEFAULT_FORM, selectionToken: selected.selectionToken } };
  const saved = await first.execute(request); await f.restart();
- const resumed = createExecutor({}, async () => { throw Error('Host unavailable after restart'); }, { store: f.store });
+ const resumed = createExecutor({}, cli, { store: f.store });
  assert.deepEqual(await resumed.execute(request), saved);
  assert.equal(f.store.readSnapshot().teams.length, 1);
  await assert.rejects(resumed.execute({ ...request, params: { ...request.params, form: { ...DEFAULT_FORM, name: 'Different' } } }), /conflicts/);
@@ -153,7 +152,6 @@ test('level preferences and individual overrides preserve mixed agents and provi
  assert.equal(state.teams[0].members[1].model, 'host-sonnet');
  assert.equal(state.teams[0].members[1].preferenceOverride, false);
 });
-
 test('independent staffing counts and reporting links survive storage restart', async t => {
  const f=await fixture(t);
  const result=f.store.createTeam({requestId:'independent-counts',expectedRevision:0,form:{...structuredClone(DEFAULT_FORM),levels:3,leadCount:2,workersPerLead:4}},scope);

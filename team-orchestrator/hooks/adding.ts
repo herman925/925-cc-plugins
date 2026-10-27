@@ -42,8 +42,9 @@ function under(list: Member[], m: Member, who: Member): boolean {
   return false
 }
 
-/** A head (reports to the user, or level 1) or a lead (has reports): the members who may ask for new members. */
-export const manages = (list: Member[], me: Member) => me.boss === 'user' || me.level === 1 || list.some(k => keyOf(k) !== keyOf(me) && bossOf(list, k) && keyOf(bossOf(list, k)!) === keyOf(me))
+/** A head (reports to the user) or a lead (others report to it): the members who may ask for new members. A level
+ * is a hint for the panel's layout, never a right. */
+export const manages = (list: Member[], me: Member) => me.boss === 'user' || list.some(k => keyOf(k) !== keyOf(me) && bossOf(list, k) && keyOf(bossOf(list, k)!) === keyOf(me))
 
 /** The teams in a head's or lead's purview: its own, then every team whose head's chain of bosses leads up to it. */
 export function purview(list: Member[], me: Member): string[] {

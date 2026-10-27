@@ -1,5 +1,7 @@
 # Team Orchestrator 迁移到 Orca plugin：机制与启动故障分析
 
+> 历史记录提示（2026-10-27）：本文保留 2026-10-15 的宿主研究与故障证据，不代表当前插件状态、版本或支持范围。当前决策与验证入口见[插件文档索引](../team-orchestrator-orca-plugin/docs/README.md)；本轮进度与未完成事项见[最新交接](handoff-2026-10-27.md)。
+
 研究日期：2026-10-15。目标目录：`team-orchestrator-orca-plugin/`，当前插件版本 `0.1.06`（manifest SemVer `0.1.6`）。本报告区分已读源码、可复现故障和仍未完成的实际启动验证；阅读与验证过程中不修改已安装 Orca，不开启 inspector，不注入运行中主进程，也不启动新的 agent。
 
 目前的核心判断是：**插件界面和 Node worker 都已经实现，阻塞点在 panel 与 worker 之间的连接。Orca 官方 plugin API 尚未提供这条通道，当前版本通过运行时注入补上；而 macOS 的注入前置检查读取了错误的二进制文件，提前将本来开启的 inspector fuse 判为不可用。** 修复该路径可以消除一个确定的阻塞，但不能据此宣称完整的多 agent 启动或编排已经工作。

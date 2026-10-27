@@ -190,6 +190,92 @@ export function judgeTeamFiles(args: { me: Member; confirmed: boolean; tool: str
   }
 }
 
+// ── Managed creation (plan item 6) ───────────────────────────────────────────────────────────────────────────────
+// Registering a project or worktree decides which folder the Team Orchestrator will later treat as a member's home.
+// That is the person's decision in Orca, so no member runs it, and no grant in this mod opens it.
+//
+// The classifier reads only the word each simple command executes: text quoted to another program (echo, grep, a URL,
+// a doc) is data. Wrappers that run a line of their own (powershell -Command, cmd /c, bash -c, Start-Process) are
+// unwrapped twice, which covers the literal nested forms. It makes no claim about a path or a command built at run
+// time, or about a program that is not named here: those are outside this check.
+
+const WRAPPERS = new Set(['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe', 'cmd', 'cmd.exe', 'bash', 'sh', 'zsh', 'dash', 'start-process'])
+const ORCA = new Set(['orca', 'orca.exe', 'orca.cmd', 'orca.bat', 'orca.ps1'])
+const AGENT_CLI = new Set(['claude', 'claude.exe', 'claude.cmd', 'codex', 'codex.exe', 'codex.cmd'])
+const WRAPPER_FLAG = /^(-c|\/c|-command|\/command)$/i
+
+/** The simple commands of a command line: words, split outside quotes on ; | & and a newline. */
+function simpleCommands(command: string): string[][] {
+  const out: string[][] = []
+  let cur: string[] = []
+  let word = ''
+  let quote = ''
+  const endWord = () => {
+    if (word !== '') cur.push(word)
+    word = ''
+  }
+  const endCommand = () => {
+    endWord()
+    if (cur.length > 0) out.push(cur)
+    cur = []
+  }
+  for (const ch of command) {
+    if (quote !== '') {
+      if (ch === quote) quote = ''
+      else word += ch
+    } else if (ch === '"' || ch === "'") quote = ch
+    else if (ch === ';' || ch === '|' || ch === '&' || ch === '\n' || ch === '\r') endCommand()
+    else if (/\s/.test(ch)) endWord()
+    else word += ch
+  }
+  endCommand()
+  return out
+}
+
+/** The program a word names: no folder, no lower case surprise ("C:\Orca\orca.exe" is orca). */
+const program = (word: string) => (word.replace(/\\/g, '/').split('/').pop() ?? '').toLowerCase()
+
+/** Why this simple command registers a project or worktree, or '' when it does not. */
+function registers(argv: string[], depth = 0): string {
+  const first = program(argv[0] ?? '')
+  if (WRAPPERS.has(first) && depth < 2) {
+    const rest = argv.slice(1)
+    const at = rest.findIndex(a => WRAPPER_FLAG.test(a))
+    // the line after the flag is one quoted word: it carries the whole nested command
+    if (at >= 0) return registers(rest.slice(at + 1).join(' ').split(/\s+/).filter(w => w !== ''), depth + 1)
+    if (first === 'start-process') return registers(rest.filter(a => !a.startsWith('-')), depth + 1)
+    return ''
+  }
+  const a = argv.slice(1).map(x => x.toLowerCase())
+  if (ORCA.has(first)) {
+    if (a[0] === 'repo' && a[1] === 'add') return 'orca repo add registers a project'
+    if (a[0] === 'worktree' && a[1] === 'create') return 'orca worktree create makes a new worktree'
+    if (a[0] === 'project' && /^setup-(existing-folder|clone|create)$/.test(a[1] ?? '')) return `orca project ${a[1]} registers a project`
+    return ''
+  }
+  if (AGENT_CLI.has(first) && argv.slice(1).some(x => /^--worktree(=|$)/.test(x))) return `${first} --worktree starts a session in a new worktree`
+  return ''
+}
+
+/**
+ * Judge a shell command for managed creation. undefined: it registers nothing this check knows, so it is left to the
+ * other guards. A hit is a refusal no grant lifts.
+ */
+export function createsManaged(command: string): Verdict {
+  for (const argv of simpleCommands(command)) {
+    const why = registers(argv)
+    if (!why) continue
+    return {
+      kind: 'deny',
+      reason:
+        `Blocked: ${why}. A member does not register projects or worktrees, because that decides which folder the Team Orchestrator treats as a home. ` +
+        'Ask the user to do it in Orca, then adopt the result with team_adopt.',
+      line: `blocked: ${why}`,
+    }
+  }
+  return undefined
+}
+
 // ── Grants changed outside the mod (0.5.11, #58) ──
 // What the mod last wrote for each member's Allow writes and Allow subagents is recorded beside the roster; the team
 // top's refresh compares the file with it and reports a difference. Nothing is reverted.

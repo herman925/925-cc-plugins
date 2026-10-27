@@ -32,6 +32,14 @@ test('a rewrite keeps the person\'s notes below the marker and replaces only the
   expect(mergeRole(second, 'GEN 2\r\n')).toBe(second)
 })
 
+test('a role file calls a member a head or a lead only when others report to it, not by its level', () => {
+  const flat = [m('Top', 'user', 'T'), m('Alone', 'Top', 'T')]
+  const text = roleText(flat[1]!, flat)
+  expect(text).toContain('- Alone: worker, reports to Top.')
+  expect(text).toContain('You do the tasks your boss gives you')
+  expect(text).not.toContain('You orchestrate')
+})
+
 test('the start-up pointer is short, safe for cmd.exe, and names the role file', () => {
   const p = pointer({ ...all[1]!, name: 'A-Head', role: 'say "hi" 100%' }, all)
   expect(p).toContain('.claude/team-orchestrator/roles/A-Head.md')

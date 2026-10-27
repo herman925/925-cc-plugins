@@ -1,11 +1,12 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import {join} from 'node:path';import {tmpdir} from 'node:os';import {createHash} from 'node:crypto';import {DatabaseSync} from 'node:sqlite';
 import {openTeamStore} from '../src/local/store.mjs';import {DEFAULT_FORM} from '../src/team.mjs';import {nativeLaunchIntent,publicOperation} from '../src/local/native-launch.mjs';
 import {createWakeService} from '../src/local/wake.mjs';
 async function fixture(t,agent='codex',kind='structured'){
- const profile=await mkdtemp(join(tmpdir(),'wake118-')),store=await openTeamStore({userData:profile});t.after(async()=>{store.close();await rm(profile,{recursive:true,force:true});});
+ const profile=await mkdtemp(join(tmpdir(),'wake118-')),store=await openTeamStore({userData:profile});t.after(async()=>{store.close();await rmTemp(profile);});
  const scope={workspaceId:'folder:/work',executionHostId:'local',kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work','local'])).digest('hex')};
  const team=store.createTeam({requestId:'team',expectedRevision:0,form:{...DEFAULT_FORM,agents:[agent,agent,agent]}},scope).teams[0],member=team.members[0];
  let op=store.prepareOperation({teamId:team.id,memberId:member.id,requestId:'launch',configVersion:1},{scope,nativeRequest:nativeLaunchIntent(team,member,scope),runtimeId:'runtime',roleVersion:1,title:'Head',executionHostId:'local',hostGeneration:null}).operation;

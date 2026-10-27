@@ -4,10 +4,11 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { adopt, ID1, STATUS, TEAM, world } from './test-world'
+import { adopt, ID1, sessionAs, STATUS, TEAM, world } from './test-world'
 
 test('SendMessage to a closed member answers with an object, as SendMessage does', async ($, on) => {
   const files = world(on, [{ handle: 'term_w', title: 'Worker', worktreePath: 'C:/proj' }], [{ id: ID1, title: 'Worker' }])
+  sessionAs(on)
   await adopt($, [
     { name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_h' },
     { name: 'Worker', role: 'worker', level: 2, boss: 'Head', handle: 'term_w', sessionId: ID1 },

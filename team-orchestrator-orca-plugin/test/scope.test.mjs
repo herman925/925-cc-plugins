@@ -1,28 +1,27 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createExecutor } from '../src/local/executor.mjs';
 import { openTeamStore } from '../src/local/store.mjs';
 import { DEFAULT_FORM } from '../src/team.mjs';
-
 async function fixture(t, workspace, repo) {
   const profile = await mkdtemp(join(tmpdir(), 'orca-scope-'));
   const store = await openTeamStore({ userData: profile });
   const cli = async args => {
     if (args[0] === 'worktree') {
       assert.deepEqual(args, ['worktree', 'show', '--worktree', workspace.id.startsWith('folder:') ? workspace.id : `id:${workspace.id}`]);
-      return { worktree: workspace };
+      return { worktree: { ...workspace, path: profile } };
     }
     assert.deepEqual(args, ['repo', 'show', '--repo', `id:${workspace.repoId}`]);
     return { repo };
   };
   const executor = createExecutor({ call: async () => {} }, cli, { store, userData: profile });
-  t.after(async () => { executor.stopWork(); store.close(); await rm(profile, { recursive: true, force: true }); });
+  t.after(async () => { executor.stopWork(); store.close(); await rmTemp(profile); });
   return { executor, context: () => executor.execute({ op: 'context', workspaceId: workspace.id }), store };
 }
-
 test('repo-backed non-Git folder is shown and saved as Folder with its exact composite identity', async t => {
   const f = await fixture(t, { id: 'repo-folder::/work', repoId: 'repo-folder', hostId: 'local' }, { id: 'repo-folder', kind: 'folder' });
   const selected = await f.context();
@@ -31,7 +30,6 @@ test('repo-backed non-Git folder is shown and saved as Folder with its exact com
   assert.equal(value.teams[0].scope.kind, 'folder');
   assert.equal(f.store.readScope(value.teams[0].id).workspaceId, 'repo-folder::/work');
 });
-
 for (const [name, workspace, repo, kind] of [
   ['legacy synthetic folder', { id: 'folder:/work', hostId: 'local' }, undefined, 'folder'],
   ['composite Git', { id: 'git-repo::/work', repoId: 'git-repo', hostId: 'local' }, { id: 'git-repo', kind: 'git' }, 'git'],
@@ -40,7 +38,6 @@ for (const [name, workspace, repo, kind] of [
   const f = await fixture(t, workspace, repo);
   assert.equal((await f.context()).kind, kind);
 });
-
 for (const [name, workspace, repo, error] of [
   ['mismatching repository', { id: 'repo::/work', repoId: 'repo', hostId: 'local' }, { id: 'sibling', kind: 'folder' }, /repository identity/],
   ['missing repository', { id: 'repo::/work', repoId: 'repo', hostId: 'local' }, undefined, /repository identity/],
@@ -51,7 +48,6 @@ for (const [name, workspace, repo, error] of [
   const f = await fixture(t, workspace, repo);
   await assert.rejects(f.context(), error);
 });
-
 test('sibling folder instances and different execution hosts retain separate scope identities', async t => {
   const keys = [];
   for (const [id, hostId] of [['repo::/work', 'local'], ['repo::/work::workspace:11111111-2222-4333-8444-555555555555', 'local'], ['repo::/work', 'ssh:remote']]) {

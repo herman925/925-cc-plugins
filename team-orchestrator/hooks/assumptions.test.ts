@@ -62,6 +62,7 @@ test('the two one-line messages are exact', () => {
 
 test('the row says "N open" for a member, found by its session id; confirmed and wrong entries do not count', async ($, on) => {
   const files = world(on)
+  sessionAs(on, ID1)
   assumptionsOn(files)
   files.set(`${DIR}/tagged-9f2c.json`, file(ID2, [entry('a1', 'open'), entry('a2', 'open'), entry('a3', 'confirmed')]))
   files.set(`${DIR}/broken.json`, 'not json')
@@ -237,6 +238,7 @@ test('a question that cannot be asked sends nothing', async () => {
 
 test('the files are read on a roster refresh, not on a redraw', async ($, on) => {
   const files = world(on)
+  sessionAs(on, ID1)
   assumptionsOn(files)
   files.set(`${DIR}/${ID2}.json`, file(ID2, [entry('a1', 'open')]))
   await adopt($, withIds(HUALONG))

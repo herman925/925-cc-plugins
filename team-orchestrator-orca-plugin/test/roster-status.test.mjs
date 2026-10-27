@@ -1,16 +1,25 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createHash} from 'node:crypto';
+import {rmTemp} from './temp.mjs';
+import {roleText} from '../src/role-files.mjs';
+import {storeRolePath} from '../src/local/guard-identity.mjs';
 import {contextUsage,createRosterStatusService} from '../src/local/roster-status.mjs';
-function fixture(kind='terminal'){
- const scope={workspaceId:'folder:/work',executionHostId:'local'},member={id:'head',agent:'codex',model:'future-model',effort:'low'},team={id:'team',members:[member,{id:'worker',agent:'claude',model:'default',effort:'default'}],launch:{members:{head:{status:'created'}}}};
+function fixture(kind='terminal',extra={}){
+ const head=extra.head??'head',worker=extra.worker??'worker';
+ const scope={workspaceId:'folder:/work',executionHostId:'local'},member={id:head,agent:'codex',model:'future-model',effort:'low'},team={id:extra.team??'team',members:[member,{id:worker,agent:'claude',model:'default',effort:'default'}],launch:{members:{[head]:{status:'created'}}}};
  const operation={requestId:'created-head',status:'created',kind,handle:'term-head',sessionId:'head-chat',paneKey:'tab:leaf',observation:{ptyId:'pty',incarnationId:'instance'},scope,nativeRequest:{agent:'codex',sessionOptions:{model:'launch-model',effort:'high'}}};
  let agent='codex',state='working',fence=7,changed=false,requests=false,options=true,missing=false;
  const marker={sessionId:'head-chat',version:'v',owner:'owner',epoch:'epoch',publisher:'publisher'},calls=[];
- const store={readSnapshot:()=>({teams:[team]}),readMemberOperation:id=>id==='head'?operation:null,readMemberDispatch:()=>null,readScope:()=>scope};
+ const store={readSnapshot:()=>({teams:[team]}),readMemberOperation:id=>id===head?operation:null,readMemberDispatch:()=>null,readScope:()=>scope};
  const rpc=async(method,params)=>{calls.push(method);
   if(method==='status.get')return {runtimeId:'runtime'};
   if(method==='worktree.show')return {worktree:{id:'folder:/work',hostId:'local'}};
   if(method==='terminal.show'){if(missing)throw Error('terminal_handle_stale');return {terminal:{handle:'term-head',worktreeId:'folder:/work',executionHostId:'local',connected:true,agentIdentity:agent,ptyId:'pty',incarnationId:changed?'new-instance':'instance',tabId:'tab',leafId:'leaf'}};}
+  if(method==='session.tabs.list')return {worktree:'folder:/work',tabs:[{type:'terminal',parentTabId:'tab',leafId:'leaf',ptyId:'pty',incarnationId:changed?'new-instance':'instance',agentStatus:{terminalHandle:'term-head',agentType:agent,restoredUnconfirmed:false,sessionBoundary:false,providerSession:{key:'session_id',id:'provider-session',transcriptPath:extra.transcript??'C:/missing/x.jsonl'}}}]};
   if(method==='terminal.agentStatus')return {agentStatus:{handle:'term-head',isRunningAgent:state!=='closed',status:state}};
   if(method==='orchestration.sessionAddress')return {orcaSessionId:'orca_session_id:head-chat'};
   if(method==='orchestration.partyLocation')return {location:{kind:'chat',sessionId:'head-chat',worktreeId:'folder:/work'}};
@@ -20,7 +29,7 @@ function fixture(kind='terminal'){
   if(method==='agentSession.options'){if(!options)throw Error('Unsupported');if(changed)fence++;return {current:{model:'actual-model',effort:'medium',confirmed:['model','effort']},contextUsage:{current:{used:{kind:'report',usedTokens:40000,windowTokens:100000,capturedAt:123}}}};}
   throw Error('Unexpected or effectful method: '+method);
  };
- return {service:createRosterStatusService({store,rpc,consent:async()=>{}}),calls,operation,team,store,rpc,setAgent:v=>agent=v,setState:v=>state=v,setChanged:()=>changed=true,setRequests:()=>requests=true,setMissing:()=>missing=true,setNoOptions:()=>options=false};
+ return {service:createRosterStatusService({store,rpc,consent:async()=>{},projectRoot:extra.projectRoot,log:extra.log}),calls,operation,team,store,rpc,setAgent:v=>agent=v,setState:v=>state=v,setChanged:()=>changed=true,setRequests:()=>requests=true,setMissing:()=>missing=true,setNoOptions:()=>options=false};
 }
 test('terminal activity is fresh, never inferred from launch success or a previous working receipt',async()=>{
  const f=fixture();assert.equal((await f.service.read()).members.head.state,'working');f.setState('idle');let row=(await f.service.read()).members.head;assert.equal(row.state,'idle');assert.equal(row.context,null);assert.equal(row.model,null);assert.equal(row.requestedModel,'launch-model');
@@ -46,4 +55,33 @@ test('on-demand worker observations retain their exact native Dispatch session i
  const f=fixture();f.setAgent('claude');f.store.readMemberOperation=()=>null;
  f.store.readMemberDispatch=id=>id==='worker'?{id:'attempt',scope:{workspaceId:'folder:/work',executionHostId:'local'},startParams:{agent:'claude',model:'worker-model',effort:'high'},binding:{kind:'terminal',handle:'term-head',paneKey:'tab:leaf',incarnationId:'pty:instance'}}:null;
  const row=(await f.service.read()).members.worker;assert.equal(row.state,'working');assert.equal(row.sessionRequestId,'attempt');assert.equal(row.requestedModel,'worker-model');
+});
+test('the roster read writes the guard identity, and a member that stops resolving loses its entry',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'roster-identity-'));const transcript=join(root,'x.jsonl');await writeFile(transcript,'');await mkdir(join(root,'.orca','team-orchestrator'),{recursive:true});await writeFile(join(root,'.orca','team-orchestrator','team.sqlite'),'');
+  const uuid='22222222-2222-2222-2222-222222222222',teamId='11111111-1111-1111-1111-111111111111';const f=fixture('terminal',{projectRoot:root,transcript,head:uuid,team:teamId});
+  await f.service.read();
+  const path=join(root,'.orca','team-orchestrator','guard','identity.json');
+  const first=JSON.parse(await readFile(path,'utf8'));
+  assert.deepEqual(Object.keys(first.sessions),['provider-session']);
+  const member=f.team.members[0];
+  assert.equal(first.sessions['provider-session'].roleFile,storeRolePath(f.team,member));
+  assert.equal(first.sessions['provider-session'].headHash,createHash('sha256').update(roleText(f.team,member)).digest('hex'));
+  f.setMissing();
+  await f.service.read();
+  const second=JSON.parse(await readFile(path,'utf8'));
+  assert.deepEqual(second.sessions,{},'a member with no verified session is removed, not left stale');
+  await rmTemp(root);
+});
+test('a guard identity that cannot be written never fails the roster read',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'roster-guard-fail-'));const transcript=join(root,'x.jsonl');await writeFile(transcript,'');
+  await mkdir(join(root,'.orca','team-orchestrator'),{recursive:true});await writeFile(join(root,'.orca','team-orchestrator','team.sqlite'),'');
+  await writeFile(join(root,'.orca','team-orchestrator','guard'),'not a folder');
+  const logged=[];
+  const f=fixture('terminal',{projectRoot:root,transcript,head:'22222222-2222-2222-2222-222222222222',team:'11111111-1111-1111-1111-111111111111',log:m=>logged.push(m)});
+  const output=await f.service.read();
+  assert.equal(output.members['22222222-2222-2222-2222-222222222222'].state,'working','the roster stays readable when the identity write fails');
+  assert.equal(output.guard.installed,false);
+  assert.equal(logged.length,1,'the failure is reported once, never swallowed');
+  assert.match(logged[0],/guard identity was not written/);
+  await rmTemp(root);
 });

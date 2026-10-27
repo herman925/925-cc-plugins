@@ -3,13 +3,14 @@
 import { expect, test } from 'claude-code/testing'
 
 import { MEND_DIRS } from './platform'
-import { adopt, HUALONG, TEAM, world } from './test-world'
+import { adopt, HUALONG, sessionAs, TEAM, world } from './test-world'
 
 test('a write refused with EACCES mends the folders on the way and writes once more', async ($, on) => {
   const ROSTER = '/.claude/team-orchestrator/roster.json' // off Windows the engine hands fs hooks the path made absolute
   let tries = 0
   const refuse = (path: string) => path.endsWith(ROSTER) && !tries++
   const files = world(on, [], [], e => (e.argv[0] === 'sh' ? '' : undefined), { env: { OS: 'Linux' }, refuse })
+  sessionAs(on)
   await adopt($, HUALONG)
   expect(tries).toBeGreaterThan(1)
   expect(files.calls).toContainEqual(['sh', '-c', MEND_DIRS, 'sh', TEAM])

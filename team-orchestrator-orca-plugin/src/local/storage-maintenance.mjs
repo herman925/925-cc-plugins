@@ -34,8 +34,14 @@ export function validateDatabase(db){
  if(schema===STORAGE_SCHEMA)for(const row of db.prepare('SELECT json FROM maintenance').all())JSON.parse(row.json);
  return {schema,revision:snapshot.revision,digest:storageDigest(db)};
 }
-async function syncFile(path){const file=await open(path,'r');try{await file.sync();}finally{await file.close();}}
-async function privateDirectory(path,parent){try{await mkdir(path,{mode:0o700});}catch(e){if(e.code!=='EEXIST')throw e;}const real=await realpath(path),rel=relative(parent,real);if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error('Backup directory escapes plugin storage');if((await stat(real)).mode&0o077)throw Error('Backup directory must be private (owner access only)');return real;}
+// Flush a file, or a folder, so that a rename survives a crash. POSIX flushes both through a read handle. Windows
+// cannot open a folder at all, and will not flush a read-only handle: a file is flushed through a writable handle,
+// and a folder is skipped. Windows has no handle-based folder flush, so the rename's durability is weaker there.
+async function syncFile(path){
+ if(process.platform==='win32'){let file;try{file=await open(path,'r+');}catch{return;}try{await file.sync();}finally{await file.close();}return;}
+ const file=await open(path,'r');try{await file.sync();}finally{await file.close();}
+}
+async function privateDirectory(path,parent){try{await mkdir(path,{mode:0o700});}catch(e){if(e.code!=='EEXIST')throw e;}const real=await realpath(path),rel=relative(parent,real);if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))throw Error('Backup directory escapes plugin storage');if(process.platform!=='win32'&&(await stat(real)).mode&0o077)throw Error('Backup directory must be private (owner access only)');return real;}
 export async function prepareStorage({path,directory,DatabaseSync,backup}){
  let source;
  try{

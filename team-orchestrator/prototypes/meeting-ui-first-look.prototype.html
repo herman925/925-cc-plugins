@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team meeting — first look</title>
+  <style>
+    :root{color-scheme:light;--ink:#172321;--muted:#62716d;--line:#d7dfda;--paper:#f4f6f2;--card:#fff;--green:#176c51;--green-soft:#e5f2eb;--amber:#875b11;--amber-soft:#fbf0d5;--blue:#335b81;--blue-soft:#edf3f8;--shadow:0 18px 48px #22352b12}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}button{font:inherit}a{color:inherit}
+    .shell{max-width:1180px;margin:auto;padding:28px 28px 56px}.banner{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid #d7b667;border-radius:999px;background:var(--amber-soft);color:#674610;font-size:12px;font-weight:800;letter-spacing:.04em}
+    .banner i{width:8px;height:8px;border-radius:50%;background:#c28318}.top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin:22px 0 26px}.eyebrow,.kicker{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}h1{font:600 clamp(30px,4vw,46px)/1.05 Georgia,serif;letter-spacing:-.04em;margin:8px 0 10px}.lede{max-width:670px;margin:0;color:#52625d}.meeting-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.chip,.status,.role{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:#fff;color:#40504b;font-size:12px;font-weight:700}.chip strong{margin-right:5px;color:var(--ink)}
+    .layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,.85fr);gap:18px;align-items:start}.stack{display:grid;gap:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow)}.card h2{font:600 22px/1.15 Georgia,serif;letter-spacing:-.02em;margin:4px 0 14px}.card h3{font-size:14px;margin:0}.card p{margin:8px 0;color:#4f5f5a}.section-head{display:flex;justify-content:space-between;gap:16px;align-items:start}.status{border:0;background:var(--green-soft);color:var(--green);white-space:nowrap}.status.wait{background:var(--amber-soft);color:var(--amber)}
+    .agenda{list-style:none;padding:0;margin:8px 0 0}.agenda li{display:grid;grid-template-columns:36px 1fr auto;gap:12px;align-items:start;padding:14px 0;border-top:1px solid #edf0ed}.num{font-size:12px;font-weight:800;color:var(--muted);padding-top:2px}.agenda li.current .num{color:var(--green)}.agenda li.current h3{color:var(--green)}.time{font-variant-numeric:tabular-nums;font-size:12px;color:var(--muted);white-space:nowrap}.topic-note{margin-top:12px;padding:14px 16px;background:var(--blue-soft);border-left:3px solid var(--blue);border-radius:8px}.topic-note strong{display:block;color:#294a68;margin-bottom:3px}.topic-note p{margin:0;color:#435a6d;font-size:13px}
+    .people{display:grid;gap:8px}.person{display:grid;grid-template-columns:36px 1fr auto;gap:11px;align-items:center;padding:10px 0;border-top:1px solid #edf0ed}.avatar{width:34px;height:34px;display:grid;place-items:center;border-radius:11px;background:#edf1ed;color:#3f554c;font-weight:800}.person small{display:block;color:var(--muted);font-size:12px}.role{padding:3px 8px;font-size:11px}.role.lead{background:#e8f0e9;color:#345640}.role.user{background:#edf3f8;color:#335b81}.person.offline .avatar{background:#f1f1ee;color:#4b5953}.person.offline .status{background:#f1f1ee;color:#4b5953}
+    details{border-top:1px solid #edf0ed;padding:12px 0 0;margin-top:10px}summary{cursor:pointer;font-weight:700;color:#34453f}details p{font-size:13px}.review{border:1px solid #c8d9ce;background:#f8fcf8}.review ul{margin:12px 0 16px;padding-left:20px;color:#43534d}.review li{margin:6px 0}.action{border:0;border-radius:10px;padding:12px 15px;font-weight:800;background:var(--green);color:white}.action:disabled{background:#aeb8b2;color:#172321;cursor:not-allowed}.hint{font-size:12px;color:var(--muted);margin:10px 0 0!important}.wait-box{border:1px solid #ebd49c;background:#fffaf0;border-radius:13px;padding:16px;margin-top:10px}.wait-box h3{color:var(--amber)}.choices{display:flex;gap:8px;margin-top:12px}.choice{border:1px solid #d8d8d0;background:#f3f3ef;color:#64706b;border-radius:9px;padding:8px 11px;font-size:12px}.choice:disabled{cursor:not-allowed}.approval{margin-top:14px;padding:12px;border-radius:10px;background:#f2f3f0;font-size:13px}.approval strong{color:#4d5a55}.approval .pending{color:var(--amber);font-weight:800}
+    .tracker{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{padding:14px;border:1px solid var(--line);border-radius:12px;background:#fbfcfa}.metric strong{display:block;font:600 24px Georgia,serif}.metric span{font-size:12px;color:var(--muted)}.draft-list{margin:12px 0 0;padding:0;list-style:none}.draft-list li{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #edf0ed;font-size:13px}.draft-list small{color:var(--muted)}.summary-placeholder{min-height:84px;border:1px dashed #c8d1cb;border-radius:12px;padding:14px;background:#fafbf8;color:var(--muted);font-size:13px}.foot{margin-top:18px;color:var(--muted);font-size:12px}
+    @media(max-width:850px){.shell{padding:20px 16px 40px}.top{display:block}.layout{grid-template-columns:1fr}.card{padding:18px}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="banner"><i aria-hidden="true"></i>ROUGH PROTOTYPE — sample data, no real effects</div>
+    <header class="top">
+      <div>
+        <div class="eyebrow">Claude Mod · Project meeting</div>
+        <h1>Neighborhood access review</h1>
+        <p class="lede">Agree on safe access steps for the next release. Essential input stays visible; nobody can approve for the user without prior explicit delegation.</p>
+        <div class="meeting-meta"><span class="chip"><strong>ILLUSTRATIVE · UNDECIDED</strong> 14:00–14:30 · not an approved budget</span><span class="chip"><strong>ILLUSTRATIVE · UNDECIDED</strong> 30 min · not an approved budget</span><span class="chip"><strong>Project</strong> Northstar</span></div>
+      </div>
+      <span class="status">Review before start</span>
+    </header>
+
+    <div class="layout">
+      <div class="stack">
+        <section class="card" aria-labelledby="agenda-title">
+          <div class="section-head"><div><div class="kicker">Meeting plan</div><h2 id="agenda-title">Agenda</h2></div><span class="chip"><strong>3</strong> topics</span></div>
+          <ol class="agenda">
+            <li class="current"><span class="num">01</span><div><h3>Confirm the access boundary</h3><p>Review which project roles can read the shared workspace and which actions need user approval.</p></div><span class="time">8 min</span></li>
+            <li><span class="num">02</span><div><h3>Resolve the audit question</h3><p>Compare the pending evidence with the agreed review rule.</p></div><span class="time">12 min</span></li>
+            <li><span class="num">03</span><div><h3>Choose next steps</h3><p>Record owners, open questions, and a short return summary.</p></div><span class="time">10 min</span></li>
+          </ol>
+          <div class="topic-note"><strong>Important topic · access boundary</strong><p>An invited, verified member relevant to the current topic joins after the current contribution finishes. Required input must arrive before the decision; otherwise wait or defer this topic. No unfinished work or contribution is interrupted.</p></div>
+          <details><summary>Why this topic is marked important</summary><p>The answer changes who may read the project brief. Keep this topic open until the required input arrives or this topic is deferred.</p></details>
+        </section>
+
+        <section class="card" aria-labelledby="people-title">
+          <div class="section-head"><div><div class="kicker">Participants</div><h2 id="people-title">Expected in the room</h2></div><span class="chip">Default guests</span></div>
+          <p class="hint">Highest leader plus direct reports only. Add other guests only with an explicit meeting decision.</p>
+          <div class="people">
+            <div class="person"><span class="avatar" aria-hidden="true">ML</span><div><h3>Morgan Lee</h3><small>Highest leader · meeting owner</small></div><span class="role user">Highest leader</span></div>
+            <div class="person"><span class="avatar" aria-hidden="true">AR</span><div><h3>Alex Rivera</h3><small>Direct report · access review</small></div><span class="role lead">Lead</span></div>
+            <div class="person offline"><span class="avatar" aria-hidden="true">SK</span><div><h3>Sam Kim</h3><small>Direct report · offline</small></div><span class="status wait">Offline</span></div>
+          </div>
+          <details><summary>Participant details</summary><p>Sam’s pending output remains attached to the meeting record. Offline status does not grant another participant permission to speak, approve, or act for Sam.</p></details>
+        </section>
+
+        <section class="card" aria-labelledby="input-title">
+          <div class="section-head"><div><div class="kicker">Decision gate</div><h2 id="input-title">Essential input is still waiting</h2></div><span class="status wait">WAIT · required</span></div>
+          <div class="wait-box"><h3>Waiting for relevant findings</h3><p>Waiting for the relevant member’s findings before finalizing this topic.</p><p class="hint">Required input is still pending.</p></div>
+          <div class="choices"><button class="choice" type="button" disabled>Wait for input · disabled demo</button><button class="choice" type="button" disabled>Defer topic · disabled demo</button></div>
+          <div class="approval"><strong>SAMPLE · Role proposal</strong><p>Alex Rivera proposes to summarize audit evidence for agenda item 02. Sample only; no role or permission change is saved.</p></div>
+          <div class="approval"><strong>Role-change approval:</strong> <span class="pending">Pending user approval.</span> The highest leader may approve only when the user gave prior explicit delegation covering this change. Urgency, unattended operation, and connectivity grant no permission. File-write grants remain separate.</div>
+        </section>
+      </div>
+
+      <aside class="stack" aria-label="Meeting preparation and outputs">
+        <section class="card review" aria-labelledby="review-title">
+          <div class="kicker">Preflight</div><h2 id="review-title">Review before start</h2>
+          <ul><li>Agenda and important topic are visible.</li><li>Default guests match the reporting line.</li><li>Essential input and user-role approval are pending.</li><li>Offline work stays pending; no permission bypass.</li></ul>
+          <button class="action" type="button" disabled>Start meeting · disabled demo</button>
+          <p class="hint">This mockup has no meeting, notification, or storage actions.</p>
+        </section>
+
+        <section class="card" aria-labelledby="tracker-title">
+          <div class="section-head"><div><div class="kicker">SAMPLE · Local tracker</div><h2 id="tracker-title">Drafts and pending outputs</h2></div><span class="status wait">Tracker unavailable</span></div>
+          <div class="tracker"><div class="metric"><strong>2</strong><span>Local drafts</span></div><div class="metric"><strong>1</strong><span>Pending output</span></div></div>
+          <ul class="draft-list"><li><span>Access matrix notes</span><small>Draft · local</small></li><li><span>Review checklist</span><small>Draft · local</small></li><li><span>Sam’s audit comment</span><small>Pending · offline</small></li></ul>
+          <p class="hint">The tracker is unavailable in this sample; the controller and sessions remain available. Local drafts continue and pending outputs stay visible. Reconnection restores visibility only; it grants no approval. A participant being offline does not mean the tracker is offline.</p>
+        </section>
+
+        <section class="card" aria-labelledby="summary-title">
+          <div class="kicker">After the meeting</div><h2 id="summary-title">Return summary</h2>
+          <div class="summary-placeholder">Summary will appear here after the leader reviews decisions, unresolved questions, and pending outputs.</div>
+          <p class="hint">No summary is generated in this first look.</p>
+        </section>
+      </aside>
+    </div>
+    <p class="foot">Sample data only. No urgency, offline approval, automatic role update, or permission override is available.</p>
+  </main>
+</body>
+</html>

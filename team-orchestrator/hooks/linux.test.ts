@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { sameMachine } from './changes'
-import { adopt, HUALONG, ID1, ID2, mountBand, world } from './test-world'
+import { HUALONG, ID1, ID2, adopt, mountBand, sessionAs, world } from './test-world'
 
 const roster = (files: Map<string, string>) => [...files].find(([k]) => k.endsWith('/.claude/team-orchestrator/roster.json'))?.[1] ?? ''
 const machines = (files: Map<string, string>) => [...roster(files).matchAll(/"machine": "([^"]*)"/g)].map(m => m[1])
@@ -11,6 +11,7 @@ const asked = (files: { calls: string[][] }, cmd: string) => files.calls.filter(
 
 test('on Linux the machine is uname -n, asked once per load', async ($, on) => {
   const files = world(on, [], [], e => (e.argv[0] === 'uname' ? 'herman925.chan\n' : undefined), { env: { OS: 'Linux' } })
+  sessionAs(on)
   await adopt($, HUALONG)
   await adopt($, HUALONG)
   expect(machines(files)).toEqual(HUALONG.map(() => 'herman925.chan'))
@@ -19,6 +20,7 @@ test('on Linux the machine is uname -n, asked once per load', async ($, on) => {
 
 test('on macOS the machine is the LocalHostName, which does not follow the network', async ($, on) => {
   const files = world(on, [], [], e => (e.argv[0] === 'scutil' ? 'Hermans-Mac\n' : e.argv[0] === 'uname' ? 'dhcp-10-0-0-5.example.com\n' : undefined), { env: { OS: 'Darwin' } })
+  sessionAs(on)
   await adopt($, HUALONG)
   expect(machines(files)).toEqual(HUALONG.map(() => 'Hermans-Mac'))
   expect(asked(files, 'uname')).toBe(0)
@@ -26,6 +28,7 @@ test('on macOS the machine is the LocalHostName, which does not follow the netwo
 
 test('a machine called localhost names no machine: the roster records none', async ($, on) => {
   const files = world(on, [], [], e => (e.argv[0] === 'uname' ? 'localhost.localdomain\n' : undefined), { env: { OS: 'Linux' } })
+  sessionAs(on)
   await adopt($, HUALONG)
   expect(machines(files)).toEqual([])
 })
@@ -41,6 +44,7 @@ test('a member recorded with no machine gets this PC once its transcript shows i
     return false
   }
   const files = world(on, [], [{ id: ID1 }], undefined, { env, registry: [], refuse })
+  sessionAs(on)
   const ids: Record<string, string> = { 'Hualong CEO': ID1, 'Hualong Workers': ID2 }
   await adopt($, HUALONG.map(r => ({ ...r, handle: '', sessionId: ids[r.name] ?? '' })))
   expect(machines(files)).toEqual([])
@@ -83,6 +87,7 @@ test('members start with the browser-automation plugins the person enabled turne
     if (a.includes('"wait"')) return '{"result":{"satisfied": true}}'
     return undefined
   }, { refuse })
+  sessionAs(on)
   box.files = files
   await $.tool.call({
     tool: 'mcp__team-orchestrator__team_launch',

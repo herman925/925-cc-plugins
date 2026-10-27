@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { adopt, mountBand, world } from './test-world'
+import { adopt, mountBand, sessionAs, world } from './test-world'
 
 // Every row of options (Show / Hide, the layout, the levels...) is drawn by one helper, Seg: the chosen option is
 // coloured text in "[ label ]" shape, the others stay pressable buttons.
@@ -7,6 +7,7 @@ const CHOSEN = '#ff5440'
 
 test('in Settings the chosen option of Show / Hide is #ff5440 and the other stays a plain button; pressing it moves the colour', async ($, on) => {
   world(on, [{ handle: 'term_c1', title: '✳ Hualong CEO' }], [])
+  sessionAs(on)
   await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c1' }])
   const band = await mountBand($, 120)
   await band.press({ key: 'settings' })
@@ -25,6 +26,7 @@ test('in Settings the chosen option of Show / Hide is #ff5440 and the other stay
 
 test('the layout row gets the same colour from the same helper', async ($, on) => {
   world(on, [{ handle: 'term_c2', title: '✳ Hualong CEO' }], [])
+  sessionAs(on)
   await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c2' }])
   const band = await mountBand($, 120)
   await band.press({ key: 'settings' })

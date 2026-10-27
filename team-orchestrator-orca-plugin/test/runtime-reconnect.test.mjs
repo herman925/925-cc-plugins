@@ -1,3 +1,4 @@
+import { endpointFor } from './endpoint.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -445,7 +446,7 @@ for (const failure of [null, 'parent-pid', 'response-epoch'])
       { join } = await import('node:path'),
       { createNativeRpc } = await import('../src/local/native-runtime.mjs');
     const f = await setup(t),
-      endpoint = join(f.profile, 'runtime.sock'),
+      ep = endpointFor(f.profile), endpoint = ep.endpoint,
       requests = [];
     const server = createServer((socket) => {
       let input = '';
@@ -480,7 +481,7 @@ for (const failure of [null, 'parent-pid', 'response-epoch'])
         pid: failure === 'parent-pid' ? process.pid + 1 : process.pid,
         runtimeId: 'runtime-two',
         authToken: 'fixture-private',
-        transports: [{ kind: 'unix', endpoint }],
+        transports:[ep],
       }),
     );
     const rpc = createNativeRpc({

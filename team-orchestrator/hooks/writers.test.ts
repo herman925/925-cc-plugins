@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { afterTry, appliedAfter, applyOps, DAY, diffOps, fileName, isAway, KEEP_MS, metaAfter, olderThan, pendingNames, projectKey, queueAction, rightsChanges, rosterOps } from './changes'
+import { afterTry, appliedAfter, applyOps, DAY, diffOps, fileName, isAway, KEEP_MS, metaAfter, olderThan, pendingNames, project, projectKey, queueAction, rightsChanges, rosterOps } from './changes'
 import type { Change, QEntry } from './changes'
 import { identify } from './identity'
 import { adopt, HUALONG, ID1, ID2, ID3, mountBand, pendingChanges, rawSaved, saved, STATUS, TEAM, world } from './test-world'
@@ -45,6 +45,17 @@ test('a change file holds only the fields a session changed; change files apply 
   expect(applyOps(base, [{ op: 'add', member: { team: 'T', name: 'N', boss: 'A' } }, { op: 'del', key: 'T|B' }]).map(x => x.name)).toEqual(['A', 'N'])
   // a change of rights is named, with who made it, for the top's toast
   expect(rightsChanges([{ name: 'x', change: change(now, [{ op: 'set', key: 'T|A', patch: { allowWrite: true } }]) }])).toEqual(['A: Allow writes on (from Hualong Workers)'])
+})
+
+test('registered home is included on first add and cannot be replaced or cleared by later change files', () => {
+  const home = { contextKind: 'unknown' as const, executionHostId: 'host-1', originalPath: 'C:/proj' }
+  const current = m('A', 'user', { registeredHome: home })
+  const changed = { ...home, originalPath: 'C:/other' }
+  // an added member carries the roster fields only; the rest live in the roster file
+  expect(diffOps([], [m('New', 'user', { registeredHome: home })])).toEqual([{ op: 'add', member: project(m('New', 'user', { registeredHome: home })) }])
+  expect(() => diffOps([current], [{ ...current, registeredHome: changed }])).toThrow('registered home cannot be changed by a routine roster patch')
+  expect(applyOps([current], [{ op: 'set', key: 'T|A', patch: { registeredHome: null, note: 'forged' } }])).toEqual([current])
+  expect(applyOps([current], [{ op: 'set', key: 'T|A', patch: { registeredHome: changed } }])).toEqual([current])
 })
 
 test('versions: an older mod is told apart from a newer one; the stamp keeps the newest writer and the first top machine', () => {

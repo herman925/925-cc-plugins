@@ -1,3 +1,4 @@
+import { rolePointer } from '../role-files.mjs';
 import {SESSION_DECISION_KINDS} from './session-decisions.mjs';
 import {verifiedWorkerReport} from './native-worker-report.mjs';
 import {readIntentWithdrawals} from './native-intent-withdrawal.mjs';
@@ -18,6 +19,7 @@ function verifyIntent(task, spec, work, protocol, team, owner, receipt) {
  if(spec.writeScope!==undefined)declaredWriteScope(spec.writeScope);
  const member=team.members.find(row=>row.id===spec.memberId);
  if(!member||member.boss!==work.supervisorMemberId||member.roleVersion!==spec.roleVersion||!same(spec.role,{brief:member.brief,habits:member.habits,collaboration:member.collaboration}))throw Error('Task member, direct supervisor or frozen role version does not match.');
+ if(team.configuration?.projectRoleFiles===1&&!spec.instruction.includes(rolePointer(team,member)))throw Error('Native Task must include the saved member role-file instruction.');
  const expected=nativeMutationFingerprint('orchestration.taskCreate',{spec:task.spec,run:work.run.id,callerTerminalHandle:caller(owner)},owner);
  if(receipt.payload_hash!==expected||receipt.value?.task?.id!==task.id||receipt.value.task.spec!==task.spec||receipt.value.task.run_id!==work.run.id)throw Error('Native Task author proof is unavailable. Use the exact task-create protocol without extra flags.');
  if(owner.kind==='terminal'&&(task.created_by_terminal_handle!==owner.handle||task.created_by_pane_key!==owner.paneKey||task.created_by_process_incarnation!==owner.processIncarnation||task.created_by_run_generation!==protocol.generation))throw Error('Native terminal Task creator instance is unverified.');

@@ -1,12 +1,13 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import {join} from 'node:path';import {tmpdir} from 'node:os';import {createHash} from 'node:crypto';import {DatabaseSync} from 'node:sqlite';
 import {openTeamStore} from '../src/local/store.mjs';import {DEFAULT_FORM} from '../src/team.mjs';import {nativeLaunchIntent,publicOperation} from '../src/local/native-launch.mjs';
 import {createRecoveryService} from '../src/local/recovery.mjs';
 async function fixture(t,{host='local'}={}){
  const profile=await mkdtemp(join(tmpdir(),'recovery117-'));let store=await openTeamStore({userData:profile});
- t.after(async()=>{store.close();await rm(profile,{recursive:true,force:true});});
+ t.after(async()=>{store.close();await rmTemp(profile);});
  const scope={workspaceId:'folder:/work',executionHostId:host,kind:'folder',displayName:'Work',workspaceKey:createHash('sha256').update(JSON.stringify(['folder:/work',host])).digest('hex')};
  const team=store.createTeam({requestId:'team',expectedRevision:0,form:DEFAULT_FORM},scope).teams[0],member=team.members[0];
  const op=store.prepareOperation({teamId:team.id,memberId:member.id,requestId:'launch',configVersion:1},{scope,nativeRequest:nativeLaunchIntent(team,member,scope),runtimeId:'old-runtime',roleVersion:1,title:'Head',executionHostId:host,hostGeneration:host==='local'?null:1}).operation;
@@ -45,7 +46,6 @@ test('a durable launch intent that never passed native admission remains distinc
  const op=f.store.readOperation('launch');f.store.settleOperation('launch',op.nativeRequest.operationId,{effectState:'submitted'},op.version);
  await f.service().reconcile();assert.equal(f.store.readOperation('launch').recovery.state,'unknown');assert.equal(f.store.isActiveOperation(f.store.readOperation('launch')),true);
 });
-
 test('legacy terminal recovery enriches exact PTY once and refuses a swapped PTY with the same raw incarnation',async t=>{
  const f=await fixture(t),patch={status:'created',kind:'terminal',handle:'terminal',paneKey:'tab:leaf',observation:{state:'unknown',incarnationId:'native-instance'}};
  f.store.settleOperation('launch',f.op.nativeRequest.operationId,{...patch,public:publicOperation({...f.op,...patch})});
@@ -59,7 +59,6 @@ test('legacy terminal recovery enriches exact PTY once and refuses a swapped PTY
  assert.equal(f.store.readOperation('launch').recovery.liveness,'unknown');
  assert.equal(f.store.readOperation('launch').observation.processIncarnation,'repo::/work@@original:native-instance');
 });
-
 test('created terminal clears only stale ledger absence after exact live proof, retaining provider and wrong-identity warnings',async t=>{
  const f=await fixture(t),absent='Original native launch ledger row is absent; no launch was retried.';
  const patch={status:'created',kind:'terminal',handle:'terminal',paneKey:'tab:leaf',error:absent,warning:'Native prompt delivery is unconfirmed.',observation:{state:'unknown',incarnationId:'native-instance',ptyId:'known-pty',processIncarnation:'known-pty:native-instance'}};
@@ -72,7 +71,6 @@ test('created terminal clears only stale ledger absence after exact live proof, 
  f.store.settleOperation('launch',saved.nativeRequest.operationId,{error:'Unresolved provider authentication failure.'},saved.version);
  await service.checkOperation('launch');assert.equal(f.store.readOperation('launch').error,'Unresolved provider authentication failure.');
 });
-
 test('late pending recovery cannot overwrite a newer successful launch settlement',async t=>{
  const f=await fixture(t);f.store.settleOperation('launch',f.op.nativeRequest.operationId,{effectState:'submitted'},f.op.version);
  let release,entered;const barrier=new Promise(resolve=>{release=resolve;}),waiting=new Promise(resolve=>{entered=resolve;});t.after(()=>release());

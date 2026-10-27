@@ -3,10 +3,11 @@
 import { expect, test } from 'claude-code/testing'
 
 import { fileName } from './changes'
-import { adopt, TEAM, world } from './test-world'
+import { adopt, sessionAs, TEAM, world } from './test-world'
 
 test('member_remove fails the queued messages for that member and leaves the others', async ($, on) => {
   const files = world(on, [], [])
+  sessionAs(on)
   await adopt($, [{ name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_h1' }, { name: 'W1', role: 'worker', level: 2, boss: 'Head', handle: 'term_w1' }, { name: 'W2', role: 'worker', level: 2, boss: 'Head', handle: 'term_w2' }])
   const q = (to: string, id: string) => {
     const k = `${TEAM}/queue/${fileName(Date.now(), id)}`

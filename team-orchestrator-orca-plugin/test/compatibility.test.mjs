@@ -1,6 +1,7 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readdir,rm,symlink} from 'node:fs/promises';
+import { mkdtemp, readdir, symlink } from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
@@ -8,13 +9,11 @@ import {validateRuntime} from '../src/local/runtime-contract.mjs';
 import {REQUIRED_HOST_CAPABILITIES,validateHostCapabilities,inspectEvidenceSchemas,probeHostCompatibility} from '../src/local/host-compatibility.mjs';
 import {inspectAdapterContract} from '../src/local/adapter.mjs';
 import {questionFixture} from './questions-fixture.mjs';
-
 const gate=(0,eval)(`(${validateRuntime.toString()})`);
 const runtime={appName:'Orca',appVersion:'1.4.229',platform:'darwin',arch:'arm64',electron:'43.7.5',node:'24.21.0',sqlite:true,build:{version:'1.4.229',commit:'37c314bcc96063c42c468e564df2c34bac8ef8a1',buildId:'current-build',platform:'darwin',architecture:'arm64'}};
 const status={runtimeId:'actual-runtime',appVersion:runtime.appVersion,capabilities:[...REQUIRED_HOST_CAPABILITIES]};
 const settings={settings:{}};
-const temp=async t=>{const root=await mkdtemp(join(tmpdir(),'team-compatibility-'));t.after(()=>rm(root,{recursive:true,force:true}));return root;};
-
+const temp=async t=>{const root=await mkdtemp(join(tmpdir(),'team-compatibility-'));t.after(()=>rmTemp(root));return root;};
 test('validation history identifies tested builds without excluding later Orca, Electron or Node versions',()=>{
  assert.equal(gate(runtime).testedBuild,true);
  for(const patch of [{appVersion:'1.4.230',build:null},{appVersion:'2.0.0-beta.1',electron:'44.0.0',node:'25.0.0',build:null},{electron:'44.1.0',node:'26.1.0'},{build:null}]){
@@ -54,7 +53,8 @@ test('changed schema and missing evidence columns fail closed while preserving d
 });
 test('journal formats and escaped profile paths cannot be treated as compatible',async t=>{
  const profile=await temp(t),other=await temp(t),file=join(other,'journal.db'),db=new DatabaseSync(file);db.exec('PRAGMA user_version=5');db.close();
- await symlink(file,join(profile,'agent-session-journal.db'));await assert.rejects(inspectEvidenceSchemas(profile),{code:'profile_mismatch'});
+ // a symlink needs Developer Mode or an elevated account on Windows; the schema refusals below need neither
+ if(process.platform!=='win32'){await symlink(file,join(profile,'agent-session-journal.db'));await assert.rejects(inspectEvidenceSchemas(profile),{code:'profile_mismatch'});}
  const own=await temp(t),journal=new DatabaseSync(join(own,'agent-session-journal.db'));journal.exec('PRAGMA user_version=5');journal.close();await assert.rejects(inspectEvidenceSchemas(own),{code:'evidence_schema_incompatible'});
 });
 test('connection probe uses only read methods and keeps provider readiness unverified',async t=>{

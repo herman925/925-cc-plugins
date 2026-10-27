@@ -4,10 +4,10 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { joinLaunch, newProblem, purview, requestProblem } from './adding'
+import { joinLaunch, manages, newProblem, purview, requestProblem } from './adding'
 import { fileName } from './changes'
 import { judgeTeamFiles } from './guard'
-import { adopt, ID1, ID2, ID3, mountBand, saved, STATUS, TEAM, world } from './test-world'
+import { adopt, ID1, ID2, ID3, mountBand, saved, sessionAs, STATUS, TEAM, world } from './test-world'
 
 const m = (team: string, name: string, boss: string, level: number, extra: Partial<Member> = {}): Member => ({
   team, name, role: 'r', level, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
@@ -34,6 +34,17 @@ test('purview: a lead over two teams has both and not a third; the top has every
   expect(purview(ORG, at('B-Head'))).toEqual(['B'])
   expect(purview(ORG, at('CEO')).sort()).toEqual(['A', 'B', 'C', 'Org'])
   expect(requestProblem(ORG, at('C-W1'), 'C')).toContain('only a head or a lead')
+})
+
+test('a level is a hint for the panel, not a right: only actual reports make a member a manager', () => {
+  // a lone member under the head has nobody under it, so it may not ask for members, whatever its level says
+  const flat = [m('T', 'Top', 'user', 1), m('T', 'Alone', 'Top', 1)]
+  expect(manages(flat, flat[1]!)).toBe(false)
+  expect(requestProblem(flat, flat[1]!, 'T')).toContain('only a head or a lead')
+  // a member others report to manages, whatever its level says
+  expect(manages(ORG, at('B-Head'))).toBe(true)
+  expect(manages(ORG, at('C-Head'))).toBe(true)
+  expect(manages(ORG, at('C-W1'))).toBe(false)
 })
 
 test('a new member needs a running team, a name free in the whole project, a boss in that team and a known effort', () => {
@@ -161,6 +172,9 @@ test('default boss of a request: the head or lead that asks, even for a team bel
 
 test('New member in Team actions adds a not-yet member with its role file, under the head unless you pick another boss', async ($, on) => {
   const files = world(on)
+  sessionAs(on)
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
   await adopt($, [{ name: 'Head', role: 'head', level: 1, boss: 'user', handle: 'term_h' }, { name: 'Worker-1', role: 'worker', level: 2, boss: 'Head', handle: 'term_1' }], 'Squad')
   const band = await mountBand($, 300)
   await band.press({ key: 'tact-0' })
@@ -198,6 +212,9 @@ const AGAIN = [
 const launch = ($: any, ifExists?: string) => $.tool.call({ tool: 'mcp__team-orchestrator__team_launch', team: 'Squad', members: AGAIN, ...(ifExists ? { ifExists } : {}) } as any) as Promise<any>
 const squadWorld = async ($: any, on: any) => {
   const files = world(on, [], [], e => (JSON.stringify(e).includes('"current"') ? '{"result":{"worktree":{"id":"wt1"}}}' : undefined))
+  sessionAs(on)
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
   await adopt($, SQUAD, 'Squad')
   return files
 }

@@ -28,7 +28,7 @@ export const SENDING_MS = 5 * MIN_MS
 export const MAX_TRIES = 3
 
 /** The member fields kept in the roster file. */
-export const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'machine', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort', 'location', 'cli'] as const
+export const STRUCT = ['team', 'name', 'address', 'role', 'level', 'boss', 'handle', 'sessionId', 'worktree', 'machine', 'registeredHome', 'short', 'allowAgent', 'allowWrite', 'briefed', 'noted', 'statusFile', 'pending', 'model', 'effort', 'location', 'cli'] as const
 
 export const keyOf = (m: Partial<Member>) => `${m.team ?? ''}|${m.name ?? ''}`
 
@@ -86,6 +86,7 @@ export function diffOps(base: Partial<Member>[], local: Partial<Member>[]): Op[]
       ops.push({ op: 'add', member: m })
       continue
     }
+    if (!same(m.registeredHome, old.registeredHome)) throw new Error('registered home cannot be changed by a routine roster patch')
     const patch: Record<string, unknown> = {}
     for (const f of STRUCT) {
       if (f === 'statusFile') continue
@@ -114,7 +115,12 @@ export function applyOps<T extends Partial<Member>>(list: T[], ops: Op[]): T[] {
   let out = list.slice()
   for (const o of ops) {
     if (o.op === 'del') out = out.filter(m => keyOf(m) !== o.key)
-    else if (o.op === 'set') out = out.map(m => (keyOf(m) === o.key ? merge(m, o.patch) : m))
+    else if (o.op === 'set')
+      out = out.map(m => {
+        if (keyOf(m) !== o.key) return m
+        if ('registeredHome' in o.patch && !same(o.patch.registeredHome, m.registeredHome)) return m
+        return merge(m, o.patch)
+      })
     else {
       const k = keyOf(o.member)
       out = out.some(m => keyOf(m) === k) ? out.map(m => (keyOf(m) === k ? ({ ...o.member, ...m } as T) : m)) : [...out, o.member as T]

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { grantsFrom, isBoss, isMemoryPath, judge, NO_GRANTS, pathOf } from './guard'
+import { createsManaged, grantsFrom, isBoss, isMemoryPath, judge, NO_GRANTS, pathOf } from './guard'
 import { adopt, HUALONG, ID1, ID2, ID3, mountBand, saved, world } from './test-world'
 
 // ── the rules alone (no engine) ──
@@ -87,6 +87,23 @@ test('judge: a standing switch or a one-turn grant lets it through, and says whi
   expect(judge({ me: head, list, tool: 'Agent', path: '', grants: { agent: false, write: true }, claudeDirs: DIRS })?.kind).toBe('deny')
 })
 
+test('the creation classifier reads the executed word: a wrapper is unwrapped twice, quoted text is data', () => {
+  const blocked = (c: string) => createsManaged(c)?.kind === 'deny'
+  expect(blocked('orca repo add x')).toBe(true)
+  expect(blocked('"/c/Program Files/Orca/orca.exe" worktree create')).toBe(true)
+  expect(blocked('powershell -NoProfile -Command "cmd /c orca repo add x"')).toBe(true)
+  expect(blocked('start-process orca repo add x')).toBe(true)
+  expect(blocked('claude --worktree x')).toBe(true)
+  // the words are data for another program, or the command registers nothing this check knows
+  expect(blocked('echo "orca repo add x"')).toBe(false)
+  expect(blocked("grep -rn 'orca repo add' docs")).toBe(false)
+  expect(blocked('orca repo show --repo id:1')).toBe(false)
+  expect(blocked('orca worktree list')).toBe(false)
+  expect(blocked('git worktree add ../x')).toBe(false)
+  expect(blocked('claude -p hello')).toBe(false)
+  expect(blocked('npm install')).toBe(false)
+})
+
 // ── the hooks, in the engine ──
 
 const FILE = 'C:/proj/src/app.ts'
@@ -120,6 +137,42 @@ test('a member with reports cannot use Agent by default, nor Write, Edit or Note
     expect(allowed(w)).toBe(false)
     expect(w.deny).toContain(`Blocked ${tool}: Hualong Workers has reports`)
   }
+})
+
+test('a member may not register an Orca project or worktree, and no grant opens it', async ($, on) => {
+  const toasts: string[] = []
+  world(on)
+  calls(on, toasts, ID2)
+  for (const tool of ['Bash', 'PowerShell']) on('tool.call', { tool } as any, async () => ({ result: 'done' }) as any)
+  await adopt($, withIds(HUALONG))
+  const run = (command: string, tool = 'Bash') => $.tool.call({ tool, command } as any)
+  for (const command of [
+    'orca repo add C:/new',
+    'orca.exe project setup-existing-folder --path C:/new',
+    'orca project setup-clone --url https://example.com/r.git',
+    'orca worktree create --repo id:r1 --name x',
+    'powershell -NoProfile -Command "orca repo add C:/new"',
+    'cmd /c orca worktree create --repo id:r1',
+    'claude --worktree C:/new',
+  ]) {
+    const r: any = await run(command)
+    expect([command, r.deny?.includes('Blocked')]).toEqual([command, true])
+  }
+  // the person's one-turn words unlock writes and subagents, never a registration
+  await $.prompt.submit({ text: 'go #allow-write #allow-subagent', origin: { kind: 'composer' }, wait: false } as any)
+  expect(((await run('orca repo add C:/new')) as any).deny).toContain('Blocked')
+  // words quoted to another program are data, and a command that registers nothing gets no opinion
+  for (const command of ['echo "orca repo add C:/new"', 'grep -r "worktree create" docs/', 'cat notes.md', 'orca status', 'git worktree add ../x', 'npm install'])
+    expect([command, ((await run(command)) as any).deny]).toEqual([command, undefined])
+})
+
+test('a session that is not on the roster is not judged for a registration', async ($, on) => {
+  const toasts: string[] = []
+  world(on)
+  calls(on, toasts, 'ffffffff-ffff-4fff-8fff-ffffffffffff')
+  on('tool.call', { tool: 'Bash' } as any, async () => ({ result: 'done' }) as any)
+  await adopt($, withIds(HUALONG))
+  expect(((await $.tool.call({ tool: 'Bash', command: 'orca repo add C:/new' } as any)) as any).deny).toBeUndefined()
 })
 
 test('in the engine: a member without Allow subagents may start statusline-setup, not general-purpose', async ($, on) => {

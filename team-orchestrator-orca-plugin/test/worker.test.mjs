@@ -1,11 +1,11 @@
+import { rmTemp } from './temp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-
 test('worker checks consent before injection and recovers from denied host call without caching rejection or writing startup status', async () => {
   const result = await build({ entryPoints: ['src/worker.mjs'], bundle: true, write: false, platform: 'node', format: 'esm', define: { __PLUGIN_DISPLAY_VERSION__: '"test"' }, plugins: [{ name: 'bootstrap-proof', setup(api) {
-    api.onLoad({ filter: /local\/bootstrap\.mjs$/ }, () => ({ contents: 'export let injections = 0; export async function bootstrap() { injections++; return {ready:true, platform:"win32", detail:"injected", cliPaths:{appData:"private-app-data",userData:"private-user-data"}, injections}; }', loader: 'js' }));
-    api.onLoad({ filter: /local\/cli\.mjs$/ }, () => ({ contents: 'export async function locateCli() { return {}; } export function createCliRunner() { return async () => {}; }', loader: 'js' }));
+    api.onLoad({ filter: /local[\\/]bootstrap\.mjs$/ }, () => ({ contents: 'export let injections = 0; export async function bootstrap() { injections++; return {ready:true, platform:"win32", detail:"injected", cliPaths:{appData:"private-app-data",userData:"private-user-data"}, injections}; }', loader: 'js' }));
+    api.onLoad({ filter: /local[\\/]cli\.mjs$/ }, () => ({ contents: 'export async function locateCli() { return {}; } export function createCliRunner() { return async () => {}; }', loader: 'js' }));
   } }] });
   const activate = (await import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].text).toString('base64'))).default;
   const commands = new Map(); const calls = []; const logs = []; let approved = false;
@@ -27,16 +27,18 @@ test('worker checks consent before injection and recovers from denied host call 
   assert.ok(calls.every(call => call.method === 'storage.get'));
   assert.equal((await commands.get('team.control')({ op: 'ping' })).injections, 2);
 });
-
 test('worker retains its SQLite service and confirmed selections across initialization retries', async t => {
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
   const { DEFAULT_FORM } = await import('../src/team.mjs');
   const profile = await mkdtemp(join(tmpdir(), 'worker-store-'));
-  t.after(() => rm(profile, { recursive: true, force: true }));
+  t.after(() => rmTemp(profile));
+  // the project folder is a separate root from the Orca profile: the store lives with the project
+  const projectRoot = await mkdtemp(join(tmpdir(), 'worker-project-'));
+  t.after(() => rmTemp(projectRoot));
   const built = await build({ entryPoints: ['src/worker.mjs'], bundle: true, write: false, platform: 'node', format: 'esm', define: { __PLUGIN_DISPLAY_VERSION__: '"test"' }, plugins: [{ name: 'host-boundary', setup(api) {
-    api.onLoad({ filter: /local\/bootstrap\.mjs$/ }, () => ({ contents: `export async function bootstrap() { return { ready:true, platform:'darwin', detail:'fixture', cliPaths:{appData:${JSON.stringify(profile)},userData:${JSON.stringify(profile)}} }; }`, loader: 'js' }));
-    api.onLoad({ filter: /local\/cli\.mjs$/ }, () => ({ contents: `export async function locateCli() { return {}; } export function createCliRunner() { return async () => ({worktree:{id:'folder:/fixture',hostId:'local',displayName:'Fixture'}}); }`, loader: 'js' }));
+    api.onLoad({ filter: /local[\\/]bootstrap\.mjs$/ }, () => ({ contents: `export async function bootstrap() { return { ready:true, platform:'darwin', detail:'fixture', cliPaths:{appData:${JSON.stringify(profile)},userData:${JSON.stringify(profile)}} }; }`, loader: 'js' }));
+    api.onLoad({ filter: /local[\\/]cli\.mjs$/ }, () => ({ contents: `export async function locateCli() { return {}; } export function createCliRunner() { return async () => ({worktree:{id:'folder:/fixture',hostId:'local',path:${JSON.stringify(projectRoot)},displayName:'Fixture'}}); }`, loader: 'js' }));
   } }] });
   const activate = (await import('data:text/javascript;base64,' + Buffer.from(built.outputFiles[0].text).toString('base64'))).default;
   const commands = new Map();

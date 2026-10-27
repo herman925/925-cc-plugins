@@ -217,7 +217,7 @@ test('a held session is denied Write and team_message, writes no status as X, an
   expect((await agent($) as any).deny).toContain('Hualong Workers has no subagent permission')
 })
 
-test('/clear in the same tab keeps the name and changes the id: the roster takes the new session id', async ($, on) => {
+test('/clear in the same tab cannot replace the saved session id without confirmation', async ($, on) => {
   const sid = { id: ID3 }
   const files = world(on, tabsOf, [], undefined, {
     env: { ORCA_TERMINAL_HANDLE: 'term_w' },
@@ -225,25 +225,21 @@ test('/clear in the same tab keeps the name and changes the id: the roster takes
   })
   engine(on, sid)
   await adopt($, withIds)
-  expect(saved(files).find((x: any) => x.name === 'Hualong Workers').sessionId).toBe(ID3)
-  // full rights as Workers: judged by its own rules, not held
-  expect((await agent($) as any).deny).toContain('Blocked Agent: Hualong Workers has no subagent permission')
+  expect(saved(files).find((x: any) => x.name === 'Hualong Workers').sessionId).toBe(ID2)
+  expect((await agent($) as any).deny).toContain('on hold')
 })
 
-test('a fresh claude in a member\'s tab is re-attached and gets the role-file note on its next prompt, once', async ($, on) => {
+test('a reused member tab cannot bind a fresh session without confirmation', async ($, on) => {
   const sid = { id: ID3 }
   const contexts: (readonly string[] | undefined)[] = []
   const files = world(on, tabsOf, [], undefined, { env: { ORCA_TERMINAL_HANDLE: 'term_5' }, registry: [{ sessionId: ID3 }] })
   engine(on, sid, { contexts })
   await adopt($, withIds)
-  expect(saved(files).find((x: any) => x.name === 'Hualong Worker 5').sessionId).toBe(ID3)
-  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' }, wait: false } as any)
-  await $.prompt.submit({ text: 'again', origin: { kind: 'composer' }, wait: false } as any)
-  expect(contexts[0]).toEqual(['You are Hualong Worker 5 in team Hualong. Your role file is .claude/team-orchestrator/roles/Hualong_Worker_5.md; read it now.'])
-  expect(contexts[1] ?? []).toEqual([])
+  expect(saved(files).find((x: any) => x.name === 'Hualong Worker 5').sessionId).toBe('')
+  expect((await agent($) as any).deny).toContain('on hold')
 })
 
-test('a /rename in the same tab relabels the member, its reports follow, and its role and status files move', async ($, on) => {
+test('an observed title change preserves canonical names, reports, roles and notes', async ($, on) => {
   const sid = { id: ID2 }
   const toasts: string[] = []
   const files = world(on, tabsOf, [], undefined, {
@@ -254,12 +250,9 @@ test('a /rename in the same tab relabels the member, its reports follow, and its
   engine(on, sid, { toasts })
   await adopt($, withIds)
   const list = saved(files)
-  expect(list.some((x: any) => x.name === 'Hualong Workers')).toBe(false)
-  const crew = list.find((x: any) => x.name === 'Hualong Crew')
-  expect([crew.address, crew.sessionId, crew.handle]).toEqual(['Hualong Crew', ID2, 'term_w'])
-  expect(list.find((x: any) => x.name === 'Hualong Worker 5').boss).toBe('Hualong Crew')
-  expect(files.has('C:/proj/.claude/team-orchestrator/roles/Hualong_Crew.md')).toBe(true)
-  // the status file follows on this machine (an older version's file in the project is read once and moved)
-  expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Crew.json')!).name).toBe('Hualong Crew')
-  expect(toasts.some(t => t.includes('Hualong Workers is now Hualong Crew'))).toBe(true)
+  expect(list.some((x: any) => x.name === 'Hualong Crew')).toBe(false)
+  expect(list.find((x: any) => x.name === 'Hualong Workers').sessionId).toBe(ID2)
+  expect(list.find((x: any) => x.name === 'Hualong Worker 5').boss).toBe('Hualong Workers')
+  expect(files.has('C:/proj/.claude/team-orchestrator/roles/Hualong_Crew.md')).toBe(false)
+  expect(toasts.some(t => t.includes('Hualong Workers is now Hualong Crew'))).toBe(false)
 })

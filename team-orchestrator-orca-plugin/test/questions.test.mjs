@@ -1,3 +1,4 @@
+import { endpointFor } from './endpoint.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {questionFixture} from './questions-fixture.mjs';
@@ -108,10 +109,10 @@ test('two failures request one genuine Head summary across restart, without inve
 });
 test('question answer crosses the authenticated native socket as legitimate user input with no manager identity override',async t=>{
  const f=await setup(t);const {createServer}=await import('node:net'),{writeFile}=await import('node:fs/promises'),{join}=await import('node:path'),{createNativeRpc}=await import('../src/local/native-runtime.mjs'),{createWorkService}=await import('../src/local/teamwork.mjs'),{createQuestionService}=await import('../src/local/questions.mjs');
- const endpoint=join(f.profile,'runtime.sock'),requests=[];
+ const ep = endpointFor(f.profile), endpoint = ep.endpoint,requests=[];
  const server=createServer(socket=>{let body='';socket.on('data',async chunk=>{body+=chunk;if(!body.includes('\n'))return;const r=JSON.parse(body.trim());requests.push(r);try{const result=await f.rpc(r.method,r.params,{orchestrationRequestId:r.orchestrationRequestId});socket.end(JSON.stringify({id:r.id,ok:true,result,_meta:{runtimeId:'runtime-one'}})+'\n');}catch{socket.end(JSON.stringify({id:r.id,ok:false,error:{message:'fixture refusal'},_meta:{runtimeId:'runtime-one'}})+'\n');}});});
  await new Promise(resolve=>server.listen(endpoint,resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
- await writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({pid:process.pid,runtimeId:'runtime-one',authToken:'fixture-only',transports:[{kind:'unix',endpoint}]}));
+ await writeFile(join(f.profile,'orca-runtime.json'),JSON.stringify({pid:process.pid,runtimeId:'runtime-one',authToken:'fixture-only',transports:[ep]}));
  const rpc=createNativeRpc({userData:f.profile,parentPid:process.pid,consent:async()=>{}}),works=createWorkService({store:f.store,rpc,userData:f.profile,consent:async()=>{}}),q=createQuestionService({store:f.store,rpc,userData:f.profile,consent:async()=>{},works});
  headIntent(f,{kind:'user-question',appQuestionId:'socket-question',summary:'Choose scope',options:[],blockingTaskKeys:[]});await q.check(f.work.id);await q.answer({workId:f.work.id,questionId:'socket-question',questionRevision:1,answerId:'socket-answer',body:'Small',supplement:false});
  assert.equal(f.store.listQuestions(f.work.id)[0].answers[0].state,'accepted');const send=requests.find(r=>r.method==='agentSession.send');assert.equal(send.params.body.role,'user');assert.equal(send.params.envelope.sessionId,'codex_head');assert.equal(send.authToken,'fixture-only');assert.equal(send.orchestrationCaller,undefined);assert.equal(send.params.from,undefined);

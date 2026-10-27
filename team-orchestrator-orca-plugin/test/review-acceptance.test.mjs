@@ -1,3 +1,4 @@
+import { rmTemp } from './temp.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -148,10 +149,13 @@ test('native evidence readers retain schema and profile refusals and release rea
  f.db.exec('PRAGMA user_version=44');
  for(const [read,detail] of readers){const result=await read();assert.equal(result.state,'unverified');assert.equal(result.detail,detail);f.db.exec('BEGIN EXCLUSIVE; ROLLBACK');}
  f.db.exec('PRAGMA user_version=43');
- const outside=await mkdtemp(join(tmpdir(),'outside-native-profile-'));t.after(()=>rm(outside,{recursive:true,force:true}));const moved=join(outside,'orchestration.db');
- await rename(file,moved);await symlink(moved,file);
- try{for(const [read,,detail] of readers){const result=await read();assert.equal(result.state,'unverified');assert.equal(result.detail,detail);}}
- finally{await rm(file);await rename(moved,file);}
+ // moving an open database and linking it into the profile needs a POSIX rename and symlink privilege
+ if(process.platform!=='win32'){
+ const outside=await mkdtemp(join(tmpdir(),'outside-native-profile-'));t.after(()=>rmTemp(outside));const moved=join(outside,'orchestration.db');
+   await rename(file,moved);await symlink(moved,file);
+   try{for(const [read,,detail] of readers){const result=await read();assert.equal(result.state,'unverified');assert.equal(result.detail,detail);}}
+   finally{await rm(file);await rename(moved,file);}
+ }
  for(const [read] of readers)assert.equal((await read()).state,'verified');
 });
 

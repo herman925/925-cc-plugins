@@ -1,3 +1,5 @@
+import { createKeyedSerializer } from './keyed-serializer.mjs';
+import { projectRoot, syncProjectRoles } from './project-roles.mjs';
 import {createRosterStatusService} from './roster-status.mjs';
 import {createClaudeStatuslineSettings} from './claude-statusline-settings.mjs';
 import {createStaffingService} from './staffing.mjs';
@@ -16,15 +18,50 @@ import { timingSafeEqual } from 'node:crypto';
 import { createHash, randomUUID } from 'node:crypto';
 import { launchInput, nativeLaunchIntent, launchReceipt, publicOperation } from './native-launch.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
-export function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
+export function createExecutor(host, cli, { store, openStore, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
   const consent = () => host.call('storage.get', { key: 'team-work-consent-v1' });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const claudeContext=createClaudeStatuslineSettings({userData,consent,...claudeContextOptions});
-  const rosterStatus=createRosterStatusService({store,rpc,consent,userData,claudeContext});
+  // A project-owned store is opened for the project the request names. Every service below captures `store`, which is
+  // this proxy, so no service call site changes when the store underneath them does.
+  let currentProject = '';
+  const openedStores = new Map();
+  if (openStore) {
+    store = new Proxy({}, {
+      get(_target, prop) {
+        if (!currentProject) throw new Error('No project is selected, so team storage is unavailable for this call.');
+        const real = openedStores.get(currentProject);
+        if (!real) throw new Error('Team storage for the selected project is not open.');
+        const value = Reflect.get(real, prop);
+        // store.mjs uses `this` (effectiveTeamForWork, assertAdmission), so a copied reference would lose it
+        return typeof value === 'function' ? value.bind(real) : value;
+      },
+    });
+  }
+  // Which project this worker serves, decided once per request. Phase 1 refuses a second project rather than serving two.
+  async function selectProject(workspaceId) {
+    if (!openStore) return;
+    const workspace = await workspaceRecord(workspaceId);
+    const scope = verifiedScope(workspace);
+    if (scope.executionHostId !== 'local') throw new Error('This project runs on another machine, and teams on another machine are not supported in this release.');
+    // the workspace record carries the folder Orca verified; the scope carries the identity, not the path
+    const path = typeof workspace.path === 'string' ? workspace.path : '';
+    if (!path) throw new Error('This project has no folder on this machine, so team storage is unavailable here.');
+    if (currentProject && currentProject !== path) throw new Error('This worker is serving another project. Restart the plugin worker to switch projects.');
+    if (currentProject) return;
+    currentProject = path;
+  }
+  // Opening is separate from selecting: merely looking at a project must not write a folder into it (row 3).
+  async function ensureStore() {
+    if (!openStore || !currentProject || openedStores.has(currentProject)) return;
+    openedStores.set(currentProject, await openStore(currentProject));
+  }
+  // The guard's identity file belongs to the project store, so it is written only once a project is selected.
+  const rosterStatus=createRosterStatusService({store,rpc,consent,userData,claudeContext,projectRoot:()=>currentProject,log:message=>console.error(`[team-orchestrator] ${message}`)});
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing=createStaffingService({store,userData,consent,rpc,works,notify:params=>host.call('notifications.show',params)});
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: params => host.call('notifications.show', params) });
-  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: id => questions.check(id), onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: input => wake.wake(input) });
+  const dispatches = createDispatchService({ store, userData, consent, rpc, works, beforeAdmission: async id => { await questions.check(id); await syncTeamRoles(store.readWork(id).teamId); }, onNativeWait: (...args) => questions.nativeWait(...args), onClosedMember: input => wake.wake(input) });
   const hierarchy=createHierarchyService({store,userData,works});
   const stops = createStopService({store,rpc,userData,consent});
   const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
@@ -35,9 +72,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
   const scheduleWork = () => { if (!workTimer && !stopped) { workTimer = setTimeout(() => { workTimer = null; void resumeWork(); }, 5000); workTimer.unref?.(); } };
   async function resumeWork() {
     if (polling || stopped || reconnecting) return;
+    // the round runs on a timer, with no request and so no project: it serves the project last selected, and does
+    // nothing at all before one is. It must never open a store of its own.
+    if (openStore && !currentProject) { scheduleWork(); return; }
     polling = true;
     try {
       await consent(); await recovery.reconcile(); await stops.reconcile();for(const row of store.listWakes()){await wake.check(row.requestId);await wake.bind(row.requestId);}
+      for (const team of store.readSnapshot().teams.filter(t=>t.launch)) await syncTeamRoles(team.id);
       for(const team of store.readSnapshot().teams.filter(t=>t.launch&&t.configuration.sessionMode!==false))try{await works.ensureSession(team.id);}catch{}
       if (!store.listCurrentWorks().some(work => work.status!=='completed' && (work.recoveryRequestId||work.input.state !== 'not_sent') && work.run.state !== 'fenced')) {if(store.readSnapshot().teams.some(t=>t.launch&&t.configuration.sessionMode!==false))scheduleWork();return;}
       await consent(); await works.reconcile(); await dispatches.reconcile(); await hierarchy.reconcile(); await dispatches.reconcile(); await questions.reconcile(); await staffing.reconcile(); await lifecycle.reconcile(); scheduleWork();
@@ -66,9 +107,23 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     if (typeof executionHostId !== 'string' || !/^(local|ssh:[^\s|]+)$/.test(executionHostId)) throw new Error('Orca did not verify a supported local or SSH execution host for this workspace.');
     return { workspaceId: workspace.id, executionHostId, kind: workspace.kind, displayName: workspace.displayName || workspace.branch || 'Workspace', branch: workspace.branch || '', workspaceKey: hash(JSON.stringify([workspace.id, executionHostId])) };
   }
-  const publicScope = ({ workspaceId, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
+  const serializeRoleSync = createKeyedSerializer();
+  async function syncTeamRoles(teamId) { return serializeRoleSync(teamId, async () => {
+    const team = store.readSnapshot().teams.find(row => row.id === teamId);
+    if (team?.configuration.projectRoleFiles !== 1) return;
+    const scope = store.readScope(teamId), workspace = await workspaceRecord(scope.workspaceId);
+    await syncProjectRoles(team, await projectRoot(workspace, scope));
+    if (store.readSnapshot().teams.find(row => row.id === teamId)?.configVersion !== team.configVersion) throw Error('Team configuration changed while generating role files; retry before launching.');
+  }); }
+  const publicScope = ({ workspaceId, projectPath, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
   async function context(workspaceId, teamId) {
-    if (teamId) return publicScope(store.readScope(teamId));
+    if (teamId) {
+      // a team belongs to the project already open; without one there is no store to read its scope from
+      // after a worker restart there is no workspace id in this call, and searching every project store is circular
+      if (openStore && !currentProject) throw new Error('Select the project again to reopen its team.');
+      return publicScope(store.readScope(teamId));
+    }
+    if (workspaceId) await selectProject(workspaceId);
     const scope = verifiedScope(await workspaceRecord(workspaceId));
     const selectionToken = randomUUID();
     if (selections.size >= 128) selections.delete(selections.keys().next().value);
@@ -97,8 +152,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
     resumeWork,
     stopWork() { stopped = true; clearTimeout(workTimer); workTimer = null; },
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
+      if (op?.startsWith('_') && !(typeof internalKey === 'string' && typeof suppliedKey === 'string' && Buffer.byteLength(internalKey) === Buffer.byteLength(suppliedKey) && timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey)))) throw Error('Internal host observation authority is required.');
+      if (workspaceId) await selectProject(workspaceId);
+      // the panel's own context call must never create a store, so it is the one op that does not open one
+      if (op !== 'context') await ensureStore();
       if (op?.startsWith('_')) {
-        if (typeof internalKey !== 'string' || typeof suppliedKey !== 'string' || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error('Internal host observation authority is required.');
         if(op==='_staffingTarget'){
           const prior=store.readStaffingRequest(params);if(prior)return {staffing:prior};
           const work=store.readWork(params.workId);if(!work||work.status==='completed')throw Error('TeamWork is closed or unavailable.');
@@ -118,7 +176,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const observed=capabilities.get(row.oldBinding.scope.workspaceKey),member=store.readSnapshot().teams.find(t=>t.id===row.teamId)?.members.find(m=>m.id===row.memberId);
           if(latestObservation.get(row.oldBinding.scope.workspaceKey)!==params.observationId||!observed||Date.now()-observed.observedAt>30000||observed.runtimeId!==row.proof.runtimeId)throw Error('Fresh authenticated recovery capability admission is required.');
           const issue=preferenceIssue(member,observed,{requireCore:true});if(issue)throw Error(issue);
-          const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
+          await syncTeamRoles(row.teamId);const result=await wake.prepareFresh(row.requestId);return result.fresh?plan(result.operation):{receipt:publicOperation(result.operation)};
         }
         if (op === '_stopPrepare') { await reconcileExisting(); return stops.prepare(params); }
         if (op === '_stopRecover') return stops.recover(params);
@@ -162,6 +220,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const issue = preferenceIssue(member, observed, { requireCore: true }); if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(scope.workspaceId)).workspaceKey !== scope.workspaceKey) throw Error('The bound workspace or execution host changed.');
           if (latestObservation.get(scope.workspaceKey) !== params.observationId) throw Error('Launch capability admission was superseded.');
+          await syncTeamRoles(team.id);
           const prepared = store.prepareOperation(input, { scope, nativeRequest: nativeLaunchIntent(team, member, scope), roleVersion: member.roleVersion, title: `${team.name}/${member.name}`, executionHostId: scope.executionHostId, runtimeId: observed.runtimeId, hostGeneration: observed.hostGeneration });
           return prepared.fresh ? plan(prepared.operation) : { receipt: publicOperation(prepared.operation) };
         }
@@ -175,6 +234,7 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           if (issue) throw Error(issue);
           if (verifiedScope(await workspaceRecord(saved.scope.workspaceId)).workspaceKey !== saved.scope.workspaceKey) throw Error('The saved execution scope changed before launch.');
           if(saved.wakeRequestId)await wake.validateFresh(saved.wakeRequestId);
+          await syncTeamRoles(saved.teamId);
           // Commit the may-have-executed boundary before the adapter can call the native effect.
           settled(saved,{effectState:'submitted',recovery:undefined});
           return { valid: true };
@@ -278,10 +338,11 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
       if (op === 'load') { await recovery.reconcile(); await stops.reconcile(); return { value: store.readSnapshot() }; }
       if (op === 'createTeam') {
         const previous = store.replay('createTeam', params);
-        if (previous) return { value: previous };
+        if (previous) { await syncTeamRoles(previous.teams.at(-1).id); return { value: previous }; }
         const selected = selections.get(params.selectionToken);
         if (!selected) throw new Error('The detected project expired. Try launching again to read the current project.');
-        const verified = verifiedScope(await workspaceRecord(selected.workspaceId));
+        const workspace = await workspaceRecord(selected.workspaceId);
+        const verified = verifiedScope(workspace);
         if (verified.workspaceKey !== selected.workspaceKey) throw new Error('The execution host changed. Try launching again to read the current project.');
         if (params.form.sessionMode === true) {
           const issue = sessionIssue(capabilities.get(selected.workspaceKey));
@@ -291,9 +352,13 @@ export function createExecutor(host, cli, { store, internalKey, userData, parent
           const issue = preferenceIssue({ agent: params.form.agents?.[level] ?? 'codex', model: params.form.models?.[level], effort: params.form.efforts?.[level] }, capabilities.get(selected.workspaceKey));
           if (issue) throw Error(issue);
         }
-        return { value: store.createTeam(params, selected) };
+        const root = await projectRoot(workspace, selected);
+        const value = store.createTeam(params, { ...selected, projectPath: root });
+        try { await syncTeamRoles(value.teams.at(-1).id); }
+        catch (error) { throw Error(`Team saved, but role files could not be prepared: ${error.message} No members were launched. Retry the same creation request to repair files without creating another team.`); }
+        return { value };
       }
-      if (op === 'updateRole') return { value: store.updateRole(params) };
+      if (op === 'updateRole') { const value = store.updateRole(params); await syncTeamRoles(params.teamId); return { value }; }
       if (op === 'updateSettings') return { value: store.updateSettings(params) };
       if (op === 'receipt') return publicOperation(store.readOperation(params.requestId));
       throw new Error('Unknown team operation.');

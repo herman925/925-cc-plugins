@@ -49,11 +49,20 @@ test('a model cell opens a list, and choosing from it closes the list', async $ 
 
 test('once a team exists the roster and bulk tools show and the welcome screen is gone', async ($, on) => {
   const files = new Map<string, string>()
-  on('session.root', async () => ({ value: 'C:\proj' }) as any)
+  on('session.root', async () => ({ value: 'C:/proj' }) as any)
+  on('session.cwd', async () => ({ value: 'C:/proj' }) as any)
+  on('session.id', async () => ({ value: 'operator-session' }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'ORCA_TERMINAL_HANDLE' ? 'term_operator' : e.name === 'ORCA_WORKTREE_ID' ? 'repo::C:/proj' : undefined }) as any)
   on('fs.exists', async (_$, e: any) => ({ value: files.has(e.path) }) as any)
-  on('fs.read', async (_$, e: any) => ({ value: files.get(e.path) }) as any)
+  on('fs.read', async (_$, e: any) => ({ value: keyOf(e.path) === 'C:/home/.claude/sessions/100.json' ? JSON.stringify({ pid: 100, sessionId: 'operator-session', cwd: 'C:/proj', name: 'Operator' }) : files.get(keyOf(e.path)) }) as any)
   on('fs.write', async (_$, e: any) => (files.set(e.path, e.text), { value: undefined }) as any)
-  on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: 'no orca in test' } }) as any)
+  on('fs.list', async (_$: any, e: any) => ({ value: keyOf(e.path) === 'C:/home/.claude/sessions' ? [{ name: '100.json', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] : [] }) as any)
+  on('process.run', async (_$: any, e: any) => {
+    const a = e.argv as string[]
+    if (a[1] === 'terminal' && a[2] === 'show' && a[a.indexOf('--terminal') + 1] === 'term_operator')
+      return { value: { exitCode: 0, stdout: JSON.stringify({ result: { terminal: { handle: 'term_operator', worktreePath: 'C:/proj', worktreeId: 'repo::C:/proj', executionHostId: 'host-test', connected: true } } }) } } as any
+    return { value: { exitCode: 1, stdout: '', stderr: 'no orca in test' } } as any
+  })
   await $.tool.call({
     tool: 'mcp__team-orchestrator__team_adopt',
     team: 'Demo-Team',
@@ -77,11 +86,21 @@ const no = { exitCode: 1, stdout: '', stderr: 'no orca in test', isStdoutTruncat
 const adoptIn = async ($: any, on: any, root: string, git: () => any, seed: [string, string][] = []) => {
   const files = new Map<string, string>(seed)
   const p = (e: any) => keyOf(e.path)
+  const contextId = `repo::${root}`
   on('session.root', async () => ({ value: root }) as any)
+  on('session.cwd', async () => ({ value: root }) as any)
+  on('session.id', async () => ({ value: 'operator-session' }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'ORCA_TERMINAL_HANDLE' ? 'term_operator' : e.name === 'ORCA_WORKTREE_ID' ? contextId : undefined }) as any)
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e)) }) as any)
-  on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e)) }) as any)
+  on('fs.read', async (_$: any, e: any) => ({ value: p(e) === 'C:/home/.claude/sessions/100.json' ? JSON.stringify({ pid: 100, sessionId: 'operator-session', cwd: root, name: 'Operator' }) : files.get(p(e)) }) as any)
   on('fs.write', async (_$: any, e: any) => (files.set(p(e), e.text), { value: undefined }) as any)
-  on('process.run', async (_$: any, e: any) => ({ value: e.argv[0] === 'git' ? git() : no }) as any)
+  on('fs.list', async (_$: any, e: any) => ({ value: p(e) === 'C:/home/.claude/sessions' ? [{ name: '100.json', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] : [] }) as any)
+  on('process.run', async (_$: any, e: any) => {
+    const a = e.argv as string[]
+    if (a[1] === 'terminal' && a[2] === 'show' && a[a.indexOf('--terminal') + 1] === 'term_operator')
+      return { value: { ...no, exitCode: 0, stdout: JSON.stringify({ result: { terminal: { handle: 'term_operator', worktreePath: root, worktreeId: contextId, executionHostId: 'host-test', connected: true } } }) } } as any
+    return { value: a[0] === 'git' ? git() : no } as any
+  })
   await $.tool.call({
     tool: 'mcp__team-orchestrator__team_adopt',
     team: 'Demo-Team',
@@ -113,27 +132,52 @@ test('outside a git repo nothing but the team folder is written (roster and role
 })
 
 // items 1 and 2: handles and session ids found by name, stats from the transcript where the status line says nothing
-type Tab = { handle: string; title: string; worktreePath?: string; screen?: string }
+type Tab = { handle: string; title: string; worktreePath?: string; worktreeId?: string; executionHostId?: string; screen?: string; showFailsAfterClose?: boolean; closeSucceeds?: boolean; malformedListAfterClose?: boolean; listFailsAfterClose?: boolean }
 type Tr = { id: string; title?: string; model?: string; used?: number; effort?: string; cwd?: string }
 const ID1 = '11111111-1111-4111-8111-111111111111'
 const ID2 = '22222222-2222-4222-8222-222222222222'
-const world = (on: any, tabs: Tab[], trs: Tr[]) => {
-  const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
+const world = (
+  on: any,
+  tabs: Tab[],
+  trs: Tr[],
+  worktreeId = '',
+  startSessions = false,
+  context: { root?: string; cwd?: string; repoRoot?: string; terminalHandle?: string; worktreePath?: string; sessionId?: string; sessionIdError?: boolean; registryUnreadable?: boolean; registrySessionId?: string; os?: string; contextUnproven?: boolean } = {},
+) => {
+  const files = Object.assign(new Map<string, string>(), { calls: [] as string[][], writes: [] as string[] })
   const p = keyOf
   const dir = 'C:/home/.claude/projects/proj'
+  let registeredSession = ''
+  let malformedListAfterClose = false
+  let listFailsAfterClose = false
   const tail = (t: Tr) =>
     [
       t.model ? JSON.stringify({ type: 'assistant', effort: t.effort, cwd: t.cwd, message: { model: t.model, usage: { input_tokens: 1, cache_read_input_tokens: (t.used ?? 1) - 1, cache_creation_input_tokens: 0, output_tokens: 9 } } }) : '',
       t.title ? JSON.stringify({ type: 'custom-title', customTitle: t.title, sessionId: t.id }) : '',
     ].join('\n')
-  on('session.root', async () => ({ value: 'C:/proj' }) as any)
-  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : undefined }) as any)
+  const callerHandle = context.terminalHandle ?? 'term_operator'
+  const callerWorktreeId = worktreeId || 'repo::C:/proj'
+  on('session.root', async () => ({ value: context.root ?? 'C:/proj' }) as any)
+  on('session.id', async () => {
+    if (context.sessionIdError) throw new Error('session id unreadable')
+    return { value: context.sessionId ?? 'operator-session' } as any
+  })
+  on('session.cwd', async () => ({ value: context.cwd ?? context.root ?? 'C:/proj' }) as any)
+  if (context.repoRoot !== undefined)
+    on('session.repo', async () => ({ value: context.repoRoot ? { root: context.repoRoot, remote: null, internal: false } : null }) as any)
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? context.os ?? 'Windows_NT' : e.name === 'ORCA_WORKTREE_ID' ? callerWorktreeId : e.name === 'ORCA_TERMINAL_HANDLE' ? callerHandle : undefined }) as any)
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
-  on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) }) as any)
-  on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
+  on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) ?? (p(e.path) === 'C:/home/.claude/sessions/100.json' ? JSON.stringify({ pid: 100, sessionId: context.registrySessionId ?? context.sessionId ?? 'operator-session', cwd: context.root ?? 'C:/proj', name: 'Operator' }) : undefined) }) as any)
+  on('fs.write', async (_$: any, e: any) => (files.writes.push(p(e.path)), files.set(p(e.path), e.text), { value: undefined }) as any)
   on('fs.list', async (_$: any, e: any) => {
     const at = p(e.path)
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
+    if (at === 'C:/home/.claude/sessions') {
+      if (context.registryUnreadable) throw new Error('session registry unavailable')
+      const names = [...files.keys()].filter(path => path.startsWith(`${at}/`)).map(path => path.slice(at.length + 1))
+      if (!names.includes('100.json')) names.push('100.json')
+      return { value: names.map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) } as any
+    }
     if (at === dir) return { value: trs.map((t, i) => ({ name: `${t.id}.jsonl`, kind: 'file', size: 9, mtimeMs: 1000 - i, isLink: false })) } as any
     return { value: [] } as any
   })
@@ -141,13 +185,53 @@ const world = (on: any, tabs: Tab[], trs: Tr[]) => {
     const a: string[] = e.argv
     files.calls.push(a)
     const out = (stdout: string) => ({ value: { ...no, exitCode: 0, stdout } }) as any
-    if (a[0] === 'powershell.exe')
+    if (a[0] === 'powershell.exe' && e.init?.env?.TO_FILES)
       return out(String(e.init.env.TO_FILES).split('|').map(f => '\0' + tail(trs.find(t => p(f).endsWith(`${t.id}.jsonl`))!)).join(''))
     const h = a[a.indexOf('--terminal') + 1]
     const tab = tabs.find(t => t.handle === h)
-    if (a[1] === 'terminal' && a[2] === 'list') return out(JSON.stringify({ result: { terminals: tabs.map(t => ({ ...t, connected: true, tabId: t.handle, leafId: 'l' })) } }))
-    if (a[1] === 'terminal' && a[2] === 'show' && tab) return out(JSON.stringify({ result: { terminal: { title: tab.title, worktreePath: tab.worktreePath, connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    if (a[1] === 'worktree' && a[2] === 'show') {
+      const selector = a[a.indexOf('--worktree') + 1]
+      // a repository-backed workspace names the repository it belongs to: that is what proves its kind
+      if (!context.contextUnproven && worktreeId && selector === `id:${worktreeId}`) return out(JSON.stringify({ result: { worktree: { id: worktreeId, path: context.worktreePath ?? 'C:/proj', repoId: `repo-${worktreeId}` } } }))
+      return { value: no } as any
+    }
+    if (a[1] === 'repo' && a[2] === 'show') {
+      const id = (a[a.indexOf('--repo') + 1] ?? '').replace(/^id:/, '')
+      return out(JSON.stringify({ result: { repo: { id, kind: 'git' } } }))
+    }
+    if (a[1] === 'terminal' && a[2] === 'list') {
+      const i = a.indexOf('--worktree')
+      if (i >= 0 && (!worktreeId || a[i + 1] !== `id:${worktreeId}`)) return { value: no } as any
+      if (listFailsAfterClose) return { value: { ...no, stdout: JSON.stringify({ result: { terminals: [] } }) } } as any
+      const inventory = tabs.filter(t => i < 0 || !t.worktreePath || t.worktreePath === 'C:/proj')
+      return out(JSON.stringify({ result: { terminals: malformedListAfterClose ? [{}] : inventory.map(t => ({ ...t, connected: true, tabId: t.handle, leafId: 'l' })) } }))
+    }
+    if (a[1] === 'terminal' && a[2] === 'close' && tab?.closeSucceeds) {
+      malformedListAfterClose = tab.malformedListAfterClose === true
+      listFailsAfterClose = tab.listFailsAfterClose === true
+      tabs.splice(tabs.indexOf(tab), 1)
+      return out('closed')
+    }
+    if (a[1] === 'terminal' && a[2] === 'show' && tab) {
+      const closed = files.calls.some(c => c[1] === 'terminal' && c[2] === 'close' && c.includes(h))
+      if (tab.showFailsAfterClose && closed) return { value: no } as any
+      // a tab that names no workspace sits in the caller's own one
+      const worktreeId = tab.worktreeId ?? callerWorktreeId
+      const executionHostId = tab.executionHostId ?? 'host-1'
+      return out(JSON.stringify({ result: { terminal: { handle: tab.handle, title: tab.title, worktreePath: tab.worktreePath ?? 'C:/proj', worktreeId, executionHostId, connected: true, tabId: tab.handle, leafId: 'l' } } }))
+    }
+    if (a[1] === 'terminal' && a[2] === 'show' && h === callerHandle) return out(JSON.stringify({ result: { terminal: { handle: callerHandle, title: 'Operator', worktreePath: context.worktreePath ?? context.root ?? 'C:/proj', worktreeId: callerWorktreeId, executionHostId: 'host-1', connected: true, tabId: callerHandle, leafId: 'l' } } }))
     if (a[1] === 'terminal' && a[2] === 'read' && tab) return out(JSON.stringify({ result: { terminal: { tail: [tab.screen ?? ''], status: 'running' } } }))
+    if (a[1] === 'terminal' && a[2] === 'create' && startSessions) {
+      const title = String(a[a.indexOf('--title') + 1] ?? '')
+      const command = String(a[a.indexOf('--command') + 1] ?? '')
+      registeredSession = command.match(/--(?:session-id|resume) ([0-9a-f-]+)/)?.[1] ?? ''
+      const handle = 'term_abcd'
+      tabs.push({ handle, title, worktreePath: 'C:/proj' })
+      if (registeredSession) files.set('C:/home/.claude/sessions/101.json', JSON.stringify({ pid: 101, sessionId: registeredSession, cwd: 'C:/proj', name: title }))
+      return out(handle)
+    }
+    if (a[1] === 'terminal' && a[2] === 'wait' && startSessions) return out('{"result":{"satisfied":true}}')
     return { value: no } as any
   })
   return files
@@ -672,9 +756,186 @@ test('the old single roster file moves into the folder once, keeping a backup an
   expect(saved(files)[0].statusFile).toBe('status/Hualong_CEO.json')
 })
 
+test('a stale session root cannot migrate team files or launch in the wrong Orca home', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/stale', cwd: 'C:/stale', repoRoot: 'C:/actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual' },
+  )
+  files.set('C:/stale/.claude/team-orchestrator.json', JSON.stringify([]))
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_launch',
+    team: 'New-Team',
+    members: [{ name: 'New-Head', role: 'head', level: 1, boss: 'user' }],
+  } as any)
+  expect(result?.deny).toContain('session project root conflicts with its native home')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('an exact native root without a proven context kind cannot select a launch destination', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual', repoRoot: 'C:/main', contextUnproven: true },
+  )
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_launch',
+    team: 'Unknown-Kind-Team',
+    members: [{ name: 'Unknown-Kind-Head', role: 'head', level: 1, boss: 'user' }],
+  } as any)
+  expect(result?.deny).toContain('Orca did not prove a supported worktree selector')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('an unreadable provider session id blocks effects despite a valid native home', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual', cwd: 'C:/actual', repoRoot: 'C:/main', terminalHandle: 'term_operator', worktreePath: 'C:/actual', sessionIdError: true },
+  )
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_launch',
+    team: 'No-Session-ID',
+    members: [{ name: 'No-ID-Head', role: 'head', level: 1, boss: 'user' }],
+  } as any)
+  expect(result?.deny).toContain('provider session id could not be read')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('an unreadable local registry blocks managed effects despite a valid native home', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual', registryUnreadable: true },
+  )
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_launch', team: 'Unreadable-Registry', members: [{ name: 'Blocked-Head', role: 'head', level: 1, boss: 'user' }] } as any)
+  expect(result?.deny).toContain('local session registry could not be read')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('a readable registry without the current provider id is distinct from an unreadable registry', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual', registrySessionId: 'other-session' },
+  )
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_launch', team: 'Missing-Registry-ID', members: [{ name: 'Blocked-Head', role: 'head', level: 1, boss: 'user' }] } as any)
+  expect(result?.deny).toContain('provider session id is not present in the readable local registry')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('a nested checkout cannot replace its enclosing registered project root', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual/nested', cwd: 'C:/actual/nested', repoRoot: 'C:/actual/nested', terminalHandle: 'term_operator', worktreePath: 'C:/actual' },
+  )
+  files.set('C:/actual/nested/.claude/team-orchestrator.json', JSON.stringify([]))
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_launch',
+    team: 'Nested-Team',
+    members: [{ name: 'Nested-Head', role: 'head', level: 1, boss: 'user' }],
+  } as any)
+  expect(result?.deny).toContain('session project root conflicts with its native home')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('native root matching is case-sensitive', async ($, on) => {
+  const files = world(on, [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }], [], 'repo::C:/actual', false, { root: 'C:/Actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual' })
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_launch', team: 'Alias-Team', members: [{ name: 'Alias-Head', role: 'head', level: 1, boss: 'user' }] } as any)
+  expect(result?.deny).toContain('session project root conflicts with its native home')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('a POSIX backslash is not treated as a slash in native root comparison', async ($, on) => {
+  const files = world(on, [{ handle: 'term_operator', title: 'Operator', worktreePath: '/home/project/sub', worktreeId: 'repo::/home/project/sub', executionHostId: 'host-1' }], [], 'repo::/home/project/sub', false, { root: '/home/project\\sub', terminalHandle: 'term_operator', worktreePath: '/home/project/sub', os: 'Linux' })
+  const before = [...files]
+  const writesBefore = files.writes.length
+  const callsBefore = files.calls.length
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_launch', team: 'Alias-Team', members: [{ name: 'Alias-Head', role: 'head', level: 1, boss: 'user' }] } as any)
+  expect(result?.deny).toContain('session project root conflicts with its native home')
+  expect(files.writes.slice(writesBefore)).toEqual([])
+  expect([...files]).toEqual(before)
+  expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+})
+
+test('a verified native home accepts its project root when the Git main root differs', async ($, on) => {
+  const files = world(
+    on,
+    [{ handle: 'term_target', title: 'Native Head', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }],
+    [],
+    'repo::C:/actual',
+    false,
+    { root: 'C:/actual', cwd: 'C:/actual', repoRoot: 'C:/main', terminalHandle: 'term_operator', worktreePath: 'C:/actual' },
+  )
+  const result: any = await $.tool.call({
+    tool: 'mcp__team-orchestrator__team_adopt',
+    team: 'Native-Team',
+    members: [{ name: 'Native Head', role: 'head', level: 1, boss: 'user', handle: 'term_target' }],
+  } as any)
+  expect(result?.deny).toBeUndefined()
+  expect(result?.result).toContain('Roster now shows 1 adopted sessions.')
+  expect(files.writes).toContain('C:/actual/.claude/team-orchestrator/roster.json')
+})
+
 test('a close sent to a stale handle does not mark a live member closed, and a message never starts a second copy', async ($, on) => {
   // the member's recorded handle is stale; its live tab (new handle, same name) is found and must not be duplicated
-  const files = world(on, [{ handle: 'term_ab9', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }], [{ id: ID1, title: 'Hualong Workers' }])
+  const files = world(on, [{ handle: 'term_ab9', title: '✳ Hualong Workers', worktreePath: 'C:/proj' }], [{ id: ID1, title: 'Hualong Workers' }], 'repo::C:/proj')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
   await adopt($, [{ ...W, handle: 'term_dead1', sessionId: ID1 }])
   // status files are kept on the machine (0.5.12), not in the project
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Workers.json', JSON.stringify({ name: 'Hualong Workers', sessionId: ID1, state: 'closed', heartbeat: Date.now() }))
@@ -684,10 +945,199 @@ test('a close sent to a stale handle does not mark a live member closed, and a m
   expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/Hualong_Workers.json')!).state).toBe('idle')
 })
 
+test('an evictee without a saved worktree scope is not closed', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj', worktreeId: 'repo::C:/proj', executionHostId: 'host-1' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', worktreeId: 'repo::C:/proj', executionHostId: 'host-1', closeSucceeds: true },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj', true)
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: '' } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a scoped inventory without the exact evictee handle cannot authorize closure', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/other', closeSucceeds: true },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj', true)
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(false)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close')).toBe(false)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a failed eviction close queues the message instead of starting another session', async ($, on) => {
+  const files = world(on, [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj' },
+  ], [], 'repo::C:/proj')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a failed close with an unverified show keeps a still-listed worker and queues the message', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', showFailsAfterClose: true },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a malformed post-close inventory cannot authorize an eviction', async ($, on) => {
+  const files = world(on, [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true, malformedListAfterClose: true },
+  ], [], 'repo::C:/proj')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a nonzero terminal inventory after close keeps the message queued', async ($, on) => {
+  const files = world(on, [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', closeSucceeds: true, listFailsAfterClose: true },
+  ], [], 'repo::C:/proj')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('queued')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
+  const queue = [...files].find(([path]) => path.includes('/queue/'))?.[1]
+  expect(queue).toBeDefined()
+  expect(JSON.parse(queue!).state).toBe('pending')
+  expect(JSON.parse(queue!).tries).toBe(0)
+})
+
+test('a verified eviction close starts the target and delivers its message', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj', worktreeId: 'repo::C:/proj', executionHostId: 'host-1' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj', worktreeId: 'repo::C:/proj', executionHostId: 'host-1', closeSucceeds: true },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj', true)
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.send', async () => ({ isDelivered: true }) as any)
+  await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+    { name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: '' },
+  ])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify(saved(files).map((m: any) => m.name === 'W2' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' }, handle: '', sessionId: '', state: 'closed' } : m.name === 'W1' ? { ...m, worktree: 'repo::C:/proj', registeredHome: { contextKind: 'worktree', executionHostId: 'host-1', originalPath: 'C:/proj' } } : m)))
+  files.set('C:/proj/.claude/team-orchestrator/settings.json', JSON.stringify({ maxOpen: 1 }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', JSON.stringify({ name: 'W1', sessionId: '', state: 'idle', heartbeat: Date.now(), lastClean: Date.now() }))
+  files.set('C:/home/.claude/team-orchestrator/C--proj/status/W2.json', JSON.stringify({ name: 'W2', sessionId: '', state: 'closed', heartbeat: Date.now() }))
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'W2', message: 'start the report' } as any)
+  expect(JSON.stringify(result)).toContain('Sent to W2.')
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close' && a.includes('term_w1'))).toBe(true)
+  const scopedLists = files.calls.filter(a => a[1] === 'terminal' && a[2] === 'list' && a.includes('--worktree'))
+  expect(scopedLists.map(a => a[a.indexOf('--worktree') + 1])).toEqual(['id:repo::C:/proj', 'id:repo::C:/proj'])
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'create' && a.includes('--title') && a[a.indexOf('--title') + 1] === 'W2')).toBe(true)
+  expect(JSON.parse(files.get('C:/home/.claude/team-orchestrator/C--proj/status/W1.json')!).state).toBe('closed')
+  expect(saved(files).find((m: any) => m.name === 'W2')?.handle).toBe('term_abcd')
+  expect(tabs.some(tab => tab.handle === 'term_w1')).toBe(false)
+  expect(tabs.some(tab => tab.handle === 'term_abcd')).toBe(true)
+  expect([...files.keys()].some(path => path.includes('/queue/'))).toBe(false)
+})
+
 // #61: a bulk rename restarts an idle member with --resume; with model and effort left on "keep" it comes back on
 // the member's own saved model and effort, not the CLI defaults
 test('a bulk rename restart keeps the member\'s saved model and effort when they are left on keep', async ($, on) => {
-  const files = world(on, [{ handle: 'term_h', title: 'Head' }, { handle: 'term_w1', title: 'W1' }], [])
+  const files = world(on, [{ handle: 'term_h', title: 'Head' }, { handle: 'term_w1', title: 'W1' }], [], 'repo::C:/proj')
   on('ui.open', async () => ({ value: { isPlaced: true } }) as any)
   on('ui.close', async () => ({ value: undefined }) as any)
   await $.tool.call({
@@ -738,4 +1188,43 @@ test('adopt refuses a name with characters a shell could act on, and adopts nobo
   expect(files.has('C:/proj/.claude/team-orchestrator/roster.json')).toBe(false)
   const ok: any = await adopt($, [W])
   expect(JSON.stringify(ok)).not.toContain('Refused: the name')
+})
+
+// RED (Operator repro, adopt case): the reply counts the adopted sessions, but the roster keeps the old handles
+test('team_adopt reply matches the roster file: saved handles follow the live tabs it adopted', async ($, on) => {
+  const files = world(on, [
+    { handle: 'term_new1', title: '✳ Hualong CEO' },
+    { handle: 'term_new2', title: '✳ Hualong Workers' },
+  ], [])
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([
+    { team: 'Hualong', name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_old1', sessionId: '' },
+    { team: 'Hualong', name: 'Hualong Workers', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_old2', sessionId: '' },
+  ]))
+  const out: any = await adopt($, [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_new1' },
+    { name: 'Hualong Workers', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_new2' },
+  ])
+  const rows = saved(files)
+  expect(JSON.stringify(out)).toContain(`Roster now shows ${rows.length} adopted sessions.`)
+  expect(rows.map((m: any) => [m.name, m.handle])).toEqual([
+    ['Hualong CEO', 'term_new1'],
+    ['Hualong Workers', 'term_new2'],
+  ])
+})
+
+// RED (Operator repro, message case): closed members with a resumable session id must not get a fresh copy
+test('team_message with startHere to closed members with resumable session ids starts no fresh copy and adds no roster row', async ($, on) => {
+  const names = ['Worker 1', 'Worker 2', 'Worker 3', 'Worker 4']
+  const ids = ['33333333-3333-4333-8333-333333333331', '33333333-3333-4333-8333-333333333332', '33333333-3333-4333-8333-333333333333', '33333333-3333-4333-8333-333333333334']
+  const files = world(on, [{ handle: 'term_head', title: 'Crystal Head', worktreePath: 'C:/proj' }], names.map((n, i) => ({ id: ids[i]!, title: n, model: 'claude-opus-5', used: 1000, cwd: 'C:\\proj' })))
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([
+    { team: 'Crystal-Art-School', name: 'Crystal Head', role: 'head', level: 1, boss: 'user', handle: 'term_head', sessionId: '' },
+    ...names.map((n, i) => ({ team: 'Crystal-Art-School', name: n, address: n, role: 'worker', level: 2, boss: 'Crystal Head', handle: '', sessionId: ids[i], state: 'closed' })),
+  ]))
+  const replies: string[] = []
+  for (const n of names) replies.push(JSON.stringify(await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: n, message: 'start the report', startHere: true } as any)))
+  expect(replies.join('\n')).not.toContain('A fresh copy of')
+  const creates = files.calls.filter(a => a[1] === 'terminal' && a[2] === 'create')
+  expect(creates.some(a => String(a[a.indexOf('--command') + 1]).includes('--session-id'))).toBe(false)
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Crystal Head', ...names])
 })

@@ -9,6 +9,8 @@ nobody starts subagents unless you allow it.
 
 Version 0.5.37. What changed in each version is in the [changelog](#changelog-05x).
 
+Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
+
 ## Contents
 
 - [Features](#features)

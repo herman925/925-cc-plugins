@@ -2,9 +2,11 @@
 
 規格日期：2026-10-16。發起者：Lin。目標程式目錄：`team-orchestrator-orca-plugin/`。
 
+> 2026-10-27 狀態提示：本輪進度與阻塞見[最新交接](handoff-2026-10-27.md)。下文 profile 專用 SQLite 是原 Orca 規格的歷史設計，不代表目前共用系統已接受的儲存契約；共用架構與遷移決策仍以現行地圖為準。
+
 > 2026-10-18 更新：本文件保留原始規格與當時狀態。Roster／New team 的最終介面、模板、主管會話交互、初始啟動方式及專案綁定，以已接受的 [ADR-001](../team-orchestrator-orca-plugin/docs/ADR-001-roster-new-team.md) 為準；相關衝突條款已被替代。下文「功能尚未實作／驗收」是 2026-10-16 的歷史狀態，不代表目前插件整體狀態；現況與驗證邊界見插件 README 及 ADR。
 
-本文件是已確認決策的開發閱讀版，對應 [Orca 原生 Team Orchestrator 開發 spec 地圖](https://github.com/herman925/925-cc-plugins/issues/95)。各決策 ticket 的 resolution 保存決議與來源，本文件將其整理成實作與驗收契約。共用名詞見 [GLOSSARY.md](../GLOSSARY.md)。
+本文件是已確認決策的開發閱讀版，對應 [Orca 原生 Team Orchestrator 開發 spec 地圖](https://github.com/herman925/925-cc-plugins/issues/95)。各決策 ticket 的 resolution 保存決議與來源，本文件將其整理成實作與驗收契約。共用名詞見 [GLOSSARY.md](../GLOSSARY.md)。原 Orca 專屬地圖保留為歷史脈絡；跨 Claude Mod 與 Orca 的共享系統後續規劃見 [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2)。本倉庫的追蹤器操作說明見 [Wayfinding operations](./wayfinding.md)。
 
 **狀態：開發規格定稿，功能尚未實作／驗收。** 本次交付文件、詞彙與 GitHub 決策同步，不改動插件功能、不提升插件版本、不發布插件。下列「必須」是後續開發要求，不代表現有 `0.1.06` 已具備。
 

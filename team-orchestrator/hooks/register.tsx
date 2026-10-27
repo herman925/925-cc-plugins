@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Act, Bulk, Form, Member, Settings, Spawn, View } from '../types'
+import type { Act, Bulk, Form, Member, RegisteredHome, Settings, Spawn, View } from '../types'
 import { headOf, joinLaunch, newMember, newProblem, purview, requestProblem } from './adding'
 import type { NewSpec } from './adding'
-import { AGENT_TOOL, grantChanges, type GrantMap, grantMap, grantsFrom, judge, judgeTeamFiles, namesTeamFile, NO_GRANTS, pathOf, recordAfterWrite, SHELL_TOOLS, WRITE_TOOLS } from './guard'
+import { AGENT_TOOL, createsManaged, grantChanges, type GrantMap, grantMap, grantsFrom, isTeamFilePath, judge, judgeTeamFiles, namesTeamFile, notReadOnly, NO_GRANTS, pathOf, recordAfterWrite, SHELL_TOOLS, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
 import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
 import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
@@ -12,9 +12,9 @@ import type { Claim, Level } from './identity'
 import type { Sleep, Status, TeamSettings } from './status'
 import { countFromPs, linkFree, livenessOf, MEND_DIRS, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
 import type { Liveness, Proc } from './platform'
-import { mergeRole, orgOf, pointer, roleText, WELCOME } from './roles'
+import { mergeRole, orgOf, pointer, rankOf, roleText, WELCOME } from './roles'
 import type { EnvModels } from './status'
-import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
+import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor } from './status'
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
@@ -32,6 +32,8 @@ async function isWindows($: any): Promise<boolean> {
 // Every file write goes through putFile (0.5.30). Refused with EACCES on macOS or Linux (a folder made without its x
 // bit, see MEND_DIRS), it mends the folders on the way and writes once more; any other failure is the caller's as before.
 async function putFile($: any, path: string, text: string): Promise<void> {
+  const scope = await preflight($)
+  if (!scope.ok) throw new Error(scope.reason)
   try {
     return await $.fs.write(path, text)
   } catch (err) {
@@ -331,48 +333,162 @@ const teamDir = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator`
 const teamFile = async ($: any) => `${await teamDir($)}/roster.json`
 // the single file of versions before 0.5.0, migrated into the folder on first read
 const oldTeamFile = async ($: any) => `${await rootOf($)}/.claude/team-orchestrator.json`
+type ProjectScope =
+  | { ok: true; root: string; sessionId: string; handle: string; contextKind: ContextKind; contextId: string; executionHostId: string; originalPath: string }
+  | { ok: false; reason: string }
+type ContextKind = 'worktree' | 'folder' | 'unknown'
+const absolutePath = (path: string) => /^[a-z]:[\\/]/i.test(path) || path.startsWith('/') || path.startsWith('\\\\')
+const pathHasParent = (path: string) => path.split(/^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\') ? /[\\/]/ : /\//).includes('..')
+// Orca names a folder context `folder:<path>` and every other workspace by a bare id. The selector must follow that
+// prefix: `id:` in front of a folder selector names nothing.
+const selectorOf = (contextId: string) => (contextId.startsWith('folder:') ? contextId : `id:${contextId}`)
+async function readOnlyProjectScope($: any): Promise<ProjectScope> {
+  const unknown = (reason: string): ProjectScope => ({ ok: false, reason })
+  try {
+    const rawRoot = await $.session.root()
+    if (typeof rawRoot !== 'string') return unknown('session project root is not verified')
+    const root = rawRoot
+    let sessionId = ''
+    try {
+      const rawSessionId = await $.session.id()
+      if (typeof rawSessionId !== 'string' || !rawSessionId.trim() || rawSessionId !== rawSessionId.trim()) return unknown('provider session id is unavailable')
+      sessionId = rawSessionId
+    } catch {
+      return unknown('provider session id could not be read')
+    }
+    if (!absolutePath(root) || pathHasParent(root)) return unknown('session project root is not verified')
+    let handle = ''
+    let worktreeId = ''
+    try {
+      const rawHandle = await $.env.get('ORCA_TERMINAL_HANDLE')
+      const rawWorktreeId = await $.env.get('ORCA_WORKTREE_ID')
+      if ((rawHandle !== undefined && (typeof rawHandle !== 'string' || rawHandle !== rawHandle.trim())) ||
+        (rawWorktreeId !== undefined && (typeof rawWorktreeId !== 'string' || rawWorktreeId !== rawWorktreeId.trim())))
+        return unknown('native caller environment is malformed')
+      handle = rawHandle ?? ''
+      worktreeId = rawWorktreeId ?? ''
+    } catch {
+      return unknown('native caller environment could not be read')
+    }
+    if (!handle) return unknown('native caller terminal is unknown')
+    const shown = await orca($, 'terminal', 'show', '--terminal', handle)
+    if (!shown.ok) return unknown('native caller terminal could not be verified')
+    let terminal: any
+    try {
+      terminal = JSON.parse(shown.out).result?.terminal
+    } catch {
+      return unknown('native caller terminal response is malformed')
+    }
+    const path = terminal?.worktreePath
+    const contextId = terminal?.worktreeId
+    const executionHostId = terminal?.executionHostId
+    if (!terminal || terminal.connected !== true || typeof terminal.handle !== 'string' || terminal.handle !== handle ||
+      typeof path !== 'string' || !path || path !== path.trim() || typeof contextId !== 'string' || !contextId || contextId !== contextId.trim() ||
+      typeof executionHostId !== 'string' || !executionHostId || executionHostId !== executionHostId.trim() || (worktreeId && contextId !== worktreeId))
+      return unknown('native caller binding is incomplete or contradictory')
+    if (!absolutePath(path) || pathHasParent(path) || path !== root) return unknown('session project root conflicts with its native home')
+    // The native home names a folder; the session's own working folder says the session runs there. Without that
+    // second fact the folder is only a name, and the selector it implies stays unproven: the plan forbids guessing
+    // a destination from a title, a cwd or the active workspace.
+    let cwd = ''
+    try {
+      const rawCwd = await $.session.cwd()
+      if (typeof rawCwd === 'string') cwd = rawCwd
+    } catch {
+      cwd = ''
+    }
+    if (cwd !== '' && cwd !== root) return unknown('session working folder conflicts with its native home')
+    const kind = await proveContextKind($, contextId)
+    return { ok: true, root, sessionId, handle, contextKind: cwd === '' ? 'unknown' : kind, contextId, executionHostId, originalPath: path }
+  } catch {
+    return unknown('session project scope could not be verified')
+  }
+}
 
-// An Orca workspace as Orca knows it now: whether it still exists, and its folder ('' when Orca gives none).
+// Orca proves the kind of a workspace, and the proof is what the mod trusts:
+//   - a `folder:<path>` id is a folder context;
+//   - any other id must be shown by `orca worktree show`, which returns the repository it belongs to; the
+//     repository must then be shown by `orca repo show` under that exact id.
+// An id that proves neither stays unproven: its selector must not be guessed, so no launch destination is chosen.
+async function proveContextKind($: any, contextId: string): Promise<ContextKind> {
+  if (!contextId) return 'unknown'
+  if (contextId.startsWith('folder:')) return 'folder'
+  const shown = await orca($, 'worktree', 'show', '--worktree', `id:${contextId}`)
+  if (!shown.ok) return 'unknown'
+  let worktree: any
+  try {
+    worktree = JSON.parse(shown.out).result?.worktree
+  } catch {
+    return 'unknown'
+  }
+  if (!worktree || worktree.id !== contextId) return 'unknown'
+  const repoId = worktree.repoId
+  if (typeof repoId !== 'string' || !repoId) return 'unknown'
+  const repo = await orca($, 'repo', 'show', '--repo', `id:${repoId}`)
+  if (!repo.ok) return 'unknown'
+  let record: any
+  try {
+    record = JSON.parse(repo.out).result?.repo
+  } catch {
+    return 'unknown'
+  }
+  if (!record || record.id !== repoId) return 'unknown'
+  if (record.kind !== undefined && record.kind !== 'git' && record.kind !== 'folder') return 'unknown'
+  return 'worktree'
+}
+
+async function nativeHomeEvidence($: any, handle: string): Promise<{ contextId: string; registeredHome: RegisteredHome } | undefined> {
+  if (!handle || handle !== handle.trim()) return undefined
+  const shown = await orca($, 'terminal', 'show', '--terminal', handle)
+  if (!shown.ok) return undefined
+  let terminal: any
+  try {
+    terminal = JSON.parse(shown.out).result?.terminal
+  } catch {
+    return undefined
+  }
+  const path = terminal?.worktreePath
+  const contextId = terminal?.worktreeId
+  const executionHostId = terminal?.executionHostId
+  if (!terminal || terminal.connected !== true || terminal.handle !== handle || typeof path !== 'string' || !path || path !== path.trim() ||
+    typeof contextId !== 'string' || !contextId || contextId !== contextId.trim() || typeof executionHostId !== 'string' || !executionHostId || executionHostId !== executionHostId.trim() ||
+    !absolutePath(path) || pathHasParent(path)) return undefined
+  const kind = await proveContextKind($, contextId)
+  return { contextId, registeredHome: { contextKind: kind, executionHostId, originalPath: path } }
+}
+
+// An Orca workspace is usable only when Orca returns the exact id and an absolute path. The selector follows the
+// context kind: a folder context is named by its path, every other workspace by `id:`.
 async function worktreeInfo($: any, id: string): Promise<{ exists: boolean; path: string }> {
-  const r = await orca($, 'worktree', 'show', '--worktree', `id:${id}`)
+  const r = await orca($, 'worktree', 'show', '--worktree', selectorOf(id))
   if (!r.ok) return { exists: false, path: '' }
   try {
-    return { exists: true, path: String(JSON.parse(r.out).result?.worktree?.path ?? '') || pathInWorktreeId(id) }
+    const worktree = JSON.parse(r.out).result?.worktree
+    const path = worktree?.path
+    if (!worktree || worktree.id !== id || typeof path !== 'string' || !absolutePath(path) || pathHasParent(path)) return { exists: false, path: '' }
+    return { exists: true, path }
   } catch {
-    return { exists: true, path: pathInWorktreeId(id) }
+    return { exists: false, path: '' }
   }
 }
 
-// The Orca workspace (worktree id) this session runs in (#68). The tab's own ORCA_WORKTREE_ID counts only while that
-// workspace's folder contains the project root: after a /cd or a moved project it names the old one. Otherwise
-// `orca worktree current`, run in the session's own folder, answers.
-async function currentWorktree($: any): Promise<string> {
-  // Orca names the workspace of the tab this session runs in; asking Orca by folder picks the wrong one when two
-  // workspaces share a folder
-  const own = String((await $.env.get('ORCA_WORKTREE_ID').catch(() => undefined)) ?? '').trim()
-  if (own) {
-    const root = await rootOf($)
-    const inId = pathInWorktreeId(own)
-    if (worktreeHolds(inId !== '' ? inId : (await worktreeInfo($, own)).path, root)) return own
-  }
-  const cur = await orca($, 'worktree', 'current')
-  return cur.ok ? (cur.out.match(/"worktree":\s*\{\s*"id":\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? '').replace(/\\\\/g, '\\') : ''
-}
-
-// The workspace a member starts in (#68): its saved one while Orca still has it and it holds the project root; else the
-// one this session finds, which the caller records on the member (from a session that is not the team top, through a
-// change file, like every roster change). '' when neither is known.
+// A member starts only from its recorded, supported native home; no coordinator-root or active-workspace fallback.
+// The home's kind must be the caller's kind: a folder context cannot be reopened as a worktree id, or the other way.
 async function memberWorktree($: any, m: Member): Promise<string> {
-  if (m.worktree) {
-    const i = await worktreeInfo($, m.worktree)
-    if (i.exists && worktreeHolds(i.path, await rootOf($))) return m.worktree
-  }
-  return (await currentWorktree($)) || m.worktree || ''
+  const scope = await preflight($)
+  const home = m.registeredHome
+  const id = typeof m.worktree === 'string' ? m.worktree : ''
+  if (!scope.ok || !home || !home.contextKind || home.contextKind === 'unknown' || home.contextKind !== scope.contextKind ||
+    !home.executionHostId || home.executionHostId !== scope.executionHostId || !home.originalPath || !id) return ''
+  const info = await worktreeInfo($, id)
+  return info.exists && info.path === home.originalPath ? id : ''
 }
 
 // Before 0.5.0 the roster was one file, .claude/team-orchestrator.json. Its content moves into the folder once (a copy
 // stays as roster.json.bak) and the old file is left as a pointer, so an old copy of the mod no longer reads it as a roster.
 async function migrate($: any) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   const [from, to] = [await oldTeamFile($), await teamFile($)]
   if ((await $.fs.exists(to)) || !(await $.fs.exists(from))) return
   const text = String(await $.fs.read(from))
@@ -390,6 +506,8 @@ async function migrate($: any) {
 // never offers it to a commit. git answers for a worktree (.git is a file there) and a subfolder; outside a repo it fails.
 const excluded = new Set<string>()
 async function exclude($: any) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   const root = String(await $.session.root())
   if (excluded.has(root)) return
   excluded.add(root)
@@ -566,20 +684,24 @@ async function writerRole($: any, who?: Who): Promise<Writer> {
       await topAway($, meta, here, false)
       return { ...base, me, role: 'away' }
     }
-    if (!(await topLive($, list, here))) return { ...base, me, role: 'standin' }
+    const live = await topLive($, list, here)
+    if (live === undefined) return { ...base, me, role: 'old' }
+    if (!live) return { ...base, me, role: 'standin' }
   }
   return { ...base, me, role: 'member' }
 }
 
 // The team top is running: its status on this machine is fresh, or this machine's registry lists its session. A top
 // whose home is another PC counts as running: this PC does not stand in for it.
-async function topLive($: any, list: Member[], here: string): Promise<boolean> {
+async function topLive($: any, list: Member[], here: string): Promise<boolean | undefined> {
   const top = projectTop(list)
   if (!top) return false
   if (isAway(top, here)) return true
   const s = await readStatus($, top.name)
   if (s && s.state !== 'closed' && Date.now() - s.heartbeat < STALE_MS) return true
-  return !!top.sessionId && (await registry($)).some(r => r.sessionId === top.sessionId)
+  const local = await readRegistry($)
+  if (!local.ok) return undefined
+  return !!top.sessionId && local.list.some(r => r.sessionId === top.sessionId)
 }
 
 const takeAsk = (there: string, here: string) =>
@@ -619,6 +741,8 @@ const rowText = (list: Partial<Member>[]) =>
 // Persist this session's roster: written by the writer, else as a change file. Role files follow either way.
 // `who` is given by identity itself, which must not wait for its own answer.
 async function share($: any, who?: Who) {
+  const scope = await preflight($)
+  if (!scope.ok) throw new Error(scope.reason)
   await migrate($)
   const r = await writerRole($, who)
   await serial(() => (writes(r) ? writeRoster($, r) : writeChange($, r)))
@@ -769,6 +893,8 @@ const BROWSER_PLUGIN = /^(chrome-devtools-mcp|playwright)@/
 const memberSettings = { path: '' }
 async function writeMemberSettings($: any): Promise<void> {
   memberSettings.path = ''
+  const scope = await preflight($)
+  if (!scope.ok) return
   try {
     const root = await rootOf($)
     const [user] = await claudeDirs($)
@@ -794,6 +920,8 @@ async function pull($: any) {
   await serial(() => pullNow($))
 }
 async function pullNow($: any) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   await migrate($)
   const eff = await effective($)
   // an empty list is a real state (the last team was removed), not a missing file
@@ -817,7 +945,7 @@ const briefText = (m: Member, list: Member[], team: string): string => {
   const isManager = kids.length > 0
   const peers = list.filter(x => x.name !== m.name && list.some(k => k.boss === x.name))
   const addr = (x: Member) => `"${x.address || x.name}"`
-  const roster = list.map(x => `${x.address || x.name} (${x.level === 1 ? 'head' : list.some(k => k.boss === x.name) ? 'lead' : 'worker'}, reports to ${x.boss})`).join('; ')
+  const roster = list.map(x => `${x.address || x.name} (${rankOf(x, list)}, reports to ${x.boss})`).join('; ')
   const rules = isManager
     ? `YOUR JOB: you ORCHESTRATE. You decide, plan and instruct only; you do NOT execute tasks yourself, you delegate execution to your direct reports and review what they send back. ` +
       `Your direct reports: ${kids.map(addr).join(', ')}. ` +
@@ -839,6 +967,8 @@ const briefText = (m: Member, list: Member[], team: string): string => {
 }
 
 async function briefTeam($: any, team: string, only?: Set<string>) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   const all: Member[] = await readMembers($)
   const mine = all.filter(m => m.team === team)
   // the briefing lists the team and every boss above it, so a head learns who its CEO is
@@ -1032,13 +1162,21 @@ async function readRegistry($: any): Promise<{ ok: boolean; list: Reg[] }> {
   return { ok, list: out }
 }
 const registry = async ($: any): Promise<Reg[]> => (await readRegistry($)).list
+async function preflight($: any): Promise<ProjectScope> {
+  const proof = await readOnlyProjectScope($)
+  if (!proof.ok) return proof
+  const local = await readRegistry($)
+  if (!local.ok) return { ok: false, reason: 'local session registry could not be read' }
+  if (!local.list.some(r => r.sessionId === proof.sessionId)) return { ok: false, reason: 'provider session id is not present in the readable local registry' }
+  return proof
+}
 
 type Who = { me?: Member; level: Level; why: string }
 const NOBODY: Who = { level: 'none', why: '' }
-const sigOf = (list: Member[]) => list.map(m => [m.team, m.name, m.address ?? '', m.handle, m.sessionId, m.boss, m.machine ?? ''].join('|')).join('\n')
+const sigOf = (list: Member[]) => list.map(m => [m.team, m.name, m.address ?? '', m.handle, m.sessionId, m.boss, m.machine ?? '', JSON.stringify(m.registeredHome ?? null)].join('|')).join('\n')
 const self = {
-  cur: undefined as undefined | { id: string; sig: string; key: string; level: Level; why: string },
-  busy: undefined as undefined | Promise<Who>,
+  cur: undefined as undefined | { id: string; sig: string; key: string; level: Level; why: string; scope: string },
+  busy: undefined as undefined | { scope: string; promise: Promise<Who> },
 }
 // the one-time note this session's next prompt carries: the role-file pointer after a re-attach, or the hold notice
 // (or the question about taking over the team top); several notes for one session ride together
@@ -1048,27 +1186,46 @@ const addNote = (id: string, text: string) => {
 }
 
 async function identity($: any, list0?: Member[]): Promise<Who> {
+  const scope = await preflight($)
   const list = list0 ?? (await readMembers($))
+  if (!scope.ok) {
+    const id = String(await $.session.id().catch(() => '')).trim()
+    const tab = String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(() => undefined)) ?? '').trim()
+    const matches = list.filter(m => (id !== '' && m.sessionId === id) || (tab !== '' && m.handle === tab))
+    return { me: matches.length === 1 ? matches[0] : undefined, level: 'restricted', why: scope.reason }
+  }
   if (list.length === 0) return NOBODY
-  const id = String(await $.session.id().catch(() => ''))
+  const id = String(await $.session.id().catch(() => '')).trim()
+  const scopeKey = [scope.root, scope.handle, scope.contextId, scope.executionHostId, scope.originalPath].join('|')
+  const cacheKey = `${scopeKey}\n${id}\n${sigOf(list)}`
   const c = self.cur
-  if (c && c.id === id && c.sig === sigOf(list)) {
+  if (c && c.id === id && c.sig === sigOf(list) && c.scope === scopeKey) {
     if (c.level === 'none') return NOBODY
     const me = list.find(m => keyOf(m) === c.key)
     if (me) return { me, level: c.level, why: c.why }
   }
-  if (!self.busy) self.busy = identifyNow($, list, id).finally(() => void (self.busy = undefined))
-  return self.busy
+  if (!self.busy || self.busy.scope !== cacheKey) {
+    const promise = identifyNow($, list, id, scope).finally(() => {
+      if (self.busy?.scope === cacheKey) self.busy = undefined
+    })
+    self.busy = { scope: cacheKey, promise }
+  }
+  return self.busy.promise
 }
 
-async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
-  const none = () => undefined
-  const tab = String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(none)) ?? '').trim()
+async function identifyNow($: any, list: Member[], id: string, scope: Extract<ProjectScope, { ok: true }>): Promise<Who> {
+  const scopeKey = [scope.root, scope.handle, scope.contextId, scope.executionHostId, scope.originalPath].join('|')
+  const tab = scope.handle
   const here = await machineOf($)
-  const root = await rootOf($)
-  const reg = id ? await registry($) : []
+  const root = scope.root
+  const registry = await readRegistry($)
+  if (!registry.ok || !registry.list.some(r => r.sessionId === id)) {
+    const matches = list.filter(m => m.sessionId === id || m.handle === tab)
+    return { me: matches.length === 1 ? matches[0] : undefined, level: 'restricted', why: registry.ok ? 'provider session id is not present in the local registry' : 'local session registry could not be read' }
+  }
+  const reg = registry.list
   const mine = reg.filter(r => r.sessionId === id)
-  const local = mine.some(r => under(r.cwd, root))
+  const local = true
   let name = mine.find(r => r.name !== '')?.name ?? ''
   if (name === '' && id !== '') {
     const own = (await transcripts($)).filter(t => t.id === id)
@@ -1085,8 +1242,21 @@ async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
     if (m.sessionId && m.sessionId !== id && others.has(m.sessionId)) live.add(keyOf(m))
     else if (m.handle && m.handle !== tab && (await showTab($, m.handle))) live.add(keyOf(m))
   }
-  const r = identify({ list, facts: { tab, sessionId: id, name }, local, live, here })
+  const bound = list.filter(m => m.sessionId === id && m.handle === tab)
+  const canonicalName = bound.length === 1 ? bound[0]!.name : name
+  const r = identify({ list, facts: { tab, sessionId: id, name: canonicalName }, local, live, here })
   const me = r.member
+  if (r.level === 'full' && me) {
+    const home = me.registeredHome
+    const idMatches = list.filter(m => m.sessionId === id && id !== '')
+    const bindingMatches = idMatches.length === 1 && keyOf(idMatches[0] as Member) === keyOf(me) && (!me.worktree || me.worktree === scope.contextId) && (!me.machine || (here !== '' && sameMachine(me.machine, here)))
+    const homeMatches = !home || (home.executionHostId === scope.executionHostId && home.originalPath === scope.originalPath)
+    if (!bindingMatches || !homeMatches) {
+      const why = !bindingMatches ? 'current session is not bound to the member id, terminal and context' : 'registered home does not match the current native host and root'
+      self.cur = { id, sig: sigOf(r.list), key: keyOf(me), level: 'restricted', why, scope: scopeKey }
+      return { me, level: 'restricted', why }
+    }
+  }
   if (r.changed && me) {
     if (r.renamedFrom) await moveFiles($, r.renamedFrom, me.name)
     await update($, members, () => r.list)
@@ -1095,7 +1265,7 @@ async function identifyNow($: any, list: Member[], id: string): Promise<Who> {
   }
   if (r.reattached && me) addNote(id, roleNote(me))
   if (r.level === 'restricted' && me) await holdOnce($, me, r.why, { sessionId: id, tab, name, machine: here })
-  self.cur = { id, sig: sigOf(r.list), key: me ? keyOf(me) : '', level: r.level, why: r.why }
+  self.cur = { id, sig: sigOf(r.list), key: me ? keyOf(me) : '', level: r.level, why: r.why, scope: scopeKey }
   return { me, level: r.level, why: r.why }
 }
 
@@ -1205,8 +1375,20 @@ async function settleClaim($: any, input: { sessionId?: string; decision?: strin
   return out
 }
 
+// A call that takes somebody off the roster, or moves it, is the team top's or the person's own session's. A worker
+// that could remove or move a peer would be able to undo the roster its boss built (#reports: no lifecycle authority).
+async function topOnly($: any, tool: string): Promise<any> {
+  const w = await identity($)
+  if (w.level === 'full' && w.me && w.me.boss !== 'user')
+    return { deny: `${tool} is for the team top only (the confirmed member that reports to the user). Ask the team top, or change the roster from the Team Orchestrator panel yourself.` }
+  return undefined
+}
+
 // A team tool asked by a held session: refused with a sentence that says why.
 async function onHold($: any, tool: string): Promise<any> {
+  const scope = await preflight($)
+  if (!scope.ok) return { deny: `Blocked ${tool}: ${scope.reason}. No project files or terminals were changed.` }
+  if (tool === 'team_launch' && (scope.contextKind === 'unknown' || !scope.contextId)) return { deny: 'Blocked team_launch: Orca did not prove a supported worktree selector. No project files or terminals were changed.' }
   await pull($)
   const w = await identity($)
   return w.level === 'restricted' && w.me ? { deny: holdTool(tool, w.me, w.why) } : undefined
@@ -1291,6 +1473,8 @@ async function readStatuses($: any, list0: Member[]): Promise<Map<string, Status
 
 // A member writes only its own file. The one exception: the team top marks a worker it closed as "closed".
 async function writeStatusOf($: any, m: Member, patch: Partial<Status>) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   const now = Date.now()
   const old = (await readStatus($, m.name)) ?? { name: m.name, sessionId: m.sessionId, state: 'idle', heartbeat: now }
   await putFile($, await statusPath($, m.name), JSON.stringify({ ...old, ...patch, name: m.name }, null, 1))
@@ -1299,6 +1483,8 @@ async function writeStatusOf($: any, m: Member, patch: Partial<Status>) {
 // Every caller fires it without waiting, so it never throws: a missed heartbeat is written by the next one.
 async function writeMine($: any, patch: Partial<Status>) {
   try {
+    const scope = await preflight($)
+    if (!scope.ok) return
     const who = await rosterSelf($)
     if (!who) return
     const sessionId = String(await $.session.id().catch(() => '')) || who.me.sessionId
@@ -1351,6 +1537,8 @@ async function readTeamSettings($: any): Promise<TeamSettings> {
   return changes.length > 0 ? applySettings(file, changes) : file
 }
 async function writeTeamSettings($: any, patch: Partial<TeamSettings>) {
+  const scope = await preflight($)
+  if (!scope.ok) throw new Error(scope.reason)
   const r = await writerRole($)
   await serial(async () => {
     if (!writes(r)) return writeChangeFile($, r, { kind: 'settings', patch })
@@ -1364,33 +1552,93 @@ async function writeTeamSettings($: any, patch: Partial<TeamSettings>) {
 // The member's live Orca tab: its recorded handle if that tab still exists, else the one live tab with its name (a
 // relaunch gives a member a new tab, so a recorded handle can be stale). '' when there is none, or more than one.
 async function liveHandleOf($: any, m: Member): Promise<string> {
-  // a member from another PC has no tab here, whatever this PC's tabs are called; one of another CLI is never polled
-  if (isAway(m, await machineOf($)) || !isManaged(m)) return ''
-  if (m.handle && (await showTab($, m.handle))) return m.handle
-  // only tabs in this project's folder: another project may have a member of the same name
-  const root = await rootOf($)
-  const hits = (await liveTabs($)).filter(t => namesOf(m).includes(bare(String(t.title ?? ''))) && (!t.worktreePath || under(root, String(t.worktreePath))))
-  return hits.length === 1 ? handleOf(String(hits[0].handle)) : ''
+  const scope = await preflight($)
+  const home = m.registeredHome
+  if (!scope.ok || !isManaged(m) || !home || !home.contextKind || home.contextKind === 'unknown' || home.contextKind !== scope.contextKind || !m.worktree || home.executionHostId !== scope.executionHostId) return ''
+  const matchesHome = async (handle: string) => {
+    const observed = await nativeHomeEvidence($, handle)
+    return observed && observed.contextId === m.worktree && observed.registeredHome.executionHostId === home.executionHostId && observed.registeredHome.originalPath === home.originalPath
+  }
+  if (m.handle && (await matchesHome(m.handle))) return m.handle
+  const hits = (await liveTabs($)).filter(t => namesOf(m).includes(bare(String(t.title ?? ''))) && t.worktreePath === home.originalPath && t.worktreeId === m.worktree && t.executionHostId === home.executionHostId)
+  if (hits.length !== 1) return ''
+  const handle = handleOf(String(hits[0].handle ?? ''))
+  return handle && (await matchesHome(handle)) ? handle : ''
 }
 
 // Close a member's tab and only then mark it closed: a close sent to a stale handle must not leave a live session
 // marked "closed" (a later message would then start a second copy of the same conversation).
 async function closeMember($: any, m: Member): Promise<boolean> {
+  const scope = await preflight($)
+  if (!scope.ok) return false
   // a member of another CLI is never closed by the mod (#69)
-  if (!isManaged(m)) return false
+  if (!isManaged(m) || !m.registeredHome || !m.registeredHome.contextKind || m.registeredHome.contextKind === 'unknown' || m.registeredHome.executionHostId !== scope.executionHostId) return false
   const handle = await liveHandleOf($, m)
   if (!handle) return false
-  await orca($, 'terminal', 'close', '--terminal', handle)
-  if (await showTab($, handle)) return false
+  const worktreeId = typeof m.worktree === 'string' ? m.worktree : ''
+  if (!worktreeId) return false
+  const worktree = selectorOf(worktreeId)
+  try {
+    const info = await worktreeInfo($, worktreeId)
+    if (!info.exists || info.path !== m.registeredHome.originalPath) return false
+    const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
+    if (!listed.ok) return false
+    const terminals = JSON.parse(listed.out)?.result?.terminals
+    if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
+    if (!terminals.some((t: any) => t.handle === handle && t.connected === true)) return false
+  } catch {
+    return false
+  }
+  let closed
+  try {
+    closed = await orca($, 'terminal', 'close', '--terminal', handle)
+  } catch {
+    return false
+  }
+  if (!closed.ok) return false
+  try {
+    const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
+    if (!listed.ok) return false
+    const terminals = JSON.parse(listed.out)?.result?.terminals
+    if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
+    if (terminals.some((t: any) => t.handle === handle && t.connected !== false)) return false
+  } catch {
+    return false
+  }
   await writeStatusOf($, m, { state: 'closed' })
   await update($, members, old => old.map(x => (x.name === m.name ? { ...x, state: 'closed', handle: '' } : x)))
   await share($)
   return true
 }
 
+// How a start ended: its tab exists and the session registered, its tab exists but readiness is not proved, or no tab
+// could be opened. Only the last leaves nothing behind.
+type Start = 'ready' | 'starting' | 'failed'
+// How long an unresolved start blocks another one. A record older than this is spent: the person has long since seen
+// its tab, and the member is treated as closed again.
+const LAUNCH_MS = 10 * MIN
+
+// One file per member, in project-owned state: written before the external create, so a reload between the create and
+// its receipt finds the intent instead of opening a second tab (plan item 4). The mod cannot delete a file, so a
+// settled intent is rewritten with its outcome.
+const launchFile = (name: string) => `launches/${name.replace(/[^\p{L}\p{N}._-]+/gu, '_')}.json`
+type Launch = { sessionId: string; at: number; state: 'pending' | 'created' | 'ready' | 'starting' | 'spent'; handle?: string }
+async function readLaunch($: any, name: string): Promise<Launch | undefined> {
+  const v: any = await readJson($, `${await teamDir($)}/${launchFile(name)}`)
+  return v && typeof v.at === 'number' && typeof v.state === 'string' ? (v as Launch) : undefined
+}
+const writeLaunch = async ($: any, name: string, l: Launch) => putFile($, `${await teamDir($)}/${launchFile(name)}`, JSON.stringify(l, null, 1))
+// An intent still in flight: its create may have happened and its receipt may be lost. Nothing may start again until
+// it is settled or spent.
+const launchInFlight = (l: Launch | undefined, now: number) => !!l && l.state !== 'ready' && now - l.at < LAUNCH_MS
+
 // Reopen a closed member in a new Orca tab: claude --resume keeps its context; fresh starts a new session. Either way it
 // starts with its role pointer (roles.ts), so a fresh session needs no typed briefing. Its home is this machine from now.
-async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
+async function reopen($: any, m: Member, t: TeamSettings): Promise<Start> {
+  const scope = await preflight($)
+  if (!scope.ok || !m.registeredHome || !m.registeredHome.contextKind || m.registeredHome.contextKind === 'unknown' || m.registeredHome.contextKind !== scope.contextKind) return 'failed'
+  // an earlier start of this member may have opened a tab whose receipt never came back: start no second one
+  if (launchInFlight(await readLaunch($, m.name), Date.now())) return 'starting'
   // a member of another CLI is not managed (#69): never started from here
   if (!isManaged(m)) return false
   const resume = t.reopen === 'resume' && !!m.sessionId
@@ -1399,14 +1647,21 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   // is looking at; one that is gone or no longer holds the project (#68), or a member launched before it was recorded,
   // goes to this session's workspace, and the roster records it
   const wt = await memberWorktree($, m)
-  if (!wt) return false
+  if (!wt) return 'failed'
   // the model it last asked for, as typed (#63), else the roster's (which holds what it ran once it has run)
   const model = await requestedModel($, m) || m.model
   envModels = await readEnvModels($)
   await writeMemberSettings($)
-  const r = await orca($, 'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume, m.name, model))
+  // the intent first: a reload from here on finds a start in flight and opens no second tab
+  await writeLaunch($, m.name, { sessionId, at: Date.now(), state: 'pending' })
+  const r = await orca($, 'terminal', 'create', '--worktree', selectorOf(wt), '--title', m.name, '--command', startCmd(m, await readMembers($), sessionId, resume, m.name, model))
   const handle = r.ok ? handleOf(r.out) : ''
-  if (!handle) return false
+  if (!handle) {
+    // no tab was opened, so nothing is left behind: the intent is spent and the next message may try again
+    await writeLaunch($, m.name, { sessionId, at: Date.now(), state: 'spent' })
+    return 'failed'
+  }
+  await writeLaunch($, m.name, { sessionId, at: Date.now(), state: 'created', handle })
   const w = await orca($, 'terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '90000')
   const ready = w.ok && /"satisfied":\s*true/.test(w.out) && (await registers($, sessionId))
   const here = await machineOf($)
@@ -1418,8 +1673,9 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<boolean> {
   // the roster first: a status write that fails must not leave a started member "not started" there
   await share($)
   // its "clean" from before the close no longer counts: kept, the idle round would close it again at once
-  await writeStatusOf($, back, { state: 'idle', sessionId, heartbeat: Date.now(), lastClean: 0 })
-  return ready
+  await writeStatusOf($, back, { state: ready ? 'idle' : 'starting', sessionId, heartbeat: Date.now(), lastClean: 0 })
+  await writeLaunch($, m.name, { sessionId, at: Date.now(), state: ready ? 'ready' : 'starting', handle })
+  return ready ? 'ready' : 'starting'
 }
 
 // Whether this PC's session registry lists the session, asked once a second for up to a minute: Orca's tui-idle can be
@@ -1496,9 +1752,9 @@ async function tellSenderHead($: any, q: QEntry) {
 
 // Make room for, and reopen, a closed member; undefined when it must wait in the queue. proved: the caller has just
 // proved its session dead (#65), so its process is not looked up again.
-async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings, proved = false): Promise<boolean | undefined> {
+async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSettings, proved = false): Promise<Start | undefined> {
   // a member of another CLI is never reopened (#69)
-  if (!isManaged(target)) return false
+  if (!isManaged(target)) return 'failed'
   // still running after all: its tab is live, or (the tab check missing it: Orca slow, say) a process of this PC holds
   // its session. Never a second copy of the same conversation, and a stale "not started" is cleared
   const live = await liveHandleOf($, target)
@@ -1506,7 +1762,7 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
     await update($, members, old => old.map(x => (x.name === target.name ? { ...x, handle: live || x.handle, state: 'idle', pending: false } : x)))
     await writeStatusOf($, target, { state: 'idle' })
     await share($)
-    return true
+    return 'ready'
   }
   // only this machine's members count toward its cap, and only they may be closed to make room
   const here = await machineOf($)
@@ -1516,7 +1772,7 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
   if (a.kind === 'queue') return undefined
   if (a.kind === 'evict') {
     const out = list.find(x => x.name === a.name)
-    if (out) await closeMember($, out)
+    if (!out || !(await closeMember($, out))) return undefined
   }
   return reopen($, target, t)
 }
@@ -1677,24 +1933,38 @@ async function closeTheGone($: any, gone: Member[], statuses: Map<string, Status
 // Why a start failed, as the sender reads it: no tab, or a session that did not register in time (see registers).
 const NOT_STARTED = 'no Orca tab opened, or its session had not started a minute after its tab did, so your message was not sent.'
 
+// A message for a member that cannot take it yet waits in the queue, and the sender is told so. Nothing is dropped
+// because a session was not ready: a tab Orca created is a tab that may still start.
+async function queueFor($: any, target: Member, message: string, why: string): Promise<string> {
+  const me = await rosterSelf($)
+  await enqueue($, target.name, me?.me.name ?? 'someone', message)
+  return `${why} Your message is queued and is delivered when its session answers.`
+}
+
 // Send a message to a member, starting or reopening it first. A string result goes back to the sender.
 async function deliver($: any, target: Member, message: string, startHere = false): Promise<string> {
+  const scope = await preflight($)
+  if (!scope.ok) return `Blocked: ${scope.reason}.`
   const here = await machineOf($)
   let said = ''
   if (!isManaged(target)) return unmanagedAnswer(target)
   if (target.location === 'remote' && !isAway(target, here)) return `${target.name} is on another device. ${NO_MESSENGER}`
-  // startHere for a member of this PC: the user said yes to a fresh copy, started once no session of it runs here (its
-  // home need not be proved: the copy resumes no conversation)
+  if (startHere && (!target.registeredHome || !(await memberWorktree($, target)))) return `Blocked: ${target.name} has no verified registered home. Its session and roster were preserved.`
+  // startHere never clears or replaces the member's registered home
   const fresh = startHere && !isAway(target, here) && (await crashCheck($, target, await readStatus($, target.name), true)).kind === 'dead'
   if (isAway(target, here) || fresh) {
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
     await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
     // a member from another PC: its Orca workspace id is that PC's, so the copy starts in this session's workspace
-    const ok = await reopen($, fresh ? target : { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
-    if (!ok) return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
+    const start = await reopen($, target, { ...t, reopen: 'fresh' })
+    if (start === 'failed') return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
+    if (start === 'starting') return queueFor($, target, message, `Orca opened ${target.name}'s tab, but its session had not registered, so it was not started a second time.`)
   } else {
     const st = await readStatus($, target.name)
+    // its tab is open and its session has not registered: start nothing, and let the message wait
+    if (st?.state === 'starting' && launchInFlight(await readLaunch($, target.name), Date.now()))
+      return queueFor($, target, message, `${target.name} is still starting: its tab is open, but its session had not registered, so it was not started again.`)
     let closed = isClosed(target, st)
     let resume = false
     // open, but silent for over 90 s of awake time: is its session still running? (0.5.16, #71 and #65) Only proof that
@@ -1719,7 +1989,8 @@ async function deliver($: any, target: Member, message: string, startHere = fals
         await enqueue($, target.name, me?.me.name ?? 'someone', message)
         return `${said}${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
       }
-      if (!ok) return `${said}${target.name} could not be started: ${NOT_STARTED} Ask the person to look at its tab.`
+      if (ok === 'failed') return `${said}${target.name} could not be started: ${NOT_STARTED} Ask the person to look at its tab.`
+      if (ok === 'starting') return queueFor($, target, message, `${said}Orca opened ${target.name}'s tab, but its session had not registered, so it was not started a second time.`)
     }
   }
   // a reopen may have changed its session id (fresh) and its home (a fresh copy here): send to the member as it is now
@@ -1758,6 +2029,8 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
       continue
     }
     const st = await readStatus($, target.name)
+    // a start still in flight takes no message yet, and spends none of its tries
+    if (st?.state === 'starting' && launchInFlight(await readLaunch($, target.name), Date.now())) continue
     let closed = isClosed(target, st)
     const quiet = !closed && !!st && heartbeatStale(st, Date.now(), sleeps())
     // held for a hung or unsure member: it waits until the member answers (a fresh heartbeat) or is proved dead and
@@ -1779,10 +2052,11 @@ async function monitor($: any, list: Member[], statuses: Map<string, Status>, no
       resume = true
     }
     await writeQ($, { name: f.name, q: { ...f.q, state: 'sending', updated: Date.now() } })
-    const open = !closed || (await admitAndReopen($, target, all, resume ? { ...t, reopen: 'resume' } : t))
+    const start: Start | undefined = !closed ? 'ready' : await admitAndReopen($, target, all, resume ? { ...t, reopen: 'resume' } : t)
     let next: QEntry
-    if (open === undefined) next = afterTry(f.q, undefined, Date.now())
-    else if (!open) next = afterTry(f.q, false, Date.now(), `${target.name} could not be started`)
+    // a start still in flight keeps its message pending without spending a try: its session may yet register
+    if (start === undefined || start === 'starting') next = afterTry(f.q, undefined, Date.now())
+    else if (start === 'failed') next = afterTry(f.q, false, Date.now(), `${target.name} could not be started`)
     else {
       // as the roster has it now: a fresh reopen gave it a new session id
       const cur = (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target
@@ -1822,7 +2096,17 @@ let turn: Grants = NO_GRANTS
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
   const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
   const command = shell ? String(e.command ?? '') : ''
-  if (shell && !namesTeamFile(command)) return undefined
+  // judged before the team-file question: a creating command names no team file, and would otherwise return here
+  const creation = shell ? createsManaged(command) : undefined
+  if (shell && !creation && !namesTeamFile(command)) return undefined
+  // a command that names a team file and is not plainly read-only: a creation command is not one of those
+  const changesTeamFile = shell
+    ? namesTeamFile(command) && notReadOnly(command) !== ''
+    : (WRITE_TOOLS as readonly string[]).includes(tool) && isTeamFilePath(pathOf(e))
+  if (changesTeamFile) {
+    const scope = await preflight($)
+    if (!scope.ok) return `Blocked ${tool}: ${scope.reason}. No project files were changed.`
+  }
   await pull($)
   const list = await readMembers($)
   if (list.length === 0) return undefined
@@ -1830,6 +2114,8 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
   if (w.level === 'none' || !w.me) return undefined
   // the team files first: no grant opens them, only being the team top
   const v =
+    // a registration is refused whatever the member's rights: no grant opens it
+    creation ??
     judgeTeamFiles({ me: w.me, confirmed: w.level === 'full', tool, path: pathOf(e), command }) ??
     // a held session gets the strictest guard: only the person's one-turn word lets a write or a subagent through
     (w.level === 'restricted'
@@ -1934,6 +2220,8 @@ async function reconcile($: any, list: Member[], statuses: Map<string, Status>, 
 // transcript where the status line says nothing. A handle that is empty or dead is found again by tab title (a
 // restarted session gets a new one); an empty session id by the transcript's customTitle.
 async function refresh($: any) {
+  const scope = await preflight($)
+  if (!scope.ok) return
   await pull($)
   if ((await readMembers($)).length === 0) return
   // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster
@@ -2219,14 +2507,19 @@ async function addMember($: any, handle: string, title: string, team: string, bo
 // purview: the request is saved in requests/, the team top is told to ask you with AskUserQuestion, and it applies your
 // answer with member_add { request, approve }. The top itself adds only after asking you in the same turn.
 async function addNew($: any, s: NewSpec): Promise<string> {
+  const scope = await preflight($)
+  if (!scope.ok) return `Refused: ${scope.reason}. No member was added.`
   await pull($)
   const all = await readMembers($)
   const problem = newProblem(all, s)
   if (problem) return problem
-  const wt = await currentWorktree($).catch(() => '')
   const here = await machineOf($)
   const m = newMember(all, s)
-  const added: Member = { ...m, statusFile: statusFile(m.name), ...(wt ? { worktree: wt } : {}), ...(here ? { machine: here } : {}) }
+  const added: Member = {
+    ...m, statusFile: statusFile(m.name), worktree: scope.contextId,
+    registeredHome: { contextKind: scope.contextKind, executionHostId: scope.executionHostId, originalPath: scope.originalPath },
+    ...(here ? { machine: here } : {}),
+  }
   // replace: the old row goes, with its queued messages; its session and tab are left alone and never resumed
   const old = s.replace ? all.filter(x => x.team === added.team && (x.name === added.name || x.address === added.name)) : []
   await freshStatus($, added.name)
@@ -2234,9 +2527,9 @@ async function addNew($: any, s: NewSpec): Promise<string> {
   await failQueued($, old)
   await share($)
   return (
-    `${old.length ? `Replaced the old ${added.name} (its conversation is not resumed; close its tab if it is still open). ` : ''}` +
+    `${old.length ? `Replaced the old ${added.name} (its conversation is not resumed; its tab is left open). ` : ''}` +
     `Added ${added.name} to team "${added.team}" under ${added.boss}, saved as not yet with its role file. ` +
-    `It starts fresh and briefed on ${added.boss === 'user' ? 'its first message' : `${added.boss}'s first team_message`}.`
+    (scope.contextKind === 'unknown' ? 'The native selector kind is unknown, so it will not start automatically.' : `It starts fresh and briefed on ${added.boss === 'user' ? 'its first message' : `${added.boss}'s first team_message`}.`)
   )
 }
 
@@ -2373,6 +2666,9 @@ const takenAnswer = (teams: string[], list: Member[]) =>
   'launched member named like a member there is that member, kept as it is, and the rest join under their bosses). Or pick another team name.'
 
 async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'merge'): Promise<string> {
+  const scope = await preflight($)
+  if (!scope.ok) return `Refused: ${scope.reason}. No members were launched.`
+  if (scope.contextKind === 'unknown' || !scope.contextId) return 'Refused: Orca did not prove a supported worktree selector. No members were launched.'
   const all0 = await readMembers($)
   const launching = new Set(input.map(s => clean(s.team || team)))
   // a launch never replaces a team on the roster (#77): refused, unless the caller chose to add or merge
@@ -2400,14 +2696,14 @@ async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'm
     specs = named.map(s => ({ ...s, boss: s.boss === 'user' ? 'user' : (renamed.get(s.boss) ?? clean(s.boss)) }))
   }
   if (specs.length === 0) return `Nothing to add: every launched member is already in ${there.map(t => `"${t}"`).join(', ')}. Nobody was removed.`
-  const wt = await currentWorktree($)
-  if (!wt) return 'Cannot find the Orca worktree of this session.'
+  const wt = scope.contextId
   const teamsMade = [...new Set(specs.map(s => s.team))]
   // every member starts on this machine
   const here = await machineOf($)
   // the whole roster is written first; nobody is launched yet
   const made: Member[] = specs.map(s => ({
     team: s.team, name: s.name, address: s.name, role: s.role, level: s.level, boss: s.boss, handle: '', sessionId: '', worktree: wt,
+    registeredHome: { contextKind: scope.contextKind, executionHostId: scope.executionHostId, originalPath: scope.originalPath },
     ...(here ? { machine: here } : {}), location: 'local',
     state: 'unstarted', ctx: -1,
     model: s.model && s.model !== 'default' ? s.model : '', effort: s.effort && s.effort !== 'default' ? s.effort : '',
@@ -2432,7 +2728,7 @@ async function launch($: any, team: string, input: Spec[], ifExists?: 'add' | 'm
       m.sessionId = uuid()
       const r = await orca(
         $,
-        'terminal', 'create', '--worktree', `id:${wt}`, '--title', m.name,
+        'terminal', 'create', '--worktree', selectorOf(wt), '--title', m.name,
         '--command', startCmd(m, made, m.sessionId, false, m.name, m.model, m.effort, WELCOME),
       )
       m.handle = r.ok ? handleOf(r.out) : ''
@@ -2486,11 +2782,23 @@ const nameFor = (b: Bulk, current: string, i: number) => {
 // Bulk rename / model / effort on the ticked rows. A running claude cannot be changed from outside,
 // so an idle session with a known id is restarted with --resume; the rest get a label-only rename.
 async function applyBulk($: any) {
+  const scope = await preflight($)
+  if (!scope.ok) return void (await update($, bulk, o => ({ ...o, msg: `Refused: ${scope.reason}.` })))
   const list: Member[] = await readMembers($)
   const b: Bulk = await readBulk($)
-  const key = (m: Member) => `${m.team}|${m.name}`
   const picked = list.filter(m => m.sel)
   if (picked.length === 0) return void (await update($, bulk, o => ({ ...o, msg: 'Tick at least one row.' })))
+  const key = (m: Member) => `${m.team}|${m.name}`
+  const homes = new Map<string, string>()
+  for (const [i, m] of picked.entries()) {
+    const newName = nameFor(b, m.name, i + 1)
+    const wantModel = b.model !== 'keep' && !m.model.toLowerCase().includes(b.model)
+    const wantEffort = b.effort !== 'keep' && b.effort !== m.effort
+    if ((newName === m.name && !wantModel && !wantEffort) || !isManaged(m)) continue
+    const home = await memberWorktree($, m)
+    if (!home) return void (await update($, bulk, o => ({ ...o, msg: `Refused: ${m.team}/${m.name} has no supported registered home. No members were changed.` })))
+    homes.set(key(m), home)
+  }
   const renames = new Map<string, string>()
   const report: string[] = []
   let n = 0
@@ -2508,15 +2816,16 @@ async function applyBulk($: any) {
     }
     const canRestart = m.sessionId !== '' && m.handle !== '' && m.state === 'idle'
     if (canRestart) {
+      const wt = homes.get(key(m))
+      if (!wt) continue
       envModels = await readEnvModels($)
       await writeMemberSettings($)
       // kept on "keep": the model it last asked for (#63), else the roster's; its workspace checked first (#68)
       const model = wantModel ? b.model : (await requestedModel($, m)) || m.model
-      const wt = await memberWorktree($, m)
       await orca($, 'terminal', 'close', '--terminal', m.handle)
       const r = await orca(
         $,
-        'terminal', 'create', '--worktree', wt ? `id:${wt}` : 'active', '--title', newName,
+        'terminal', 'create', '--worktree', selectorOf(wt), '--title', newName,
         '--command', startCmd(m, list, m.sessionId, true, newName, model, wantEffort ? b.effort : m.effort),
       )
       const handle = r.ok ? handleOf(r.out) : ''
@@ -2769,7 +3078,8 @@ export const register: Register = (on, options) => {
     // a short name is kept from an earlier adopt unless this call gives one (an empty one clears it)
     const given = (m: { short?: string }) => (typeof m.short === 'string' ? { short: m.short.trim() } : {})
     const team = clean(input.team || '') || 'team'
-    // the tabs adopted run on this machine
+    const caller = await preflight($)
+    if (!caller.ok) return { deny: `Blocked team_adopt: ${caller.reason}. No project files were changed.` } as any
     const here = await machineOf($)
     // which CLI each tab runs (#69), from Orca's terminal list: by handle, else the one tab of that name in this project
     const root = await rootOf($)
@@ -2780,19 +3090,44 @@ export const register: Register = (on, options) => {
       const hits = tabs.filter(t => [m.address, m.name].includes(bare(String(t.title ?? ''))) && (!t.worktreePath || under(root, String(t.worktreePath))))
       return hits.length === 1 ? hits[0] : undefined
     }
-    const adopted: Member[] = input.members.map(m => {
-      const cli = cliOf(tabOf(m as any))
-      return {
-        team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss, handle: m.handle ?? '',
-        sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
-        ...(here ? { machine: here } : {}),
-        ...(cli ? { cli } : {}),
-        location: cli && cli !== 'claude' ? 'other-cli' : 'local',
-      }
-    })
-    // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     const known = (await readMembers($)).filter(m => m.team === team)
-    await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, model: known.find(k => k.name === a.name)?.model ?? a.model, effort: known.find(k => k.name === a.name)?.effort ?? a.effort, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: a.sessionId || known.find(k => k.name === a.name)?.sessionId || '' })))
+    const adopted: Member[] = await Promise.all(input.members.map(async m => {
+      const prior = known.find(k => k.name === m.name)
+      const tab = tabOf(m as any)
+      const cli = cliOf(tab)
+      const handle = String(m.handle ?? '').trim()
+      // A tab that answers with a native home proves where it runs. Its CLI decides only whether the mod manages it,
+      // so a CLI this mod cannot read is still a tab whose home it may record; another CLI's tab is never polled at all.
+      const observed = (!cli || cli === 'claude') && handle ? await nativeHomeEvidence($, handle) : undefined
+      // The tab the caller names is the member's live tab when it answers at the member's home. Only a tab that
+      // cannot be found there leaves the saved handle standing: a handle that names no verified tab proves nothing.
+      const sameHome = (o: { contextId: string; registeredHome: RegisteredHome }) =>
+        !!prior?.registeredHome && prior.worktree === o.contextId &&
+        prior.registeredHome.executionHostId === o.registeredHome.executionHostId &&
+        prior.registeredHome.originalPath === o.registeredHome.originalPath
+      // The member's own tab proves its home. When Orca cannot find that tab, the caller's verified native home
+      // stands in: it is proven evidence (execution host, original path, context id), not a cwd, a title or the
+      // active workspace. A member whose tab was found on another host keeps that other host's home.
+      const fallback = !observed ? { worktree: caller.contextId, registeredHome: { contextKind: caller.contextKind, executionHostId: caller.executionHostId, originalPath: caller.originalPath } } : undefined
+      const capture = !prior && observed ? { worktree: observed.contextId, registeredHome: observed.registeredHome } : undefined
+      const home = capture ?? (!prior ? fallback : undefined)
+      const sameHost = !!observed ? observed.registeredHome.executionHostId === caller.executionHostId : true
+      // the handle the caller names, when a tab answers at the member's home; else the saved one
+      const takeHandle = handle && (!prior || !prior.registeredHome || (observed && sameHome(observed))) ? handle : prior?.handle ?? ''
+      return {
+        team, name: m.name, address: (m as any).address || m.name, role: m.role, level: m.level, boss: m.boss,
+        handle: takeHandle,
+        sessionId: m.sessionId ?? '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...given(m),
+        ...(home ?? {}),
+        ...(!home && prior?.worktree ? { worktree: prior.worktree } : {}),
+        ...(!home && prior?.registeredHome ? { registeredHome: prior.registeredHome } : {}),
+        ...(prior?.machine ? { machine: prior.machine } : sameHost && here ? { machine: here } : {}),
+        ...(prior?.cli ? { cli: prior.cli } : cli ? { cli } : {}),
+        location: prior?.location ?? (cli && cli !== 'claude' ? 'other-cli' : observed && !sameHost ? 'remote' : 'local'),
+      }
+    }))
+    // keep what is already known about a session that is adopted again (briefing, model, effort, id)
+    await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, model: known.find(k => k.name === a.name)?.model ?? a.model, effort: known.find(k => k.name === a.name)?.effort ?? a.effort, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: known.find(k => k.name === a.name)?.sessionId ?? a.sessionId })))
     await update($, view, () => 'roster')
     // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
@@ -2808,6 +3143,8 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: REMOVE_TEAM }, async ($, e) => safely(async () => {
     const held = await onHold($, 'team_remove')
     if (held) return held
+    const authority = await topOnly($, 'team_remove')
+    if (authority) return authority
     const input = e as unknown as { team: string }
     return { result: await remove($, input.team) } as any
   }))
@@ -2815,6 +3152,8 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: REMOVE_MEMBER }, async ($, e) => safely(async () => {
     const held = await onHold($, 'member_remove')
     if (held) return held
+    const authority = await topOnly($, 'member_remove')
+    if (authority) return authority
     const input = e as unknown as { team: string; name: string }
     return { result: await remove($, input.team, input.name) } as any
   }))
@@ -2822,6 +3161,8 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: MOVE }, async ($, e) => safely(async () => {
     const held = await onHold($, 'member_move')
     if (held) return held
+    const authority = await topOnly($, 'member_move')
+    if (authority) return authority
     const input = e as unknown as { team: string; name: string; toTeam: string; boss?: string }
     return { result: await move($, new Set([`${input.team}|${input.name}`]), input.toTeam, input.boss || undefined) } as any
   }))

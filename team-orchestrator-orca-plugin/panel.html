@@ -646,6 +646,7 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   }
   function planTeam(form2) {
     if (form2.sessionMode !== void 0 && typeof form2.sessionMode !== "boolean") throw Error("Invalid team conversation mode.");
+    if (form2.projectRoleFiles !== void 0 && form2.projectRoleFiles !== 1) throw Error("Invalid project role file format.");
     if (form2.launchMode !== void 0 && !["on-demand", "all"].includes(form2.launchMode)) throw Error("Choose a supported launch mode.");
     for (const key of ["leadCount", "workersPerLead"]) if (form2[key] !== void 0 && (!Number.isInteger(form2[key]) || form2[key] < 1 || form2[key] > 5)) throw Error("Choose 1\u20135 leads and 1\u20135 workers per lead.");
     const name = cleanName(form2.name);
@@ -853,6 +854,7 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   var connectionReady = false;
   var state = emptyTeamState();
   var form = { ...structuredClone(DEFAULT_FORM), name: "Team", leadNames: "", sessionMode: true, launchMode: "all", leadCount: 1, workersPerLead: 3 };
+  var pendingCreation = null;
   var leadPreferences = { agent: "codex", model: "default", effort: "default" };
   var telemetry = { members: {}, observedAt: null };
   var rosterRefreshRunning = false;
@@ -1006,7 +1008,7 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   function render() {
     app.setAttribute("aria-busy", String(busy));
     const usable = connectionReady && loaded && storageAvailable;
-    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.22")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
+    app.innerHTML = `<header class="app-header"><div class="brand"><span aria-hidden="true">\u25C6</span> Team Orchestrator<small>v${escape("0.1.23")}</small></div>${usable ? `<nav aria-label="Team Orchestrator">${[["roster", "Roster"], ["new", "New team"], ["settings", "Settings"]].map(([id, text]) => button(text, id, `aria-current="${view === id ? "page" : "false"}"`, view === id ? "active" : "")).join("")}</nav>` : ""}</header><main>${!usable ? loading ? '<p class="loading" role="status">Connecting to Orca\u2026</p>' : unavailableView() : `
     ${problem ? `<div class="notice error" role="alert">${escape(problem)} ${canRetry ? button("Retry storage", "retry", busy ? "disabled" : "", "small") : ""}</div>` : ""}
     ${message ? `<p class="notice success" role="status">${escape(message)}</p>` : ""}
     ${view === "new" ? formView() : view === "settings" ? settingsView() : roster()}`}
@@ -1162,9 +1164,12 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
         const issue = preferenceIssue({ agent: draft.agents[i], model: draft.models[i], effort: draft.efforts[i] }, admission);
         if (issue) throw Error(issue);
       }
-      const result = await call("createTeam", mutation({ form: draft, selectionToken: scope.selectionToken }));
+      const creationKey = JSON.stringify([scope.workspaceKey, draft]);
+      if (pendingCreation?.key !== creationKey) pendingCreation = { key: creationKey, request: mutation({ form: draft, selectionToken: scope.selectionToken }) };
+      const result = await call("createTeam", pendingCreation.request);
       state = validatePersistentState(result.value);
       await launchTeam(state.teams.length - 1);
+      pendingCreation = null;
       view = "roster";
       render();
       await refreshRoster();
