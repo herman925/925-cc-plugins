@@ -2,9 +2,11 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.63. The version is shown dim beside the band title, as ` v0.3.63`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
+Version 0.3.64. The version is shown dim beside the band title, as ` v0.3.64`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
+
+Install: `/plugin install session-panel --marketplace herman925/925-cc-plugins`
 
 ## The band
 
@@ -15,7 +17,7 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 - **Settings** opens the Settings card (below).
 - **Stop** appears only while a turn is running. It cancels that turn. The toast is `Stopped`, or `Nothing to stop: the turn has ended.` if the turn already ended.
 - **Subagents:** a subagent's or teammate's turn does not start a job, change the checklist or move the Stop button; only the session's own turns do.
-- **Checklist:** Claude plans the job with `mcp__session-panel__plan_steps` and reports progress with `mcp__session-panel__report_progress`. Questions go through AskUserQuestion while the question box is on (the default); with it off and `/askchoices on`, `mcp__session-panel__ask_choices` shows numbered choices in the band.
+- **Checklist:** Claude may open a job with an optional plan line, and the band reads it as the checklist (see [How the checklist works](#how-the-checklist-works)). `mcp__session-panel__plan_steps` sets or corrects the checklist, `mcp__session-panel__report_progress` reports a percent alongside real tool calls, and `mcp__session-panel__ask_choices` asks questions (numbered choices in the band, when `/askchoices on` is set). None of these is required. Questions go through AskUserQuestion while the question box is on (the default).
 - `NO_COLOR` is honoured. `NO_MOTION`, `REDUCE_MOTION` or `PREFERS_REDUCED_MOTION` gives a static meter.
 
 ### Commands
@@ -35,18 +37,41 @@ The band sits above the prompt, in this order: the title line, the Settings butt
 
 Settings → Questions holds three switches:
 
-- **Question box** (on by default): Claude asks with AskUserQuestion, never in prose, for permission to act (edits, deletes, sends, pushes, installs) and for choices that change scope, cost, files or direction. Routine details are not asked; Claude decides them and states them as `ASSUMPTION:` lines. The rule is in the system-prompt section `session-panel:rules`; it is an instruction, so Claude can still miss it. The grill skills (`grilling`, `grill-me` and `grill-with-docs`, also when named with their plugin) get a note added to their own text when they load: ask each question with AskUserQuestion, one call per question, the recommended option first. It is added only while the question box is on, and costs no context on other turns. While it is on, the ask_choices picker is refused with `The question box is on: ask this with AskUserQuestion instead.`
-- **Picker above the prompt** (off by default): the ask_choices buttons. It works only while the question box is off.
-- **Warn on prose questions** (on by default): when a reply ends with a question and no AskUserQuestion call was made in that turn, a toast says `Claude asked in prose instead of the question box. Turn the warning off in Settings → Questions if it is not wanted.` It needs the question box on. It only warns; it cannot make Claude ask again.
+- **Question box** (on by default): Claude writes one short plain sentence saying what is being decided, then calls AskUserQuestion in the same reply, for permission to act (edits, deletes, sends, pushes, installs) and for choices that change scope, cost, files or direction. Routine details are not asked; Claude decides them and states them as `ASSUMPTION:` lines. When a grill skill (`/grilling`, `/grill-me`, `/grill-with-docs`) loads while the question box is on, a note is attached to that skill's text asking for each of its questions through AskUserQuestion, one call per question; it is not part of this rules line. The rule is in the system-prompt section `session-panel:rules`; it is an instruction, so Claude can still miss it. While it is on, the ask_choices picker is refused with `The question box is on: ask this with AskUserQuestion instead.`
+- **Picker above the prompt** (off by default): the ask_choices buttons. It is used only when it is on and the question box is off. With the question box off and the picker off, Claude is still told to ask with AskUserQuestion, so a question is never left open in prose.
+- **Warn on prose questions** (on by default): when a reply ends with a question and no AskUserQuestion call was made in that turn, a toast says `Claude asked in prose instead of the question box. Turn the warning off in Settings → Questions if it is not wanted.` It needs the question box on. It does not fire when the same turn holds a short sentence and an AskUserQuestion call; it fires only when a question ends the reply with no AskUserQuestion call. It only warns; it cannot make Claude ask again.
 
-## The plan gate
+## How the checklist works
 
-Until the job has a plan, other tools are refused for the main agent. Subagents are never gated.
+There is no gate. Tools run before any plan, and no tool call is refused for lacking one. The checklist is built from what Claude says and does, and nothing is required of it.
 
-- The refusal says: `Blocked by the Session Panel mod until this session calls mcp__session-panel__plan_steps (see the Session Panel system section).`
-- The rule itself is in a system-prompt section, `session-panel:plan`. It asks for `plan_steps` before any other tool, and says to skip the plan if the tool is still missing.
-- **Escape:** after 3 refusals in a row with no plan, tools go through. The toast says `Session Panel: no plan_steps call after 3 tries, so tools are open.` A plan, or the end of the job, resets the count.
-- If the gate hook throws an error, tools are allowed through. A gate hook that cannot answer in time is refused by Claude Code itself, which now blocks an action whose hook gives no answer.
+- **Plan line (optional):** the first reply of a new job may begin with a line of the form `Plan: Read the notes · Make the changes · Check the result`. It is read only from the main agent's first request of the turn that started the job (`turn.step` index 0). A subagent's request, a later request, and a continuation turn never set it. Only the first text block of that request is read, and it must be that line (a `Plan:` line followed by a newline). Between 1 and 8 names are taken, separated by ` · `, each cleaned the same way as `plan_steps` names. An empty, malformed or longer list gives no plan. The line is hidden in the chat only when it is exactly that line; any other text is left visible.
+- **`plan_steps` (optional):** sets or corrects the checklist. It is a correction tool, not a first step. Claude is never asked to retry it.
+- **`report_progress` (optional):** reports a percent for a step, with its name. It must ride in the same message as a real tool call. It is never a separate turn that only reports 100%.
+  - A step with no reported percent shows no percent. The bar never invents one.
+- **Tool activity:** the action line under the checklist comes from the tool in use (for example, reading or editing), or from the in-progress item of a `TodoWrite` list, cleaned. A `TodoWrite` list never replaces the checklist rows; it only sets the action line. `TaskCreate` and `TaskUpdate` do not feed the action line, because they carry no activity text.
+- **Jobs with no plan (fallback rows):** a job with no plan line and no `plan_steps` gets rows inferred from the tools it uses, one row per kind of tool. A kind whose latest call is still running is active; a kind whose calls succeeded is done, except that the newest kind stays active while the job is still working; a kind whose latest call failed is upcoming and is never ticked. A job that answers with no tool calls shows `Answer your question` as its one row, so it never stays blank. A plan line or `plan_steps` later in the job replaces the fallback rows with the plan.
+- **Honest completion:** a turn ending never ticks unfinished steps. A finished job with unticked steps is kept in the history with the note `Reply finished — steps not confirmed`, so a missing tick is never read as done. For a job with no plan, that note appears when a step failed or was still running at the end.
+
+  - **Explicit plan:** the plan line or `plan_steps` creates the steps, and the first is active at once. A step is ticked when its own `report_progress` reaches 100%, or when a later step is reported (every earlier step is then ticked). A `report_progress` name that matches no step adds a new step after the current one.
+  - **Turn end:** the turn's end is reported by its reason. `aborted` shows Stopped, and `error` or `refusal` shows Stuck; each keeps the steps as they were. An `answer` finishes the job, and its unticked explicit steps stay unticked under the note above. The one exception is an answer that asks the person something while steps are unfinished: that shows Needs you, `Claude is waiting for your reply`. A question from `ask_choices` or `AskUserQuestion` shows Needs you with that question.
+  - **Job name:** when a turn starts, a short model call names the job. It runs beside the turn, sets only the job's name, and never touches steps, phase or the finished record. If it fails, or has not answered by the time the job ends, the job keeps the default name `Working on it`.
+  - **Background work:** a job whose subagent the engine spawned in the background (the spawn's `background` flag, from the main loop; the Agent call's own input is not read), or a background Bash command, does not finish when its reply does. The action line reads `Waiting for background work`. A background subagent is followed through the engine's agent list. While it is pending, running or waiting, the job keeps waiting. When it is completed, the job finishes as normal. When it is failed or killed, the job finishes with the note `Background work stopped before it finished`, and its steps are never ticked as done. When it is idle, or absent from the list, the job waits a few more polls and then finishes with the note `Background work not confirmed finished`. If the agent list cannot be read, the same note applies. A background Bash command has no end signal the plugin can see, so its job keeps waiting until the next prompt. That prompt starts a new job, and the old one closes with `Background work not confirmed finished`.
+- **Parent and subagent:** the plan line is read only from the main agent. Subagent replies are never parsed for plans.
+- **Progress bar:** a job with no steps shows 0% while it runs, and 0% when it finishes with no steps. A finished job shows 100% only when every step is ticked and it has no note. Otherwise it shows the average of its steps, capped at 99%. A fallback job shows 0% while it runs and 100% only when it finishes with no note.
+- **New prompt during waiting background work:** a new non-empty prompt, typed while the job waits only on background work, starts a fresh job with its own plan. The old job is closed with `Background work not confirmed finished`, and its background agent is not changed by the new job. An empty automatic continuation (an engine turn with no text) keeps the same job, its plan, and its background agent; it creates and archives nothing.
+
+
+### Round trips
+
+A job that uses the optional tools makes no extra model turns for them. The plan line rides on the reply that already starts the job, and `report_progress` rides on a tool call that was going to happen anyway. A job that uses none of them still runs and still shows its action line.
+
+### Limits and what is not verified
+
+- **Not verified live.** The behaviour above is covered by fixture tests (`claude plugin test session-panel`). None of it was run against a live model, and none was run with live AI spending. Whether Claude writes the plan line, and how well it keeps to it, is not measured here.
+- **Background work is partly seen.** A subagent the engine spawns in the background from the main loop, as the `agent.spawn` event's `background` flag says, is followed through `$.agent.list()`, and its status is the engine's. Subagent, teammate and workflow spawns are not followed. An agent the list cannot be read for, or that is idle or missing, is not treated as finished. A background Bash command has no end signal the plugin can read, so its job waits for the next prompt. **Limit:** if a job has both a background Bash command and a background agent, the job closes as `Background work not confirmed finished` on the next prompt, even when the agent has already finished, because the Bash command keeps the job waiting. **Not covered by tests:** the engine's own Agent-tool spawn. The test kit refuses `$.agent.spawn` inside a tool call, so the background-agent tests raise the spawn from the test body before the Agent call. The spawn rule itself is tested as a pure function. The composed system prompt is checked by tests that use a stub base section: the decision-step digest, and the presence of the plan, rules and assumptions sections. Whether Claude follows the plan rule in the composed text is not checked.
+- **Plan line stays visible:** the plugin does not hide a `Plan:` line in the chat. An assistant message does not say which agent loop produced it, so a subagent's first line that reads `Plan:` cannot be told apart from the main agent's, and nothing is hidden on a guess.
+- **Test coverage:** the stream hook is driven through `$.turn.step` in the test kit, over a bottom the test supplies. Tests cover the plan line in a first main-agent request, with every chunk passed on byte for byte; the first text block only; a subagent request; a later index; a request with no plan line; a new non-empty prompt during waiting background work, which starts a fresh job with its own plan and does not keep the first turn's plan; and an empty automatic continuation, which keeps the waiting job, its plan, and its background agent. A mutation check (`+=` replaced by `=` in the chunk accumulator) makes the pieces test fail. Not covered: the engine's own stream, a live model's text, and the drawing of the plan line, which is no longer hidden. In the test kit, the stream returned by `$.turn.step` has no `.result`; read its final value from the loop instead. Inside a hook, `next(e).result` works.
 
 ## The enhancer
 
@@ -71,7 +96,7 @@ The enhancer rewrites the prompt box so Claude can act on it, using the project 
 
 ### Model and chat
 
-- **Model:** Haiku by default. Settings offer Haiku, Sonnet and Opus.
+- **Model:** Haiku by default. Settings offer Haiku, Sonnet and Opus. Cheap background calls (the job title, and the enhancer when its model is Haiku) use the model named by `ANTHROPIC_DEFAULT_HAIKU_MODEL` when that is set, otherwise the plain `haiku` alias. Sonnet and Opus choices are sent as set.
 - **Chat context** (a setting):
   - **Recent** (default): sends the last 6 user and assistant text turns to the model on the chosen model, Haiku unless you pick another. Each turn is capped at 1500 characters, and the whole excerpt at 6000 characters, keeping the newest end.
   - **Full chat**: asks the session itself, on the session's model, so the model sees the whole conversation. It falls back to the chosen model only if there is nothing to ask yet.
@@ -233,7 +258,7 @@ A status line changes an entry's status without a model turn. It is one line, al
 
 ## Cross-mod functions
 
-- Session Panel band: the title " Session Panel " with its version (for example " v0.3.62") when known, read from the plugin's own manifest.
+- Session Panel band: the title " Session Panel " with its version (for example " v0.3.64") when known, read from the plugin's own manifest.
 - Cross-session messages and the head line: Session Panel reads `SESSION-PANEL: confirm <id>`, `SESSION-PANEL: wrong <id>` or `SESSION-PANEL: delete <id>` alone on its own line inside the cross-session envelope, with the envelope's from-name as the sender. Escaped tag forms are plain text. More than one envelope, or a malformed one, applies no status. Only the member's boss or the team top may send these lines. The head is matched by display name, not session id, so a second session with the same name could pose as head. A head's `wrong` fills the member's box with the Redirect text and submits nothing. A status-only message is dropped.
 - Toasts (Session Panel side), as in the code: "Assumption <id> marked confirmed." / "Assumption <id> marked wrong." / "Assumption <id> deleted." / "No assumption <id> in this session." / "Assumption <id> is already <status>." / "Refused: <name> is not this session's team head." / "Refused: the team roster cannot be read, so <name> cannot be checked." / "Refused: more than one message envelope." / "Refused: the message envelope is malformed."
 - Team-orchestrator roster view: each member's row shows "N open". Opening it shows "Open assumptions of <name> (N)". The boss and the team top see Confirm, Wrong and Delete, which send the status line as a team message; Delete asks first. Others see the count and list only. Team-orchestrator never writes an assumptions file.

@@ -1,4 +1,4 @@
-import type { AssumptionTrack, CleanChecklist, CleanTask } from '../types'
+import type { AssumptionTrack, CleanActivity, CleanActivityStatus, CleanChecklist, CleanTask, CleanTaskStatus } from '../types'
 
 // Pure helpers for Session Panel: no engine calls here, so tests can use them directly.
 
@@ -96,6 +96,12 @@ export function newChecklist(): CleanChecklist {
     failStreak: 0,
     isBelled: false,
     bar: 0,
+    fallback: false,
+    planTurn: '',
+    bgAgents: [],
+    bgCommands: [],
+    activities: [],
+    note: '',
   }
 }
 
@@ -103,14 +109,28 @@ function task(id: string, name: string, status: CleanTask['status']): CleanTask 
   return { id, name: cleanName(name), status, percent: 0, hasReported: false, shown: 0 }
 }
 
-export function startJob(prev: CleanChecklist, now: number): CleanChecklist {
+/** The row and action line of a job whose reply is not yet known to use a tool. */
+export const ANSWER_LABEL = 'Answer your question'
+/** The action line while the job waits on background work it started. */
+export const WAITING_LABEL = 'Waiting for background work'
+/** The note on a finished job whose explicit steps were not all reported. */
+export const UNCONFIRMED_NOTE = 'Reply finished — steps not confirmed'
+/** The note on a job closed by a new prompt while a background shell it started may still run. */
+export const BG_UNCONFIRMED_NOTE = 'Background work not confirmed finished'
+/** The note on a job whose background agent failed or was killed before it finished. */
+export const BG_STOPPED_NOTE = 'Background work stopped before it finished'
+
+export function startJob(prev: CleanChecklist, now: number, turnId: string): CleanChecklist {
   return {
     ...newChecklist(),
     title: 'Working on it',
     phase: 'working',
-    tasks: [task('s1', 'Understand your request', 'active'), task('s2', 'Plan the steps', 'upcoming')],
+    action: ANSWER_LABEL,
     startedAt: now,
     jobId: prev.jobId + 1,
+    fallback: true,
+    tasks: [task('f0', ANSWER_LABEL, 'active')],
+    planTurn: turnId,
   }
 }
 
@@ -120,7 +140,109 @@ export function planSteps(cl: CleanChecklist, names: unknown): CleanChecklist | 
   const list = names.filter((n): n is string => typeof n === 'string').slice(0, MAX_STEPS)
   if (list.length < 1) return null
   const tasks = list.map((n, i) => task(`p${i + 1}`, n, i === 0 ? 'active' : 'upcoming'))
-  return { ...cl, tasks, hasPlan: true, phase: cl.phase === 'idle' ? 'working' : cl.phase, isCollapsed: false }
+  return {
+    ...cl,
+    tasks,
+    fallback: false,
+    hasPlan: true,
+    phase: cl.phase === 'idle' ? 'working' : cl.phase,
+    isCollapsed: false,
+    action: cl.action === ANSWER_LABEL ? '' : cl.action,
+  }
+}
+
+/**
+ * The rows of a job with no plan: one per kind of tool it used, from the latest call of that kind. A call still
+ * running, or one that started background work, is active; a finished one is done, except the kind Claude is on
+ * while the job is working, which stays active. A failed call is not ticked done.
+ */
+function fallbackRows(acts: CleanActivity[], working: boolean): CleanTask[] {
+  if (acts.length === 0) return [task('f0', ANSWER_LABEL, working ? 'active' : 'done')]
+  const latest = new Map<string, CleanActivityStatus>()
+  for (const a of acts) latest.set(a.kind, a.status)
+  const kinds = Array.from(latest.keys())
+  const last = kinds[kinds.length - 1]
+  return kinds.map((kind, i) => {
+    const s = latest.get(kind)
+    const status: CleanTaskStatus =
+      s === 'running' ? 'active' : s === 'ok' ? (working && kind === last ? 'active' : 'done') : 'upcoming'
+    return task(`f${i + 1}`, kind, status)
+  })
+}
+
+/** A tool call of a job with no plan starts an activity; the rows are rebuilt from the activities. */
+export function startActivity(cl: CleanChecklist, id: string, tool: string): CleanChecklist {
+  if (cl.hasPlan) return cl
+  const activities: CleanActivity[] = [...cl.activities, { id, kind: actionLabel(tool), status: 'running' }]
+  return { ...cl, fallback: true, activities, tasks: fallbackRows(activities, true) }
+}
+
+/** A tool call's result: 'background' means it started work with no end signal, so it stays running. */
+export function settleActivity(cl: CleanChecklist, id: string, outcome: 'ok' | 'failed' | 'background'): CleanChecklist {
+  if (!cl.activities.some(a => a.id === id)) return cl
+  const status: CleanActivityStatus = outcome === 'background' ? 'running' : outcome
+  const activities = cl.activities.map(a => (a.id === id ? { ...a, status } : a))
+  return { ...cl, activities, tasks: fallbackRows(activities, cl.phase === 'working') }
+}
+
+/** The id of a subagent the main loop started in the background, from the engine's agent.spawn answer; undefined for anything else. */
+export function backgroundSpawn(
+  spawn: { background: boolean; parentAgentId?: string; isTeammate?: true; workflow?: unknown },
+  answer: { deny?: unknown; agentId?: string },
+): string | undefined {
+  if (answer.deny !== undefined || typeof answer.agentId !== 'string') return undefined
+  if (spawn.background !== true || spawn.parentAgentId !== undefined || spawn.isTeammate === true || spawn.workflow !== undefined) return undefined
+  return answer.agentId
+}
+
+/** The background shell task a finished tool call started, if it started one. */
+export function backgroundStart(tool: string, result: unknown): { command?: string } {
+  const r = (result ?? {}) as Record<string, unknown>
+  if ((tool === 'Bash' || tool === 'PowerShell') && typeof r.backgroundTaskId === 'string') return { command: r.backgroundTaskId }
+  return {}
+}
+
+export function trackBackground(cl: CleanChecklist, started: { agent?: string; command?: string }): CleanChecklist {
+  const bgAgents = started.agent !== undefined && !cl.bgAgents.includes(started.agent) ? [...cl.bgAgents, started.agent] : cl.bgAgents
+  const bgCommands = started.command !== undefined && !cl.bgCommands.includes(started.command) ? [...cl.bgCommands, started.command] : cl.bgCommands
+  return { ...cl, bgAgents, bgCommands }
+}
+
+const WORKING_AGENT: ReadonlySet<string> = new Set(['pending', 'running', 'waiting'])
+
+/** What the engine's agent list says about a job's background agents: working, stopped, done, or unknown. */
+export type BgVerdict = 'none' | 'working' | 'done' | 'stopped' | 'unknown'
+
+/** Working beats unknown beats stopped; an agent idle or missing from the list is unknown, never finished. */
+export function bgVerdict(ids: string[], agents: { id: string; status: string }[]): BgVerdict {
+  if (ids.length === 0) return 'none'
+  const verdicts = ids.map((id): BgVerdict => {
+    const a = agents.find(x => x.id === id)
+    if (a === undefined) return 'unknown'
+    if (WORKING_AGENT.has(a.status)) return 'working'
+    if (a.status === 'completed') return 'done'
+    if (a.status === 'failed' || a.status === 'killed') return 'stopped'
+    return 'unknown'
+  })
+  if (verdicts.includes('working')) return 'working'
+  if (verdicts.includes('unknown')) return 'unknown'
+  if (verdicts.includes('stopped')) return 'stopped'
+  return 'done'
+}
+
+/**
+ * A finished job's rows and note. Fallback rows keep only the steps that finished OK; a step that failed or never
+ * ended is dropped and the note says so. Background verdicts other than done set their own note.
+ */
+export function finishState(cl: CleanChecklist, bg: BgVerdict = 'none'): { tasks: CleanTask[]; note: string } {
+  const bgNote = bg === 'stopped' ? BG_STOPPED_NOTE : bg === 'unknown' ? BG_UNCONFIRMED_NOTE : ''
+  if (cl.fallback) {
+    const rows = fallbackRows(cl.activities, false)
+    const tasks = rows.filter(t => t.status === 'done')
+    return { tasks, note: bgNote || (tasks.length < rows.length ? UNCONFIRMED_NOTE : '') }
+  }
+  const unreported = cl.tasks.some(t => t.status !== 'done')
+  return { tasks: cl.tasks, note: bgNote || (unreported ? UNCONFIRMED_NOTE : '') }
 }
 
 function norm(s: string): string {
@@ -137,7 +259,7 @@ export function clampPercent(percent: unknown): number {
 export function reportProgress(cl: CleanChecklist, name: unknown, percent: unknown): { cl: CleanChecklist; pct: number } {
   const pct = clampPercent(percent)
   const wanted = norm(cleanName(name))
-  const tasks: CleanTask[] = cl.tasks.map(t => ({ ...t }))
+  const tasks: CleanTask[] = (cl.fallback ? [] : cl.tasks).map(t => ({ ...t }))
   let idx = tasks.findIndex(t => norm(t.name) === wanted)
   if (idx < 0) idx = tasks.findIndex(t => norm(t.name).startsWith(wanted) || wanted.startsWith(norm(t.name)))
   if (idx < 0) {
@@ -152,7 +274,7 @@ export function reportProgress(cl: CleanChecklist, name: unknown, percent: unkno
       if (was >= 0) tasks[was]!.status = 'active'
     }
     tasks.splice(was >= 0 ? was + 1 : tasks.length, 0, fresh)
-    return { cl: { ...cl, tasks, hasPlan: true, phase: cl.phase === 'idle' ? 'working' : cl.phase }, pct }
+    return { cl: { ...cl, tasks, fallback: false, hasPlan: true, phase: cl.phase === 'idle' ? 'working' : cl.phase }, pct }
   }
   for (let i = 0; i < idx; i++) {
     const t = tasks[i]!
@@ -172,78 +294,28 @@ export function reportProgress(cl: CleanChecklist, name: unknown, percent: unkno
     for (let i = idx + 1; i < tasks.length; i++) if (tasks[i]!.status === 'active') tasks[i]!.status = 'upcoming'
   }
   return {
-    cl: { ...cl, tasks, hasPlan: true, phase: cl.phase === 'idle' ? 'working' : cl.phase },
+    cl: { ...cl, tasks, fallback: false, hasPlan: true, phase: cl.phase === 'idle' ? 'working' : cl.phase },
     pct,
   }
 }
 
-type Todo = { content?: unknown; status?: unknown }
+type Todo = { content?: unknown; status?: unknown; activeForm?: unknown }
 
-/** TodoWrite as checklist rows. */
-export function applyTodos(cl: CleanChecklist, todos: unknown): CleanChecklist {
-  if (!Array.isArray(todos) || todos.length === 0) return cl
-  const old = new Map(cl.tasks.map(t => [norm(t.name), t]))
-  let sawActive = false
-  const tasks = (todos as Todo[]).map((t, i) => {
-    const status: CleanTask['status'] =
-      t.status === 'completed' ? 'done' : t.status === 'in_progress' && !sawActive ? 'active' : 'upcoming'
-    if (status === 'active') sawActive = true
-    const row = task(`t${i + 1}`, String(t.content ?? ''), status)
-    const before = old.get(norm(row.name))
-    if (before) {
-      row.percent = status === 'done' ? 100 : before.percent
-      row.hasReported = before.hasReported || status === 'done'
-      row.shown = before.shown
-    } else if (status === 'done') {
-      row.percent = 100
-      row.hasReported = true
-    }
-    return row
-  })
-  if (!sawActive) {
-    const first = tasks.find(t => t.status === 'upcoming')
-    if (first) first.status = 'active'
-  }
-  return { ...cl, tasks, hasPlan: true }
+/** TodoWrite feeds the action line only: the cleaned activeForm of the in-progress to-do, or '' when there is none. */
+export function todoAction(todos: unknown): string {
+  if (!Array.isArray(todos)) return ''
+  const active = (todos as Todo[]).find(t => t.status === 'in_progress')
+  if (!active || typeof active.activeForm !== 'string' || active.activeForm.trim() === '') return ''
+  return cleanName(active.activeForm)
 }
 
-export function applyTaskCreate(cl: CleanChecklist, subject: unknown, id: string): CleanChecklist {
-  const fresh = cl.hasPlan ? cl.tasks : []
-  const t = task(id, String(subject ?? ''), fresh.some(x => x.status === 'active') ? 'upcoming' : 'active')
-  return { ...cl, tasks: [...fresh, t], hasPlan: true }
-}
-
-export function applyTaskUpdate(cl: CleanChecklist, args: { taskId?: unknown; status?: unknown; subject?: unknown }): CleanChecklist {
-  const id = String(args.taskId ?? '')
-  let tasks = cl.tasks.map(t => ({ ...t }))
-  const t = tasks.find(x => x.id === id)
-  if (!t) return cl
-  if (typeof args.subject === 'string') t.name = cleanName(args.subject)
-  if (args.status === 'completed') {
-    t.status = 'done'
-    t.percent = 100
-    t.hasReported = true
-    if (!tasks.some(x => x.status === 'active')) {
-      const next = tasks.find(x => x.status === 'upcoming')
-      if (next) next.status = 'active'
-    }
-  } else if (args.status === 'in_progress') {
-    tasks.forEach(x => {
-      if (x.status === 'active') x.status = 'upcoming'
-    })
-    t.status = 'active'
-  } else if (args.status === 'deleted') {
-    tasks = tasks.filter(x => x.id !== id)
-  }
-  return { ...cl, tasks }
-}
-
-/** The whole job as one percent: finished steps count full, the others by what was reported. */
+/** The whole job as one percent: finished steps count full, the others by what was reported. Never 100 unless confirmed. */
 export function jobPercent(cl: CleanChecklist): number {
-  if (cl.phase === 'done') return 100
   if (cl.tasks.length === 0) return 0
+  if (cl.fallback) return cl.phase === 'done' && cl.note === '' ? 100 : 0
   const sum = cl.tasks.reduce((n, t) => n + (t.status === 'done' ? 100 : t.percent), 0)
-  return Math.max(0, Math.min(100, Math.round(sum / cl.tasks.length)))
+  const pct = Math.max(0, Math.min(100, Math.round(sum / cl.tasks.length)))
+  return cl.phase === 'done' && cl.note !== '' ? Math.min(99, pct) : pct
 }
 
 /** One 250 ms step of easing: meters move toward their percent and never back. */
@@ -333,53 +405,59 @@ export function fitName(name: string, width: number): string {
   return name.slice(0, Math.max(1, width - 1)) + '…'
 }
 
-const EXEMPT = new Set([
-  'ToolSearch',
-  'TodoWrite',
-  'TaskCreate',
-  'TaskUpdate',
-  'AskUserQuestion',
-  'mcp__session-panel__plan_steps',
-  'mcp__session-panel__report_progress',
-  'mcp__session-panel__ask_choices',
-])
+export const PLAN_LINE_START = 'Plan:'
 
-export function isGateExempt(tool: string): boolean {
-  return EXEMPT.has(tool)
+function planNames(line: string): string[] | null {
+  const parts = line
+    .split('·')
+    .map(p => p.trim())
+    .filter(p => p !== '')
+  if (parts.length < 1 || parts.length > MAX_STEPS) return null
+  return parts.map(p => cleanName(p))
 }
 
-/** Factual, not an order: a tool result is data, so the rule itself lives in the system section (PLAN_SECTION). */
-export const GATE_MESSAGE =
-  'Blocked by the Session Panel mod until this session calls mcp__session-panel__plan_steps (see the Session Panel system section).'
+/** The optional first-reply plan line, read as one complete line of the reply's first text block. */
+export function planFromReply(index: number, blocks: string[]): string[] | null {
+  if (index !== 0) return null
+  const first = blocks[0]
+  if (first === undefined) return null
+  const end = first.indexOf('\n')
+  if (end < 0 || !first.startsWith(PLAN_LINE_START)) return null
+  return planNames(first.slice(PLAN_LINE_START.length, end))
+}
 
-/** Denied calls in a row, with no plan_steps call, before the gate lets tools through. Never traps a session. */
-export const GATE_LIMIT = 3
+/** The plan_steps description: an optional correction, never a first step. */
+export const PLAN_STEPS_DESCRIPTION =
+  'Optional. Set or correct the checklist for this job: 1 to 8 short plain-English step names. Real tools need no plan first.'
 
-/** The first-tool rule, from the system prompt. It is not in a tool result, so it is not treated as an instruction from one. */
-export const PLAN_SECTION = `Session Panel rule for this session: at the start of each job, before any other tool, call mcp__session-panel__plan_steps with 1 to 8 short plain-English step names. The person sees these steps as their progress checklist. If plan_steps is not in your tool list, load it with ToolSearch. If it is still missing, skip the plan and continue the work.`
+/** The optional plan rule, from the system prompt. It is not in a tool result, so it is not treated as an instruction from one. */
+export const PLAN_SECTION = `Session Panel is on for this session, and it shows the person a progress checklist. Using it is optional: call the tools the job needs, in any order. If you like, the first line of the first reply to a new job can be "Plan: " followed by 1 to 8 short plain-English step names separated by " · ".`
 
 export function looksLikeUserDenial(text: string): boolean {
   return /doesn.?t want to proceed|rejected|permission (to use|for) .* (was )?denied|user denied|declined to/i.test(text)
 }
 
-const SECTION_BASE = `Session Panel is on for this session. The person you are helping is not technical and sees a step checklist instead of tool calls.
-- For EVERY request, even a quick question, call plan_steps first (load it with ToolSearch if it is deferred). Use 1 step for a quick question, 2 to 8 for bigger work.
-- Step names are plain English, under 40 characters, and start with a verb, for example "Build the pricing section". Never put file paths, file names, commands, code or tool names in a step name.
-- Then call report_progress as real progress happens, with the same step name, and call it with percent 100 the moment a step finishes.
-- If you have TodoWrite or TaskCreate you may use that to-do list as the plan instead.
+export const SECTION_TEXT = `Session Panel is on for this session. The person you are helping is not technical and sees a progress checklist instead of tool calls.
+- Optional: start the first reply to a new job with "Plan: " and 1 to 8 short plain-English step names separated by " · ". Each name starts with a verb, stays under 40 characters, and never has file paths, file names, commands, code or tool names in it.
+- Optional: report_progress with a step name and a percent, in the same message as a real tool call. Never send it alone just to report progress.
 - Keep written replies short, warm and free of jargon.`
 
 const ASK_CHOICES_LINE =
-  "- Whenever you need the person's input, including quick questions, call ask_choices with 2 to 4 options, the recommended option first, instead of asking in prose. Then stop and wait for their reply."
+  "- When you need the person's input, including quick questions, first write one short plain sentence saying what is being decided, then call ask_choices in the same reply with 2 to 4 options, the recommended option first. Then stop and wait for their reply."
 
 const QUESTION_BOX_LINE =
-  "- Ask with AskUserQuestion, never in prose, whenever you need the person's go-ahead: permission to act (edits, deletes, sends, pushes, installs), or a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Then stop and wait for the reply."
+  "- When you need the person's go-ahead, first write one short plain sentence in the reply saying what is being decided, then call AskUserQuestion in the same reply with the options, the recommended option first. Ask for permission to act (edits, deletes, sends, pushes, installs) and for a choice that changes scope, cost, files or direction. Do not ask about routine details; decide them and state them as ASSUMPTION lines. Then stop and wait for the reply."
 
 /** The rules section. The question-box rule replaces the picker line when it is on; otherwise the picker is used when it is on. */
 export function rulesSection(questionBox: boolean, picker: boolean): string {
-  if (questionBox) return `${SECTION_BASE}\n${QUESTION_BOX_LINE}`
-  if (picker) return `${SECTION_BASE}\n${ASK_CHOICES_LINE}`
-  return SECTION_BASE
+  const line = picker && !questionBox ? ASK_CHOICES_LINE : QUESTION_BOX_LINE
+  return SECTION_TEXT.replace('\n- Keep written', `\n${line}\n- Keep written`)
+}
+
+/** The model a cheap background call uses: the Haiku mapping from the environment, else the plain alias. */
+export function cheapModel(mapped: string | undefined): string {
+  const m = mapped?.trim() ?? ''
+  return m === '' ? 'haiku' : m
 }
 
 /**

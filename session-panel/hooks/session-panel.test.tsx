@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { rulesSection } from './logic'
 
 import { DEFAULT_PREFS, buildContext, enhance, githubMap, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo } from './enhancer'
-import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, GATE_MESSAGE, GATE_LIMIT, PLAN_SECTION, reportProgress, newChecklist, planSteps } from './logic'
+import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, backgroundSpawn, cheapModel, clampPercent, barSegments, barText, stepsOf, cleanName, easeStep, friendlyError, jobPercent, meter, migratedValues, recentExcerpt, PLAN_SECTION, PLAN_STEPS_DESCRIPTION, SECTION_TEXT, planFromReply, todoAction, reportProgress, newChecklist, planSteps } from './logic'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -23,11 +23,22 @@ const PLAN = 'mcp__session-panel__plan_steps'
 const REPORT = 'mcp__session-panel__report_progress'
 const ASK = 'mcp__session-panel__ask_choices'
 
+// The background agents the engine lists for the test, by id and status; each test sets its own.
+let agentRows: { id: string; status: string }[] = []
+// Set by a test to make the engine's agent list throw, as when the list cannot be read.
+let agentListFails = false
+
 // The world beneath the plugin: a clock, a store, an env and a tool bottom that says ok.
 function world(on: any, env: Record<string, string> = {}, hasOwnBand = false, seed?: Record<string, unknown>) {
   const clock = mock.clock(on)
   mock.store(on, seed)
   mock.env(on, env)
+  agentRows = []
+  agentListFails = false
+  on('agent.list', () => {
+    if (agentListFails) throw new Error('agent list unavailable')
+    return { value: agentRows }
+  })
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
   // The engine draws nothing in the band of its own, so what is beneath us is empty.
@@ -37,10 +48,16 @@ function world(on: any, env: Record<string, string> = {}, hasOwnBand = false, se
       return <Box />
     })
   }
-  // Bash always fails beneath the plugin, so the failure test can reach it.
-  on('tool.call', (_$: any, e: any) =>
-    e.tool === 'Bash' ? { result: 'failed', text: 'failed', isError: true } : { result: 'ok', text: 'ok' },
-  )
+  // A background Agent or Bash call answers with its id; Bash otherwise always fails, so the failure test can reach it.
+  // An Agent call answers with its agent's id; the background spawn that makes it a background agent is raised by the test itself (see startBackgroundAgent).
+  on('agent.spawn', (_$: any, e: any) => ({ model: e.model ?? 'test', agentId: e.background === true ? 'a1' : 'f1' }))
+  on('tool.call', (_$: any, e: any) => {
+    if (e.tool === 'Agent') return { result: { agentId: 'a1' }, text: 'started' }
+    if (e.tool === 'Bash' && e.run_in_background === true) return { result: { backgroundTaskId: 'b1' }, text: 'started' }
+    if (e.tool === 'Bash' && e.command === 'npm test -- retry') return { result: 'ok', text: 'ok' }
+    if (e.tool === 'Edit' && e.old_string === 'fail-me') return { result: 'failed', text: 'failed', isError: true }
+    return e.tool === 'Bash' ? { result: 'failed', text: 'failed', isError: true } : { result: 'ok', text: 'ok' }
+  })
   return clock
 }
 
@@ -111,15 +128,47 @@ test('helpers: meter, action words, calm errors', () => {
   expect(c.tasks.map(t => t.status)).toEqual(['done', 'active'])
 })
 
-// 2. a to-do list plus a 60% report draws the rows on the terminal and the desktop
-test('to-do list and a 60% report draw the checklist rows', async ($, on) => {
+test('cheap calls: the Haiku mapping from the environment is used, else the plain alias', () => {
+  expect(cheapModel('claude-haiku-5-5')).toBe('claude-haiku-5-5')
+  expect(cheapModel('  claude-haiku-5-5  ')).toBe('claude-haiku-5-5')
+  expect(cheapModel(undefined)).toBe('haiku')
+  expect(cheapModel('')).toBe('haiku')
+  expect(cheapModel('   ')).toBe('haiku')
+})
+
+test('the rules section always tells Claude to ask: AskUserQuestion unless the picker is on alone', () => {
+  expect(rulesSection(false, false)).toContain('first write one short plain sentence')
+  expect(rulesSection(true, false)).toContain('first write one short plain sentence')
+  expect(rulesSection(true, true)).toContain('first write one short plain sentence')
+  expect(rulesSection(false, true)).toContain('call ask_choices in the same reply')
+  expect(rulesSection(true, false)).toContain('call AskUserQuestion in the same reply')
+  expect(rulesSection(false, false)).not.toContain('ask_choices')
+})
+
+test('backgroundSpawn: only a main-loop background spawn that started an agent answers its id', () => {
+  const main = { background: true }
+  expect(backgroundSpawn(main, { agentId: 'a1' })).toBe('a1')
+  expect(backgroundSpawn({ background: false }, { agentId: 'a1' })).toBeUndefined()
+  expect(backgroundSpawn({ ...main, parentAgentId: 'sub1' }, { agentId: 'a1' })).toBeUndefined()
+  expect(backgroundSpawn({ ...main, isTeammate: true }, { agentId: 'a1' })).toBeUndefined()
+  expect(backgroundSpawn({ ...main, workflow: { runId: 'w1', agentIndex: 0 } }, { agentId: 'a1' })).toBeUndefined()
+  expect(backgroundSpawn(main, { deny: 'no', agentId: 'a1' })).toBeUndefined()
+  expect(backgroundSpawn(main, {})).toBeUndefined()
+})
+
+// 2. the plan draws the rows; a to-do in progress only names the action line; a 60% report draws on the terminal and the desktop
+test('plan rows and a 60% report draw the checklist, and a to-do only names the action', async ($, on) => {
   world(on)
   await begin($)
+  await $.tool.call({
+    tool: PLAN,
+    steps: ['Read your brand notes', 'Build the pricing section', 'Add the contact form', 'Polish the footer'],
+  })
   await $.tool.call({
     tool: 'TodoWrite',
     todos: [
       { content: 'Read your brand notes', status: 'completed', activeForm: 'Reading' },
-      { content: 'Build the pricing section', status: 'in_progress', activeForm: 'Building' },
+      { content: 'Build the pricing section', status: 'in_progress', activeForm: 'Building the pricing section' },
       { content: 'Add the contact form', status: 'pending', activeForm: 'Adding' },
       { content: 'Polish the footer', status: 'pending', activeForm: 'Polishing' },
     ],
@@ -128,13 +177,11 @@ test('to-do list and a 60% report draw the checklist rows', async ($, on) => {
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     const t = await texts(ui)
-    expect(t).toContain('✓ ')
     expect(t).toContain('Read your brand notes')
-    expect(t).toContain('Done')
-    expect(t).toContain('▶ ')
+    expect(t).toContain('Build the pricing section')
+    expect(t).toContain('Building the pricing section…')
+    expect(t).not.toContain('Draft A')
     expect(t).toContain('60%')
-    expect(t).toContain('Next')
-    expect(t).toContain('Up next')
     expect(t).toContain('Step 2 of 4')
     expect((await ui.find({ key: 'settings' }))?.props.label).toBe('⚙ Settings ▾')
     await ui.unmount()
@@ -209,17 +256,12 @@ test('after a first report, step 2 is current and step 1 is done', async ($, on)
   await ui.unmount()
 })
 
-// 6. every other tool is denied before a plan exists and allowed after
-test('tools are denied before a plan and allowed after', async ($, on) => {
+// 6. a tool before any plan runs at once: plan_steps is optional, so nothing is denied
+test('a tool before any plan runs at once, with no deny', async ($, on) => {
   world(on)
   await begin($)
-  const denied = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
-  expect(String((denied as any).deny ?? (denied as any).text ?? '')).toContain('plan_steps')
-  const exempt = await $.tool.call({ tool: 'ToolSearch', query: 'plan_steps', max_results: 1 })
-  expect((exempt as any).deny).toBeUndefined()
-  await $.tool.call({ tool: PLAN, steps: ['Read the file'] })
-  const allowed = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
-  expect((allowed as any).deny).toBeUndefined()
+  const r = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  expect((r as any).deny).toBeUndefined()
 })
 
 test('a subagent is never gated', async ($, on) => {
@@ -1201,23 +1243,713 @@ test('enhance key: a file that is not JSON is never written', async ($, on) => {
   expect(w.writes).toEqual([])
 })
 
-// 8. the gate: factual deny text, a system-section rule, and an escape after GATE_LIMIT denials
-test('gate: the deny text is a fact, not an order, and the rule sits in the system section', () => {
-  expect(GATE_MESSAGE).toContain('mcp__session-panel__plan_steps')
-  expect(GATE_MESSAGE).not.toMatch(/before any other tool/i)
-  expect(PLAN_SECTION).toContain('mcp__session-panel__plan_steps')
-  expect(GATE_LIMIT).toBe(3)
+// 8. the optional plan line: first reply only, a complete line, 1 to 8 names, and no mandatory first tool
+test('plan line: a complete first-reply line gives its names', () => {
+  expect(planFromReply(0, ['Plan: Read the notes · Make the changes · Check the result\n'])).toEqual(['Read the notes', 'Make the changes', 'Check the result'])
 })
 
-test('gate: after three denials in a row with no plan, tools go through', async ($, on) => {
+test('plan line: a fragmented or unfinished line is not a plan yet', () => {
+  expect(planFromReply(0, ['Plan: Read the no'])).toBeNull()
+  expect(planFromReply(0, ['Plan: Read the notes · Make'])).toBeNull()
+})
+
+test('plan line: malformed, empty or more than 8 names give no plan', () => {
+  expect(planFromReply(0, ['Plan:\n'])).toBeNull()
+  expect(planFromReply(0, ['Plan: · · \n'])).toBeNull()
+  expect(planFromReply(0, [`Plan: ${Array.from({ length: 9 }, (_, i) => `Step ${i + 1}`).join(' · ')}\n`])).toBeNull()
+})
+
+test('plan line: only the first text block of the first reply counts', () => {
+  expect(planFromReply(0, ['Sure.\n', 'Plan: Read the notes · Make the changes\n'])).toBeNull()
+  expect(planFromReply(1, ['Plan: Read the notes · Make the changes\n'])).toBeNull()
+  expect(planFromReply(0, [])).toBeNull()
+})
+
+test('plan line: names go through the same cleaner as plan_steps, and the input is not changed', () => {
+  const blocks = ['Plan: Fix `src/Pricing.tsx` · Make the changes\n']
+  expect(planFromReply(0, blocks)).toEqual(['Fix', 'Make the changes'])
+  expect(blocks).toEqual(['Plan: Fix `src/Pricing.tsx` · Make the changes\n'])
+})
+
+test('mandatory first-tool rule is gone from the system text and the plan_steps description', () => {
+  expect(PLAN_SECTION).not.toMatch(/before any other tool|at the start of each job/i)
+  expect(SECTION_TEXT).not.toMatch(/call plan_steps first|For EVERY request/)
+  expect(PLAN_STEPS_DESCRIPTION).not.toMatch(/call this first/i)
+  expect(PLAN_STEPS_DESCRIPTION).toMatch(/optional/i)
+})
+
+// The text of each drawn Text, trimmed, without the marker an upcoming or active row prints before its name.
+async function rowTexts(ui: any): Promise<string[]> {
+  const all = await ui.findAll({ type: 'Text' })
+  return all.map((t: any) => String(t.text).trim().replace(/^[○▶✓‖]\s*/, ''))
+}
+
+// The names of the rows drawn as done: a done row is a Text of its marker and name, or a bare marker Text followed by the name's Text.
+async function doneRows(ui: any): Promise<string[]> {
+  const all = (await ui.findAll({ type: 'Text' })).map((t: any) => String(t.text).trim())
+  return all.flatMap((t: string, i: number) => {
+    const inline = /^✓\s+(.+)$/.exec(t)
+    if (inline) return [inline[1]]
+    return t === '✓' && i + 1 < all.length ? [all[i + 1]] : []
+  })
+}
+
+test('a quick question with no tools is shown as an indeterminate Answer your question row', async ($, on) => {
+  world(on)
+  await begin($, 'What is a band?')
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Answer your question')
+  expect(rows).toContain('Working')
+  expect(rows).not.toContain('Step 1 of 1')
+  await ui.unmount()
+})
+
+test('a job that only uses tools gets rows named for the kinds of tool it used, never a percent', async ($, on) => {
   world(on)
   await begin($)
-  for (let i = 0; i < GATE_LIMIT; i++) {
-    const denied = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
-    expect((denied as any).deny).toBe(GATE_MESSAGE)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'x', new_string: 'y' })
+  await $.tool.call({ tool: 'Read', file_path: 'b.md' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Reading a file')
+  expect(rows).toContain('Making changes')
+  expect(rows).not.toContain('Answer your question')
+  expect(await texts(ui)).not.toContain('%')
+  await ui.unmount()
+})
+
+test('an explicit plan replaces the fallback rows', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.tool.call({ tool: PLAN, steps: ['Write the summary', 'Send it'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Write the summary')
+  expect(rows).toContain('Send it')
+  expect(rows).not.toContain('Reading a file')
+  await ui.unmount()
+})
+
+test('a first reply plan still applies after fallback rows were shown', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await streamStep($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Write the summary')
+  expect(rows).not.toContain('Reading a file')
+  await ui.unmount()
+})
+
+
+test('progress rides a real tool: a job can end with an unreported step, and that step is not ticked', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes', 'Write the summary'] })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: 'Here is the summary.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).not.toContain('Needs you')
+  expect(t).not.toContain('✓ Write the summary')
+  expect(t).toContain('Reply finished — steps not confirmed')
+  expect(t).not.toContain('All done')
+  await ui.unmount()
+})
+
+test('a to-do in progress names the action line and never replaces the plan rows', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes', 'Write the summary'] })
+  await $.tool.call({ tool: 'TodoWrite', todos: [{ content: 'Draft A', status: 'in_progress', activeForm: 'Drafting the summary' }] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Write the summary')
+  expect(t).not.toContain('Draft A')
+  expect(t).toContain('Drafting the summary')
+  await ui.unmount()
+})
+
+test('todoAction: the in-progress activeForm, cleaned, or empty', () => {
+  expect(todoAction([{ content: 'a', status: 'completed', activeForm: 'A' }, { content: 'b', status: 'in_progress', activeForm: 'Building the pricing section' }])).toBe('Building the pricing section')
+  expect(todoAction([{ content: 'b', status: 'pending', activeForm: 'Later' }])).toBe('')
+  expect(todoAction('nope')).toBe('')
+})
+
+// The turn.step stream, driven through $.turn.step over a test-supplied bottom that yields the given chunks in order.
+function chunkBottom(on: any, chunks: any[]) {
+  on('turn.step', async function* (_$: any, e: any) {
+    for (const c of chunks) yield c
+    return { turnId: e.turnId, index: e.index, answer: chunks.map(c => c.text).join(''), toolUses: [] }
+  })
+}
+
+function stepBottom(on: any, text: string) {
+  chunkBottom(on, [{ kind: 'text', index: 0, text }])
+}
+
+async function streamStep($: any, extra: { index?: number; agentId?: string; turnId?: string } = {}) {
+  const s = $.turn.step({ turnId: extra.turnId ?? 't1', index: extra.index ?? 0, model: 'm', messageCount: 1, ...(extra.agentId ? { agentId: extra.agentId } : {}) })
+  const chunks: unknown[] = []
+  for (;;) {
+    const n = await s.next()
+    if (n.done) return { chunks, done: n.value }
+    chunks.push(n.value)
   }
-  const escaped = await $.tool.call({ tool: 'Read', file_path: 'a.md' })
-  expect((escaped as any).deny).toBeUndefined()
+}
+
+test('stream: a plan line in the first main-agent step makes the checklist, and every chunk is passed on', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  const { chunks, done } = await streamStep($)
+  expect(chunks).toEqual([{ kind: 'text', index: 0, text: 'Plan: Read the notes · Write the summary\n' }])
+  expect(done).toMatchObject({ turnId: 't1', index: 0, answer: 'Plan: Read the notes · Write the summary\n' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Read the notes')
+  expect(t).toContain('Write the summary')
+  await ui.unmount()
+})
+
+test('stream: a plan line that arrives in pieces makes the checklist, and each piece is passed on unchanged', async ($, on) => {
+  world(on)
+  const pieces = [
+    { kind: 'text', index: 0, text: 'Pl' },
+    { kind: 'text', index: 0, text: 'an: Read the notes · ' },
+    { kind: 'text', index: 0, text: 'Check the result\nanswer' },
+    { kind: 'text', index: 1, text: 'A second block.' },
+  ]
+  chunkBottom(on, pieces)
+  await begin($)
+  const { chunks } = await streamStep($)
+  expect(chunks).toEqual(pieces)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Read the notes')
+  expect(rows).toContain('Check the result')
+  await ui.unmount()
+})
+
+test('stream: the checklist comes from the first text block only, never a later one', async ($, on) => {
+  world(on)
+  chunkBottom(on, [
+    { kind: 'text', index: 0, text: 'Here is my answer.\n' },
+    { kind: 'text', index: 1, text: 'Plan: Read the notes · Write the summary\n' },
+  ])
+  await begin($)
+  await streamStep($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).not.toContain('Read the notes')
+  await ui.unmount()
+})
+
+test('stream: a subagent step never makes a plan, and its text is passed on unchanged', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  const { chunks } = await streamStep($, { agentId: 'sub1' })
+  expect(chunks.length).toBe(1)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).not.toContain('Read the notes')
+  await ui.unmount()
+})
+
+test('stream: a plan line in a later step (index 1) makes no plan', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  await streamStep($, { index: 1 })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).not.toContain('Read the notes')
+  await ui.unmount()
+})
+
+test('stream: a first step without a plan line makes no plan and passes its chunk on', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Just an answer.\n')
+  await begin($)
+  const { chunks } = await streamStep($)
+  expect(chunks).toEqual([{ kind: 'text', index: 0, text: 'Just an answer.\n' }])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).not.toContain('Step 1 of')
+  await ui.unmount()
+})
+
+const BACKGROUND_AGENT = { tool: 'Agent', prompt: 'Check the links', description: 'Check links' } as never
+
+// The engine spawns a background subagent before its Agent call returns; the test raises that spawn through the real hook, then the call.
+async function startBackgroundAgent($: any) {
+  await $.agent.spawn({ ...SPAWN, background: true } as never)
+}
+
+test('stream: a new prompt during waiting background work starts a fresh job whose own plan is read', async ($, on) => {
+  world(on)
+  chunkBottom(on, [{ kind: 'text', index: 0, text: 'Plan: Other step · Another step\n' }])
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'I started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: 'And one more thing', turnId: 't2' })
+  await streamStep($, { turnId: 't2' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Other step')
+  expect(await texts(ui)).toContain('Background work not confirmed finished')
+  await ui.unmount()
+})
+
+test('stream: a new prompt during waiting background work does not keep the first turn’s plan', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  await streamStep($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'I started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: 'Continue', turnId: 't2' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).not.toContain('Read the notes')
+  expect(rows).not.toContain('Write the summary')
+  expect(await texts(ui)).toContain('Background work not confirmed finished')
+  await ui.unmount()
+})
+
+test('stream: an empty automatic continuation keeps the waiting job, its plan, and its background agent', async ($, on) => {
+  const clock = world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  await streamStep($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'I started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: '', turnId: 't2' })
+  const waiting = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await rowTexts(waiting)).toContain('Read the notes')
+  expect(await texts(waiting)).toContain('Waiting for background work')
+  expect(await texts(waiting)).not.toContain('Background work not confirmed finished')
+  await waiting.unmount()
+  agentRows = [{ id: 'a1', status: 'completed' }]
+  await clock.advance(10000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).toContain('took ')
+  expect(await texts(ui)).not.toContain('Waiting for background work')
+  expect(await texts(ui)).not.toContain('Background work not confirmed finished')
+  await ui.unmount()
+})
+
+test('an Agent the engine spawns in the background holds the job, though its call carries no run_in_background', async ($, on) => {
+  world(on)
+  stepBottom(on, 'Plan: Read the notes · Write the summary\n')
+  await begin($)
+  await streamStep($)
+  await $.agent.spawn({ ...SPAWN, background: true } as never)
+  await $.tool.call({ tool: 'Agent', prompt: 'Check the links', description: 'Check links' } as never)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'I started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await rowTexts(ui)).toContain('Read the notes')
+  expect(await texts(ui)).toContain('Waiting for background work')
+  expect(await texts(ui)).not.toContain('took ')
+  await ui.unmount()
+})
+
+test('a foreground Agent the engine spawns does not hold the job open', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Agent', prompt: 'Check the links', description: 'Check links' } as never)
+  await $.turn.complete({ answer: 'Checked the links.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).toContain('took ')
+  expect(await texts(ui)).not.toContain('Waiting for background work')
+  await ui.unmount()
+})
+
+const SPAWN = { tool_use_id: 'tu2', prompt: 'Check the links', description: 'Check links', subagentType: 'general-purpose', provider: 'test', parentModel: 'test', fork: false } as const
+
+for (const c of [
+  { label: 'a subagent spawns it', extra: { parentAgentId: 'sub1' } },
+  { label: 'a teammate spawns it', extra: { isTeammate: true } },
+  { label: 'a workflow spawns it', extra: { workflow: { runId: 'w1', agentIndex: 0 } } },
+]) {
+  test(`a background spawn from outside the main loop does not hold the job, when ${c.label}`, async ($, on) => {
+    world(on)
+    await begin($)
+    await $.agent.spawn({ ...SPAWN, background: true, ...c.extra } as never)
+    await $.turn.complete({ answer: 'Checked the links.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain('took ')
+    expect(await texts(ui)).not.toContain('Waiting for background work')
+    await ui.unmount()
+  })
+}
+
+test('an unconfirmed note shows at once in the list and the bars, with no 100%, and history keeps it after the collapse', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'fail-me', new_string: 'y' })
+  await $.turn.complete({ answer: 'I could not make the change.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const list = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(list)).toContain('steps not confirmed')
+  expect(await texts(list)).toContain('Working on it · Reply finished — steps not confirmed')
+  expect(await texts(list)).not.toContain('All done')
+  expect(await texts(list)).not.toContain('100%')
+  await list.unmount()
+  await $.command.run(RUN('bars'))
+  const bars = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(bars)).toContain('steps not confirmed')
+  expect(await texts(bars)).not.toContain('100%')
+  await bars.unmount()
+  await clock.advance(6000)
+  await $.command.run(RUN('list'))
+  const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(after)).toContain('steps not confirmed')
+  await after.unmount()
+})
+
+test('prose warning: a question in the same turn as an AskUserQuestion call does not warn', async ($, on) => {
+  world(on)
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => (toasts.push(e.text), { value: undefined }))
+  await begin($)
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: 'Deploy now?', header: 'Deploy', options: ['Yes', 'No'], multiSelect: false }] })
+  await $.turn.complete({ answer: 'Should I deploy now?', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  expect(toasts.some(t => t.includes('asked in prose'))).toBe(false)
+})
+
+test('prose warning: a reply that ends with a question and no AskUserQuestion call warns', async ($, on) => {
+  world(on)
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any) => (toasts.push(e.text), { value: undefined }))
+  await begin($)
+  await $.turn.complete({ answer: 'Should I deploy now?', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  expect(toasts.some(t => t.includes('asked in prose'))).toBe(true)
+})
+
+test('a background agent id from a finished job does not mark a later job’s Agent call as background', async ($, on) => {
+  world(on)
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'completed' }]
+  await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: 'Check the links again', turnId: 't2' })
+  await $.tool.call({ tool: 'Agent', prompt: 'Check again', description: 'Check again' } as never)
+  await $.turn.complete({ answer: 'Checked again.', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).not.toContain('steps not confirmed')
+  expect(await texts(ui)).not.toContain('Background work')
+  await ui.unmount()
+})
+
+// ---------- fallback rows and background work: what a failed or unconfirmed step does ----------
+
+test('a failed edit is not ticked done when the job ends, and the note says the steps were not confirmed', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'fail-me', new_string: 'y' })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: 'I could not make the change.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(await doneRows(ui)).not.toContain('Making changes')
+  expect(t).toContain('Reply finished — steps not confirmed')
+  expect(t).not.toContain('All done')
+  await ui.unmount()
+})
+
+test('a failed bash step that is retried and succeeds counts as done', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test -- retry' })
+  await $.turn.complete({ answer: 'The tests pass.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(await doneRows(ui)).toContain('Running a check')
+  expect(await doneRows(ui)).toContain('Reading a file')
+  expect(t).not.toContain('steps not confirmed')
+  await ui.unmount()
+})
+
+test('a background command followed by a read: the job keeps waiting, and the command row is not ticked done', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', run_in_background: true })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: 'The dev server is starting.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(120000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Waiting for background work')
+  expect(t).not.toContain('took ')
+  expect(await doneRows(ui)).not.toContain('Running a check')
+  await ui.unmount()
+})
+
+test('parallel read and edit calls each settle on their own result', async ($, on) => {
+  world(on)
+  await begin($)
+  await Promise.all([
+    $.tool.call({ tool: 'Edit', file_path: 'a.md', old_string: 'fail-me', new_string: 'y' }),
+    $.tool.call({ tool: 'Read', file_path: 'a.md' }),
+    $.tool.call({ tool: 'Grep', pattern: 'x' }),
+  ])
+  await $.turn.complete({ answer: 'I could not make the change.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(await doneRows(ui)).toContain('Reading a file')
+  expect(await doneRows(ui)).toContain('Looking through files')
+  expect(await doneRows(ui)).not.toContain('Making changes')
+  expect(t).toContain('steps not confirmed')
+  await ui.unmount()
+})
+
+test('a plain answer with no tools completes the job', async ($, on) => {
+  world(on)
+  await begin($, 'What is a band?')
+  await $.turn.complete({ answer: 'A band is a group of players.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('took ')
+  expect(t).not.toContain('Waiting for background work')
+  expect(t).not.toContain('steps not confirmed')
+  await ui.unmount()
+})
+
+test('a failed agent-list read keeps the job waiting, and the job finishes once the list recovers', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  agentListFails = true
+  await clock.advance(6000)
+  const during = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(during)).toContain('Waiting for background work')
+  await during.unmount()
+  agentListFails = false
+  agentRows = [{ id: 'a1', status: 'completed' }]
+  await clock.advance(10000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('took ')
+  expect(t).not.toContain('Waiting for background work')
+  expect(t).not.toContain('not confirmed finished')
+  await ui.unmount()
+})
+
+for (const status of ['failed', 'killed']) {
+  test(`a background agent that ${status} ends the job with a stopped note, never as done`, async ($, on) => {
+    const clock = world(on)
+    await begin($)
+    await startBackgroundAgent($)
+    agentRows = [{ id: 'a1', status: 'running' }]
+    await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    agentRows = [{ id: 'a1', status }]
+    await clock.advance(10000)
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const t = await texts(ui)
+    expect(t).toContain('Background work stopped before it finished')
+    expect(t).not.toContain('All done')
+    expect(t).not.toContain('All done')
+    await ui.unmount()
+  })
+}
+
+const UNKNOWN_AGENT_CASES: { label: string; rows: { id: string; status: string }[] }[] = [
+  { label: 'idle', rows: [{ id: 'a1', status: 'idle' }] },
+  { label: 'missing from the list', rows: [] },
+]
+for (const c of UNKNOWN_AGENT_CASES) {
+  test(`a background agent that is ${c.label} is not treated as finished`, async ($, on) => {
+    const clock = world(on)
+    await begin($)
+    await startBackgroundAgent($)
+    agentRows = [{ id: 'a1', status: 'running' }]
+    await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    agentRows = c.rows
+    const early = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(early)).toContain('Waiting for background work')
+    await early.unmount()
+    await clock.advance(60000)
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const t = await texts(ui)
+    expect(t).toContain('Background work not confirmed finished')
+    expect(t).not.toContain('All done')
+    await ui.unmount()
+  })
+}
+
+test('a new prompt during waiting background work starts its own job, which the old agent does not change', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.start({ text: 'Now write the summary', turnId: 't2' })
+  agentRows = [{ id: 'a1', status: 'completed' }]
+  await clock.advance(10000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Answer your question')
+  expect(rows).not.toContain('Waiting for background work…')
+  expect(await texts(ui)).toContain('took ')
+  await ui.unmount()
+})
+
+test('a finished job whose steps are unconfirmed shows its note and never a 100% figure', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  await $.turn.complete({ answer: 'The tests failed.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Reply finished — steps not confirmed')
+  expect(t).not.toContain('100%')
+  expect(t).not.toContain('All done')
+  await ui.unmount()
+})
+
+// ---------- honest completion: what ends a job, and what keeps it running ----------
+// The engine's background agents are set per test through agentRows; a background command is started by Bash with run_in_background.
+
+test('completion: an answered job with a background agent still running is waiting, not finished', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'I started a helper to check the links.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const rows = await rowTexts(ui)
+  expect(rows).toContain('Waiting for background work…')
+  expect(rows.some(r => r.startsWith('took '))).toBe(false)
+  expect(await texts(ui)).not.toContain('100%')
+  await ui.unmount()
+  await clock.advance(10000)
+  const ui2 = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await rowTexts(ui2)).toContain('Waiting for background work…')
+  await ui2.unmount()
+})
+
+test('completion: the job finishes once its background agent has completed', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await startBackgroundAgent($)
+  agentRows = [{ id: 'a1', status: 'running' }]
+  await $.turn.complete({ answer: 'Started a helper.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  agentRows = [{ id: 'a1', status: 'completed' }]
+  await clock.advance(10000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await texts(ui)).toContain('took ')
+  expect(await texts(ui)).not.toContain('Waiting for background work')
+  await ui.unmount()
+})
+
+test('completion: a background command has no end signal, so the job keeps waiting', async ($, on) => {
+  const clock = world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', run_in_background: true })
+  await $.turn.complete({ answer: 'The dev server is running.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(120000)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Waiting for background work')
+  expect(t).not.toContain('took ')
+  await ui.unmount()
+})
+
+test('completion: an unfinished explicit plan with no question ends with the unconfirmed note, not All done', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes', 'Write the summary'] })
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: 'Here is the summary.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Reply finished — steps not confirmed')
+  expect(t).not.toContain('All done')
+  expect(t).not.toContain('Needs you')
+  await ui.unmount()
+})
+
+test('completion: an explicit plan with every step reported ends with no note', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes', 'Write the summary'] })
+  await $.tool.call({ tool: REPORT, task: 'Read the notes', percent: 100 })
+  await $.tool.call({ tool: REPORT, task: 'Write the summary', percent: 100 })
+  await $.turn.complete({ answer: 'Here is the summary.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).not.toContain('Reply finished')
+  expect(t).toContain('took ')
+  await ui.unmount()
+})
+
+test('completion: a tool-only job finishes on evidence, with no note', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: 'Read it.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('took ')
+  expect(t).not.toContain('Reply finished')
+  await ui.unmount()
+})
+
+test('completion: a plain answer with no tools finishes on evidence, with no note', async ($, on) => {
+  world(on)
+  await begin($, 'What is a band?')
+  await $.turn.complete({ answer: 'A band is a row.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('took ')
+  expect(t).not.toContain('Reply finished')
+  await ui.unmount()
+})
+
+test('completion: an error ends the job as stuck, never as finished', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes', 'Write the summary'] })
+  await $.turn.complete({ answer: 'Request timed out', durationMs: 1, isAborted: false, turnId: 't1', reason: 'error' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Stuck')
+  expect(t).not.toContain('took ')
+  await ui.unmount()
+})
+
+test('completion: a refusal ends the job as stuck with the refusal reason', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: PLAN, steps: ['Read the notes'] })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'refusal', refusal: { category: null, explanation: null } })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain("Claude couldn't help with that request")
+  expect(t).not.toContain('took ')
+  await ui.unmount()
+})
+
+test('completion: an interrupted job ends as stopped, never as finished', async ($, on) => {
+  world(on)
+  await begin($)
+  await $.tool.call({ tool: 'Read', file_path: 'a.md' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const t = await texts(ui)
+  expect(t).toContain('Stopped')
+  expect(t).not.toContain('took ')
+  await ui.unmount()
 })
 
 // 9. assumptions: the parser, the turn reducers, edit detection, the stored file, and the Stop, Confirm and Wrong actions
