@@ -1956,11 +1956,13 @@ async function deliver($: any, target: Member, message: string, startHere = fals
   if (isAway(target, here) || fresh) {
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
-    await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
+    const saved = fresh ? (await readStatus($, target.name))?.sessionId || target.sessionId : ''
+    const resumes = fresh && !!saved
+    await $.ui.toast(`Starting ${resumes ? 'a resumed' : 'a fresh'} copy of ${target.name} on this PC…`)
     // Mark a proven-dead local session closed before counting capacity; preserve the verified home.
-    if (fresh && !(await markDead($, target))) return `A fresh copy of ${target.name} was not started because its old tab could not be confirmed closed.`
+    if (fresh && !(await markDead($, target))) return `A copy of ${target.name} was not started because its old tab could not be confirmed closed.`
     const candidate = fresh ? (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target : target
-    const start = await admitAndReopen($, candidate, await readMembers($), { ...t, reopen: 'fresh' })
+    const start = await admitAndReopen($, resumes ? { ...candidate, sessionId: saved } : candidate, await readMembers($), { ...t, reopen: resumes ? 'resume' : 'fresh' })
     if (start === undefined) {
       if (isAway(target, here))
         return `${target.name} was not started because the session cap (${t.maxOpen}) is full. This request was not queued. When a slot opens, ask the user again, then retry team_message with startHere: true.`
@@ -1969,8 +1971,10 @@ async function deliver($: any, target: Member, message: string, startHere = fals
       await enqueue($, target.name, me?.me.name ?? 'someone', message)
       return `${said}${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
     }
-    if (start === 'failed') return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
+    if (start === 'failed') return resumes ? `${target.name} could not be resumed here: ${NOT_STARTED} Ask the person to open its tab.` : `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
     if (start === 'starting') return queueFor($, target, message, `Orca opened ${target.name}'s tab, but its session had not registered, so it was not started a second time.`)
+    if (fresh) said = resumes ? `${target.name} was resumed with its saved session. ` : `${target.name} had no saved session, so a fresh one was started. `
+
   } else {
     const st = await readStatus($, target.name)
     // its tab is open and its session has not registered: start nothing, and let the message wait
