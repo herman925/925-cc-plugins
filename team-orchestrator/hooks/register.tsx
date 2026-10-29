@@ -2123,7 +2123,7 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
     : (WRITE_TOOLS as readonly string[]).includes(tool) && isTeamFilePath(pathOf(e))
   if (changesTeamFile) {
     const scope = await preflight($)
-    if (!scope.ok) return `Blocked ${tool}: ${scope.reason}. No project files were changed.`
+    if (!scope.ok) return `Blocked ${tool}: team-file guard cannot verify the project scope for ${JSON.stringify(shell ? command : pathOf(e))}: ${scope.reason}. No project files were changed.`
   }
   await pull($)
   const list = await readMembers($)

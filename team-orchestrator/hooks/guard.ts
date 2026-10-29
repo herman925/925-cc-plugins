@@ -133,14 +133,14 @@ export function isTeamFilePath(path: string): boolean {
  */
 export function namesTeamFile(command: string): boolean {
   const c = command.replace(/\\/g, '/').toLowerCase()
-  const dir = /team-orchestrator|team-o~\d/.test(c)
+  const dir = /(^|[\s/'"=(:,])(?:team-orchestrator|team-o~\d+)(?=$|[\s/'";|&):])/.test(c)
   if (/roster(\.json|~\d)/.test(c)) return true
-  if (/(team-orchestrator|team-o~\d)\/+(changes|change~\d|requests)\b/.test(c)) return true
+  if (/(^|[\s/'"=(:,])(?:team-orchestrator|team-o~\d+)\/+(changes|change~\d|requests)\b/.test(c)) return true
   if (dir && /meta(\.json|~\d)/.test(c)) return true
   if (/settin(gs\.json|~\d)/.test(c) && (dir || /(^|[\s'"=(,;|&<>])settings\.json/.test(c))) return true
   // a change into the team folder: the rest of the command runs there, so the whole command counts
-  if (/(^|[\s;|&(])(cd|chdir|pushd|sl|set-location)\s[^;|&\n]*(team-orchestrator|team-o~\d)/.test(c)) return true
-  return [...c.matchAll(/\S*(team-orchestrator|team-o~\d)\S*/g)].some(w => /[*?[\]{}$`]/.test(w[0]))
+  if (/(^|[\s;|&(])(cd|chdir|pushd|sl|set-location)\s+(?:[^;|&\n]*[\s/'"])?(?:team-orchestrator|team-o~\d+)(?=$|[\s/'";|&])/.test(c)) return true
+  return [...c.matchAll(/\S*(team-orchestrator|team-o~\d)\S*/g)].some(w => /(?:^|\/)(?:team-orchestrator|team-o~\d+)(?=$|[/'"])/.test(w[0]) && /[*?[\]{}$`]/.test(w[0]))
 }
 
 const READERS = /^(cat|type|get-content|gc|ls|dir|get-childitem|gci|grep|select-string|sls|jq)$/

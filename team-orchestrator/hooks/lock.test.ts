@@ -65,6 +65,26 @@ test('a command that only mentions the words, or the folder with a wildcard in a
   expect(judgeTeamFiles({ me: m('W1', 'Head'), confirmed: true, tool: 'Bash', path: '', command: "claude plugin test team-orchestrator 2>&1 | grep -E 'fail|[0-9]+ *pass'" })).toBeUndefined()
 })
 
+test('source folders whose names contain the team name are not team-file commands', () => {
+  for (const command of [
+    'cd team-orchestrator-orca-plugin && node --test test/*.test.mjs',
+    'cd team-orchestrator-orca-plugin/src/local && ls',
+    'node --test ./team-orchestrator-orca-plugin/test/*.test.mjs',
+    'cd my-team-orchestrator && ls',
+    'rm ./team-orchestrator-backup/*.json',
+  ]) expect(namesTeamFile(command)).toBe(false)
+})
+
+test('exact team directory segments remain protected with shell syntax and Windows aliases', () => {
+  for (const command of [
+    'cd ".claude/team-orchestrator" && ls',
+    'cd .claude/team-orchestrator/changes && ls',
+    'rm .claude/team-orchestrator/requests/*.json',
+    'rm $D/team-orchestrator/a',
+    'cd .claude/TEAM-O~1 && ls',
+  ]) expect(namesTeamFile(command)).toBe(true)
+})
+
 test('real edits to the team files stay blocked: Write, Edit, Set-Content, a redirect, rm of the changes folder', () => {
   const w1 = m('W1', 'Head')
   const deny = (tool: string, path: string, command: string) => judgeTeamFiles({ me: w1, confirmed: true, tool, path, command })?.kind
@@ -170,6 +190,16 @@ const engine = (on: any, toasts: string[], sid: string) => {
 const ok = (r: any) => r.deny === undefined
 const write = ($: any, path: string, agentId?: string) => $.tool.call({ tool: 'Write', file_path: path, content: '[]', ...(agentId ? { agentId } : {}) } as any)
 const shell = ($: any, tool: string, command: string, agentId?: string) => $.tool.call({ tool, command, ...(agentId ? { agentId } : {}) } as any)
+
+test('a scope refusal identifies the team-file guard and the command it checked', async ($, on) => {
+  world(on, [{ handle: 'term_c', title: 'Operator', worktreePath: 'C:/other' }], [], undefined, { worktreePath: 'C:/other' })
+  engine(on, [], ID1)
+  const command = 'cd .claude/team-orchestrator && ls'
+  const result: any = await shell($, 'Bash', command)
+  expect(result.deny).toContain('team-file guard')
+  expect(result.deny).toContain(command)
+  expect(result.deny).toContain('session project root conflicts with its native home')
+})
 
 test('a worker may not change roster.json or settings.json by Write, Edit, Bash or PowerShell, but may read them', async ($, on) => {
   const toasts: string[] = []

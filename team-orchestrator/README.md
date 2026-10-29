@@ -6,7 +6,7 @@ Orca tab. You build the team, watch it and change it from a panel above the prom
 A guard keeps the members inside their roles: members with reports plan and delegate instead of writing files, and
 nobody starts subagents unless you allow it.
 
-Version 0.5.40. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.41. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 
@@ -797,6 +797,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.41 | The team-file guard no longer refuses a folder whose name merely contains the team name. The Orca plugin's own folder, `team-orchestrator-orca-plugin`, was judged to name a team file, so the mod refused commands that only `cd` into it or glob a file inside it, and reported the wrong reason. A path now counts only when a segment is exactly the team folder: `.claude/team-orchestrator` and its `changes/`, `requests/`, `roster.json`, `meta.json` and `settings.json` stay protected, and a variable path such as `$D/team-orchestrator/a` is still refused. The refusal message now names the team-file guard and the command it checked, and gives the real scope reason beside it. ||
 | 0.5.40 | A permission guard for roster members. A member with reports (the top, heads and leads) plans and delegates instead of writing files, and no member may start a subagent, unless you allow it: **Allow writes** and **Allow subagents** in Settings, or the one-turn keyword `#allow-write` or `#allow-subagent` in your own message to that member. Claude Code's own helpers `statusline-setup` and `claude-code-guide` always pass, and a member's own memory folder is always writable. A member on hold gets the strictest guard. A shell command that writes the team files is refused by a command check. Also merges the 0.5.39 cleanup-safety mode with the registered-home evidence and dispatch-depth preparation from the Orca plugin. |
 | 0.5.37 | Subagents' and teammates' turns no longer mark a member working: Claude Code now reports them to `turn.start` too, so the hook skips any turn with an `agentId`. `team_adopt` refuses a name with characters a shell could act on (anything but letters, digits, spaces, dot, dash and underscore), since the name goes into the command that reopens the member; a name saved before goes into that command in its cleaned form. Text uses `weight` instead of the deprecated `bold`. |
 | 0.5.36 | `team_message` answers when it runs out of time. On a busy machine the hook could outrun its 10 s budget after the message had gone out; the engine then reported "no tool.call hook answered this call", and senders sent the same message again. A `.catch` handler now answers a timeout with "most likely delivered: do not send it again", and any other failure with its kind. |
