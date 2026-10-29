@@ -3,7 +3,7 @@
 - 状态：已接受，已合并截至 `0.1.23` 的用户决策。
 - 决策日期：2026-10-18。
 - 决策人：Lin；依据为本轮连续产品讨论及最终确认。
-- 当前实现基线：插件 `0.1.23`；在既有会话导航及 Claude statusline Context 上，新增本机多层团队的原生派工深度准备。此前模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地，Worker 前缀由 `8feb269` 落地。
+- 当前实现基线：插件 `0.1.24`；在既有会话导航及 Claude statusline Context 上，新增本机多层团队的原生派工深度准备。此前模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地，Worker 前缀由 `8feb269` 落地。
 - 初始设计基线：插件 `0.1.17`，提交 `26bc866`；其后修订以本文当前条款为准。
 - 范围：Roster、New team，以及两页依赖的主管交互、可用性与宿主能力边界。Settings 的整体设计不在本次定稿范围内。
 - 关联历史：[2026-10-16 开发规格](../../docs/team-orchestrator-orca-spec.md)、[原版 Claude Code mod](../../team-orchestrator/README.md)。

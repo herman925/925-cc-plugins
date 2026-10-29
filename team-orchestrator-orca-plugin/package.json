@@ -1,7 +1,7 @@
 {
   "name": "team-orchestrator-orca-plugin",
-  "version": "0.1.23",
-  "displayVersion": "0.1.23",
+  "version": "0.1.24",
+  "displayVersion": "0.1.24",
   "private": true,
   "type": "module",
   "scripts": {

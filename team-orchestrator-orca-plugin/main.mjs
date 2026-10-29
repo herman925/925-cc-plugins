@@ -621,7 +621,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.23" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.24" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -727,7 +727,7 @@ async function inspectTeamStorage({ userData, sqlite = () => import("node:sqlite
 
 // src/worker.mjs
 import { randomBytes as randomBytes4 } from "node:crypto";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/local/bootstrap.mjs
 import { readFile as readFile3, realpath as realpath4 } from "node:fs/promises";
@@ -764,14 +764,14 @@ async function connectInspector(url, timeoutMs = 4e3) {
   const address = new URL(url);
   if (address.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw new Error("Inspector must be loopback-only.");
   const socket = new WebSocket(url);
-  await new Promise((resolve3, reject2) => {
+  await new Promise((resolve4, reject2) => {
     const timer = setTimeout(() => {
       socket.close();
       reject2(new Error("Inspector connection timed out."));
     }, timeoutMs);
     socket.addEventListener("open", () => {
       clearTimeout(timer);
-      resolve3();
+      resolve4();
     }, { once: true });
     socket.addEventListener("error", () => {
       clearTimeout(timer);
@@ -806,12 +806,12 @@ async function connectInspector(url, timeoutMs = 4e3) {
   return {
     async evaluate(expression) {
       const id2 = ++sequence;
-      const result = await new Promise((resolve3, reject2) => {
+      const result = await new Promise((resolve4, reject2) => {
         const timer = setTimeout(() => {
           pending.delete(id2);
           reject2(new Error("Inspector evaluation timed out."));
         }, timeoutMs);
-        pending.set(id2, { resolve: resolve3, reject: reject2, timer });
+        pending.set(id2, { resolve: resolve4, reject: reject2, timer });
         socket.send(JSON.stringify({ id: id2, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true } }));
       });
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
@@ -858,7 +858,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
       if (current.runtimeId !== metadata.runtimeId || current.pid !== parentPid || current.authToken !== metadata.authToken) throw Error("Native runtime epoch changed before effect or observation settlement.");
     };
     await consent();
-    return new Promise((resolve3, reject2) => {
+    return new Promise((resolve4, reject2) => {
       const id2 = randomUUID2(), socket = createConnection(transport.endpoint);
       let buffer = "", finished = false, validating = false;
       const finish = (error, result) => {
@@ -866,7 +866,7 @@ function createNativeRpc({ userData, parentPid, consent, timeoutMs = 15e3, maxBy
         finished = true;
         clearTimeout(timer);
         socket.destroy();
-        error ? reject2(error) : resolve3(result);
+        error ? reject2(error) : resolve4(result);
       };
       const timer = setTimeout(() => finish(Error("Native runtime timed out; any submitted objective remains unconfirmed.")), timeoutMs);
       socket.setEncoding("utf8");
@@ -1012,13 +1012,13 @@ async function probeHostCompatibility({ rpc, userData, appVersion }) {
 // src/local/bootstrap.mjs
 var execute = promisify(execFile);
 var activateParent = (pid) => execute(process.execPath, ["-e", "process._debugProcess(Number(process.argv[1]))", String(pid)], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, timeout: 4e3, windowsHide: true });
-var delay = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
+var delay = (ms) => new Promise((resolve4) => setTimeout(resolve4, ms));
 var SENTINEL = Buffer.from("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX");
-var occupied = (port) => new Promise((resolve3) => {
+var occupied = (port) => new Promise((resolve4) => {
   const socket = createConnection2({ host: "127.0.0.1", port });
   const finish = (value) => {
     socket.destroy();
-    resolve3(value);
+    resolve4(value);
   };
   socket.once("connect", () => finish(true));
   socket.once("error", () => finish(false));
@@ -1320,6 +1320,9 @@ async function syncProjectRoles(team, root) {
   });
 }
 
+// src/local/roster-status.mjs
+import { join as join10 } from "node:path";
+
 // src/local/terminal-identity.mjs
 function terminalIdentity(terminal) {
   const { ptyId, incarnationId } = terminal ?? {};
@@ -1361,11 +1364,11 @@ async function registerStatuslineBinding(directory, binding) {
 async function readSmallFile(path, limit = 65536) {
   const file = await open3(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const stat4 = await file.stat();
-    if (!stat4.isFile() || stat4.size > limit) throw Error("Context data is not a bounded regular file.");
+    const stat6 = await file.stat();
+    if (!stat6.isFile() || stat6.size > limit) throw Error("Context data is not a bounded regular file.");
     const buffer = Buffer.alloc(limit + 1), { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
     if (bytesRead > limit) throw Error("Context data exceeded its size limit.");
-    return { text: buffer.subarray(0, bytesRead).toString("utf8"), stat: stat4 };
+    return { text: buffer.subarray(0, bytesRead).toString("utf8"), stat: stat6 };
   } finally {
     await file.close();
   }
@@ -1461,7 +1464,7 @@ function terminalProviderSession(snapshot, shown, agent) {
 }
 function createTerminalContextReader() {
   const cache = /* @__PURE__ */ new Map();
-  return async ({ rpc, shown, agent, scope, snapshots, contextDirectory, statuslineEnabled = false }) => {
+  return async ({ rpc, shown, agent, scope, snapshots, contextDirectory, statuslineEnabled = false, onProvider }) => {
     if (scope.executionHostId !== "local" || !["codex", "claude"].includes(agent)) return null;
     const params = { worktree: scope.workspaceId.startsWith("folder:") ? scope.workspaceId : `id:${scope.workspaceId}` };
     if (!snapshots.has(scope.workspaceId)) snapshots.set(scope.workspaceId, rpc("session.tabs.list", params));
@@ -1502,9 +1505,204 @@ function createTerminalContextReader() {
       if (reported !== void 0) context = reported;
     }
     const current = terminalProviderSession(await rpc("session.tabs.list", params), shown, agent);
-    return current?.sessionId === provider.sessionId && current.path === provider.path ? context : null;
+    if (current?.sessionId !== provider.sessionId || current.path !== provider.path) return null;
+    if (onProvider) onProvider(provider);
+    return context;
   };
 }
+
+// src/local/guard-identity.mjs
+import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
+import { mkdir as mkdir4, open as open5, rename as rename4, stat as stat3, unlink as unlink3 } from "node:fs/promises";
+import { join as join8 } from "node:path";
+var STORE = ".orca/team-orchestrator";
+var storeRolePath = (team, member) => roleFilePath(team, member).replace(/^\.orca\/team-orchestrator\//, "");
+function identityEntry(team, member, sessionId) {
+  return { sessionId, roleFile: storeRolePath(team, member), headHash: createHash6("sha256").update(roleText(team, member)).digest("hex") };
+}
+async function writeGuardIdentity(projectRoot2, entries) {
+  try {
+    await stat3(join8(projectRoot2, STORE, "team.sqlite"));
+  } catch {
+    return { written: false, reason: "This project has no team store yet, so no guard identity was written." };
+  }
+  const directory = join8(projectRoot2, STORE, "guard");
+  await mkdir4(directory, { recursive: true, mode: 448 });
+  const sessions = {};
+  for (const { sessionId, roleFile, headHash } of entries) sessions[sessionId] = { roleFile, headHash };
+  const text9 = JSON.stringify({ schema: 1, sessions }, null, 2) + "\n";
+  const path = join8(directory, "identity.json"), temporary = `${path}.${randomUUID5()}.tmp`;
+  try {
+    const handle = await open5(temporary, "wx", 384);
+    try {
+      await handle.writeFile(text9, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename4(temporary, path);
+  } finally {
+    await unlink3(temporary).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+  return { written: true };
+}
+
+// src/local/guard.mjs
+import { readFileSync } from "node:fs";
+import { stat as stat4 } from "node:fs/promises";
+import { createHash as createHash7 } from "node:crypto";
+import { dirname as dirname2, join as join9, resolve as resolve3, sep as sep5 } from "node:path";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+var ROLE_MARKER2 = "<!-- END OF GENERATED ROLE. Personal notes below this line are preserved. -->";
+var STORE2 = ".orca/team-orchestrator";
+var IDENTITY = "guard/identity.json";
+var SHELL = ["Bash", "PowerShell"];
+var EDIT = ["Write", "Edit", "MultiEdit"];
+var PATCH = ["apply_patch"];
+var READERS = /^(cat|type|get-content|gc|ls|dir|get-childitem|gci|grep|select-string|sls|jq)$/;
+var HARMLESS = /\d?>>?\s*(&\d|\/dev\/null|\$null|nul)(?=$|[\s;|&)])/gi;
+var SEPARATORS = /&&|\|\||[;|&\n\r]/;
+var fold = (platform) => platform === "win32" || platform === "darwin";
+function canonical(target, from, platform = process.platform) {
+  let full;
+  try {
+    full = resolve3(from || ".", String(target));
+  } catch {
+    return "";
+  }
+  full = full.split(sep5).join("/");
+  return fold(platform) ? full.toLowerCase() : full;
+}
+var foldText = (text9) => text9.split("\\").join("/").toLowerCase();
+function inStore(target, projectRoot2, platform = process.platform) {
+  const store = canonical(STORE2, projectRoot2, platform), path = canonical(target, projectRoot2, platform);
+  if (!path) return { inside: false, rel: "" };
+  const inside = path === store || path.startsWith(`${store}/`);
+  return { inside, rel: inside ? path.slice(store.length + 1) : "" };
+}
+function patchPaths(text9, projectRoot2, platform = process.platform) {
+  const paths = [];
+  let began = false, headers = 0;
+  for (const line of String(text9 ?? "").split(/\r?\n/)) {
+    if (line === "*** Begin Patch") began = true;
+    const header = /^\*\*\* (?:Update|Add|Delete) File: (.*)$/.exec(line);
+    if (!header) continue;
+    const target = header[1].trim();
+    if (!target) return { paths, unreadable: true };
+    const full = canonical(target, projectRoot2, platform);
+    if (!full) return { paths, unreadable: true };
+    paths.push(full);
+    headers++;
+  }
+  if (began && headers === 0) return { paths, unreadable: true };
+  return { paths, unreadable: false };
+}
+function shellReason(command) {
+  const c = String(command ?? "");
+  if (/`|\$\(|\$\{|<\(|>\(/.test(c)) return "it runs a substitution";
+  const bare = c.replace(/'[^']*'|"[^"]*"/g, " Q ").replace(HARMLESS, " ");
+  if (/['"]/.test(bare)) return "its quoting is unbalanced";
+  if (/>/.test(bare)) return "it redirects output into a file";
+  const parts = bare.replace(/<\s*\S+/g, " ").split(SEPARATORS).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return "it is empty";
+  for (const part of parts) {
+    const first = (part.split(/\s+/)[0] || "").toLowerCase();
+    if (!READERS.test(first)) return `it runs "${first}", which is not a plain read`;
+    if (first === "jq" && /(^|\s)-[a-z]*i/i.test(part)) return "it runs jq -i";
+  }
+  return "";
+}
+var INTERPRETERS = /^(node|nodejs|deno|bun|tsx|python|python3|py|perl|ruby|bash|sh|zsh|pwsh|powershell|cmd|wsl)$/;
+var stripQuotes = (command) => String(command ?? "").replace(/'[^']*'|"[^"]*"/g, " ");
+function runsInterpreter(command) {
+  const parts = stripQuotes(command).split(SEPARATORS).map((part) => part.trim()).filter(Boolean);
+  return parts.some((part) => INTERPRETERS.test((part.split(/\s+/)[0] || "").toLowerCase()));
+}
+function namesStore(command, projectRoot2, platform) {
+  const raw = foldText(String(command ?? ""));
+  const store = foldText(canonical(STORE2, projectRoot2, platform));
+  if (!raw.includes("team-orchestrator") && !raw.includes(store)) return false;
+  if (runsInterpreter(command)) return true;
+  const bare = foldText(stripQuotes(command));
+  return new RegExp("[^\\s]*team-orchestrator[^\\s]*").test(bare) || bare.includes(store);
+}
+function decide(payload, { readIdentity, projectRoot: projectRoot2, platform = process.platform } = {}) {
+  const block = (reason) => ({ decision: "block", reason });
+  const pass = { decision: "pass" };
+  if (!payload || typeof payload !== "object" || typeof payload.tool_name !== "string") {
+    return block("The team store guard could not read this tool call, so the team store stays read-only.");
+  }
+  const tool = payload.tool_name, input = payload.tool_input || {};
+  const root = projectRoot2 || (typeof payload.cwd === "string" ? payload.cwd : "");
+  if (SHELL.includes(tool)) {
+    const command = String(input.command || "");
+    if (!namesStore(command, root, platform)) return pass;
+    const why = shellReason(command);
+    return why ? block(`The team store is not writable from a shell (${why}); change it from the Team Orchestrator panel.`) : pass;
+  }
+  let targets2;
+  if (PATCH.includes(tool)) {
+    const { paths, unreadable } = patchPaths(input.command, root, platform);
+    if (unreadable) return block("The team store guard could not read every path in this patch, so the team store stays read-only.");
+    targets2 = paths;
+  } else if (EDIT.includes(tool)) {
+    const one = input.file_path || input.notebook_path;
+    if (typeof one !== "string" || !one) return pass;
+    targets2 = [one];
+  } else return pass;
+  const touched = [];
+  for (const target of targets2) {
+    const { inside, rel } = inStore(target, root, platform);
+    if (inside) touched.push(rel);
+  }
+  if (touched.length === 0) return pass;
+  if (touched.includes(IDENTITY)) return block("The team store identity file is not writable.");
+  const session = String(payload.session_id || "");
+  let identity;
+  try {
+    identity = readIdentity();
+  } catch {
+    return block("The team store guard cannot read the roster identity file, so no team store write is allowed.");
+  }
+  const me = identity?.sessions?.[session];
+  if (!session || !me) return block("This session is not on the team roster, so it may not write the team store.");
+  const outside = touched.find((rel) => rel !== me.roleFile);
+  if (outside !== void 0) return block(`A member may write only its own role file (${me.roleFile}), not ${outside}.`);
+  if (tool !== "Write") return block("Only a full-file Write of your own role file is allowed, because a partial edit cannot be checked.");
+  const proposed = String(input.content ?? "");
+  const at = proposed.indexOf(ROLE_MARKER2);
+  if (at < 0) return block("The generated-section marker is missing from this role file, so the write is refused.");
+  if (proposed.indexOf(ROLE_MARKER2, at + ROLE_MARKER2.length) >= 0) return block("The generated-section marker appears more than once, so the write is refused.");
+  const head = createHash7("sha256").update(proposed.slice(0, at)).digest("hex");
+  if (head !== me.headHash) return block("The generated part of this role file was changed, so the write is refused.");
+  return pass;
+}
+async function guardFilesPresent(pluginRoot = dirname2(fileURLToPath2(import.meta.url)), platform = process.platform) {
+  const wrapper = join9(pluginRoot, platform === "win32" ? "guard.cmd" : "guard.sh");
+  try {
+    await stat4(wrapper);
+    await stat4(join9(pluginRoot, "guard.mjs"));
+    return { present: true, wrapper };
+  } catch {
+    return { present: false, wrapper };
+  }
+}
+async function main() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  let payload = null;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+  }
+  const root = process.argv[2] || process.cwd();
+  const readIdentity = () => JSON.parse(readFileSync(join9(root, STORE2, IDENTITY), "utf8"));
+  const answer = decide(payload, { readIdentity, projectRoot: root });
+  if (answer.decision === "block") process.stdout.write(JSON.stringify(answer));
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve3(process.argv[1])).href) await main();
 
 // src/local/roster-status.mjs
 var text3 = (v) => typeof v === "string" && v.trim() && v.length <= 200 ? v : null;
@@ -1539,9 +1737,14 @@ async function pendingRequests(rpc, page) {
   }
   throw Error("Question snapshot is incomplete.");
 }
-function createRosterStatusService({ store, rpc, consent, userData, claudeContext }) {
+function createRosterStatusService({ store, rpc, consent, userData, claudeContext, projectRoot: projectRoot2, log = () => {
+} }) {
   let inFlight;
   const terminalContext = createTerminalContextReader();
+  async function presence(root) {
+    const files = await guardFilesPresent(join10(root, STORE, "guard")).catch(() => ({ present: false }));
+    return files.present ? { installed: true } : { installed: false, reason: "The team store guard is not installed, so a member cannot change its own notes." };
+  }
   async function read() {
     await consent();
     const snapshot = store.readSnapshot(), status = await rpc("status.get");
@@ -1550,15 +1753,26 @@ function createRosterStatusService({ store, rpc, consent, userData, claudeContex
     const statuslineEnabled = await claudeContext?.status().then((s) => s.enabled).catch(() => false) ?? false;
     const jobs = snapshot.teams.flatMap((team) => team.members.map((member) => ({ team, member })));
     let index = 0;
+    const identities = [];
     await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
       while (index < jobs.length) {
         const { team, member } = jobs[index++];
-        output.members[member.id] = await observe(team, member, status.runtimeId, snapshots, statuslineEnabled);
+        output.members[member.id] = await observe(team, member, status.runtimeId, snapshots, statuslineEnabled, identities);
       }
     }));
+    const root = typeof projectRoot2 === "function" ? projectRoot2() : projectRoot2;
+    if (root) {
+      try {
+        const result = await writeGuardIdentity(root, identities);
+        output.guard = result.written ? await presence(root) : { installed: false, reason: result.reason };
+      } catch (error) {
+        log(`The team store guard identity was not written: ${error.message}`);
+        output.guard = { installed: false, reason: String(error.message).slice(0, 200) };
+      }
+    }
     return output;
   }
-  async function observe(team, member, runtimeId, snapshots, statuslineEnabled) {
+  async function observe(team, member, runtimeId, snapshots, statuslineEnabled, identities) {
     const operation = store.readMemberOperation(member.id), attempt = store.readMemberDispatch(member.id);
     const binding = operation?.status === "created" ? operation : attempt?.binding ? { ...attempt.binding, scope: attempt.scope, sessionId: attempt.binding.liveSessionId ?? attempt.binding.sessionId, paneKey: attempt.binding.paneKey, observation: { processIncarnation: attempt.binding.incarnationId }, nativeRequest: { agent: attempt.reuse?.preferences?.agent ?? attempt.startParams?.agent ?? member.agent, sessionOptions: { model: attempt.reuse?.preferences?.model ?? attempt.startParams?.model ?? member.model, effort: attempt.reuse?.preferences?.effort ?? attempt.startParams?.effort ?? member.effort } } } : null;
     const row = { state: operation?.status === "unknown" ? "unknown" : binding ? "unknown" : team.launch?.members?.[member.id] ? "offline" : "not-started", agent: binding?.nativeRequest?.agent ?? member.agent, model: null, effort: null, context: null, requestedModel: binding?.nativeRequest?.sessionOptions?.model ?? member.model, requestedEffort: binding?.nativeRequest?.sessionOptions?.effort ?? member.effort, observedAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -1585,7 +1799,13 @@ function createRosterStatusService({ store, rpc, consent, userData, claudeContex
           row.state = activity.isRunningAgent === false ? "offline" : activity.status === "working" ? "working" : activity.status === "permission" ? "asking" : activity.status === "idle" ? "idle" : "unknown";
           if (activity.isRunningAgent) {
             try {
-              row.context = await terminalContext({ rpc, shown, agent: row.agent, scope, snapshots, contextDirectory: claudeContextDirectory(userData), statuslineEnabled });
+              row.context = await terminalContext({ rpc, shown, agent: row.agent, scope, snapshots, contextDirectory: claudeContextDirectory(userData), statuslineEnabled, onProvider: (provider) => {
+                try {
+                  identities.push(identityEntry(team, member, provider.sessionId));
+                } catch {
+                  log(`Member ${member.id} of team ${team.id} has no valid role-file identity, so the team store guard does not certify it.`);
+                }
+              } });
             } catch {
               row.context = null;
             }
@@ -1664,8 +1884,8 @@ function requiredDispatchDepth(members) {
 }
 
 // src/local/claude-statusline-settings.mjs
-import { mkdir as mkdir4, readFile as readFile5, open as open5, unlink as unlink3 } from "node:fs/promises";
-import { join as join8, isAbsolute as isAbsolute7 } from "node:path";
+import { mkdir as mkdir5, readFile as readFile5, open as open6, unlink as unlink4 } from "node:fs/promises";
+import { join as join11, isAbsolute as isAbsolute7 } from "node:path";
 import { homedir } from "node:os";
 var quote2 = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 async function optional(path) {
@@ -1677,8 +1897,8 @@ async function optional(path) {
   }
 }
 var object = (value) => value && typeof value === "object" && !Array.isArray(value);
-function createClaudeStatuslineSettings({ userData, helperPath, configDir = process.env.CLAUDE_CONFIG_DIR || join8(homedir(), ".claude"), executable = process.execPath, electron = Boolean(process.versions.electron), platform = process.platform, consent }) {
-  const directory = claudeContextDirectory(userData), root = join8(configDir, "team-orchestrator-orca"), settingsPath = join8(configDir, "settings.json"), configPath = join8(root, "bridge.json"), installedHelper = join8(root, "statusline.cjs");
+function createClaudeStatuslineSettings({ userData, helperPath, configDir = process.env.CLAUDE_CONFIG_DIR || join11(homedir(), ".claude"), executable = process.execPath, electron = Boolean(process.versions.electron), platform = process.platform, consent }) {
+  const directory = claudeContextDirectory(userData), root = join11(configDir, "team-orchestrator-orca"), settingsPath = join11(configDir, "settings.json"), configPath = join11(root, "bridge.json"), installedHelper = join11(root, "statusline.cjs");
   const installedCommand = (electron ? "ELECTRON_RUN_AS_NODE=1 " : "") + quote2(executable) + " " + quote2(installedHelper) + " " + quote2(configPath);
   const supported = platform === "darwin" && isAbsolute7(userData || "") && isAbsolute7(helperPath || "");
   const read = async () => {
@@ -1699,11 +1919,11 @@ function createClaudeStatuslineSettings({ userData, helperPath, configDir = proc
     await consent();
     if (!supported) throw Error("Claude context setup is unavailable on this host.");
     if (typeof enabled !== "boolean") throw Error("Choose whether to connect Claude context.");
-    await mkdir4(root, { recursive: true, mode: 448 });
-    const lockPath = join8(root, "configuration.lock");
+    await mkdir5(root, { recursive: true, mode: 448 });
+    const lockPath = join11(root, "configuration.lock");
     let lock;
     try {
-      lock = await open5(lockPath, "wx", 384);
+      lock = await open6(lockPath, "wx", 384);
     } catch (error) {
       if (error.code === "EEXIST") throw Error("Another Claude context configuration is in progress.");
       throw error;
@@ -1735,7 +1955,7 @@ function createClaudeStatuslineSettings({ userData, helperPath, configDir = proc
       return await status();
     } finally {
       await lock.close();
-      await unlink3(lockPath).catch(() => {
+      await unlink4(lockPath).catch(() => {
       });
     }
   } };
@@ -1779,8 +1999,8 @@ function verifiedWorkerReport(fact, message, dispatch, worker) {
 }
 
 // src/local/native-mutation.mjs
-import { createHash as createHash6 } from "node:crypto";
-var canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== void 0).map((key) => [key, canonical(value[key])])) : value;
+import { createHash as createHash8 } from "node:crypto";
+var canonical2 = (value) => Array.isArray(value) ? value.map(canonical2) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== void 0).map((key) => [key, canonical2(value[key])])) : value;
 var nativeMutationFingerprint = (method, params, owner, target) => {
   const stable = { ...params };
   delete stable.waitSubmitMs;
@@ -1793,7 +2013,7 @@ var nativeMutationFingerprint = (method, params, owner, target) => {
     const parts = owner.paneKey.split(":"), leaf = parts[1];
     stable[key] = parts.length === 2 && parts[0] && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(leaf) ? { paneLeafId: leaf } : { paneKey: owner.paneKey };
   }
-  return createHash6("sha256").update(JSON.stringify(canonical({ method, params: stable }))).digest("hex");
+  return createHash8("sha256").update(JSON.stringify(canonical2({ method, params: stable }))).digest("hex");
 };
 
 // src/local/native-question-origin.mjs
@@ -1830,16 +2050,16 @@ function verifiedReportOrigin(db, { work, attempts, spec }) {
 }
 
 // src/local/questions.mjs
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 
 // src/local/orchestration-snapshot.mjs
 import { realpath as realpath6 } from "node:fs/promises";
-import { join as join9, relative as relative5, isAbsolute as isAbsolute8, sep as sep5 } from "node:path";
+import { join as join12, relative as relative5, isAbsolute as isAbsolute8, sep as sep6 } from "node:path";
 async function withOrchestrationSnapshot(userData, { pathError, schemaError }, read) {
   let db;
   try {
-    const root = await realpath6(userData), file = await realpath6(join9(root, "orchestration.db")), rel = relative5(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute8(rel)) throw Error(pathError);
+    const root = await realpath6(userData), file = await realpath6(join12(root, "orchestration.db")), rel = relative5(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute8(rel)) throw Error(pathError);
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     db.exec("BEGIN");
@@ -1857,7 +2077,7 @@ async function withOrchestrationSnapshot(userData, { pathError, schemaError }, r
 }
 
 // src/local/native-history.mjs
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 var parse3 = (value) => {
   try {
     return JSON.parse(value);
@@ -1866,7 +2086,7 @@ var parse3 = (value) => {
   }
 };
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-var digest = (value) => createHash7("sha256").update(JSON.stringify(value)).digest("hex");
+var digest = (value) => createHash9("sha256").update(JSON.stringify(value)).digest("hex");
 var caller = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
 var authority = (history, spec, epoch) => history.authorities.filter((h) => (epoch === void 0 || h.epoch === epoch) && h.protocol.token === spec.token && h.protocol.generation === spec.generation);
 function controlProof(entry) {
@@ -1877,7 +2097,7 @@ function savedControl(entry, spec, task, receipt) {
   const r = entry.record, proof = controlProof(entry);
   if (proof?.nativeTaskId !== task.id || proof.payloadHash !== receipt.payload_hash || proof.requestId && proof.requestId !== receipt.request_id) return false;
   const intent = { spec, nativeTaskId: task.id, requestId: receipt.request_id, payloadHash: receipt.payload_hash };
-  if (proof.spec && !same(proof.spec, spec) || ["question", "staffing-proposal", "collaboration-directive"].includes(entry.kind) && r.fingerprint && r.fingerprint !== digest(entry.kind === "staffing-proposal" ? canonical(intent) : intent)) return false;
+  if (proof.spec && !same(proof.spec, spec) || ["question", "staffing-proposal", "collaboration-directive"].includes(entry.kind) && r.fingerprint && r.fingerprint !== digest(entry.kind === "staffing-proposal" ? canonical2(intent) : intent)) return false;
   switch (entry.kind) {
     case "session-answer":
     case "session-resolution":
@@ -2063,10 +2283,10 @@ async function nameDispatchedMember({ store, rpc, consent, work, attempt, team }
 }
 
 // src/local/dispatch.mjs
-import { createHash as createHash9, randomBytes as randomBytes2, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash11, randomBytes as randomBytes2, randomUUID as randomUUID7 } from "node:crypto";
 
 // src/local/runtime-reconnect.mjs
-var same2 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var same2 = (a, b) => JSON.stringify(canonical2(a)) === JSON.stringify(canonical2(b));
 var terminalControlIdentity = (terminal) => [
   "handle",
   "worktreeId",
@@ -2221,7 +2441,7 @@ async function readNativeParentEvidence(userData, { parentWork, attempt, active 
 }
 
 // src/local/teamwork.mjs
-import { createHash as createHash8, randomBytes, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash10, randomBytes, randomUUID as randomUUID6 } from "node:crypto";
 
 // src/local/native-run.mjs
 import { isAbsolute as isAbsolute9 } from "node:path";
@@ -2248,8 +2468,8 @@ async function readNativeRunEvidence(userData, { objective, owner, runId } = {})
 }
 
 // src/local/teamwork.mjs
-var canonical2 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical2).join(",")}]` : `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical2(v)}`).join(",")}}`;
-var sendFingerprint = (sessionId, body, delivery) => createHash8("sha256").update(canonical2({ method: "agentSession.send", sessionId, fields: { body, ...delivery ? { delivery } : {} } })).digest("hex");
+var canonical3 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical3).join(",")}]` : `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical3(v)}`).join(",")}}`;
+var sendFingerprint = (sessionId, body, delivery) => createHash10("sha256").update(canonical3({ method: "agentSession.send", sessionId, fields: { body, ...delivery ? { delivery } : {} } })).digest("hex");
 function objectiveInstructions(work, team) {
   if (work.parent) return `TEAM_MANAGER_RUN
 ${JSON.stringify({ teamWorkId: work.teamWorkId, runBindingId: work.id, parent: work.parent, objective: work.nativeObjective, instruction: "You are the actual assigned manager of the original parent Dispatch. Keep that umbrella Dispatch active while delegating and reviewing. Using your own inherited native identity create exactly one Run with this exact objective. This message is JSON: decode its objective string, including escaped newlines, before passing it as one CLI argument; verify the actual stored objective string; do not fabricate --from. Never pass a parent Run Task as native --parent in this Run. Wait for the versioned child admission protocol. Native depth is inherited from your active parent Dispatch across Runs; if nested_worker_depth_exceeded, report that refusal and ask the highest supervisor to request Settings \u2192 Orchestration \u2192 Nested worker depth at least 2 (or the required deeper level). Never change the setting or launch a standalone replacement to bypass it. Accept only direct reports. When every descendant is accepted and questions resolved, send your own native worker_done for the ORIGINAL parent Dispatch/Task and original parent Run using the installed guide; do not stamp the child Run onto the upward report. Only the highest supervisor asks/delivers to the user. Relay questions through your real parent manager, preserving their original native question IDs. Do not self-create provider-native subagents; only approved roster members via admitted native Orca dispatch. This is a cooperative instruction and admission policy, not global provider tool interception." })}`;
@@ -2367,7 +2587,7 @@ function createWorkService({ store, rpc, userData, consent }) {
       if (work.binding.kind === "structured") {
         const sessionId = work.binding.sessionId;
         nativeSend = { method: "agentSession.send", params: { envelope: { sessionId, clientOperationId: `${Date.now()}-${randomBytes(16).toString("hex")}`, expectedRuntimeFence: verified.instance.fence, payloadFingerprint: sendFingerprint(sessionId, body) }, body }, envelope: {} };
-      } else nativeSend = { method: "terminal.send", params: { terminal: work.binding.handle, text: body.blocks[0].text, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID5() } };
+      } else nativeSend = { method: "terminal.send", params: { terminal: work.binding.handle, text: body.blocks[0].text, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID6() } };
       await consent();
       work = save(work, { nativeSend, instance: verified.instance, input: { state: "sending" }, status: "awaiting_input" });
       attempted = true;
@@ -2438,7 +2658,7 @@ function createWorkService({ store, rpc, userData, consent }) {
         }
         await verify(candidate, true);
       });
-      const input = { teamId, requestId: "session-" + createHash8("sha256").update(binding.requestId).digest("hex").slice(0, 48), expectedRevision: store.readSnapshot().revision, objective: `Coordinate @${team.name}; receive assignments directly in the supervisor conversation.` };
+      const input = { teamId, requestId: "session-" + createHash10("sha256").update(binding.requestId).digest("hex").slice(0, 48), expectedRevision: store.readSnapshot().revision, objective: `Coordinate @${team.name}; receive assignments directly in the supervisor conversation.` };
       const prepared = store.prepareWork(input, { sessionMode: true });
       return serial(prepared.work.id, () => prepared.fresh ? deliver(store.readCurrentWork(prepared.work.id)) : store.readCurrentWork(prepared.work.id));
     },
@@ -2478,7 +2698,7 @@ var parse5 = (value) => {
     return null;
   }
 };
-var same3 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var same3 = (a, b) => JSON.stringify(canonical2(a)) === JSON.stringify(canonical2(b));
 var fields = ["protocol", "workId", "token", "generation", "supervisorMemberId", "nativeTaskId", "taskKey", "memberId", "replacementNativeTaskId", "reason"];
 var caller2 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
 function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitted, identity, receipts, verifyIntent: verifyIntent2, history = [], historyContexts = [] }) {
@@ -2536,7 +2756,7 @@ function readIntentWithdrawals({ db, tasks, work, protocol, team, owner, admitte
 
 // src/local/native-dispatch.mjs
 var caller3 = (owner) => owner.kind === "structured" ? `orca_session_id:${owner.sessionId}` : owner.handle;
-var same4 = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+var same4 = (a, b) => JSON.stringify(canonical2(a)) === JSON.stringify(canonical2(b));
 var parse6 = (value) => {
   try {
     return JSON.parse(value);
@@ -2833,7 +3053,7 @@ function userMessage(work, instance, text9, status) {
     const body = { kind: "message", role: "user", blocks: [{ type: "text", text: text9 }] }, sessionId = work.binding.sessionId, delivery = status?.capabilities?.includes("agent-session.queued-messages.v1") ? "queue-if-active" : void 0;
     return { method: "agentSession.send", params: { envelope: { sessionId, clientOperationId: `${Date.now()}-${randomBytes2(16).toString("hex")}`, expectedRuntimeFence: instance.fence, payloadFingerprint: sendFingerprint(sessionId, body, delivery) }, body, ...delivery ? { delivery } : {} }, envelope: {} };
   }
-  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text9, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID6() } };
+  return { method: "terminal.send", params: { terminal: work.binding.handle, text: text9, enter: true, agentPrompt: true, waitSubmitMs: 1e3, client: { id: "team-orchestrator", type: "desktop" } }, envelope: { orchestrationRequestId: randomUUID7() } };
 }
 function accepted(receipt, send, instance) {
   if (send.method === "agentSession.send") return receipt?.ok === true && receipt.value?.clientMessageId === send.params.envelope.clientOperationId && (receipt.value.queued ? send.params.delivery === "queue-if-active" && typeof receipt.value.queued.messageId === "string" && ["waiting", "dispatched"].includes(receipt.value.queued.state) : ["pending", "accepted"].includes(receipt.value.submission?.dispatchState));
@@ -2974,7 +3194,7 @@ function createDispatchService({ store, rpc, userData, consent, works, beforeAdm
             reuse = recovered ? await preparedSession(work, intent.member, prepared) : prior ? await retainedSession(work, intent.member, prior) : prepared ? await preparedSession(work, intent.member, prepared) : void 0;
           } catch (error) {
             const bindingRequestId = prior?.id ?? prepared?.requestId;
-            if (bindingRequestId && onClosedMember) await onClosedMember({ teamId: work.teamId, memberId: intent.member.id, bindingRequestId, requestId: "taskwake-" + createHash9("sha256").update(JSON.stringify([work.id, intent.member.id, bindingRequestId])).digest("hex").slice(0, 48) });
+            if (bindingRequestId && onClosedMember) await onClosedMember({ teamId: work.teamId, memberId: intent.member.id, bindingRequestId, requestId: "taskwake-" + createHash11("sha256").update(JSON.stringify([work.id, intent.member.id, bindingRequestId])).digest("hex").slice(0, 48) });
             throw error;
           }
           const startParams = { task: intent.nativeTaskId, worktree: work.scope.workspaceId.startsWith("folder:") ? work.scope.workspaceId : `id:${work.scope.workspaceId}`, agent: intent.member.agent, run: work.run.id, ...intent.member.model !== "default" ? { model: intent.member.model } : {}, ...intent.member.effort !== "default" ? { effort: intent.member.effort } : {} };
@@ -3151,7 +3371,7 @@ function createQuestionService({ store, rpc, userData, consent, works, notify })
     for (const streak of store.failureStreaks(workId).filter((s) => s.escalationNeeded)) {
       const evidenceIds = streak.evidence.slice(-2).map((e) => e.evidenceId);
       if (store.listQuestions(workId).some((q) => q.evidence?.length && evidenceIds.every((id3) => q.evidence.includes(id3)))) continue;
-      const id2 = "failure-" + createHash10("sha256").update(JSON.stringify([streak.taskKey, evidenceIds])).digest("hex");
+      const id2 = "failure-" + createHash12("sha256").update(JSON.stringify([streak.taskKey, evidenceIds])).digest("hex");
       const event = store.ensureQuestionEvent(workId, id2, "failure-summary", { taskKey: streak.taskKey, evidence: streak.evidence.slice(-2) });
       if (event.state === "sending") {
         store.updateQuestionEvent(workId, id2, { state: "unknown" });
@@ -3391,15 +3611,15 @@ function createHierarchyService({ store, userData, works }) {
 }
 
 // src/local/stop-store.mjs
-import { randomUUID as randomUUID7, createHash as createHash11 } from "node:crypto";
-var canonical3 = (v) => Array.isArray(v) ? v.map(canonical3) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical3(v[k])])) : v;
-var sameStopIdentity = (a, b) => JSON.stringify(canonical3(a)) === JSON.stringify(canonical3(b));
+import { randomUUID as randomUUID8, createHash as createHash13 } from "node:crypto";
+var canonical4 = (v) => Array.isArray(v) ? v.map(canonical4) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical4(v[k])])) : v;
+var sameStopIdentity = (a, b) => JSON.stringify(canonical4(a)) === JSON.stringify(canonical4(b));
 function stopStore({ db, readPrivate, putPrivate, atomic }) {
   const listStops = () => db.prepare("SELECT json FROM receipts WHERE id LIKE 'stop:%' ORDER BY rowid").all().map((row) => JSON.parse(row.json));
   const readStop = (id2) => readPrivate(`stop:${id2}`);
   const recoveryInput = (input) => {
     if (!input || Object.keys(input).some((k) => !["requestId", "stopRequestId", "version"].includes(k)) || typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || typeof input.stopRequestId !== "string" || !Number.isSafeInteger(input.version) || input.version < 1) throw Error("Choose a saved unknown stop and its current version.");
-    return createHash11("sha256").update(JSON.stringify(canonical3(input))).digest("hex");
+    return createHash13("sha256").update(JSON.stringify(canonical4(input))).digest("hex");
   };
   const readStopRecovery = (input) => {
     const fingerprint2 = recoveryInput(input), prior = readPrivate(`stop-recovery:${input.requestId}`);
@@ -3426,14 +3646,14 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
     prepareStop(input, target) {
       return atomic(() => {
         if (typeof input.requestId !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId)) throw Error("A stable stop request identity is required.");
-        const fingerprint2 = createHash11("sha256").update(JSON.stringify(canonical3(input))).digest("hex"), prior = readStop(input.requestId);
+        const fingerprint2 = createHash13("sha256").update(JSON.stringify(canonical4(input))).digest("hex"), prior = readStop(input.requestId);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Stop identity conflicts with another input.");
           return prior;
         }
         const duplicate = listStops().findLast((row2) => sameStopIdentity(row2.target, target));
         if (duplicate) return duplicate;
-        const row = { requestId: input.requestId, nativeRequestId: randomUUID7(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const row = { requestId: input.requestId, nativeRequestId: randomUUID8(), fingerprint: fingerprint2, target, state: "intent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         putPrivate(`stop:${row.requestId}`, row);
         return row;
       });
@@ -3457,12 +3677,12 @@ function stopStore({ db, readPrivate, putPrivate, atomic }) {
 
 // src/local/wake-evidence.mjs
 import { realpath as realpath7 } from "node:fs/promises";
-import { join as join10, relative as relative6, isAbsolute as isAbsolute10, sep as sep6 } from "node:path";
+import { join as join13, relative as relative6, isAbsolute as isAbsolute10, sep as sep7 } from "node:path";
 async function resumedOwner(userData, operation, oldFence) {
   let db;
   try {
-    const root = await realpath7(userData), path = await realpath7(join10(root, "agent-session-journal.db")), rel = relative6(root, path);
-    if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute10(rel)) return null;
+    const root = await realpath7(userData), path = await realpath7(join13(root, "agent-session-journal.db")), rel = relative6(root, path);
+    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute10(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -3617,8 +3837,8 @@ function publicOperation(operation) {
 }
 
 // src/local/wake-store.mjs
-import { randomUUID as randomUUID8, createHash as createHash12 } from "node:crypto";
-var digest2 = (v) => createHash12("sha256").update(JSON.stringify(v)).digest("hex");
+import { randomUUID as randomUUID9, createHash as createHash14 } from "node:crypto";
+var digest2 = (v) => createHash14("sha256").update(JSON.stringify(v)).digest("hex");
 var publicWake = (row) => {
   if (!row) return null;
   const { oldBinding, nativeAction, fingerprint: fingerprint2, managerRequest, ...value } = row;
@@ -3673,7 +3893,7 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
           if (attempt.workId !== workId || attempt.supervisorMemberId !== row.memberId) continue;
           if (attempt.review && attempt.originalSupervisorInstance) continue;
           attempt.originalSupervisorInstance ??= work.instance;
-          if (!attempt.review) attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID8(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
+          if (!attempt.review) attempt.reviewAuthority = { recoveryRequestId: id2, reviewerMemberId: row.memberId, generation: run.consumerGeneration, reviewToken: randomUUID9(), previousGeneration: attempt.generation, handoff: row.handoff ?? { decision: "native-resume", death: row.proof.death } };
           attempt.version++;
           putPrivate(saved.id, attempt);
         }
@@ -3786,24 +4006,24 @@ function wakeStore({ db, readPrivate, putPrivate, atomic, readOperation, persist
 
 // src/local/recovery.mjs
 import { realpath as realpath9 } from "node:fs/promises";
-import { join as join12, relative as relative8, isAbsolute as isAbsolute12, sep as sep8 } from "node:path";
+import { join as join15, relative as relative8, isAbsolute as isAbsolute12, sep as sep9 } from "node:path";
 
 // src/local/native-launch-ledger.mjs
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 import { realpath as realpath8 } from "node:fs/promises";
-import { join as join11, relative as relative7, isAbsolute as isAbsolute11, sep as sep7 } from "node:path";
+import { join as join14, relative as relative7, isAbsolute as isAbsolute11, sep as sep8 } from "node:path";
 var LAUNCH_LEDGER_ABSENT = "Original native launch ledger row is absent; no launch was retried.";
-var canonical4 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical4).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical4(entry)}`).join(",")}}`;
+var canonical5 = (value) => value === null || typeof value !== "object" ? JSON.stringify(value ?? null) : Array.isArray(value) ? `[${value.map(canonical5).join(",")}]` : `{${Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => `${JSON.stringify(key)}:${canonical5(entry)}`).join(",")}}`;
 function nativeLaunchFingerprint(input) {
-  return createHash13("sha256").update(canonical4(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
+  return createHash15("sha256").update(canonical5(Object.fromEntries([["method", "agent.launch"], ...["agent", "target", "prompt", "sessionOptions", "reuseTerminal", "agentArgs", "cwd", "paneKey", "sessionId"].map((key) => [key, input[key]])]))).digest("hex");
 }
 async function readNativeLaunchLedger(userData, request) {
   let db;
   try {
     if (!isAbsolute11(userData || "")) throw Error();
-    const profile = await realpath8(userData), file = await realpath8(join11(profile, "agent-session-journal.db"));
+    const profile = await realpath8(userData), file = await realpath8(join14(profile, "agent-session-journal.db"));
     const rel = relative7(profile, file);
-    if (rel === ".." || rel.startsWith(`..${sep7}`) || isAbsolute11(rel)) throw Error();
+    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute11(rel)) throw Error();
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) throw Error();
@@ -3830,8 +4050,8 @@ async function readSessionDeath(userData, sessionId, ownerFence, scope) {
   let db;
   try {
     if (!Number.isSafeInteger(ownerFence) || ownerFence < 1 || !isAbsolute12(userData || "")) return null;
-    const profile = await realpath9(userData), path = await realpath9(join12(profile, "agent-session-journal.db")), rel = relative8(profile, path);
-    if (rel === ".." || rel.startsWith(`..${sep8}`) || isAbsolute12(rel)) return null;
+    const profile = await realpath9(userData), path = await realpath9(join15(profile, "agent-session-journal.db")), rel = relative8(profile, path);
+    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute12(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 4) return null;
@@ -4255,12 +4475,12 @@ Member ${op.memberId}; original operation ${op.requestId}; TeamWork ${work?.id ?
 
 // src/local/native-stop.mjs
 import { realpath as realpath10 } from "node:fs/promises";
-import { join as join13, relative as relative9, isAbsolute as isAbsolute13, sep as sep9 } from "node:path";
+import { join as join16, relative as relative9, isAbsolute as isAbsolute13, sep as sep10 } from "node:path";
 async function readStopReceipt(userData, row) {
   let db;
   try {
-    const root = await realpath10(userData), file = await realpath10(join13(root, "orchestration.db")), rel = relative9(root, file);
-    if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute13(rel)) return null;
+    const root = await realpath10(userData), file = await realpath10(join16(root, "orchestration.db")), rel = relative9(root, file);
+    if (rel === ".." || rel.startsWith(`..${sep10}`) || isAbsolute13(rel)) return null;
     const { DatabaseSync } = await import("node:sqlite");
     db = new DatabaseSync(file, { readOnly: true });
     if (db.prepare("PRAGMA user_version").get().user_version !== 43) return null;
@@ -4499,13 +4719,41 @@ function createLifecycleService({ store, rpc, userData, consent, works, notify }
 
 // src/local/executor.mjs
 import { timingSafeEqual } from "node:crypto";
-import { createHash as createHash14, randomUUID as randomUUID9 } from "node:crypto";
-var hash3 = (value) => createHash14("sha256").update(value).digest("hex");
-function createExecutor(host, cli, { store, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
+import { createHash as createHash16, randomUUID as randomUUID10 } from "node:crypto";
+var hash3 = (value) => createHash16("sha256").update(value).digest("hex");
+function createExecutor(host, cli, { store, openStore: openStore2, internalKey, userData, parentPid = process.ppid, nativeRpc, claudeContextOptions } = {}) {
   const consent = () => host.call("storage.get", { key: "team-work-consent-v1" });
   const rpc = nativeRpc ?? createNativeRpc({ userData, parentPid, consent });
   const claudeContext = createClaudeStatuslineSettings({ userData, consent, ...claudeContextOptions });
-  const rosterStatus = createRosterStatusService({ store, rpc, consent, userData, claudeContext });
+  let currentProject = "";
+  const openedStores = /* @__PURE__ */ new Map();
+  if (openStore2) {
+    store = new Proxy({}, {
+      get(_target, prop) {
+        if (!currentProject) throw new Error("No project is selected, so team storage is unavailable for this call.");
+        const real = openedStores.get(currentProject);
+        if (!real) throw new Error("Team storage for the selected project is not open.");
+        const value = Reflect.get(real, prop);
+        return typeof value === "function" ? value.bind(real) : value;
+      }
+    });
+  }
+  async function selectProject(workspaceId) {
+    if (!openStore2) return;
+    const workspace = await workspaceRecord(workspaceId);
+    const scope = verifiedScope(workspace);
+    if (scope.executionHostId !== "local") throw new Error("This project runs on another machine, and teams on another machine are not supported in this release.");
+    const path = typeof workspace.path === "string" ? workspace.path : "";
+    if (!path) throw new Error("This project has no folder on this machine, so team storage is unavailable here.");
+    if (currentProject && currentProject !== path) throw new Error("This worker is serving another project. Restart the plugin worker to switch projects.");
+    if (currentProject) return;
+    currentProject = path;
+  }
+  async function ensureStore() {
+    if (!openStore2 || !currentProject || openedStores.has(currentProject)) return;
+    openedStores.set(currentProject, await openStore2(currentProject));
+  }
+  const rosterStatus = createRosterStatusService({ store, rpc, consent, userData, claudeContext, projectRoot: () => currentProject, log: (message) => console.error(`[team-orchestrator] ${message}`) });
   const works = createWorkService({ store, userData, consent, rpc });
   const staffing = createStaffingService({ store, userData, consent, rpc, works, notify: (params) => host.call("notifications.show", params) });
   const questions = createQuestionService({ store, userData, consent, rpc, works, notify: (params) => host.call("notifications.show", params) });
@@ -4534,6 +4782,10 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   };
   async function resumeWork() {
     if (polling || stopped || reconnecting) return;
+    if (openStore2 && !currentProject) {
+      scheduleWork();
+      return;
+    }
     polling = true;
     try {
       await consent();
@@ -4600,9 +4852,13 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   }
   const publicScope2 = ({ workspaceId, projectPath, ...scope }) => ({ ...scope, nativeAgentLaunch: true });
   async function context(workspaceId, teamId) {
-    if (teamId) return publicScope2(store.readScope(teamId));
+    if (teamId) {
+      if (openStore2 && !currentProject) throw new Error("Select the project again to reopen its team.");
+      return publicScope2(store.readScope(teamId));
+    }
+    if (workspaceId) await selectProject(workspaceId);
     const scope = verifiedScope(await workspaceRecord(workspaceId));
-    const selectionToken = randomUUID9();
+    const selectionToken = randomUUID10();
     if (selections.size >= 128) selections.delete(selections.keys().next().value);
     selections.set(selectionToken, scope);
     return { ...publicScope2(scope), selectionToken };
@@ -4618,7 +4874,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
   }
   function plan(operation) {
     if (launchPlans.size >= 128) launchPlans.delete(launchPlans.keys().next().value);
-    const phaseId = randomUUID9();
+    const phaseId = randomUUID10();
     launchPlans.set(phaseId, { requestId: operation.requestId, operationId: operation.nativeRequest.operationId });
     return { phaseId, operation };
   }
@@ -4634,8 +4890,10 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
       workTimer = null;
     },
     async execute({ op, params = {}, workspaceId, internalKey: suppliedKey } = {}) {
+      if (op?.startsWith("_") && !(typeof internalKey === "string" && typeof suppliedKey === "string" && Buffer.byteLength(internalKey) === Buffer.byteLength(suppliedKey) && timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey)))) throw Error("Internal host observation authority is required.");
+      if (workspaceId) await selectProject(workspaceId);
+      if (op !== "context") await ensureStore();
       if (op?.startsWith("_")) {
-        if (typeof internalKey !== "string" || typeof suppliedKey !== "string" || Buffer.byteLength(internalKey) !== Buffer.byteLength(suppliedKey) || !timingSafeEqual(Buffer.from(internalKey), Buffer.from(suppliedKey))) throw Error("Internal host observation authority is required.");
         if (op === "_teamDepth") {
           if (Object.keys(params).some((key) => !["teamId", "configVersion", "memberId", "observationId"].includes(key))) throw Error("Invalid team depth selection.");
           const team = store.readSnapshot().teams.find((row) => row.id === params.teamId);
@@ -4808,7 +5066,7 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
         if (op === "_capabilityScope") {
           const scope = params.teamId ? store.readScope(params.teamId) : selections.get(params.selectionToken);
           if (!scope) throw Error("Confirm a saved team or selected project before reading capabilities.");
-          const observationId = randomUUID9();
+          const observationId = randomUUID10();
           latestObservation.set(scope.workspaceKey, observationId);
           capabilities.delete(scope.workspaceKey);
           const verified = verifiedScope(await workspaceRecord(scope.workspaceId));
@@ -4959,8 +5217,8 @@ function createExecutor(host, cli, { store, internalKey, userData, parentPid = p
 }
 
 // src/local/runtime-reconnect-store.mjs
-import { createHash as createHash15 } from "node:crypto";
-var digest3 = (value) => createHash15("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+import { createHash as createHash17 } from "node:crypto";
+var digest3 = (value) => createHash17("sha256").update(JSON.stringify(canonical2(value))).digest("hex");
 var fail = (message) => {
   throw Error(message);
 };
@@ -5165,9 +5423,9 @@ function nativeHistoryReader({ db, readPrivate, readWork, questions }) {
 }
 
 // src/local/staffing-fingerprint.mjs
-import { createHash as createHash16 } from "node:crypto";
-var canonical5 = (v) => Array.isArray(v) ? v.map(canonical5) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical5(v[k])])) : v;
-var staffingFingerprint = (v) => createHash16("sha256").update(JSON.stringify(canonical5(v))).digest("hex");
+import { createHash as createHash18 } from "node:crypto";
+var canonical6 = (v) => Array.isArray(v) ? v.map(canonical6) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== void 0).map((k) => [k, canonical6(v[k])])) : v;
+var staffingFingerprint = (v) => createHash18("sha256").update(JSON.stringify(canonical6(v))).digest("hex");
 
 // src/local/staffing-expiry.mjs
 function staffingExpiryProof(proposal, read) {
@@ -5184,9 +5442,9 @@ function staffingExpiryProof(proposal, read) {
 }
 
 // src/local/history-cleanup.mjs
-import { randomUUID as randomUUID10, createHash as createHash17 } from "node:crypto";
+import { randomUUID as randomUUID11, createHash as createHash19 } from "node:crypto";
 var CLEARED = "[History manually cleared]";
-var hash4 = (v) => createHash17("sha256").update(JSON.stringify(v)).digest("hex");
+var hash4 = (v) => createHash19("sha256").update(JSON.stringify(v)).digest("hex");
 var family = (id2) => id2.split(":")[0];
 var known = /* @__PURE__ */ new Set(["runtime-control", "runtime-reconnect", "work", "native-run-binding", "work-request", "active-work", "session-work", "operation", "binding", "binding-generation", "launch", "dispatch", "dispatch-intent", "intent-withdrawal", "dispatch-member", "dispatch-binding", "dispatch-review", "dispatch-protocol", "dispatch-protocol-history", "dispatch-queue", "question", "question-answer", "question-event", "team-message", "collaboration", "delivery", "work-decision", "goal", "goal-request", "next-goal", "stop", "stop-recovery", "wake", "wake-member", "staffing-request", "staffing-proposal", "configuration-amendment", "work-configuration", "roster-delta", "organization"]);
 var contains = (value, ids) => typeof value === "string" ? ids.has(value) || [...ids].some((id2) => id2.length >= 32 && value.includes(id2)) : Array.isArray(value) ? value.some((v) => contains(v, ids)) : value && typeof value === "object" ? Object.values(value).some((v) => contains(v, ids)) : false;
@@ -5366,7 +5624,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
     previewHistoryCleanup(input) {
       if (!input || Object.keys(input).some((k) => k !== "selectedWorkIds") || !Array.isArray(input.selectedWorkIds) || input.selectedWorkIds.length < 1 || input.selectedWorkIds.length > 100 || input.selectedWorkIds.some((id2) => typeof id2 !== "string" || !/^[a-zA-Z0-9-]{1,120}$/.test(id2))) throw Error("Select 1\u2013100 saved Work histories.");
       return atomic(() => {
-        const ids = [...new Set(input.selectedWorkIds)].sort(), p = plan(ids), previewToken = randomUUID10(), storageRevision = p.storageRevision, expiresAt = Date.now() + 3e5;
+        const ids = [...new Set(input.selectedWorkIds)].sort(), p = plan(ids), previewToken = randomUUID11(), storageRevision = p.storageRevision, expiresAt = Date.now() + 3e5;
         if (previews.size >= 64) previews.delete(previews.keys().next().value);
         previews.set(previewToken, { ...p, storageRevision, expiresAt });
         return { previewToken, storageRevision, expiresAt, selectedWorkIds: ids, eligibleWorkIds: p.eligibleWorkIds, retained: p.retained, changes: p.changes.map(({ id: id2, workId, fields: fields2, logicalBytes }) => ({ recordId: id2, workId, fields: fields2, logicalBytes })), snapshotCount: p.snapshots.length, logicalBytes: p.changes.reduce((n, r) => n + r.logicalBytes, 0), notice: "Clears displayed delivery summaries, task results, review summaries and cached public snapshots. Keeps objectives, native request/proof bodies (which may contain copies), questions, notification evidence, closure decisions, identities, replay barriers, configuration and role versions. Migration backups may still contain history. Project files, login data, native sessions and provider conversations are outside this cleanup. No secure erasure or immediate file shrink is promised." };
@@ -5403,7 +5661,7 @@ function historyCleanup({ db, readSnapshot, write, atomic }) {
 }
 
 // src/local/organization-store.mjs
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
 function reorganize(team, changes) {
   const members = structuredClone(team.members), ids = /* @__PURE__ */ new Set();
   if (!Array.isArray(changes) || !changes.length || changes.length > 49) throw Error("Choose at least one organization change.");
@@ -5444,7 +5702,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
     scheduleOrganization(input) {
       return atomic(() => {
         if (!input || !/^[a-zA-Z0-9-]{1,120}$/.test(input.requestId) || Object.keys(input).some((k) => !["requestId", "teamId", "workId", "expectedRevision", "configVersion", "changes", "pause"].includes(k))) throw Error("Invalid organization request.");
-        const key = `organization:${input.requestId}`, fingerprint2 = createHash18("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
+        const key = `organization:${input.requestId}`, fingerprint2 = createHash20("sha256").update(JSON.stringify(input)).digest("hex"), prior = readPrivate(key);
         if (prior) {
           if (prior.fingerprint !== fingerprint2) throw Error("Organization request conflicts with saved input.");
           return prior;
@@ -5501,7 +5759,7 @@ function organizationStore({ db, readPrivate, putPrivate, atomic, readSnapshot, 
 }
 
 // src/local/staffing-store.mjs
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 var text8 = (v, n) => typeof v === "string" && v.trim().length > 0 && v.length <= n;
 var id = (v) => text8(v, 120) && /^[a-zA-Z0-9-]+$/.test(v);
 function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, readSnapshot, write, archive, atomic }) {
@@ -5527,11 +5785,11 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
     if (!db.isTransaction) throw Error("Configuration amendment must share its validated save transaction.");
     const work = active(workId), previous = effectiveTeamForWork(work.id);
     if (team.id !== work.teamId || team.configVersion <= previous.configVersion || !memberIds.length || memberIds.some((id2) => !team.members.some((m) => m.id === id2))) throw Error("Invalid Work configuration amendment.");
-    const amendment = { id: randomUUID11(), workId: work.id, teamId: team.id, previousConfigVersion: previous.configVersion, configVersion: team.configVersion, requestId, kind, memberIds, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+    const amendment = { id: randomUUID12(), workId: work.id, teamId: team.id, previousConfigVersion: previous.configVersion, configVersion: team.configVersion, requestId, kind, memberIds, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
     putPrivate(`configuration-amendment:${amendment.id}`, amendment);
     putPrivate(`work-configuration:${work.id}`, amendment);
     for (const supervisorMemberId of new Set(team.members.filter((m) => team.members.some((child) => child.boss === m.id)).map((m) => m.id))) {
-      const delta = { id: randomUUID11(), workId: work.id, teamId: team.id, amendmentId: amendment.id, supervisorMemberId, configVersion: team.configVersion, memberIds: memberIds.filter((id2) => team.members.find((m) => m.id === id2).boss === supervisorMemberId), state: "queued", processed: "unconfirmed", createdAt: amendment.createdAt };
+      const delta = { id: randomUUID12(), workId: work.id, teamId: team.id, amendmentId: amendment.id, supervisorMemberId, configVersion: team.configVersion, memberIds: memberIds.filter((id2) => team.members.find((m) => m.id === id2).boss === supervisorMemberId), state: "queued", processed: "unconfirmed", createdAt: amendment.createdAt };
       putPrivate(`roster-delta:${delta.id}`, delta);
     }
     return amendment;
@@ -5660,7 +5918,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         }
         if (proposal && input.decision === "approve" && (readWork(proposal.contextId)?.run.id !== proposal.runId || readWork(proposal.contextId)?.run.consumerGeneration !== proposal.generation)) throw Error("Proposal supervisor changed; review a fresh proposal.");
         if (proposal && proposal.configVersion !== input.configVersion) throw Error("Proposal configuration changed; review a fresh proposal.");
-        const decide = (result2) => {
+        const decide2 = (result2) => {
           if (proposal) {
             proposal.status = input.decision === "reject" ? "rejected" : "approved";
             proposal.decision = { from: "user", choice: input.decision, requestId: input.requestId, recordedAt: (/* @__PURE__ */ new Date()).toISOString(), result: result2, ...sessionDecision ? { source: "supervisor-session", recordedBy: work.supervisorMemberId, sessionDecision } : {} };
@@ -5672,7 +5930,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         if (proposal && input.decision === "reject") {
           state.revision++;
           write(state);
-          return decide({ requestId: input.requestId, workId: work.id, proposalId: proposal.id, decision: "rejected" });
+          return decide2({ requestId: input.requestId, workId: work.id, proposalId: proposal.id, decision: "rejected" });
         }
         if (state.revision !== input.expectedRevision || team?.configVersion !== input.configVersion || effectiveTeamForWork(work.id)?.configVersion !== input.configVersion) throw Error("Team configuration changed; reload and review staffing again.");
         if (readPrivate(`next-goal:${team.id}`)) throw Error("Queued goal transition is reserved.");
@@ -5682,7 +5940,7 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         if (!["claude", "codex"].includes(source.agent) || !text8(source.model, 120) || !text8(source.effort, 120) || source.model === "default" && source.effort !== "default") throw Error("Choose valid agent, model and effort preferences.");
         if (team.members.some((m) => m.name.toLowerCase() === source.name.toLowerCase())) throw Error("Member name already exists.");
         if (team.scope.workspaceKey !== work.scope.workspaceKey || team.scope.executionHostId !== work.scope.executionHostId) throw Error("TeamWork execution scope changed.");
-        const member = { ...source, id: randomUUID11(), team: boss.team, role: boss.role === "ceo" ? "head" : boss.level === 1 && team.configuration.levels === 3 ? "lead" : "worker", level: boss.level + 1, roleVersion: 1, state: "unassigned", preferenceOverride: true };
+        const member = { ...source, id: randomUUID12(), team: boss.team, role: boss.role === "ceo" ? "head" : boss.level === 1 && team.configuration.levels === 3 ? "lead" : "worker", level: boss.level + 1, roleVersion: 1, state: "unassigned", preferenceOverride: true };
         team.members.push(member);
         team.configVersion++;
         archive(team);
@@ -5690,8 +5948,8 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
         state.revision++;
         validatePersistentState(state);
         write(state);
-        const result = { requestId: input.requestId, workId: work.id, from: "user", source: sessionDecision ? "supervisor-session" : proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" && !sessionDecision ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID11() } } : {} };
-        return decide(result);
+        const result = { requestId: input.requestId, workId: work.id, from: "user", source: sessionDecision ? "supervisor-session" : proposal ? "proposal" : "direct", recordedAt: (/* @__PURE__ */ new Date()).toISOString(), memberId: member.id, configVersion: team.configVersion, amendmentId: amendment.id, decision: "approved", ...team.configuration.launchMode === "all" && !sessionDecision ? { launch: { teamId: team.id, memberId: member.id, configVersion: team.configVersion, requestId: randomUUID12() } } : {} };
+        return decide2(result);
       });
     }
   };
@@ -5699,8 +5957,8 @@ function staffingStore({ db, readPrivate, putPrivate, readWork, listRunWorks, re
 }
 
 // src/local/lifecycle-store.mjs
-import { randomUUID as randomUUID12, createHash as createHash19 } from "node:crypto";
-var digest4 = (value) => createHash19("sha256").update(JSON.stringify(value)).digest("hex");
+import { randomUUID as randomUUID13, createHash as createHash21 } from "node:crypto";
+var digest4 = (value) => createHash21("sha256").update(JSON.stringify(value)).digest("hex");
 var fail2 = (message) => {
   throw Error(message);
 };
@@ -5809,8 +6067,8 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
           if (goal) {
             goal.status = "reserved";
             goal.previousWorkId = w.id;
-            goal.launchRequests = Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID12()]));
-            goal.workRequestId = randomUUID12();
+            goal.launchRequests = Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID13()]));
+            goal.workRequestId = randomUUID13();
             goal.configVersion = team.configVersion;
             goal.supervisorMemberId = team.members.find((m) => m.boss === null).id;
             goal.handoff = boundedHandoff(w.handoff);
@@ -5846,7 +6104,7 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
         if (Object.keys(team.launch?.members ?? {}).length) fail2("Existing preparation bindings must be resolved before a fresh queued goal.");
         const old = db.prepare("SELECT json FROM receipts WHERE id LIKE 'work:%' ORDER BY rowid DESC").all().map((r) => JSON.parse(r.json)).find((w) => w.teamId === teamId && w.status === "completed");
         if (!old) fail2("Submit the first total objective with its prepared supervisor before advancing later goals.");
-        Object.assign(goal, { status: "reserved", previousWorkId: old.id, handoff: boundedHandoff(old.handoff), launchRequests: Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID12()])), workRequestId: randomUUID12(), configVersion: team.configVersion, supervisorMemberId: team.members.find((m) => m.boss === null).id });
+        Object.assign(goal, { status: "reserved", previousWorkId: old.id, handoff: boundedHandoff(old.handoff), launchRequests: Object.fromEntries(initialMembers(team).map((m) => [m.id, randomUUID13()])), workRequestId: randomUUID13(), configVersion: team.configVersion, supervisorMemberId: team.members.find((m) => m.boss === null).id });
         putPrivate(`goal:${goal.id}`, goal);
         putPrivate(`next-goal:${teamId}`, { goalId: goal.id });
         state.revision++;
@@ -5863,26 +6121,27 @@ function lifecycleStore({ db, readPrivate, putPrivate, readWork, persistWork, li
 }
 
 // src/local/store.mjs
-import { mkdir as mkdir5, realpath as realpath11, stat as stat3, open as open6 } from "node:fs/promises";
-import { join as join14, isAbsolute as isAbsolute14, relative as relative10, sep as sep10 } from "node:path";
-import { randomUUID as randomUUID13, createHash as createHash20 } from "node:crypto";
+import { mkdir as mkdir6, realpath as realpath11, stat as stat5, open as open7 } from "node:fs/promises";
+import { join as join17, isAbsolute as isAbsolute14, relative as relative10, sep as sep11 } from "node:path";
+import { randomUUID as randomUUID14, createHash as createHash22 } from "node:crypto";
 var FORMAT = "orca-team-store";
-var canonical6 = (value) => Array.isArray(value) ? value.map(canonical6) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical6(value[key])])) : value;
-var fingerprint = (value) => createHash20("sha256").update(JSON.stringify(canonical6(value))).digest("hex");
+var canonical7 = (value) => Array.isArray(value) ? value.map(canonical7) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical7(value[key])])) : value;
+var fingerprint = (value) => createHash22("sha256").update(JSON.stringify(canonical7(value))).digest("hex");
 var publicScope = ({ workspaceId, ...scope }) => scope;
 var empty = () => ({ format: FORMAT, version: 2, revision: 0, teams: [], settings: { ...SETTINGS } });
 var fail3 = (message) => {
   throw new Error(message);
 };
-async function openTeamStore(options) {
+async function openTeamStore(options = {}) {
+  const where = options.projectRoot === void 0 ? "the verified Orca profile" : "the verified project folder";
   try {
     return await openStore(options);
   } catch (error) {
-    if (["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EROFS", "EEXIST", "ELOOP", "ENOSPC", "EMFILE", "ENFILE", "EIO"].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to the verified Orca profile; existing data has not been reset.`);
+    if (["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EROFS", "EEXIST", "ELOOP", "ENOSPC", "EMFILE", "ENFILE", "EIO"].includes(error.code)) throw new Error(`Team storage is unavailable (${error.code}). Check access to ${where}; existing data has not been reset.`);
     throw error;
   }
 }
-async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}) {
+async function openStore({ userData, projectRoot: projectRoot2, sqlite = () => import("node:sqlite") } = {}) {
   if (typeof userData !== "string" || !isAbsolute14(userData) || userData.includes("\0")) fail3("Verified Orca profile is required for team storage.");
   let DatabaseSync, backup;
   try {
@@ -5892,24 +6151,34 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
   }
   if (typeof DatabaseSync !== "function") fail3("This worker does not support node:sqlite. Team persistence is unavailable.");
   const profile = await realpath11(userData);
-  const directory = join14(profile, "plugins-data", "herman925.team-orchestrator");
+  if (projectRoot2 !== void 0 && (typeof projectRoot2 !== "string" || !isAbsolute14(projectRoot2) || projectRoot2.includes("\0"))) fail3("A verified project folder is required for a project-owned team store.");
+  const scopeRoot = projectRoot2 === void 0 ? profile : await realpath11(projectRoot2);
+  if (projectRoot2 !== void 0) {
+    const within = (a, b) => {
+      const rel = relative10(a, b);
+      return rel === "" || !rel.startsWith(`..${sep11}`) && rel !== ".." && !isAbsolute14(rel);
+    };
+    if (within(profile, scopeRoot) || within(scopeRoot, profile)) fail3("A project store and the Orca profile must be separate folders.");
+  }
+  const parent = projectRoot2 === void 0 ? join17(profile, "plugins-data") : join17(scopeRoot, ".orca");
+  const directory = projectRoot2 === void 0 ? join17(parent, "herman925.team-orchestrator") : join17(parent, "team-orchestrator");
   const inside = (path2) => {
-    const rel = relative10(profile, path2);
-    if (rel === ".." || rel.startsWith(`..${sep10}`) || isAbsolute14(rel)) fail3("Plugin data directory escapes the verified Orca profile.");
+    const rel = relative10(scopeRoot, path2);
+    if (rel === ".." || rel.startsWith(`..${sep11}`) || isAbsolute14(rel)) fail3("Team store directory escapes its verified root.");
   };
-  for (const target of [join14(profile, "plugins-data"), directory]) {
+  for (const target of [parent, directory]) {
     try {
       inside(await realpath11(target));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
-      await mkdir5(target, { mode: 448 });
+      await mkdir6(target, { mode: 448 });
       inside(await realpath11(target));
     }
   }
-  const path = join14(directory, "team-orchestrator.sqlite");
+  const path = join17(directory, projectRoot2 === void 0 ? "team-orchestrator.sqlite" : "team.sqlite");
   let exists = false;
   try {
-    await stat3(path);
+    await stat5(path);
     exists = true;
     inside(await realpath11(path));
   } catch (error) {
@@ -5924,10 +6193,11 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     throw Error(`Cannot open team storage: ${reason}. Existing data has not been reset. Recovery: preserve the database and WAL/SHM/journal sidecars; stop the plugin before making a recovery copy. Verified migration backups: ${backups.filter((b) => b.status === "verified-backup").length}. Do not restore an older backup automatically: later native effects require manual reconciliation.`);
   }
   if (!exists) {
-    const fresh = await open6(path, "wx", 384);
+    const fresh = await open7(path, "wx", 384);
     await fresh.close();
   }
   const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout = 5000");
   try {
     if (exists) {
       migrateStorage(db, prepared);
@@ -5955,7 +6225,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
     const readCurrentWork = (id2) => {
       const raw = readWork(id2), work = raw?.currentSupervisor ? { ...raw, ...raw.currentSupervisor, nativeSend: raw.currentSupervisor.nativeSend, error: raw.currentSupervisor.error, originalBinding: raw.binding } : raw;
       if (work?.parent) {
-        const parent = readWork(work.parent.workId), epoch = parent?.currentSupervisor, attempt = readPrivate(`dispatch:${work.parent.attemptId}`);
+        const parent2 = readWork(work.parent.workId), epoch = parent2?.currentSupervisor, attempt = readPrivate(`dispatch:${work.parent.attemptId}`);
         if (epoch && attempt?.reviewAuthority?.recoveryRequestId === epoch.recoveryRequestId && attempt.reviewAuthority.generation === epoch.run.consumerGeneration) work.parentAuthority = { generation: epoch.run.consumerGeneration, recoveryRequestId: epoch.recoveryRequestId };
       }
       if (work) delete work.runtimeControl;
@@ -6215,7 +6485,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           }
           const state = readSnapshot(), team = state.teams.find((row) => row.id === input.teamId);
           if (!team || state.revision !== input.expectedRevision) fail3("Team changed; reload before queueing a goal.");
-          const goal = { id: randomUUID13(), teamId: team.id, objective: input.objective, status: "queued", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const goal = { id: randomUUID14(), teamId: team.id, objective: input.objective, status: "queued", createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           putPrivate(`goal:${goal.id}`, goal);
           putPrivate(key, { id: goal.id, fingerprint: digest5 });
           state.revision++;
@@ -6258,7 +6528,7 @@ async function openStore({ userData, sqlite = () => import("node:sqlite") } = {}
           const root = readCurrentWork(parentWork.teamWorkId ?? parentWork.id);
           const team = this.effectiveTeamForWork?.(root.id) ?? JSON.parse(db.prepare("SELECT json FROM team_versions WHERE team_id=? AND version=?").get(root.teamId, root.configVersion).json), member = team.members.find((m) => m.id === attempt?.memberId);
           if (root.status === "completed" || parentWork.run.state !== "verified" || attempt?.status !== "running" || attempt.admission !== "committed" || !attempt.dispatchId || !attempt.binding || attempt.supervisorMemberId !== parentWork.supervisorMemberId || !team.members.some((m) => m.boss === member?.id) || listDispatches(parentWorkId).filter((a) => a.taskKey === attempt.taskKey).at(-1)?.id !== attempt.id) fail3("A current genuine manager parent assignment is required.");
-          const id2 = randomUUID13(), protocolToken = randomUUID13(), b = attempt.binding;
+          const id2 = randomUUID14(), protocolToken = randomUUID14(), b = attempt.binding;
           const binding = { status: "created", requestId: attempt.id, sourceAttemptId: attempt.id, memberId: member.id, teamId: root.teamId, kind: b.kind, handle: b.handle, ...b.sessionId ? { sessionId: b.liveSessionId ?? b.sessionId } : {}, paneKey: b.paneKey, runtimeId: b.runtimeId, scope: root.scope, nativeRequest: { agent: member.agent, sessionOptions: { model: member.model, effort: member.effort } } };
           const work = { format: "team-work-v1", id: id2, teamWorkId: root.id, teamId: root.teamId, requestId: attempt.id, objective: attempt.instruction, configVersion: team.configVersion, roleVersion: attempt.roleVersion, supervisorMemberId: member.id, scope: root.scope, binding, protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
 ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), version: 1, status: "preparing", input: { state: "not_sent" }, processing: { state: "unknown" }, run: { state: "unverified" }, parent: { workId: parentWork.id, runId: attempt.runId, taskId: attempt.nativeTaskId, dispatchId: attempt.dispatchId, attemptId: attempt.id, generation: attempt.generation } };
@@ -6276,7 +6546,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
             if (prior.generation !== work.run.consumerGeneration) fail3("Dispatch protocol belongs to an older Run generation.");
             return prior;
           }
-          const protocol = { format: "team-dispatch-protocol-v1", workId, generation: work.run.consumerGeneration, token: randomUUID13(), state: "not_sent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const protocol = { format: "team-dispatch-protocol-v1", workId, generation: work.run.consumerGeneration, token: randomUUID14(), state: "not_sent", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           putPrivate(`dispatch-protocol:${workId}`, protocol);
           return protocol;
         });
@@ -6304,8 +6574,8 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           const work = readCurrentWork(workId), protocol = readDispatchProtocol(workId);
           if (work?.status === "completed" || work?.run.state !== "verified" || protocol?.state !== "accepted" || protocol.generation !== work.run.consumerGeneration || intent.spec.token !== protocol.token) fail3("Current supervisor admission authority is required.");
           if (work.parent) {
-            const parent = readWork(work.parent.workId), a = listDispatches(parent.id).find((a2) => a2.id === work.parent.attemptId);
-            if (readWork(work.teamWorkId)?.status === "completed" || a?.status !== "running" || a.evidenceId || a.dispatchId !== work.parent.dispatchId || listDispatches(parent.id).filter((r) => r.taskKey === a.taskKey).at(-1)?.id !== a.id) fail3("Parent attempt is stale or settled; child admission is fenced.");
+            const parent2 = readWork(work.parent.workId), a = listDispatches(parent2.id).find((a2) => a2.id === work.parent.attemptId);
+            if (readWork(work.teamWorkId)?.status === "completed" || a?.status !== "running" || a.evidenceId || a.dispatchId !== work.parent.dispatchId || listDispatches(parent2.id).filter((r) => r.taskKey === a.taskKey).at(-1)?.id !== a.id) fail3("Parent attempt is stale or settled; child admission is fenced.");
           }
           const key = `dispatch-intent:${workId}:${intent.spec.taskKey}${intent.spec.previousAttemptId ? `:${intent.spec.previousAttemptId}` : ""}`, digest5 = fingerprint({ spec: intent.spec, nativeTaskId: intent.nativeTaskId });
           const prior = readPrivate(key);
@@ -6336,7 +6606,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           if (reservation && !recoveredMember && (!reuse || retained?.id !== reuse.attemptId || !["accepted", "rework"].includes(retained.status) || JSON.stringify(retained.binding) !== JSON.stringify(reuse.binding) || startParams.terminal !== reuse.terminal)) fail3("This member already has a reserved or active binding. Reconcile it before another dispatch.");
           if (reuse && reuse.kind !== "prepared" && !reservation) fail3("Retained member reservation changed.");
           const instanceGeneration = reuse?.instanceGeneration ?? retained?.instanceGeneration ?? (readPrivate(`binding-generation:${member.id}`)?.generation ?? 0) + 1;
-          const id2 = randomUUID13(), attempt = { format: "team-dispatch-v1", id: id2, attemptId: id2, instanceGeneration, workId, teamWorkId: work.teamWorkId ?? work.id, runId: work.run.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, memberId: member.id, memberName: member.name, nativeTaskId: intent.nativeTaskId, taskKey: intent.spec.taskKey, taskSpec: intent.taskSpec, dependencies, writeScope, reviewToken: randomUUID13(), ...previous ? { previousAttemptId: previous.id } : {}, configVersion: team.configVersion, roleVersion: member.roleVersion, role: intent.spec.role, instruction: intent.spec.instruction, token: protocol.token, generation: protocol.generation, scope: work.scope, startParams, ...reuse ? { reuse } : {}, createRequestId: intent.requestId, createPayloadHash: intent.payloadHash, admission: intent.unadmitted ? "unadmitted" : "committed", status: intent.unadmitted ? "unknown" : "admitted", permit: { state: intent.unadmitted ? "unknown" : "not_sent" }, ...intent.unadmitted ? { detail: "Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent." } : {}, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+          const id2 = randomUUID14(), attempt = { format: "team-dispatch-v1", id: id2, attemptId: id2, instanceGeneration, workId, teamWorkId: work.teamWorkId ?? work.id, runId: work.run.id, teamId: work.teamId, supervisorMemberId: work.supervisorMemberId, memberId: member.id, memberName: member.name, nativeTaskId: intent.nativeTaskId, taskKey: intent.spec.taskKey, taskSpec: intent.taskSpec, dependencies, writeScope, reviewToken: randomUUID14(), ...previous ? { previousAttemptId: previous.id } : {}, configVersion: team.configVersion, roleVersion: member.roleVersion, role: intent.spec.role, instruction: intent.spec.instruction, token: protocol.token, generation: protocol.generation, scope: work.scope, startParams, ...reuse ? { reuse } : {}, createRequestId: intent.requestId, createPayloadHash: intent.payloadHash, admission: intent.unadmitted ? "unadmitted" : "committed", status: intent.unadmitted ? "unknown" : "admitted", permit: { state: intent.unadmitted ? "unknown" : "not_sent" }, ...intent.unadmitted ? { detail: "Native work started before plugin admission. Reserved for reconciliation; no permit or replacement was sent." } : {}, version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
           validateDispatch(attempt);
           db.prepare("DELETE FROM receipts WHERE id=?").run(`dispatch-queue:${workId}:${intent.nativeTaskId}`);
           putPrivate(`dispatch:${id2}`, attempt);
@@ -6431,7 +6701,7 @@ ${attempt.instruction}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), 
           if (supervisor.agent !== binding.nativeRequest.agent || supervisor.model !== (binding.nativeRequest.sessionOptions?.model ?? "default") || supervisor.effort !== (binding.nativeRequest.sessionOptions?.effort ?? "default")) fail3("The prepared supervisor preferences differ from the saved preferences. Restore its original requested preferences or replace the session through a supported lifecycle action first.");
           if (db.prepare("SELECT id FROM receipts WHERE id=?").get(`session-work:${requestId}`)) fail3("This preparation session has already accepted a total objective.");
           const scope = JSON.parse(db.prepare("SELECT json FROM scopes WHERE team_id=?").get(team.id).json);
-          const id2 = randomUUID13(), protocolToken = randomUUID13();
+          const id2 = randomUUID14(), protocolToken = randomUUID14();
           const work = { format: "team-work-v1", ...sessionMode ? { mode: "supervisor-session" } : {}, id: id2, teamId: team.id, requestId: input.requestId, objective: input.objective, configVersion: team.configVersion, roleVersion: supervisor.roleVersion, supervisorMemberId: supervisor.id, scope, binding, recipientBindings: Object.values(team.launch?.members ?? {}).map((r) => readOperation(r.requestId)).filter(Boolean), protocolToken, nativeObjective: `TeamWork ${id2} ${protocolToken}
 ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), version: 1, status: "preparing", input: { state: "not_sent" }, processing: { state: "unknown" }, run: { state: "unverified" } };
           if (nextGoal) {
@@ -6549,9 +6819,9 @@ ${input.objective}`, createdAt: (/* @__PURE__ */ new Date()).toISOString(), vers
         return mutate("createTeam", input, (next) => {
           if (!scope?.workspaceId || !scope.executionHostId || !["git", "folder"].includes(scope.kind)) fail3("A verified current project and execution host are required before saving.");
           const team = planTeam(input.form);
-          const ids = new Map(team.members.map((member) => [member.id, randomUUID13()]));
+          const ids = new Map(team.members.map((member) => [member.id, randomUUID14()]));
           if (scope.projectPath) team.configuration.projectRoleFiles = 1;
-          team.id = randomUUID13();
+          team.id = randomUUID14();
           team.createdAt = (/* @__PURE__ */ new Date()).toISOString();
           team.configVersion = 1;
           team.scope = publicScope(scope);
@@ -6659,16 +6929,12 @@ function activate(orca) {
   let ready;
   let initialising = false;
   let executorPromise;
-  let storePromise;
   let storeProfile;
   const executorFor = async (report) => {
     if (storeProfile && storeProfile !== report.cliPaths.userData) throw new Error("Orca profile changed; restart the plugin worker before continuing.");
     storeProfile = report.cliPaths.userData;
-    storePromise ??= openTeamStore({ userData: storeProfile }).catch((error) => {
-      storePromise = null;
-      throw error;
-    });
-    executorPromise ??= Promise.all([locateCli(void 0, void 0, report.cliPaths), storePromise]).then(([command, store]) => createExecutor(orca.host, createCliRunner(command), { store, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid, claudeContextOptions: { electron: true, helperPath: import.meta.url.startsWith("file:") ? fileURLToPath2(new URL("./claude-statusline.cjs", import.meta.url)) : void 0 } })).catch((error) => {
+    const openStoreFor = (projectPath) => openTeamStore({ userData: storeProfile, projectRoot: projectPath });
+    executorPromise ??= locateCli(void 0, void 0, report.cliPaths).then((command) => createExecutor(orca.host, createCliRunner(command), { openStore: openStoreFor, internalKey, userData: storeProfile, parentPid: report.parentPid ?? process.ppid, claudeContextOptions: { electron: true, helperPath: import.meta.url.startsWith("file:") ? fileURLToPath3(new URL("./claude-statusline.cjs", import.meta.url)) : void 0 } })).catch((error) => {
       executorPromise = null;
       throw error;
     });
@@ -6680,7 +6946,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.23", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.24", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;
