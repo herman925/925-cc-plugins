@@ -82,6 +82,37 @@ test('a crash (no process holds the session): the member is marked closed, reope
   expect(queued(files)).toEqual([])
 })
 
+test('startHere on a member proved dead resumes its saved session, and the reply says so', async ($, on) => {
+  const files = world(on, [], [], answers({}), { env: { COMPUTERNAME: PC }, registry: REG })
+  engine(on, ID1)
+  await adopt($, withIds(HUALONG))
+  // the team setting says fresh: the startHere rule decides here, not the setting
+  files.set(`${TEAM}/settings.json`, JSON.stringify({ reopen: 'fresh' }))
+  beat(files, 10 * MIN)
+  const r: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'Hualong Workers', message: 'build it', startHere: true } as any)
+  const create = creates(files)
+  expect(create.length).toBe(1)
+  expect(String(create[0]![create[0]!.indexOf('--command') + 1])).toContain(`--resume ${ID2}`)
+  expect(String(create[0]![create[0]!.indexOf('--command') + 1])).not.toContain('--session-id')
+  expect(String(r.result)).toContain('resumed')
+})
+
+// slice 3, #5 (RED): the roster has no session id, but the status file holds the one that was proved dead: resume that one
+test('startHere resumes a member proved dead by its status-file session id when the roster has none', async ($, on) => {
+  const files = world(on, [], [], answers({}), { env: { COMPUTERNAME: PC }, registry: REG })
+  engine(on, ID1)
+  await adopt($, withIds(HUALONG).map(r => (r.name === 'Hualong Workers' ? { ...r, sessionId: '' } : r)))
+  files.set(`${TEAM}/settings.json`, JSON.stringify({ reopen: 'fresh' }))
+  beat(files, 10 * MIN)
+  const r: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to: 'Hualong Workers', message: 'build it', startHere: true } as any)
+  const create = creates(files)
+  expect(create.length).toBe(1)
+  const cmd = String(create[0]![create[0]!.indexOf('--command') + 1])
+  expect(cmd).toContain(`--resume ${ID2}`)
+  expect(cmd).not.toContain('--session-id ')
+  expect(String(r.result)).toContain('resumed')
+})
+
 test('a member that answers within 90 s is sent to at once: no process lookup', async ($, on) => {
   const files = world(on, [], [], answers({}), { env: { COMPUTERNAME: PC }, registry: REG })
   const seen = engine(on, ID1)

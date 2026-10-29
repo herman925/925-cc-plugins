@@ -66,18 +66,19 @@ const setup = async ($: any, on: any, o: { running?: Record<number, string>; lat
   return { files, at: () => at, sends, creates, message, workers, setWorkers }
 }
 
-test('startHere on a member of this PC whose session has stopped starts a fresh copy and sends to it', async ($, on) => {
+test('startHere on a member of this PC whose session has stopped resumes its saved session and says so, then sends to it', async ($, on) => {
   const { files, at, sends, creates, message } = await setup($, on)
   // its last status was written 10 minutes ago, by the start whose session then stopped
   files.set(`${at()}${STATUS}/Hualong_Workers.json`, JSON.stringify({ name: 'Hualong Workers', sessionId: ID2, state: 'idle', heartbeat: Date.now() - 10 * 60_000 }))
   const r = await message({ startHere: true })
   expect(creates().length).toBe(1)
   const cmd = String(creates()[0]![creates()[0]!.indexOf('--command') + 1])
-  expect(cmd).toContain('--session-id ')
-  expect(cmd).not.toContain(ID2)
+  expect(cmd).toContain(`--resume ${ID2}`)
+  expect(cmd).not.toContain('--session-id ')
+  expect(String(r.result)).toContain('resumed')
   expect(String(r.result)).toContain('Sent to Hualong Workers.')
   expect(sends.length).toBe(1)
-  expect(JSON.stringify(sends[0].to)).not.toContain(ID2)
+  expect(JSON.stringify(sends[0].to)).toContain(ID2)
 })
 
 test('a running member the roster still calls "not started", whose tab Orca does not find, is sent to and never started again', async ($, on) => {

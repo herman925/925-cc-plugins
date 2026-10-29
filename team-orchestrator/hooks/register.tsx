@@ -1726,10 +1726,14 @@ async function deliver($: any, target: Member, message: string, startHere = fals
   if (isAway(target, here) || fresh) {
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
-    await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
+    // the saved session: the status file's id when present (the latest, written after a /clear), else the roster's
+    const saved = fresh ? (await readStatus($, target.name))?.sessionId || target.sessionId : ''
+    const resumes = fresh && !!saved
+    await $.ui.toast(`Starting ${resumes ? 'a resumed' : 'a fresh'} copy of ${target.name} on this PC…`)
     // a member from another PC: its Orca workspace id is that PC's, so the copy starts in this session's workspace
-    const ok = await reopen($, fresh ? target : { ...target, worktree: '' }, { ...t, reopen: 'fresh' })
-    if (!ok) return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
+    const ok = await reopen($, fresh ? { ...target, sessionId: resumes ? saved : target.sessionId } : { ...target, worktree: '' }, { ...t, reopen: resumes ? 'resume' : 'fresh' })
+    if (!ok) return resumes ? `${target.name} could not be resumed here: ${NOT_STARTED} Ask the person to open its tab.` : `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
+    if (fresh) said = resumes ? `${target.name} was resumed with its saved session. ` : `${target.name} had no saved session, so a fresh one was started. `
   } else {
     const st = await readStatus($, target.name)
     let closed = isClosed(target, st)

@@ -122,7 +122,7 @@ const ID1 = '11111111-1111-4111-8111-111111111111'
 const ID2 = '22222222-2222-4222-8222-222222222222'
 // worktreeId and startSessions are used only by the close and eviction regressions; without them this world is unchanged
 const world = (on: any, tabs: Tab[], trs: Tr[], worktreeId = '', startSessions = false, callerHandle = '') => {
-  const files = Object.assign(new Map<string, string>(), { calls: [] as string[][] })
+  const files = Object.assign(new Map<string, string>(), { calls: [] as string[][], writes: [] as string[] })
   const p = keyOf
   const dir = 'C:/home/.claude/projects/proj'
   let malformedListAfterClose = false
@@ -136,7 +136,7 @@ const world = (on: any, tabs: Tab[], trs: Tr[], worktreeId = '', startSessions =
   on('env.get', async (_$: any, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:/home' : e.name === 'OS' ? 'Windows_NT' : e.name === 'ORCA_TERMINAL_HANDLE' && callerHandle ? callerHandle : undefined }) as any)
   on('fs.exists', async (_$: any, e: any) => ({ value: files.has(p(e.path)) }) as any)
   on('fs.read', async (_$: any, e: any) => ({ value: files.get(p(e.path)) }) as any)
-  on('fs.write', async (_$: any, e: any) => (files.set(p(e.path), e.text), { value: undefined }) as any)
+  on('fs.write', async (_$: any, e: any) => (files.writes.push(p(e.path)), files.set(p(e.path), e.text), { value: undefined }) as any)
   on('fs.list', async (_$: any, e: any) => {
     const at = p(e.path)
     if (at === 'C:/home/.claude/projects') return { value: [{ name: 'proj', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] } as any
@@ -727,6 +727,7 @@ test('team_adopt refuses a list that would remove existing members of the team, 
   files.set('C:/home/.claude/team-orchestrator/C--proj/status/W1.json', status)
   // every file the mod keeps, before and after: a refused call must change none of them
   const before = JSON.stringify([...files])
+  const writesBefore = files.writes.length
   const out: any = await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' }])
   expect(JSON.stringify(out)).toContain('Refused')
   expect(JSON.stringify(out)).toContain('W1')
@@ -735,6 +736,68 @@ test('team_adopt refuses a list that would remove existing members of the team, 
   expect(files.get('C:/proj/.claude/team-orchestrator/roster.json')).toBe(roster)
   expect(files.get('C:/proj/.claude/team-orchestrator/roles/W1.md')).toBe('role W1')
   expect(files.get('C:/home/.claude/team-orchestrator/C--proj/status/W1.json')).toBe(status)
+  // write-attempt counter: the refused call attempted no file write at all
+  expect(files.writes.length - writesBefore).toBe(0)
+  expect(JSON.stringify([...files])).toBe(before)
+})
+
+// slice 2 follow-up: a named removal removes only the named member
+test('team_adopt with a named remove removes only the named member', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj' },
+    { handle: 'term_w2', title: 'W2', worktreePath: 'C:/proj' },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj')
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([
+    { team: 'Hualong', name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head', sessionId: '', state: 'idle', worktree: 'repo::C:/proj' },
+    { team: 'Hualong', name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1', sessionId: ID1, state: 'idle', worktree: 'repo::C:/proj' },
+    { team: 'Hualong', name: 'W2', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w2', sessionId: ID2, state: 'idle', worktree: 'repo::C:/proj' },
+  ]))
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Hualong', members: [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+  ], remove: ['W2'] } as any)
+  expect(JSON.stringify(out)).toContain('Roster now shows 2 adopted sessions.')
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Hualong CEO', 'W1'])
+})
+
+// slice 2 follow-up: a named member that is not on the team is ignored: nothing is removed or created for it
+test('team_adopt ignores a named remove for a member that does not exist', async ($, on) => {
+  const tabs: Tab[] = [
+    { handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' },
+    { handle: 'term_w1', title: 'W1', worktreePath: 'C:/proj' },
+  ]
+  const files = world(on, tabs, [], 'repo::C:/proj')
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([
+    { team: 'Hualong', name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head', sessionId: '', state: 'idle', worktree: 'repo::C:/proj' },
+    { team: 'Hualong', name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1', sessionId: ID1, state: 'idle', worktree: 'repo::C:/proj' },
+  ]))
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Hualong', members: [
+    { name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head' },
+    { name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1' },
+  ], remove: ['Ghost'] } as any)
+  expect(JSON.stringify(out)).toContain('Roster now shows 2 adopted sessions.')
+  expect(saved(files).map((m: any) => m.name)).toEqual(['Hualong CEO', 'W1'])
+})
+
+// guard, not RED: the settleClaim refusal already exists in the code; this test is added after it and passes on it
+test('member_claim on an unreadable claims.json returns the refusal and writes nothing (guard, not RED)', async ($, on) => {
+  const tabs: Tab[] = [{ handle: 'term_head', title: 'Hualong CEO', worktreePath: 'C:/proj' }]
+  const files = world(on, tabs, [], 'repo::C:/proj', true, 'term_head')
+  on('ui.toast', async () => ({ value: undefined }) as any)
+  on('session.id', async () => ({ value: ID1 }) as any)
+  files.set('C:/home/.claude/sessions/101.json', JSON.stringify({ pid: 101, sessionId: ID1, cwd: 'C:/proj', name: 'Hualong CEO' }))
+  files.set('C:/proj/.claude/team-orchestrator/roster.json', JSON.stringify([
+    { team: 'Hualong', name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_head', sessionId: ID1, state: 'idle', worktree: 'repo::C:/proj' },
+    { team: 'Hualong', name: 'W1', role: 'worker', level: 2, boss: 'Hualong CEO', handle: 'term_w1', sessionId: ID2, state: 'idle', worktree: 'repo::C:/proj' },
+  ]))
+  files.set('C:/proj/.claude/team-orchestrator/claims.json', 'not json [')
+  const before = JSON.stringify([...files])
+  const writesBefore = files.writes.length
+  const out: any = await $.tool.call({ tool: 'mcp__team-orchestrator__member_claim', sessionId: '44444444-4444-4444-8444-444444444444', decision: 'is', member: 'W1' } as any)
+  expect(JSON.stringify(out)).toContain('claims.json could not be read')
+  expect(files.writes.length - writesBefore).toBe(0)
   expect(JSON.stringify([...files])).toBe(before)
 })
 
