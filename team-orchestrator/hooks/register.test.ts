@@ -907,6 +907,22 @@ test('a nested checkout cannot replace its enclosing registered project root', a
   expect(files.calls.slice(callsBefore).some(a => a[1] === 'terminal' && a[2] === 'create')).toBe(false)
 })
 
+test('Windows native home accepts backslash session root and forward-slash Orca path', async ($, on) => {
+  const files = world(on, [{ handle: 'term_target', title: 'Native Head', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }], [], 'repo::C:/actual', false, { root: 'C:\\actual', cwd: 'C:\\actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual' })
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Native-Team', members: [{ name: 'Native Head', role: 'head', level: 1, boss: 'user', handle: 'term_target' }] } as any)
+  expect(result?.deny).toBeUndefined()
+  expect(result?.result).toContain('Roster now shows 1 adopted sessions.')
+  expect(files.writes).toContain('C:/actual/.claude/team-orchestrator/roster.json')
+})
+
+test('Windows session working folder accepts equivalent separator forms', async ($, on) => {
+  const files = world(on, [{ handle: 'term_target', title: 'Native Head', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }], [], 'repo::C:/actual', false, { root: 'C:\\actual', cwd: 'C:/actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual' })
+  const result: any = await $.tool.call({ tool: 'mcp__team-orchestrator__team_adopt', team: 'Native-Team', members: [{ name: 'Native Head', role: 'head', level: 1, boss: 'user', handle: 'term_target' }] } as any)
+  expect(result?.deny).toBeUndefined()
+  expect(result?.result).toContain('Roster now shows 1 adopted sessions.')
+  expect(files.writes).toContain('C:/actual/.claude/team-orchestrator/roster.json')
+})
+
 test('native root matching is case-sensitive', async ($, on) => {
   const files = world(on, [{ handle: 'term_operator', title: 'Operator', worktreePath: 'C:/actual', worktreeId: 'repo::C:/actual', executionHostId: 'host-1' }], [], 'repo::C:/actual', false, { root: 'C:/Actual', terminalHandle: 'term_operator', worktreePath: 'C:/actual' })
   const before = [...files]

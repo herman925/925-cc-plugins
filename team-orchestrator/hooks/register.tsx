@@ -339,6 +339,8 @@ type ProjectScope =
 type ContextKind = 'worktree' | 'folder' | 'unknown'
 const absolutePath = (path: string) => /^[a-z]:[\\/]/i.test(path) || path.startsWith('/') || path.startsWith('\\\\')
 const pathHasParent = (path: string) => path.split(/^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\') ? /[\\/]/ : /\//).includes('..')
+// Only drive-letter Windows paths treat backslash as a separator; POSIX backslashes stay literal. Preserve case.
+const sameNativePath = (a: string, b: string) => /^[a-z]:[\\/]/i.test(a) && /^[a-z]:[\\/]/i.test(b) ? a.replace(/\\/g, '/') === b.replace(/\\/g, '/') : a === b
 // Orca names a folder context `folder:<path>` and every other workspace by a bare id. The selector must follow that
 // prefix: `id:` in front of a folder selector names nothing.
 const selectorOf = (contextId: string) => (contextId.startsWith('folder:') ? contextId : `id:${contextId}`)
@@ -386,7 +388,7 @@ async function readOnlyProjectScope($: any): Promise<ProjectScope> {
       typeof path !== 'string' || !path || path !== path.trim() || typeof contextId !== 'string' || !contextId || contextId !== contextId.trim() ||
       typeof executionHostId !== 'string' || !executionHostId || executionHostId !== executionHostId.trim() || (worktreeId && contextId !== worktreeId))
       return unknown('native caller binding is incomplete or contradictory')
-    if (!absolutePath(path) || pathHasParent(path) || path !== root) return unknown('session project root conflicts with its native home')
+    if (!absolutePath(path) || pathHasParent(path) || !sameNativePath(path, root)) return unknown('session project root conflicts with its native home')
     // The native home names a folder; the session's own working folder says the session runs there. Without that
     // second fact the folder is only a name, and the selector it implies stays unproven: the plan forbids guessing
     // a destination from a title, a cwd or the active workspace.
@@ -397,7 +399,7 @@ async function readOnlyProjectScope($: any): Promise<ProjectScope> {
     } catch {
       cwd = ''
     }
-    if (cwd !== '' && cwd !== root) return unknown('session working folder conflicts with its native home')
+    if (cwd !== '' && (!absolutePath(cwd) || pathHasParent(cwd) || !sameNativePath(cwd, root))) return unknown('session working folder conflicts with its native home')
     const kind = await proveContextKind($, contextId)
     return { ok: true, root, sessionId, handle, contextKind: cwd === '' ? 'unknown' : kind, contextId, executionHostId, originalPath: path }
   } catch {
