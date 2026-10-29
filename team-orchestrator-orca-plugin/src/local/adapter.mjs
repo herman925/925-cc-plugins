@@ -1,6 +1,7 @@
 import {PUBLIC_OPERATIONS,BROKERED_PUBLIC_OPERATIONS} from '../public-operations.mjs';
 import {createNativeRpc,withNativeRuntime} from './native-runtime.mjs';
 import { mediateOperation } from './native-broker.mjs';
+import {ensureDispatchDepth,nativeDispatchDepth} from './dispatch-depth.mjs';
 const SLOT = Symbol.for('herman925.team-orchestrator.adapter');
 const KEY = 'herman925.team-orchestrator';
 const CHANNEL = 'workspace.readContext';
@@ -91,7 +92,22 @@ export async function installAdapter(electron, { version, identity, internalKey 
           }
           await authority();return {ok:true,value:await command('load',{})};
         }
-        return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority });
+        const ensureDepth=async plan=>{
+          const get=handlers.get('settings:get'),set=handlers.get('settings:set');
+          const currentSettings=()=>{current();if(handlers.get('settings:get')!==get||handlers.get('settings:set')!==set)throw Error('Native settings authority changed.');};
+          const result=await ensureDispatchDepth(plan,{authority,getSettings:typeof get==='function'?()=>{currentSettings();return get(event);}:undefined,setSettings:typeof set==='function'?params=>{currentSettings();return set(event,params);}:undefined});
+          if(result.adjusted){
+            await authority();currentSettings();
+            const observed=nativeDispatchDepth(get(event));
+            if(observed<plan.requiredDepth)throw Error('Native dispatch depth changed before launch.');
+            // Native settings:set excludes its origin renderer from broadcasts;
+            // this plugin, unlike the native Settings form, cannot update its store.
+            event.sender.send?.('settings:changed',{nestedWorkerMaxDepth:observed});
+            result.observedDepth=observed;
+          }
+          return result;
+        };
+        return await mediateOperation({ op: message.args.op, input: message.args.params, invoke, rpc, authority, ensureDepth });
       }
       // CLI "active" means cwd; capture desktop selection without exposing its paths to HTML.
       let workspaceId;

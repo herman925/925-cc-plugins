@@ -10,7 +10,7 @@ import { openTeamStore } from '../src/local/store.mjs';
 import { nativeLaunchFingerprint } from '../src/local/native-launch-ledger.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_FORM } from '../src/team.mjs';
-async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand', form = {} } = {}) {
+async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on-demand', form = {}, depth = 1 } = {}) {
  const profile = await mkdtemp(join(tmpdir(), 'native-launch-'));
  let store = await openTeamStore({ userData: profile });
  const extraDatabases = [];
@@ -21,7 +21,8 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, ...form, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
  const team = state.teams[0], member = team.members.find(row => !row.boss);
  const input = { teamId: team.id, memberId: member.id, requestId: 'launch-root', configVersion: team.configVersion };
- const sender = { id: 1, mainFrame: {}, isDestroyed: () => false }, event = { sender, senderFrame: sender.mainFrame };
+ const notifications=[];
+ const sender = { id: 1, mainFrame: {}, isDestroyed: () => false,send:(channel,value)=>notifications.push({channel,value}) }, event = { sender, senderFrame: sender.mainFrame };
  const recordNative = (request, result) => {
   const db = new DatabaseSync(join(profile, 'agent-session-journal.db'));
   db.exec('PRAGMA user_version=4; CREATE TABLE IF NOT EXISTS agent_session_operations (operation_key TEXT PRIMARY KEY,row_json TEXT NOT NULL)');
@@ -29,8 +30,10 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
   db.prepare('INSERT OR REPLACE INTO agent_session_operations VALUES (?,?)').run(`trusted-local:desktop\0${request.operationId}`, JSON.stringify(row)); db.close();
  };
  let effect = async params => ({ worktreeId: 'folder:/saved', outcome: kind === 'structured' ? { kind, handle: 'session-handle', sessionId: 'codex:fixture-session', tabId: 'chat-tab' } : { kind, handle: 'native-handle', paneKey: 'native-tab:native-leaf' }, receipt: { mode: kind, preferred: kind, reason: 'user_default', detail: 'Orca chose saved mode' }, prompt: { delivery: 'submit', outcome: kind === 'structured' ? 'journaled' : 'handed-to-terminal', ...(kind === 'structured' ? { messageId: 'native-message' } : {}) } });
- let enabled = true, gates = 0, budget = Infinity;
+ let enabled = true, gates = 0, budget = Infinity;let depthSettings={nestedWorkerMaxDepth:depth,keepSetting:'unchanged'};
  const handlers = new Map([
+  ['settings:get', actual=>{assert.equal(actual,event);calls.push({method:'settings:get'});return {...depthSettings};}],
+  ['settings:set', async(actual,params)=>{assert.equal(actual,event);assert.deepEqual(params,{nestedWorkerMaxDepth:2});calls.push({method:'settings:set',params});depthSettings={...depthSettings,...params};return {...depthSettings};}],
   ['plugins:readPanelEntry', async () => ({ sessionToken: 'token' })],
   ['plugins:panelAction', async () => ++gates > budget ? { ok: false, code: 'rate_limited' } : enabled ? { ok: true } : { ok: false, code: 'consent_required' }],
   ['plugins:invokeCommand', async (actual, args) => { assert.equal(actual, event); return executor.execute(args.args); }],
@@ -59,8 +62,42 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  await installAdapter({ ipcMain: { _invokeHandlers: handlers, removeHandler: name => handlers.delete(name), handle: (name, fn) => handlers.set(name, fn) } }, { identity: profile, internalKey, version: 'test' });
  t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); executor.stopWork(); for(const db of extraDatabases)if(db.isOpen)db.close(); store.close(); await rmTemp(profile); });
  const send = (op, params = input) => handlers.get('plugins:panelAction')(event, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'nonce', commandId: 'team.control', args: { op, params } } } });
- return { closeWithFixture: db => extraDatabases.push(db), send, calls, cliCalls, input, team, profile, handlers, recordNative, budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
+ return { closeWithFixture: db => extraDatabases.push(db), send, calls, notifications, cliCalls, input, team, profile, handlers, recordNative, settings:()=>({...depthSettings}), budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
 }
+test('three-level launch raises native depth before reserving or opening the first member',async t=>{
+ const f=await fixture(t,{launchMode:'all',form:{levels:3,leadCount:2,workersPerLead:4}});
+ const original=f.handlers.get('settings:set');f.handlers.set('settings:set',(event,params)=>{assert.equal(f.store().listOperations().length,0);return original(event,params);});
+ const result=await f.send('launchSupervisor');assert.equal(result.ok,true,result.error);assert.equal(f.team.members.length,11);
+ assert.equal(f.settings().nestedWorkerMaxDepth,2);assert.equal(f.settings().keepSetting,'unchanged');
+ assert.deepEqual(f.notifications,[{channel:'settings:changed',value:{nestedWorkerMaxDepth:2}}]);
+ assert.ok(f.calls.findIndex(c=>c.method==='settings:set')<f.calls.findIndex(c=>c.method==='agent.launchReplay'));
+ assert.equal(f.calls.filter(c=>c.method==='settings:set').length,1);
+ const repeated=await f.send('launchSupervisor');assert.equal(repeated.ok,true);assert.equal(f.calls.filter(c=>c.method==='agent.launchReplay').length,1);
+ await f.send('recoverLaunch');assert.equal(f.calls.filter(c=>c.method==='settings:set').length,1);
+});
+test('a higher native depth is preserved when preparing a three-level roster',async t=>{
+ const f=await fixture(t,{depth:5,form:{levels:3,leadCount:2,workersPerLead:1}});
+ const result=await f.send('launchSupervisor');assert.equal(result.ok,true,result.error);assert.equal(f.settings().nestedWorkerMaxDepth,5);assert.equal(f.calls.some(c=>c.method==='settings:set'),false);
+});
+test('missing or unconfirmed native depth prevents reservations and provider launches',async t=>{
+ for(const mode of ['missing','unconfirmed','denied']){
+  const f=await fixture(t,{form:{levels:3,leadCount:2,workersPerLead:1}});
+  if(mode==='missing')f.handlers.delete('settings:set');else if(mode==='denied')f.handlers.set('settings:set',()=>{throw Error('Native settings refused');});else f.handlers.set('settings:set',()=>({nestedWorkerMaxDepth:1}));
+  const result=await f.send('launchSupervisor');assert.equal(result.ok,false);assert.match(result.error,/dispatch depth/);assert.equal(result.code,'dispatch_depth_unavailable');
+  assert.equal(f.store().listOperations().length,0);assert.equal(f.calls.some(c=>c.method==='agent.launchReplay'),false);
+ }
+});
+test('an already-prepared team can repair its depth without relaunching or changing its roster',async t=>{
+ const f=await fixture(t,{form:{levels:3,leadCount:2,workersPerLead:1}}),before=f.store().readSnapshot();
+ const result=await f.send('ensureTeamDepth',{teamId:f.team.id,configVersion:f.team.configVersion});assert.equal(result.ok,true,result.error);assert.equal(result.value.observedDepth,2);
+ assert.deepEqual(f.store().readSnapshot(),before);assert.equal(f.store().listOperations().length,0);assert.equal(f.calls.some(c=>c.method==='agent.launchReplay'),false);
+ const again=await f.send('ensureTeamDepth',{teamId:f.team.id,configVersion:f.team.configVersion});assert.equal(again.value.adjusted,false);assert.equal(f.calls.filter(c=>c.method==='settings:set').length,1);
+});
+test('invalid or stale team selections cannot authorize a settings mutation',async t=>{
+ const f=await fixture(t,{form:{levels:3,leadCount:2,workersPerLead:1}});
+ for(const params of [{teamId:'missing',configVersion:1},{teamId:f.team.id,configVersion:0},{teamId:f.team.id,configVersion:1,requiredDepth:9}])assert.equal((await f.send('ensureTeamDepth',params)).ok,false);
+ assert.equal(f.calls.some(c=>c.method==='settings:set'),false);
+});
 test('saved supervisor launches through genuine native IPC after durable intent, inherits configuration and persists identity before followups', async t => {
  const f = await fixture(t);
  const response = await f.send('launchSupervisor');

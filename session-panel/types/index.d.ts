@@ -14,6 +14,12 @@ export type CleanTask = {
 
 export type CleanPhase = 'idle' | 'working' | 'needs-you' | 'stuck' | 'stopped' | 'done'
 
+/** How one tool call of a job with no plan ended: still running (or background work), OK, or failed. */
+export type CleanActivityStatus = 'running' | 'ok' | 'failed'
+
+/** One tool call of a job with no plan: its row name and its status. */
+export type CleanActivity = { id: string; kind: string; status: CleanActivityStatus }
+
 export type CleanQuestion = { question: string; options: string[] }
 
 export type CleanChecklist = {
@@ -29,6 +35,18 @@ export type CleanChecklist = {
   jobId: number
   /** True once plan_steps or a to-do list made a real plan for this job. */
   hasPlan: boolean
+  /** True while the rows are inferred from tool use, not from a plan. */
+  fallback: boolean
+  /** The turn whose first reply may still set the plan; '' once it has. */
+  planTurn: string
+  /** Agent ids started in the background by this job. */
+  bgAgents: string[]
+  /** Bash ids started in the background by this job. */
+  bgCommands: string[]
+  /** The tool calls of a job with no plan, in the order they started. */
+  activities: CleanActivity[]
+  /** The note on a finished job, "" when every step is confirmed. */
+  note: string
   /** The plain verb line under the current step, "" for none. */
   action: string
   /** The ask_choices question being shown, or null. */
@@ -110,7 +128,7 @@ export type EnhancerState = { original: string | null; passText: string | null; 
 export type CleanStyle = 'checklist' | 'bars'
 
 /** A finished job kept as a dismissible bar. */
-export type CleanFinished = { id: string; title: string; seconds: number; steps: string[] }
+export type CleanFinished = { id: string; title: string; seconds: number; steps: string[]; note?: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -134,7 +152,7 @@ declare module 'claude-code' {
       finished: CleanFinished[]
       prefs: Prefs
       enhancer: EnhancerState
-      gateDenied: number
+      openGroups: string[]
       assumptionTrack: AssumptionTrack
       /** the plugin's manifest version, read once per load; '' when it cannot be read */
       version: string

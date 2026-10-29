@@ -17,7 +17,7 @@ const CLAUDE = `"C:\\Users\\me\\.local\\bin\\claude.exe" --session-id ${ID2} --n
  * command line; late: how many one-second pauses pass before a newly started session registers; refuse: a write that
  * fails with EACCES.
  */
-const setup = async ($: any, on: any, o: { running?: Record<number, string>; late?: number; refuse?: (path: string) => boolean } = {}) => {
+const setup = async ($: any, on: any, o: { running?: Record<number, string>; late?: number; refuse?: (path: string) => boolean; machine?: string } = {}) => {
   const running = o.running ?? {}
   let at = ''
   let started = ''
@@ -43,7 +43,7 @@ const setup = async ($: any, on: any, o: { running?: Record<number, string>; lat
     }
     if (a[1] === 'terminal' && a[2] === 'wait') return '{"result":{"satisfied": true}}'
     return undefined
-  }, { env: { ORCA_TERMINAL_HANDLE: 'term_c' }, registry: [], refuse: o.refuse })
+  }, { env: { ORCA_TERMINAL_HANDLE: 'term_c', COMPUTERNAME: o.machine ?? 'PC-LOCAL' }, registry: [], refuse: o.refuse })
   // a message reaches only a session the registry lists, as the engine's does
   const listed = (to: unknown) =>
     [...files.entries()].some(([k, v]) => k.includes('/.claude/sessions/') && JSON.stringify(to).includes(JSON.parse(v).sessionId))
@@ -66,6 +66,29 @@ const setup = async ($: any, on: any, o: { running?: Record<number, string>; lat
   return { files, at: () => at, sends, creates, message, workers, setWorkers }
 }
 
+test('a remote startHere request at capacity is not queued; retry after capacity frees starts it fresh', async ($, on) => {
+  const { files, at, creates, message, setWorkers } = await setup($, on, { machine: 'PC-LOCAL' })
+  setWorkers({ machine: 'PC-REMOTE', location: 'remote', worktree: 'remote::C:/other', handle: '', sessionId: ID2, state: 'idle' })
+  files.set(`${at()}${TEAM}/settings.json`, JSON.stringify({ maxOpen: 1 }))
+  const ordinary: any = await message()
+  expect(String(ordinary.result)).toContain('PC-REMOTE')
+  expect(String(ordinary.result)).not.toContain('queued')
+  expect(creates().length).toBe(0)
+
+  const full: any = await message({ startHere: true })
+  expect(String(full.result)).toContain('was not started')
+  expect(String(full.result)).toContain('not queued')
+  expect(String(full.result)).toContain('retry team_message with startHere: true')
+  expect(creates().length).toBe(0)
+  expect([...files.keys()].some(k => k.includes('/queue/'))).toBe(false)
+
+  files.set(`${at()}${TEAM}/settings.json`, JSON.stringify({ maxOpen: 2 }))
+  const retried: any = await message({ startHere: true })
+  expect(creates().length).toBe(1)
+  expect(String(retried.result)).toContain('Sent to Hualong Workers.')
+  expect(files.calls.filter(a => a[1] === 'terminal' && a[2] === 'create')).toHaveLength(1)
+})
+
 test('startHere on a member of this PC whose session has stopped starts a fresh copy and sends to it', async ($, on) => {
   const { files, at, sends, creates, message } = await setup($, on)
   // its last status was written 10 minutes ago, by the start whose session then stopped
@@ -78,6 +101,17 @@ test('startHere on a member of this PC whose session has stopped starts a fresh 
   expect(String(r.result)).toContain('Sent to Hualong Workers.')
   expect(sends.length).toBe(1)
   expect(JSON.stringify(sends[0].to)).not.toContain(ID2)
+})
+
+test('startHere cannot exceed Max open; a proven-dead local member is marked closed, then the fresh start queues at cap', async ($, on) => {
+  const { files, at, creates, message } = await setup($, on)
+  files.set(`${at()}${TEAM}/settings.json`, JSON.stringify({ maxOpen: 1 }))
+  files.set(`${at()}${STATUS}/Hualong_Workers.json`, JSON.stringify({ name: 'Hualong Workers', sessionId: ID2, state: 'idle', heartbeat: Date.now() - 10 * 60_000 }))
+  const result = await message({ startHere: true })
+  expect(String(result.result)).toContain('queued')
+  expect(creates().length).toBe(0)
+  expect(files.calls.some(a => a[1] === 'terminal' && a[2] === 'close')).toBe(false)
+  expect(JSON.parse(files.get(`${at()}${STATUS}/Hualong_Workers.json`)!).state).toBe('closed')
 })
 
 test('a running member the roster still calls "not started", whose tab Orca does not find, is sent to and never started again', async ($, on) => {

@@ -6,8 +6,8 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod, 
 
 | Mod | What it does | Version |
 |---|---|---|
-| [`session-panel`](session-panel/README.md) | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). Has a prompt Enhancer (`/enhance`, or auto-enhance on Enter), and an Assumptions list that Claude fills as it works, with Confirm, Wrong and Delete. A question box rule, on by default, has Claude ask for permission and big choices with AskUserQuestion instead of in prose, including every `/grilling`, `/grill-me` and `/grill-with-docs` question, with an optional warning when it asks in prose. Settings is a floating card with tabs, laid out as a table. | 0.3.63 |
-| [`team-orchestrator`](team-orchestrator/README.md) | Runs a team of Claude Code sessions as Orca tabs, managed from a panel above the prompt: quick starts, a team form, a live roster (stacked, side by side or docked) and an org chart. Members start on their first message, close when idle and reopen when a message arrives; each has a role file. Members can be added to a running team. A guard keeps members from starting subagents, and members with reports from writing files, unless you allow it. With Session Panel, it shows each member's open assumptions and lets its boss or the team top confirm, mark wrong or delete them (opt-in: Settings → Assumptions → Show). Works on Windows, macOS and Linux. | 0.5.37 |
+| [`session-panel`](session-panel/README.md) | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). Has a prompt Enhancer (`/enhance`, or auto-enhance on Enter), and an Assumptions list that Claude fills as it works, with Confirm, Wrong and Delete. A question box rule, on by default, has Claude ask for permission and big choices with AskUserQuestion instead of in prose, including every `/grilling`, `/grill-me` and `/grill-with-docs` question, with an optional warning when it asks in prose. Settings is a floating card with tabs, laid out as a table. | 0.3.64 |
+| [`team-orchestrator`](team-orchestrator/README.md) | Runs a team of Claude Code sessions as Orca tabs, managed from a panel above the prompt: quick starts, a team form, a live roster (stacked, side by side or docked) and an org chart. Members start on their first message and reopen when a message arrives; automatic close and eviction are paused until native cleanup verification exists. Each member has a role file. Members can be added to a running team. A guard keeps members from starting subagents, and members with reports from writing files, unless you allow it. With Session Panel, it shows each member's open assumptions and lets its boss or the team top confirm, mark wrong or delete them (opt-in: Settings → Assumptions → Show). Works on Windows, macOS and Linux. | 0.5.39 |
 | [`speaker-colours`](speaker-colours) | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
 
 ### Install
@@ -17,6 +17,33 @@ Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod, 
 3. Run `/reload-plugins` in a session that is already open.
 
 To update: `claude plugin marketplace update herman-mods`, then `claude plugin update <mod>@herman-mods`, then `/reload-plugins`. For Team Orchestrator, reload the team top first (see its README).
+
+### Develop a mod
+
+The marketplace is this repository on GitHub, and nothing else. A mod is changed in a
+clone of this repo, on a branch, and is only real once it is pushed.
+
+1. Clone: `git clone https://github.com/herman925/925-cc-plugins.git`
+2. Branch: `git checkout -b feature/<mod>-<version>`
+3. Change the mod folder, and bump its `.claude-plugin/plugin.json` `version`.
+4. Check it: `claude plugin validate <folder>` and `claude plugin test <folder>`.
+5. Commit and push the branch, then merge it into `main`.
+6. On every computer that uses the mod:
+   `claude plugin marketplace update herman-mods`,
+   `claude plugin update <mod>@herman-mods`, then `/reload-plugins`.
+
+**Why the update step is not optional.** The installed copy lives in
+`~/.claude/plugins/cache/<marketplace>/<mod>/<version>/`, and the marketplace itself is a
+clone of this repo under `~/.claude/plugins/marketplaces/`. Both are refreshed only by
+`claude plugin marketplace update` and `claude plugin update`. A change that exists only
+in a working directory is not installed, and a machine that does not run the update keeps
+the version it last installed. That is what makes several computers work: every one of
+them pulls the same published commit.
+
+**Do not develop against the installed copy.** `~/.claude/plugins/cache/` and
+`~/.claude/plugins/marketplaces/` are both replaced by the update commands, so an edit
+made there is lost on the next update. Change the clone, push it, and let the update
+commands install it.
 
 ### Add a mod
 

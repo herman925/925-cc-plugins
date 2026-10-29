@@ -18,6 +18,9 @@ test('a role file knows the member, its boss, its reports and the team, includin
   expect(w).toContain('Boss: A-Head.')
   expect(w).toContain('Talk only to your boss')
   expect(w).toContain('roles/A-W1.md')
+  expect(w).toContain('same message')
+  expect(w).toContain('never OS verification')
+  expect(w).not.toContain('tell your boss "clean"')
 })
 
 test('a rewrite keeps the person\'s notes below the marker and replaces only the generated part', () => {

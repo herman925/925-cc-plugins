@@ -1,0 +1,48 @@
+{
+  "version": "0.1.23",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "orca": "1.4.229"
+  },
+  "live": {
+    "observedAt": "2026-10-18T14:35:04.497Z",
+    "team": "issue-130",
+    "memberCount": 11,
+    "version": "0.1.23",
+    "beforeDepth": 2,
+    "result": {
+      "adjusted": false,
+      "observedDepth": 2,
+      "previousDepth": 2,
+      "requiredDepth": 2,
+      "status": "verified"
+    },
+    "afterDepth": 2,
+    "otherSettingsPreserved": true,
+    "rostersAndLaunchBindingsPreserved": true,
+    "createdTeams": 0,
+    "launchedMembers": 0
+  },
+  "validation": {
+    "domainPassed": 600,
+    "browserFullRunPassed": 34,
+    "browserAffectedRerunPassed": 2,
+    "browserDistinctCasesCovered": 35,
+    "hostContractsPassed": 3
+  },
+  "artifacts": {
+    "main.mjs": "318148a2c6ee30f82c6032cae5f6d3b4b2beed2ffbb3b1daae2fae1b247b8ed9",
+    "runtime-adapter.cjs": "ddd4466eb4dada1ac1b279f576baf8bfc7a41bb173870551d45a177dba733b0e",
+    "claude-statusline.cjs": "d3e83592998187bd3e92f4327c17e4e4f8b741f3447affc8672c30cf85b8859e",
+    "panel.html": "520fdd9f8252c10baaac5de8cedde9ceedad9698eed5775bc6c678a54267ff78",
+    "orca-plugin.json": "702f99644dc1147a37a299efb2689805b6b39ee22e3556ea2959769f5661309f",
+    "package.json": "25583ea15783abd9a4c3e06c0e93fdf8f2a33dad4228bd575a9d6920e5c2c0f3",
+    "package-lock.json": "babf1a81be53feede868bfb6009b9eab04db1b2c7fadff79698850cb56a88c2f"
+  },
+  "limits": {
+    "liveRaiseFromOneObserved": false,
+    "noLoweringOfLiveSettingForTesting": true,
+    "scaleWorkloadAcceptanceClaimed": false
+  }
+}

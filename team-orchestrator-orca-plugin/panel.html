@@ -469,79 +469,6 @@ footer {
   color:var(--dim);
   margin:12px 0 4px;
 }
-.org-chart {
-  padding:10px 0 18px;
-}
-.org-chart>.root {
-  display:flex;
-  width:max-content;
-  min-width:100%;
-  justify-content:center;
-}
-.org-chart .org-tree {
-  display:flex;
-  padding:18px 0 0;
-  justify-content:center;
-}
-.org-chart .org-tree.root {
-  padding-top:0;
-}
-.org-chart .org-tree li {
-  padding:0 4px;
-  text-align:center;
-}
-.org-chart .org-node {
-  flex-direction:column;
-  gap:1px;
-  min-width:42px;
-  padding:5px 7px;
-  background:transparent;
-  border-color:transparent;
-  font-size:11px;
-}
-.org-chart .glyph {
-  font-size:15px;
-}
-.org-chart .org-node small {
-  display:none;
-}
-.org-chart .org-tree:not(.root)>li:before {
-  left:0;
-  right:0;
-  top:-9px;
-  height:9px;
-  bottom:auto;
-  border-left:0;
-  border-top:1px solid var(--line);
-  width:100%;
-}
-.org-chart .org-tree:not(.root)>li:after {
-  left:50%;
-  top:-9px;
-  width:0;
-  height:9px;
-  border-top:0;
-  border-left:1px solid var(--line);
-}
-.org-chart .org-tree:not(.root)>li:first-child:before {
-  left:50%;
-  width:50%;
-}
-.org-chart .org-tree:not(.root)>li:last-child:before {
-  width:50%;
-  height:9px;
-}
-.org-chart .org-tree:not(.root)>li:only-child:before {
-  border-top:0;
-}
-.org-chart .org-tree li:has(>.org-tree)>.org-node:after {
-  content:'';
-  position:absolute;
-  left:50%;
-  top:48px;
-  height:9px;
-  border-left:1px solid var(--line);
-}
 
 .task-card {
   border:1px solid var(--line);
@@ -582,10 +509,11 @@ footer {
 .member-name { font-weight:600; }
 button.member-name { border:0; background:transparent; padding:2px 0; text-align:left; }
 button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:underline; }
-.org-chart button.org-node:hover:not(:disabled) { border-color:var(--cyan); background:var(--surface); }
 .team-heading-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
 
 .staffing-counts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+
+button.org-node:hover:not(:disabled) { border-color:var(--cyan); background:var(--surface); }
 </style></head><body><div id="app" aria-busy="true"><p>Loading Team Orchestrator…</p></div><script>(() => {
   // src/capabilities.mjs
   var AGENTS = ["codex", "claude"];
@@ -787,9 +715,9 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   }
 
   // src/public-operations.mjs
-  var PUBLIC_OPERATIONS = Object.freeze(["claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
+  var PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "claudeContext", "saveStaffing", "requestReplacement", "scheduleOrganization", "cancelOrganization", "storageRecovery", "previewHistoryCleanup", "applyHistoryCleanup", "setAdmission", "stopMember", "recoverStop", "checkStop", "rosterStatus", "ping", "context", "load", "createTeam", "submitWork", "enqueueGoal", "decideWork", "startNextGoal", "answerQuestion", "wakeMember", "resolveRecoveryQuestion", "checkWake", "decideWake", "checkHandoff", "replaceMember", "checkWork", "reconnectWork", "retryObjective", "updateRole", "updateSettings", "launchSupervisor", "recoverLaunch", "openMember", "receipt", "capabilities", "updateAgentPreferences"]);
   var PUBLIC_BRIDGE_ALIASES = Object.freeze({ "workspace.readContext": "context", "storage.get": "load" });
-  var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
+  var BROKERED_PUBLIC_OPERATIONS = Object.freeze(["ensureTeamDepth", "saveStaffing", "stopMember", "recoverStop", "decideWork", "startNextGoal", "capabilities", "launchSupervisor", "recoverLaunch", "openMember", "replaceMember"]);
 
   // src/worker-bridge.mjs
   var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -919,14 +847,13 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
     const requestId = memberSessionRequest(team, member);
     return button(content, "open-member", `data-team="${escape(team.id)}" data-member="${escape(member.id)}" data-request="${escape(requestId || "")}" aria-label="Open ${escape(member.name)}\u2019s session" title="${requestId ? `Open ${escape(member.name)}\u2019s session` : "No saved session is available"}" ${requestId ? "" : "disabled"} ${attrs}`, className);
   }
-  function tree(members, parent = null, live = false, compact = false, team = null) {
+  function tree(members, parent = null, compact = false, team = null) {
     const children = members.filter((member) => member.boss === parent);
     return `<ul class="org-tree ${parent === null ? "root" : ""}">${children.map((member) => {
       const shortName = compact ? member.role === "ceo" ? "CEO" : member.role === "head" && member.name === "Head" ? member.team : member.name.replace(/^Worker-(\d+(?:-\d+)*)$/, "W$1").replace(/^Lead-(\d+(?:-\d+)*)$/, "L$1") : member.name;
-      const observation = memberObservation(member);
       const content = `<span class="glyph" aria-hidden="true">${GLYPHS[member.role]}</span><span>${escape(shortName)}</span><small>${label(member.role)}</small>`;
-      const node = live && team ? memberSessionButton(team, member, content, `org-node ${escape(member.role)}`, `data-state="${escape(observation.state)}"`) : `<span class="org-node ${escape(member.role)}">${content}</span>`;
-      return `<li>${node}${members.some((child) => child.boss === member.id) ? tree(members, member.id, live, compact, team) : ""}</li>`;
+      const node = team ? memberSessionButton(team, member, content, `org-node ${escape(member.role)}`) : `<span class="org-node ${escape(member.role)}">${content}</span>`;
+      return `<li>${node}${members.some((child) => child.boss === member.id) ? tree(members, member.id, compact, team) : ""}</li>`;
     }).join("")}</ul>`;
   }
   function preferenceControls(name, preference, caps, suffix) {
@@ -986,7 +913,7 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
   function roster() {
     const teams = workspace ? state.teams.filter((t) => t.launch && t.scope.workspaceKey === workspace.workspaceKey) : [];
     if (!teams.length) return empty();
-    return `<div class="section-heading"><h1>Team roster</h1><div class="team-heading-actions"><small>Updates every 5s</small>${button("Add team", "new", "", "small")}</div></div>${state.settings.chart ? `<section class="organisation">${teams.map((team) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll org-chart">${tree(team.members, null, true, true, team)}</div>`).join("")}</section>` : ""}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${teams.map((team) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><div class="team-heading-actions"><small>${team.members.length} members</small></div></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map((member) => `<tr data-member-row="${member.id}"><td>${memberSessionButton(team, member, `<span aria-hidden="true">${GLYPHS[member.role]}</span> ${escape(member.name)}`, "member-name")}</td><td>${label(member.role)}</td><td>${memberObservation(member).agent === "claude" ? "Claude" : "Codex"}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member, "model")}</td><td data-live-effort="${member.id}">${preferenceCell(member, "effort")}</td></tr>`).join("")}</tbody></table></div></section>`).join("")}</div>`;
+    return `<div class="section-heading"><h1>Team roster</h1><div class="team-heading-actions"><small>Updates every 5s</small>${button("Add team", "new", "", "small")}</div></div>${state.settings.chart ? `<section class="organisation">${teams.map((team) => `<div class="chart-heading">@${escape(team.name)}</div><div class="tree-scroll">${tree(team.members, null, true, team)}</div>`).join("")}</section>` : ""}<div class="team-cards ${state.settings.layout === "columns" ? "columns" : ""}">${teams.map((team) => `<section class="team-card"><header><h2>@${escape(team.name)}</h2><div class="team-heading-actions"><small>${team.members.length} members</small></div></header><div class="table-scroll"><table class="roster"><thead><tr><th>Name</th><th>Role</th><th>CLI</th><th>Status</th><th>Context</th><th>Model</th><th>Effort</th></tr></thead><tbody>${team.members.map((member) => `<tr data-member-row="${member.id}"><td>${memberSessionButton(team, member, `<span aria-hidden="true">${GLYPHS[member.role]}</span> ${escape(member.name)}`, "member-name")}</td><td>${label(member.role)}</td><td>${memberObservation(member).agent === "claude" ? "Claude" : "Codex"}</td><td data-live-status="${member.id}">${statusCell(member)}</td><td data-live-context="${member.id}">${contextCell(member)}</td><td data-live-model="${member.id}">${preferenceCell(member, "model")}</td><td data-live-effort="${member.id}">${preferenceCell(member, "effort")}</td></tr>`).join("")}</tbody></table></div></section>`).join("")}</div>`;
   }
   function storageRecoveryView() {
     return `<section aria-label="Storage recovery"><h1>Saved storage is unavailable</h1><p>Your saved teams could not be read. Existing data has not been reset.</p><p>Preserve the database together with its WAL, SHM and journal sidecars. Stop the plugin before copying recovery evidence. Use a compatible plugin for a newer schema. Restoring an older backup requires manual reconciliation of later native effects before starting work.</p>${button("Inspect recovery details", "storage-recovery", "", "small")}${storageRecovery ? `<dl><dt>Storage status</dt><dd>${escape(storageRecovery.status)}</dd><dt>Found / supported schema</dt><dd>${escape(storageRecovery.foundSchema ?? "Unreadable")} / ${escape(storageRecovery.supportedSchema)}</dd>${storageRecovery.location ? `<dt>Verified local recovery directory</dt><dd>${escape(storageRecovery.location)}</dd>` : ""}</dl><p>${escape(storageRecovery.guidance)}</p><h2>Migration backups</h2>${storageRecovery.backups.length ? storageRecovery.backups.map((b) => `<p>${escape(b.id)} \xB7 ${escape(b.status)} \xB7 ${escape(b.createdAt || "Incomplete")}</p>`).join("") : "<p>No verified migration backup is available.</p>"}` : ""}</section>`;
@@ -1221,6 +1148,10 @@ button.member-name:hover:not(:disabled) { color:var(--cyan); text-decoration:und
           else failures.push(member.name);
         } catch (error) {
           failures.push(`${member.name}: ${error.message}`);
+          if (error.code === "dispatch_depth_unavailable") {
+            problem = error.message;
+            break;
+          }
         }
       }
       message = "";

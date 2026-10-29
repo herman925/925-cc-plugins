@@ -1,75 +1,32 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { Member } from '../types'
-import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll, WORKER_NOTE } from './housekeeping'
+import { parseCleanupReport } from './housekeeping'
 
-const m = (name: string, boss: string, extra: Partial<Member> = {}): Member => ({
-  team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
-})
-const ceo = m('CEO', 'user')
-const lead = m('Data-Lead', 'CEO', { address: 'Data-and-Numbers-Lead' })
-const w1 = m('Analyst', 'Data-Lead')
-const other = m('Other', 'CEO')
-const list = [ceo, lead, w1, other]
-const peer = (from: string) => `<cross-session-message from="uds:x" from-name="${from}" from-mode="bypass">done</cross-session-message>`
-
-test('a worker sending to its own boss (by name, address, or with a [ref]) is told to clean up', () => {
-  expect(onSend(w1, list, 'Data-Lead')).toBe(WORKER_NOTE)
-  expect(onSend(lead, list, 'CEO')).toBe(WORKER_NOTE)
-  expect(onSend(w1, list, 'data-and-numbers-lead [8005a7]')).toBe(WORKER_NOTE) // the boss's address, with a ref
-  expect(onSend(lead, list, 'CEO [548347]')).toBe(WORKER_NOTE)
+test('only explicit cleanup fields are stored as worker reports; they are never OS verified', () => {
+  expect(parseCleanupReport('Done. Cleanup: clean.')).toEqual({ status: 'reported-clean', verified: false })
+  expect(parseCleanupReport('Done. Cleanup status: incomplete; one exact file remains.')).toEqual({ status: 'reported-incomplete', verified: false })
+  expect(parseCleanupReport('Done. Housekeeping: failed.')).toEqual({ status: 'reported-incomplete', verified: false })
+  expect(parseCleanupReport('Done. Cleanup: unverified.')).toEqual({ status: 'unverified', verified: false })
 })
 
-test('a message to anyone but the own boss, or from the top of the tree, carries no note', () => {
-  expect(onSend(w1, list, 'Other')).toBeUndefined()
-  expect(onSend(lead, list, 'Analyst')).toBeUndefined()
-  expect(onSend(ceo, list, 'Data-and-Numbers-Lead')).toBeUndefined()
+test('do not infer completion or clean status from ordinary prose', () => {
+  for (const text of [
+    'Not done; build is still running.',
+    'Progress: parser done; tests still running.',
+    'Waiting for the user.',
+    'Clean report will be sent later.',
+    'Done. Cleanup is unclear.',
+  ]) expect(parseCleanupReport(text)).toBeUndefined()
 })
 
-test('a head hearing from one of its own reports (name or address) is told to check on that worker', () => {
-  expect(onReceive(lead, list, peer('Analyst'))).toBe(HEAD_NOTE('Analyst'))
-  expect(onReceive(ceo, list, peer('Data-and-Numbers-Lead'))).toBe(HEAD_NOTE('Data-Lead'))
-  expect(onReceive(ceo, list, peer('other'))).toBe(HEAD_NOTE('Other'))
+test('incomplete or remaining resources override a clean label', () => {
+  expect(parseCleanupReport('Cleanup: clean; not clean yet, one process remains.')).toEqual({ status: 'reported-incomplete', verified: false })
+  expect(parseCleanupReport('Cleanup: clean; cleanup incomplete.')).toEqual({ status: 'reported-incomplete', verified: false })
+  for (const residue of ['2 left', 'one process kept', 'report retained', 'the output still exists'])
+    expect(parseCleanupReport(`Cleanup: clean; ${residue}.`)).toEqual({ status: 'reported-incomplete', verified: false })
 })
 
-test('a message from a non-report, a boss, or with no sender carries no note', () => {
-  expect(onReceive(ceo, list, peer('Analyst'))).toBeUndefined() // not a direct report
-  expect(onReceive(w1, list, peer('Data-and-Numbers-Lead'))).toBeUndefined() // from the boss
-  expect(onReceive(lead, list, 'plain text')).toBeUndefined()
-  expect(senderOf(peer('X Y'))).toBe('X Y')
-})
-
-const say = (from: string, body: string) => `<cross-session-message from="uds:x" from-name="${from}" from-mode="bypass">\n${body}\n</cross-session-message>`
-
-test('a cleanup confirmation does not trigger the head note again (no ping-pong)', () => {
-  expect(isCleanConfirmation(say('Analyst', 'clean.'))).toBe(true)
-  expect(isCleanConfirmation(say('Analyst', 'clean. My scratch and /tmp files are deleted; only the live tool runtime remains.'))).toBe(true)
-  expect(isCleanConfirmation(say('Data-Lead', 'Data-Lead: clean. Analysts confirmed.'))).toBe(true)
-  expect(isCleanConfirmation(say('Analyst', 'All clean: no processes left.'))).toBe(true)
-  expect(onReceive(lead, list, say('Analyst', 'clean.'))).toBeUndefined()
-})
-
-test('a real report that mentions cleanup still triggers the head note', () => {
-  expect(isCleanConfirmation(say('Analyst', 'Tables saved to report-tables/. Housekeeping: clean.'))).toBe(false)
-  expect(isCleanConfirmation(say('Analyst', 'clean ' + 'x'.repeat(900)))).toBe(false)
-  expect(onReceive(lead, list, say('Analyst', 'Tables saved. Housekeeping: clean.'))).toBe(HEAD_NOTE('Analyst'))
-})
-
-test('both notes cover idle browser-automation servers', () => {
-  expect(WORKER_NOTE).toContain('playwright/mcp')
-  expect(WORKER_NOTE).toContain('chrome-devtools-mcp')
-  expect(HEAD_NOTE('Analyst')).toContain('browser-automation')
-})
-
-test('only the team top (boss "user") or a non-member session polls Orca', () => {
-  expect(shouldPoll(ceo)).toBe(true)
-  expect(shouldPoll(undefined)).toBe(true)
-  expect(shouldPoll(lead)).toBe(false)
-  expect(shouldPoll(w1)).toBe(false)
-})
-
-test('a confirmation with a spaced speaker label and a longer housekeeping note still counts as "clean"', () => {
-  const long = 'Report lead: clean. Scratch folder emptied. Stopped 11 browser-automation server processes that my session started (Playwright and Chrome DevTools MCP trees); I had not used them. Left running: the status-line helper and the Pencil MCP server, both part of this session\'s own setup, plus the current shell. The report files are in outputs/report (HTML and Word, last build 16:37:05). Note: the Playwright and Chrome DevTools MCP tools will be unavailable until those servers restart.'
-  expect(isCleanConfirmation(say('HTML-Report-Lead', long))).toBe(true)
-  expect(isCleanConfirmation(say('HTML-Report-Lead', 'Report lead: tables 1-8 inserted, build 16:01. Housekeeping clean.'))).toBe(false)
+test('long completion reports parse without a length cutoff; trailing words do not become new requests', () => {
+  const long = `Task complete. Cleanup: clean. ${'Active harness shell retained. '.repeat(100)}`
+  expect(parseCleanupReport(long)).toEqual({ status: 'reported-incomplete', verified: false })
 })

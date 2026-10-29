@@ -55,7 +55,7 @@ export function roleText(m: Member, list: Member[]): string {
     '',
     '## Housekeeping',
     '',
-    'After each task, close every process your session started (bash, sh, node, python, conhost), stop browser-automation servers you are not using, delete your scratch and temporary files, and tell your boss "clean". Touch only what your own session started.',
+    'When you report a completed task, include one explicit cleanup field in that same message: `Cleanup: clean`, `Cleanup: incomplete`, `Cleanup: failed`, or `Cleanup: unverified`. This is self-reported only, never OS verification; old status-file counts do not prove cleanup. Never send a separate clean-only acknowledgement. Delete only exact task-owned files when the current permission allows it; otherwise ask. Never delete shared temp, project scratch, task outputs, logs, tests, retained results or artifacts. Stop no process for automated housekeeping in this interim phase; separate user-directed actions still use normal permission and ownership checks. If anything is unclear or failed, report incomplete or unverified rather than clean.',
     '',
     '## The team',
     '',

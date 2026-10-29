@@ -6,15 +6,15 @@ import { headOf, joinLaunch, newMember, newProblem, purview, requestProblem } fr
 import type { NewSpec } from './adding'
 import { AGENT_TOOL, createsManaged, grantChanges, type GrantMap, grantMap, grantsFrom, isTeamFilePath, judge, judgeTeamFiles, namesTeamFile, notReadOnly, NO_GRANTS, pathOf, recordAfterWrite, SHELL_TOOLS, WRITE_TOOLS } from './guard'
 import type { Grants } from './guard'
-import { isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll } from './housekeeping'
+import { bodyOf, parseCleanupReport, reportsTo, senderOf, shouldPoll } from './housekeeping'
 import { freshName, headWarning, holdNote, holdTool, identify, judgeHeld, nameTaken, relabel, roleNote, topAsk, topOf } from './identity'
 import type { Claim, Level } from './identity'
 import type { Sleep, Status, TeamSettings } from './status'
-import { countFromPs, linkFree, livenessOf, MEND_DIRS, parseWinProcs, psProc, scratchDeletePlan, winProcScript } from './platform'
+import { livenessOf, MEND_DIRS, parseWinProcs, psProc, winProcScript } from './platform'
 import type { Liveness, Proc } from './platform'
 import { mergeRole, orgOf, pointer, rankOf, roleText, WELCOME } from './roles'
 import type { EnvModels } from './status'
-import { admit, awakeAge, chunk, cliOf, COUNT_EVERY_MS, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor } from './status'
+import { admit, awakeAge, chunk, cliOf, heartbeatStale, isManaged, locationOf, MIN, modelArg, needsTabCheck, nextCheckInterval, noteTick, pathInWorktreeId, roleFile, shownModel, shownState, STALE_MS, startsAtCreate, statusFile, TEAM_SETTINGS0, taskLine, toClose, windowFor, worktreeHolds } from './status'
 import { afterTry, appliedAfter, applyOps, applySettings, diffOps, fileName, fromOldQueue, isAway, KEEP_MS, META0, metaAfter, olderThan, pendingNames, project, projectKey, projectTop, queueAction, rightsChanges, rosterOps, sameMachine, STRUCT, timeOf, topElsewhere } from './changes'
 import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
@@ -1288,21 +1288,35 @@ async function moveFiles($: any, from: string, to: string) {
 
 // Held sessions waiting for the user's decision, one per session id: <team folder>/claims.json.
 const claimsFile = async ($: any) => `${await teamDir($)}/claims.json`
-async function readClaims($: any): Promise<Claim[]> {
-  const p = await claimsFile($)
-  if (!(await $.fs.exists(p))) return []
+// undefined when claims.json exists but cannot be read or parsed, or a row is malformed: callers then refuse to write or
+// to decide, so a corrupt file is never overwritten or read as "no claims". A missing file holds no claims.
+async function readClaims($: any): Promise<Claim[] | undefined> {
   try {
+    const p = await claimsFile($)
+    if (!(await $.fs.exists(p))) return []
     const c = JSON.parse(String(await $.fs.read(p)))
-    return Array.isArray(c) ? c : []
+    return Array.isArray(c) && c.every((x: any) => !!x && typeof x === 'object' && typeof x.team === 'string' && typeof x.member === 'string') ? c : undefined
   } catch {
-    return []
+    return undefined
   }
 }
 const writeClaims = async ($: any, c: Claim[]) => putFile($, await claimsFile($), JSON.stringify(c, null, 1))
+// The members an undecided identity claim names, as team|name. undefined when claims.json cannot be read: the caller
+// then skips auto-close and eviction for the round. A missing file holds nobody.
+async function heldMembers($: any): Promise<Set<string> | undefined> {
+  const claims = await readClaims($)
+  return claims ? new Set(claims.filter(c => c.decision === undefined).map(c => `${c.team}|${c.member}`)) : undefined
+}
+// The names of the roster's own members that the held keys name: a claim for a member not on the roster holds no slot.
+const heldNamesOf = (list: Member[], keys: Set<string>) => new Set(list.filter(m => keys.has(keyOf(m))).map(m => m.name))
 
 // Once per session id: record the claim, warn the member's head, and tell the team top to ask the user at once.
 async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; tab: string; name: string; machine: string }) {
   const claims = await readClaims($)
+  if (!claims) {
+    await $.ui.toast('Team Orchestrator: claims.json could not be read, so this hold was not recorded. Repair or remove that file.')
+    return
+  }
   if (claims.some(c => c.sessionId === f.sessionId)) return
   const c: Claim = { sessionId: f.sessionId, member: x.name, team: x.team, tab: f.tab, name: f.name, why, at: Date.now(), ...(f.machine ? { machine: f.machine } : {}) }
   await writeClaims($, [...claims, c])
@@ -1332,6 +1346,7 @@ async function holdOnce($: any, x: Member, why: string, f: { sessionId: string; 
 // The team top applies the user's answer to a held session (member_claim).
 async function settleClaim($: any, input: { sessionId?: string; decision?: string; member?: string }): Promise<string> {
   const claims = await readClaims($)
+  if (!claims) return 'claims.json could not be read, so no decision was recorded. Repair or remove that file, then decide again.'
   const c = claims.find(x => x.sessionId === String(input.sessionId ?? '').trim())
   if (!c) return `No session ${String(input.sessionId ?? '')} is waiting for an identity decision.`
   const decision = String(input.decision ?? '')
@@ -1497,24 +1512,20 @@ async function writeMine($: any, patch: Partial<Status>) {
   }
 }
 
-// Count this session's own leftover shells and runtimes, found under the claude process whose command line carries the
-// session id (PowerShell on Windows, ps elsewhere). At most once per five minutes; -1 when the session cannot be found.
-const counted = { at: 0 }
-async function countLeftovers($: any, sessionId: string): Promise<number | undefined> {
-  if (!sessionId || Date.now() - counted.at < COUNT_EVERY_MS) return undefined
-  counted.at = Date.now()
-  if (!(await isWindows($))) {
-    const r = await $.process.run(['ps', '-eo', 'pid=,ppid=,args='], { timeoutMs: 20000 }).catch(() => undefined)
-    return r?.exitCode === 0 ? countFromPs(String(r.stdout), sessionId) : -1
-  }
-  const ps =
-    `$all=Get-CimInstance Win32_Process; $me=$all|?{$_.Name -eq 'claude.exe' -and [string]$_.CommandLine -match '${sessionId}'}|select -First 1; ` +
-    `if(-not $me){'-1';exit}; $ids=@{}; $all|%{$ids[[int]$_.ProcessId]=$_}; $n=0; ` +
-    `foreach($p in $all){ if($p.Name -notmatch '^(bash|sh|node|python.*|conhost)\\.exe$'){continue}; $x=$p; ` +
-    `for($i=0;$i -lt 8;$i++){ $q=$ids[[int]$x.ParentProcessId]; if(-not $q){break}; if($q.ProcessId -eq $me.ProcessId){$n++;break}; $x=$q } }; $n`
-  const r = await $.process.run(['powershell.exe', '-NoProfile', '-Command', ps], { timeoutMs: 20000 }).catch(() => undefined)
-  const n = Number(String(r?.stdout ?? '').trim())
-  return Number.isFinite(n) ? n : -1
+async function recordCleanupReport($: any, to: string, message: string, deliveryId?: string): Promise<void> {
+  const report = parseCleanupReport(message)
+  if (!report) return
+  const who = await rosterSelf($)
+  if (!who || !reportsTo(who.me, who.list, to)) return
+  const old = await readStatus($, who.me.name)
+  await writeMine($, {
+    cleanupReport: {
+      ...report,
+      at: Date.now(),
+      ...(old?.task ? { taskLabel: old.task } : {}),
+      ...(deliveryId ? { deliveryId } : {}),
+    },
+  })
 }
 
 // ── Team settings (worker auto-close), shared by every session in .claude/team-orchestrator/settings.json ──
@@ -1575,26 +1586,20 @@ async function closeMember($: any, m: Member): Promise<boolean> {
   if (!isManaged(m) || !m.registeredHome || !m.registeredHome.contextKind || m.registeredHome.contextKind === 'unknown' || m.registeredHome.executionHostId !== scope.executionHostId) return false
   const handle = await liveHandleOf($, m)
   if (!handle) return false
-  const worktreeId = typeof m.worktree === 'string' ? m.worktree : ''
+  const worktreeId = typeof m.worktree === 'string' ? m.worktree.trim() : ''
   if (!worktreeId) return false
   const worktree = selectorOf(worktreeId)
   try {
     const info = await worktreeInfo($, worktreeId)
-    if (!info.exists || info.path !== m.registeredHome.originalPath) return false
+    if (!info.exists || info.path !== m.registeredHome.originalPath || !worktreeHolds(info.path, await rootOf($))) return false
     const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
     if (!listed.ok) return false
     const terminals = JSON.parse(listed.out)?.result?.terminals
     if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
     if (!terminals.some((t: any) => t.handle === handle && t.connected === true)) return false
-  } catch {
-    return false
-  }
+  } catch { return false }
   let closed
-  try {
-    closed = await orca($, 'terminal', 'close', '--terminal', handle)
-  } catch {
-    return false
-  }
+  try { closed = await orca($, 'terminal', 'close', '--terminal', handle) } catch { return false }
   if (!closed.ok) return false
   try {
     const listed = await orca($, 'terminal', 'list', '--worktree', worktree)
@@ -1602,9 +1607,7 @@ async function closeMember($: any, m: Member): Promise<boolean> {
     const terminals = JSON.parse(listed.out)?.result?.terminals
     if (!Array.isArray(terminals) || terminals.some((t: any) => !t || typeof t.handle !== 'string' || !t.handle)) return false
     if (terminals.some((t: any) => t.handle === handle && t.connected !== false)) return false
-  } catch {
-    return false
-  }
+  } catch { return false }
   await writeStatusOf($, m, { state: 'closed' })
   await update($, members, old => old.map(x => (x.name === m.name ? { ...x, state: 'closed', handle: '' } : x)))
   await share($)
@@ -1640,7 +1643,7 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<Start> {
   // an earlier start of this member may have opened a tab whose receipt never came back: start no second one
   if (launchInFlight(await readLaunch($, m.name), Date.now())) return 'starting'
   // a member of another CLI is not managed (#69): never started from here
-  if (!isManaged(m)) return false
+  if (!isManaged(m)) return 'failed'
   const resume = t.reopen === 'resume' && !!m.sessionId
   const sessionId = resume ? m.sessionId : uuid()
   // back in the member's own workspace (recorded at launch), never Orca's "active" one, which is whatever the person
@@ -1673,7 +1676,7 @@ async function reopen($: any, m: Member, t: TeamSettings): Promise<Start> {
   // the roster first: a status write that fails must not leave a started member "not started" there
   await share($)
   // its "clean" from before the close no longer counts: kept, the idle round would close it again at once
-  await writeStatusOf($, back, { state: ready ? 'idle' : 'starting', sessionId, heartbeat: Date.now(), lastClean: 0 })
+  await writeStatusOf($, back, { state: ready ? 'idle' : 'starting', sessionId, heartbeat: Date.now(), turnEnd: Date.now(), lastClean: 0 })
   await writeLaunch($, m.name, { sessionId, at: Date.now(), state: ready ? 'ready' : 'starting', handle })
   return ready ? 'ready' : 'starting'
 }
@@ -1768,12 +1771,10 @@ async function admitAndReopen($: any, target: Member, list0: Member[], t: TeamSe
   const here = await machineOf($)
   const list = list0.filter(m => !isAway(m, here))
   const statuses = await readStatuses($, list)
-  const a = admit(list, statuses, t, Date.now(), sleeps())
+  const held = await heldMembers($)
+  const a = admit(list, statuses, t, Date.now(), sleeps(), heldNamesOf(list, held ?? new Set()))
+  // The interim mod does not evict another worker based on a self-reported cleanup status; wait at the cap.
   if (a.kind === 'queue') return undefined
-  if (a.kind === 'evict') {
-    const out = list.find(x => x.name === a.name)
-    if (!out || !(await closeMember($, out))) return undefined
-  }
   return reopen($, target, t)
 }
 
@@ -1956,8 +1957,18 @@ async function deliver($: any, target: Member, message: string, startHere = fals
     if (!startHere) return awayAnswer(target, here)
     const t = await readTeamSettings($)
     await $.ui.toast(`Starting a fresh copy of ${target.name} on this PC…`)
-    // a member from another PC: its Orca workspace id is that PC's, so the copy starts in this session's workspace
-    const start = await reopen($, target, { ...t, reopen: 'fresh' })
+    // Mark a proven-dead local session closed before counting capacity; preserve the verified home.
+    if (fresh && !(await markDead($, target))) return `A fresh copy of ${target.name} was not started because its old tab could not be confirmed closed.`
+    const candidate = fresh ? (await readMembers($)).find(m => m.team === target.team && m.name === target.name) ?? target : target
+    const start = await admitAndReopen($, candidate, await readMembers($), { ...t, reopen: 'fresh' })
+    if (start === undefined) {
+      if (isAway(target, here))
+        return `${target.name} was not started because the session cap (${t.maxOpen}) is full. This request was not queued. When a slot opens, ask the user again, then retry team_message with startHere: true.`
+      const me = await rosterSelf($)
+      const ahead = (await readQueue($)).filter(f => f.q.state === 'pending' || f.q.state === 'sending').length
+      await enqueue($, target.name, me?.me.name ?? 'someone', message)
+      return `${said}${target.name} is closed and the session cap (${t.maxOpen}) is full with every worker busy. Your message is queued (position ${ahead + 1}) and is delivered as soon as a worker frees up.`
+    }
     if (start === 'failed') return `A fresh copy of ${target.name} could not be started here: ${NOT_STARTED} Ask the person to open its tab.`
     if (start === 'starting') return queueFor($, target, message, `Orca opened ${target.name}'s tab, but its session had not registered, so it was not started a second time.`)
   } else {
@@ -2003,7 +2014,10 @@ async function deliver($: any, target: Member, message: string, startHere = fals
 async function monitor($: any, list: Member[], statuses: Map<string, Status>, now: number) {
   const here = await machineOf($)
   const t = await readTeamSettings($)
-  for (const m of toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now, sleeps())) await closeMember($, m)
+  // an unreadable claims file: nobody is auto-closed this round, and the queue below still runs
+  const held = await heldMembers($)
+  if (held === undefined) await $.ui.toast('Team Orchestrator: claims.json could not be read; auto-close and eviction are skipped this round.')
+  for (const m of held === undefined ? [] : toClose(list.filter(x => !isAway(x, here) && isManaged(x)), statuses, t, now, sleeps(), heldNamesOf(list, held))) await closeMember($, m)
   await migrateQueue($)
   const queue = await readQueue($)
   const prune: string[] = []
@@ -2960,6 +2974,11 @@ export const register: Register = (on, options) => {
               required: ['name', 'role', 'level', 'boss'],
             },
           },
+          remove: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'names of existing members of this team that this list removes on purpose; a member left out of members is refused unless it is named here',
+          },
         },
         required: ['members'],
       },
@@ -3062,13 +3081,15 @@ export const register: Register = (on, options) => {
         if ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet) || busy) await update($, frame, x => x + 1)
       })(),
     )
+    // a member's own process starts: its idle clock starts now, whatever its last turn or clean said (guardrail #11)
+    void writeMine($, { turnEnd: Date.now(), lastClean: 0 })
     return next(e)
   })
 
   on('tool.call', { tool: ADOPT }, async ($, e) => safely(async () => {
     const held = await onHold($, 'team_adopt')
     if (held) return held
-    const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[] }
+    const input = e as unknown as { team?: string; members: (Spec & { handle?: string; sessionId?: string })[]; remove?: string[] }
     // an adopted name is the running session's own; it goes into the shell command that reopens the member
     const unsafe = (input.members ?? []).find(m => !SAFE_NAME.test(String(m.name ?? '')))
     if (unsafe)
@@ -3080,6 +3101,15 @@ export const register: Register = (on, options) => {
     const team = clean(input.team || '') || 'team'
     const caller = await preflight($)
     if (!caller.ok) return { deny: `Blocked team_adopt: ${caller.reason}. No project files were changed.` } as any
+    // the list replaces the team's members, so a member left out of it is removed: refuse that unless each removal is named
+    const listed = new Set((input.members ?? []).map(m => m.name))
+    const named = new Set((input.remove ?? []).map(String))
+    const dropped = (await readMembers($)).filter(m => m.team === team && !listed.has(m.name) && !named.has(m.name)).map(m => m.name)
+    if (dropped.length > 0)
+      return {
+        result: `Refused: this list would remove ${dropped.length} existing member${dropped.length === 1 ? '' : 's'} of team "${team}": ${dropped.join(', ')}. Nothing was changed. Add them to the list, or call team_adopt again with remove: [${dropped.map(n => JSON.stringify(n)).join(', ')}] to name each removal.`,
+      } as any
+    // the tabs adopted run on this machine
     const here = await machineOf($)
     // which CLI each tab runs (#69), from Orca's terminal list: by handle, else the one tab of that name in this project
     const root = await rootOf($)
@@ -3175,8 +3205,7 @@ export const register: Register = (on, options) => {
       return deny !== undefined ? ({ deny } as any) : next(e)
     })
 
-  // housekeeping by role: a worker that reports to its boss is told to clean up after itself; a head that hears
-  // from one of its reports is told to check on that worker's leftovers (see housekeeping.ts)
+  // Cleanup is self-reported in the same completion message. The acknowledgement is recorded, never answered with another demand.
   on('tool.call', { tool: 'SendMessage' } as any, async ($, e, next) => {
     const to = String((e as any).to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const message = typeof (e as any).message === 'string' ? (e as any).message : ''
@@ -3187,14 +3216,15 @@ export const register: Register = (on, options) => {
     // a member from another PC, or of another CLI, is never reopened from here: SendMessage answers for it as it can
     if (target && message && isManaged(target) && !isAway(target, await machineOf($)) && isClosed(target, await readStatus($, target.name))) {
       // in SendMessage's own shape, an object: core fails a bare string with "SendMessage output is not an object"
-      return { result: { success: true, message: await deliver($, target, message) } } as any
+      const delivered = await deliver($, target, message)
+      const result = { result: { success: true, message: delivered } }
+      if (delivered.startsWith('Sent to ')) await recordCleanupReport($, String((e as any).to ?? ''), message, (e as any).tool_use_id)
+      return result as any
     }
     const r: any = await next(e)
-    if (r?.deny !== undefined) return r
-    const who = await rosterSelf($)
-    const note = who && onSend(who.me, who.list, String((e as any).to ?? ''), await isWindows($))
-    if (note && isCleanConfirmation(message)) void writeMine($, { lastClean: Date.now() })
-    return note ? { ...r, context: [...(r.context ?? []), note] } : r
+    if (r?.deny !== undefined || r?.isError || r?.result?.success !== true) return r
+    await recordCleanupReport($, String((e as any).to ?? ''), message, (e as any).tool_use_id)
+    return r
   })
   // the turn ends: what the person allowed for it goes with it, and this member's status file records the turn
   on('turn.complete', async ($, e, next) => {
@@ -3207,7 +3237,6 @@ export const register: Register = (on, options) => {
       if (!who) return
       const id = String(await $.session.id().catch(() => '')) || who.me.sessionId
       const st = id ? (await statsOf($, await transcripts($), [id])).get(id) : undefined
-      const leftover = await countLeftovers($, id)
       // the session's own window and fill, as its status line has them (#63): no guessing from the model's name
       const usage: any = await $.session.usage().catch(() => undefined)
       const window = Number(usage?.context?.window)
@@ -3221,7 +3250,6 @@ export const register: Register = (on, options) => {
         ...(st?.effort ? { effort: st.effort } : {}),
         ...(live ? { window } : {}),
         ...(ctx !== undefined && Number.isFinite(ctx) ? { ctx } : {}),
-        ...(leftover !== undefined ? { leftover, countedAt: Date.now() } : {}),
       })
     })()
     return r
@@ -3277,7 +3305,10 @@ export const register: Register = (on, options) => {
     const to = String(input.to ?? '').replace(/\s*\[[^\]]*\]\s*$/, '').trim()
     const target = (await readMembers($)).find(m => m.name === to || m.address === to)
     if (!target) return { result: `No member named ${to} on the roster. Use SendMessage for sessions outside the team.` } as any
-    return { result: await deliver($, target, String(input.message ?? ''), input.startHere === true) } as any
+    const message = String(input.message ?? '')
+    const delivered = await deliver($, target, message, input.startHere === true)
+    if (delivered.includes(`Sent to ${target.name}.`)) await recordCleanupReport($, input.to, message, (e as any).tool_use_id)
+    return { result: delivered } as any
   })).catch((_$: any, _e: any, next: any) =>
     // 0.5.36: on a busy machine the hook can outrun its 10 s budget after the send went out; the engine then said "no
     // tool.call hook answered", and the sender sent again. Say what is known instead, so nothing is sent twice.
@@ -3355,33 +3386,6 @@ export const register: Register = (on, options) => {
     return who && (who.me.boss === 'user' || who.list.some(k => k.boss === who.me.name)) ? { ...r, isDeferred: false } : r
   })
 
-  // routine clean-up never waits for the person: a delete of the member's own scratch is approved here (platform.ts).
-  // Only an "ask" is lifted to "allow"; a deny from a rule or the organization stands.
-  for (const tool of ['Bash', 'PowerShell'])
-    on('tool.check', { tool } as any, async ($, e, next) => {
-      const r: any = await next(e)
-      if (r?.decision !== 'ask') return r
-      const command = String((e as any).input?.command ?? '')
-      const t = await readTeamSettings($)
-      const who = await rosterSelf($)
-      if (!t.autoScratch || !who || !command) return r
-      const none = () => undefined
-      const temps = [await $.env.get('TEMP').catch(none), await $.env.get('TMP').catch(none), await $.env.get('TMPDIR').catch(none), '/tmp'].map(x => String(x ?? ''))
-      const root = await rootOf($)
-      const plan = scratchDeletePlan(command, {
-        cwd: String(await $.session.cwd().catch(() => root)),
-        sessionId: String(await $.session.id().catch(() => '')) || who.me.sessionId,
-        head: who.list.some(m => m !== who.me && m.boss === who.me.name),
-        temps,
-        projectScratch: t.scratchDir.trim() ? `${root}/${t.scratchDir.trim().replace(/^[\\/]+/, '')}` : '',
-        caseSensitive: !(await isWindows($)),
-      })
-      // the words allow it; the disk must too: no link from the allowed root down to the target, nor inside a folder
-      // a recursive delete empties (a link there would carry the delete into real files). Else the engine's ask stands.
-      if (!plan || !(await linkFree(plan, p => $.fs.list(p)))) return r
-      return { ...r, decision: 'allow', reason: 'Team Orchestrator: scratch clean-up of this member\'s own temporary files' }
-    })
-
   // the Orca command option: a value that does not start is refused, with the reason shown in /config
   on('config.set', { key: ORCA_KEY } as any, async ($, e, next) => {
     const value = String((e as any).value ?? '').trim()
@@ -3424,18 +3428,15 @@ export const register: Register = (on, options) => {
     const withOnce = (x: typeof e) => (once ? { ...x, context: [...(x.context ?? []), once] } : x)
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
-    // a report from another session: its head is told to check on that worker's leftovers (housekeeping.ts)
+    // A peer report/acknowledgement never asks the head to scan or rearms this member's cleanup generation.
     if (o?.kind === 'peer' || o?.kind === 'peer-send-message') {
       const who = await rosterSelf($)
-      const note = who && onReceive(who.me, who.list, e.text, await isWindows($))
-      // an order from this member's own boss becomes its task line (when Session Panel gives none)
       const from = senderOf(e.text)
       const boss = who && who.list.find(m => m.name === who.me.boss)
       if (boss && from && [boss.name, boss.address].includes(from)) {
-        const body = (e.text.match(/<cross-session-message[^>]*>([\s\S]*?)<\/cross-session-message>/)?.[1] ?? e.text).trim()
-        void writeMine($, { task: taskLine(body) })
+        void writeMine($, { task: taskLine(bodyOf(e.text)) })
       }
-      return next(withOnce(note ? { ...e, context: [...(e.context ?? []), note] } : e))
+      return next(withOnce(e))
     }
     if (o !== undefined && o.kind !== 'composer' && !o.asUser) return next(withOnce(e))
     const list = await readMembers($)
@@ -3691,7 +3692,7 @@ async function settingsView($: any, ui: any) {
       <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
       <Text weight="bold">Workers</Text>
       <Text dimColor>
-        Shared by the whole team (.claude/team-orchestrator/settings.json). A worker that said "clean" and stayed idle for the set minutes is closed; a message to it reopens it. Anyone with reports is never closed.
+        Shared by the whole team (.claude/team-orchestrator/settings.json). Cleanup reports are self-reported, not verified. Automatic close and eviction stay paused until the native verifier exists; at the cap, messages queue.
       </Text>
       <Box>
         <Text weight="bold">{'Auto-close'.padEnd(13)}</Text>
@@ -3701,6 +3702,7 @@ async function settingsView($: any, ui: any) {
         <Text weight="bold">{'Idle minutes'.padEnd(13)}</Text>
         {Seg(ui, 'ts-idle', [['5', '5'], ['10', '10'], ['20', '20'], ['30', '30'], ['60', '60']], String(ts.idleMinutes), v => void setTeam({ idleMinutes: Number(v) }))}
       </Box>
+      <Text dimColor>{' '.repeat(13)}Stored for compatibility; no automatic close currently reads this threshold.</Text>
       <Box>
         <Text weight="bold">{'Reopen as'.padEnd(13)}</Text>
         {Seg(ui, 'ts-reopen', [['resume', 'Resume (keep context)'], ['fresh', 'Fresh (briefed again)']], ts.reopen, v => void setTeam({ reopen: v as TeamSettings['reopen'] }))}
@@ -3722,15 +3724,14 @@ async function settingsView($: any, ui: any) {
       </Text>
       <Box>
         <Text weight="bold">{'Scratch'.padEnd(13)}</Text>
-        {Seg(ui, 'ts-scratch', [['1', 'Auto-approve clean-up'], ['0', 'Ask each time']], ts.autoScratch ? '1' : '0', v => void setTeam({ autoScratch: v === '1' }))}
+        <Text dimColor>Auto-approval paused</Text>
       </Box>
+      <Text dimColor>{' '.repeat(13)}Every cleanup delete, including own scratch, uses normal permission checks. The autoScratch setting remains stored for compatibility.</Text>
       <Box>
-        <Text weight="bold">{'Scratch dir'.padEnd(13)}</Text>
+        <Text weight="bold">{'Scratch dir (legacy)'.padEnd(21)}</Text>
         <Input key="ts-scratchdir" value={ts.scratchDir} placeholder=".claude/scratch" onInput={(v: string) => void setTeam({ scratchDir: v })} onSubmit={() => {}} />
       </Box>
-      <Text dimColor>
-        {' '.repeat(13)}Workers may delete inside their own session's temporary folder without asking; heads and leads may also clean the system temp folder and this project folder. Any other delete still asks.
-      </Text>
+      <Text dimColor>{' '.repeat(21)}Stored for compatibility only; this path does not grant delete approval.</Text>
       <Text weight="bold">Assumptions</Text>
       <Text dimColor>
         {' '.repeat(13)}Each member's open assumptions from Session Panel: the count on its row, and Confirm or Wrong for its boss and the team top. Needs Session Panel installed and enabled in this session.

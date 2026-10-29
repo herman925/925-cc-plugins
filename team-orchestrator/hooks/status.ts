@@ -6,6 +6,7 @@
 // worker can reopen it now or must wait (the session cap). Pure rules from data (no $), so a test can call them.
 
 import type { Member } from '../types'
+import type { CleanupReport } from './housekeeping'
 import { isAway } from './changes'
 
 export type Status = {
@@ -24,11 +25,14 @@ export type Status = {
   window?: number
   /** what the member is on now: the Session Panel step, else the first line of the last order from its boss */
   task?: string
-  /** when it last told its boss "clean" */
+  /** Legacy worker-reported "clean" timestamp. It is not OS-verified and never authorizes automatic closure. */
   lastClean?: number
-  /** its own leftover shells and runtimes at the last count, -1 when the count could not be made */
+  /** Legacy process count from old turn-end census; it does not prove owned resources were removed. */
   leftover?: number
+  /** When the legacy process count was sampled, not a cleanup-verification time. */
   countedAt?: number
+  /** Latest explicit cleanup field reported to the boss; always self-reported, never proof. */
+  cleanupReport?: CleanupReport & { at: number; taskLabel?: string; deliveryId?: string; reportedLeftover?: number }
 }
 
 /** Team-wide settings for worker auto-close, kept in .claude/team-orchestrator/settings.json. */
@@ -46,11 +50,11 @@ export type TeamSettings = {
   launch: 'demand' | 'all'
   /** sessions started at once at Create; the next batch waits until these are ready and briefed */
   batch: number
-  /** deletes of a member's own scratch are approved without asking (platform.ts) */
+  /** Legacy switch retained for saved settings; cleanup auto-approval is paused in the interim safety mode. */
   autoScratch: boolean
   /** show each member's open assumptions from Session Panel (#89); reads its files only when Session Panel is on here */
   assumptions: boolean
-  /** the project's scratch folder, relative to the project; heads and leads may clean it without asking */
+  /** Legacy project scratch path retained for settings compatibility; never auto-approved in interim mode. */
   scratchDir: string
 }
 
@@ -61,8 +65,6 @@ export const MIN = 60_000
 export const STALE_MS = 5 * MIN
 /** the tab check runs only when some heartbeat is older than this */
 export const CHECK_AFTER_MS = 2 * MIN
-/** at most one leftover-process count per member per this long */
-export const COUNT_EVERY_MS = 5 * MIN
 
 /** A file-safe name for a member's status file. */
 export const statusFile = (name: string) => `status/${name.replace(/[^\p{L}\p{N}._-]+/gu, '_')}.json`
@@ -112,43 +114,32 @@ export const needsTabCheck = (statuses: (Status | undefined)[], now: number, sle
 export const nextCheckInterval = (current: number, tookMs: number, base = 2 * MIN, cap = 10 * MIN) =>
   tookMs > 500 ? Math.min(cap, Math.max(base, current) * 2) : base
 
-const hasReports = (m: Member, list: Member[]) => list.some(x => x !== m && x.boss === m.name)
-
-/** When a member went idle: after its last turn end or its last "clean", whichever is later. */
-const idleSince = (s: Status) => Math.max(s.turnEnd ?? 0, s.lastClean ?? 0)
-
-/** Workers that may be closed: no reports, not exempt, idle, said "clean", and idle for the set minutes (awake). */
-export function toClose(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Member[] {
+/** Automatic closure is paused until native cleanup ownership can be verified. */
+export function toClose(_list: Member[], _statuses: Map<string, Status>, t: TeamSettings, _now: number, _sleeps: readonly Sleep[] = [], _held: ReadonlySet<string> = new Set()): Member[] {
+  // No native verifier is implemented in this phase. Legacy lastClean/leftover status fields are not evidence.
   if (!t.autoClose) return []
-  return list.filter(m => {
-    const s = statuses.get(m.name)
-    return (
-      !!s &&
-      !hasReports(m, list) &&
-      !t.exempt.includes(m.name) &&
-      shownState(s, now, sleeps) === 'idle' &&
-      !!s.lastClean &&
-      awakeAge(idleSince(s), now, sleeps) >= t.idleMinutes * MIN
-    )
-  })
+  return []
 }
 
-/** How many sessions are open: members whose state is neither offline nor closed. */
-export const openCount = (statuses: Map<string, Status>, now: number, sleeps: readonly Sleep[] = []) =>
-  [...statuses.values()].filter(s => !['offline', 'closed'].includes(shownState(s, now, sleeps) ?? 'offline')).length
+/** Count known and uncertain sessions as occupying capacity; only two closed views free a slot. */
+export const openCount = (statuses: Map<string, Status>, _now: number, _sleeps: readonly Sleep[] = [], held: ReadonlySet<string> = new Set(), members: Member[] = []) => {
+  const open = new Set<string>()
+  for (const [name, s] of statuses) if (s.state !== 'closed') open.add(name) // offline/unknown is not proof of closure
+  for (const name of held) if (statuses.get(name)?.state !== 'closed') open.add(name)
+  for (const m of members) {
+    const s = statuses.get(m.name)
+    if (!s && !m.pending && m.state !== 'closed' && m.state !== 'unstarted' && (!!m.handle || !!m.sessionId)) open.add(m.name) // roster identifies an open session; missing status is unknown
+    else if (s && m.state !== 'closed' && m.state !== 'unstarted') open.add(m.name)
+  }
+  return open.size
+}
 
-export type Admit = { kind: 'open' } | { kind: 'evict'; name: string } | { kind: 'queue' }
+export type Admit = { kind: 'open' } | { kind: 'queue' }
 
-/**
- * Whether a closed member can reopen now: under the cap it opens; at the cap the longest-idle closable worker makes
- * room; with no worker to close, the message waits in the queue.
- */
-export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = []): Admit {
-  if (t.maxOpen <= 0 || openCount(statuses, now, sleeps) < t.maxOpen) return { kind: 'open' }
-  const idle = list
-    .filter(m => !hasReports(m, list) && !t.exempt.includes(m.name) && shownState(statuses.get(m.name), now, sleeps) === 'idle')
-    .sort((a, b) => idleSince(statuses.get(a.name)!) - idleSince(statuses.get(b.name)!))
-  return idle.length ? { kind: 'evict', name: idle[0]!.name } : { kind: 'queue' }
+/** Never evict by worker cleanup claims; at the cap, wait for an explicit user-directed close. */
+export function admit(list: Member[], statuses: Map<string, Status>, t: TeamSettings, now: number, sleeps: readonly Sleep[] = [], held: ReadonlySet<string> = new Set()): Admit {
+  if (t.maxOpen <= 0 || openCount(statuses, now, sleeps, held, list) < t.maxOpen) return { kind: 'open' }
+  return { kind: 'queue' }
 }
 
 /** One short line for the task field. */

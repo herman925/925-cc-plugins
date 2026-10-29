@@ -31,22 +31,19 @@ test('the tab check runs only when an open member has been silent over two minut
   expect(nextCheckInterval(8 * MIN, 100)).toBe(2 * MIN)
 })
 
-test('auto-close takes idle workers that said clean and waited the set minutes, never heads or exempt members', () => {
+test('auto-close is paused until native cleanup ownership is verified; legacy clean/count fields never authorize it', () => {
   const s = new Map([
-    ['Lead', st('Lead', 'idle', 0, { turnEnd: NOW - 30 * MIN, lastClean: NOW - 30 * MIN })],
-    ['W1', st('W1', 'idle', 0, { turnEnd: NOW - 12 * MIN, lastClean: NOW - 11 * MIN })],
+    ['Lead', st('Lead', 'idle', 0, { turnEnd: NOW - 30 * MIN, lastClean: NOW - 30 * MIN, leftover: 0, countedAt: NOW - 30 * MIN })],
+    ['W1', st('W1', 'idle', 0, { turnEnd: NOW - 12 * MIN, lastClean: NOW - 11 * MIN, leftover: 0, countedAt: NOW - 11 * MIN, cleanupReport: { status: 'reported-clean', verified: false, at: NOW - 11 * MIN } })],
     ['W2', st('W2', 'idle', 0, { turnEnd: NOW - 3 * MIN, lastClean: NOW - 3 * MIN })],
   ])
-  expect(toClose(list, s, TEAM_SETTINGS0, NOW).map(x => x.name)).toEqual(['W1'])
+  expect(toClose(list, s, TEAM_SETTINGS0, NOW)).toEqual([])
   expect(toClose(list, s, { ...TEAM_SETTINGS0, exempt: ['W1'] }, NOW)).toEqual([])
   expect(toClose(list, s, { ...TEAM_SETTINGS0, autoClose: false }, NOW)).toEqual([])
-  expect(toClose(list, s, { ...TEAM_SETTINGS0, idleMinutes: 2 }, NOW).map(x => x.name)).toEqual(['W1', 'W2'])
-  // a worker that never said clean stays open
-  s.set('W1', st('W1', 'idle', 0, { turnEnd: NOW - 30 * MIN }))
-  expect(toClose(list, s, TEAM_SETTINGS0, NOW)).toEqual([])
+  expect(toClose(list, s, { ...TEAM_SETTINGS0, idleMinutes: 2 }, NOW)).toEqual([])
 })
 
-test('a closed worker reopens under the cap, makes room by closing the longest-idle worker, or waits in the queue', () => {
+test('at the open-session cap, admission queues instead of evicting a worker based on an old clean', () => {
   const s = new Map([
     ['Head', st('Head', 'working', 0)],
     ['Lead', st('Lead', 'idle', 0)],
@@ -55,10 +52,18 @@ test('a closed worker reopens under the cap, makes room by closing the longest-i
   ])
   expect(openCount(s, NOW)).toBe(3)
   expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 8 }, NOW)).toEqual({ kind: 'open' })
-  expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 3 }, NOW)).toEqual({ kind: 'evict', name: 'W1' })
+  expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 3 }, NOW)).toEqual({ kind: 'queue' })
   s.set('W1', st('W1', 'working', 0))
   expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 3 }, NOW)).toEqual({ kind: 'queue' })
   expect(admit(list, s, { ...TEAM_SETTINGS0, maxOpen: 0 }, NOW)).toEqual({ kind: 'open' })
+})
+
+test('unknown or offline roster members still occupy capacity; no admission evicts to make room', () => {
+  const missing = new Map([['Head', st('Head', 'working', 0)]])
+  const roster = [m('Head', 'user'), { ...m('W1', 'Head'), handle: 'term_w1', sessionId: 'w1' }]
+  expect(admit(roster, missing, { ...TEAM_SETTINGS0, maxOpen: 1 }, NOW)).toEqual({ kind: 'queue' })
+  const offline = new Map([['Head', st('Head', 'working', 0)], ['W1', st('W1', 'idle', 10 * MIN)]])
+  expect(admit(roster, offline, { ...TEAM_SETTINGS0, maxOpen: 1 }, NOW)).toEqual({ kind: 'queue' })
 })
 
 test('on-demand Create starts the top and, under a CEO, the team heads; leads and workers wait', () => {
@@ -129,17 +134,17 @@ test('waking up closes nothing: idle and silent ages leave the sleep out, so nob
   expect(shownState(s.get('W1'), NOW, slept)).toBe('idle')
   expect(heartbeatStale(s.get('W1')!, NOW, slept)).toBe(false)
   expect(needsTabCheck([s.get('W1')], NOW, slept)).toBe(false)
-  // it beats again on wake: the plain clock would close it now, the sleep-aware one waits for its 10 awake minutes
+  // waking the machine changes liveness, but no worker claim or old time can auto-close a member in interim mode
   const fresh = new Map([['W1', { ...s.get('W1')!, heartbeat: NOW }]])
-  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW).map(x => x.name)).toEqual(['W1'])
+  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW)).toEqual([])
   expect(toClose(list, fresh, TEAM_SETTINGS0, NOW, slept)).toEqual([])
-  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW + 2 * MIN, slept).map(x => x.name)).toEqual(['W1'])
-  // the members silent through the sleep still count as open at the cap
+  expect(toClose(list, fresh, TEAM_SETTINGS0, NOW + 2 * MIN, slept)).toEqual([])
+  // The silent member is not proven closed: count it as occupying capacity with or without a sleep window.
   expect(openCount(s, NOW, slept)).toBe(1)
-  expect(openCount(s, NOW)).toBe(0)
+  expect(openCount(s, NOW)).toBe(1)
 })
 
-test('a hung top only delays auto-close, never brings it forward', () => {
+test('a hung top cannot cause automatic closure while cleanup verification is unavailable', () => {
   // the top hung for 10 minutes while W1 and W2 kept beating
   const hung = noteTick(NOW - 10 * MIN, NOW, 30_000, [])
   const s = new Map([
@@ -148,7 +153,6 @@ test('a hung top only delays auto-close, never brings it forward', () => {
   ])
   const plain = toClose(list, s, TEAM_SETTINGS0, NOW).map(x => x.name)
   const aware = toClose(list, s, TEAM_SETTINGS0, NOW, hung).map(x => x.name)
-  expect(plain).toEqual(['W1', 'W2'])
-  expect(aware).toEqual(['W2'])
-  expect(aware.every(n => plain.includes(n))).toBe(true)
+  expect(plain).toEqual([])
+  expect(aware).toEqual([])
 })

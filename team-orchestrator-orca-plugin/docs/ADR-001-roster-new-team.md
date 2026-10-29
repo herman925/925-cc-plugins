@@ -1,9 +1,9 @@
 # ADR-001：Roster 与 New team 的职责及最终交互
 
-- 状态：已接受，已合并截至 `0.1.22` 的用户决策。
+- 状态：已接受，已合并截至 `0.1.23` 的用户决策。
 - 决策日期：2026-10-18。
 - 决策人：Lin；依据为本轮连续产品讨论及最终确认。
-- 当前实现基线：插件 `0.1.22`；在全员会话跳转与本机终端 Context 读取上，新增 Claude statusline 的实际窗口／百分比接入。此前模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地，Worker 前缀由 `8feb269` 落地。
+- 当前实现基线：插件 `0.1.23`；在既有会话导航及 Claude statusline Context 上，新增本机多层团队的原生派工深度准备。此前模型目录、Lead name 和稳定模型选择由 `a7d2145` 落地，Worker 前缀由 `8feb269` 落地。
 - 初始设计基线：插件 `0.1.17`，提交 `26bc866`；其后修订以本文当前条款为准。
 - 范围：Roster、New team，以及两页依赖的主管交互、可用性与宿主能力边界。Settings 的整体设计不在本次定稿范围内。
 - 关联历史：[2026-10-16 开发规格](../../docs/team-orchestrator-orca-spec.md)、[原版 Claude Code mod](../../team-orchestrator/README.md)。
@@ -42,8 +42,8 @@ Roster 按 Orca 当前选中的项目过滤已启动团队。这里的“已启�
 保留的监控列为 Name、Role、CLI、Status、Context、Model、Effort。页面可见时约每 5 秒读取一次原生状态；显示必须来自当前、准确匹配的会话身份，不能沿用启动时的旧 Working 记录。
 
 - Add team 保留在 Roster，包含空名册状态；点击只跳转 New team，不另建一套创建流程。
-- 点击列表中的成员名字或组织图节点，直接打开该成员已绑定的会话，覆盖 Head／CEO、Lead 和 Worker；移除单独的 Open supervisor 按钮。没有保存的绑定时禁用入口，身份失效时报告错误，不创建替代会话。
-- 名称使用支持键盘操作的按钮；点击只进行会话导航，不打开个人详情或下属会话管理表单。
+- 组织树沿用 New team 的 Organisation preview，纵向显示主管与下属层级。点击树节点或下方监控列表中的成员名字，直接打开该成员已绑定的会话，覆盖 Head／CEO、Lead 和 Worker；移除单独的 Open supervisor 按钮。没有保存的绑定时禁用入口，身份失效时报告错误，不创建替代会话。
+- 组织树节点和监控列表中的名称使用支持键盘操作的按钮；点击只进行会话导航，不打开个人详情或下属会话管理表单。
 - 移除成员角色说明、工作习惯、协作规则、个人模型偏好、暂停派工、停止、替换、唤醒及恢复诊断等详情入口。
 - 移除会话回执列表、内部 request/instance 信息、团队派工开关等面板块。
 - 移除 Start team work、Submit total objective、Next total objective，以及总目标队列、交付验收表单。
@@ -129,6 +129,12 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 
 旧的按需启动配置、CEO 组织、仅 Head 的历史团队仍可读取；本轮不迁移或重组既有团队。`leadCount`、`workersPerLead` 缺失时，旧配置继续按原有 `fan` 语义解释。
 
+### 本机派工深度
+
+0.1.23 起，启动前按已保存名册的实际父子关系计算派工深度。单主管 Head → Workers 需要 1；Head → Leads → Workers 需要 2，与 11／21 人的宽度无关。实际 Launch 在新鲜会话及能力校验后、成员预留和创建前检查本机上限；不足时通过原有 `settings:get`／`settings:set`，使用真实面板主 frame 的事件和正常插件权限，仅将 `nestedWorkerMaxDepth` 提升至 2，再读回确认。已有更高设置保留，不在测试结束时降回 1。深度数据来自保存的团队及配置版本，不接受面板直接指定任意数值。
+
+原生设置接口缺失、失效、拒绝或读回不满足时停止启动，不创建成员。已有团队可通过受控 `ensureTeamDepth` 检查入口确认该配置，不重建成员、不重发工作。恢复／重读既有启动回执本身仍然只读，不触发设置修改。远端不使用本机设置代替远端事实；深于 2 的旧名册不足时由用户明确配置，本次不自动提升至更深层。真实结果和验证边界见 [0.1.23 派工深度验证](validation/dispatch-depth-023.md)。
+
 ## 4. 可用性与兼容原则
 
 连接和保存数据都验证成功后才展示正常导航与内容。插件连接或存储不可用时只展示 Plugin unavailable、Retry 和可选 Details，不同时呈现缓存名册或误导性的“没有团队”。正常连接诊断放在 Settings → Connection，技术细节默认折叠。
@@ -160,7 +166,7 @@ Default 继承 Orca 配置。切换 CLI 时重置该角色的模型/effort，切
 | Structure 与 Levels 分开选择 | 先合并，最终都取消；由 Lead 数量推导 |
 | 两层显示不可编辑的 Head = 1，三层才显示 Leads | 最终统一显示可编辑的 Leads；1 位对应单主管，超过 1 位增加 Head |
 | 一个 Reports each 同时决定 Lead 和 Worker 数量 | 分开配置 Leads 与 Workers per lead |
-| 单独 Open supervisor 按钮，成员名与组织图不可点击 | 点击任意成员打开其已绑定会话，不新增会话或个人管理表单 |
+| 单独 Open supervisor 按钮，成员名与组织图不可点击 | 纵向组织树节点与下方监控列表中的成员名均打开已绑定会话，不新增会话或个人管理表单 |
 | 成员详情中修改角色、模型、控制会话与查看诊断 | Roster 只读监控，个人管理表单移除 |
 | 用户手动填写模型 ID | 从宿主目录选择，未知时 Default |
 | 模型名称后附加括号中的 ID | 选项仅显示宿主名称，内部保存并传递原始 model ID |

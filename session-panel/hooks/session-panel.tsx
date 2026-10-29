@@ -1,18 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderChildren, RenderElement, Timer } from 'claude-code'
 
-import type { Assumption, AssumptionTrack, CleanChecklist, CleanFinished, CleanStyle, EnhancerState, Prefs } from '../types'
+import type { Assumption, AssumptionTrack, CleanChecklist, CleanFinished, CleanStyle, CleanTask, EnhancerState, Prefs } from '../types'
 import { DEFAULT_PREFS, enhance, runEnhance, sendBox, undoEnhance, type EnhancerDeps, type EnhancerIo, type Outcome } from './enhancer'
 import {
-  GATE_MESSAGE,
   PLAN_SECTION,
+  PLAN_STEPS_DESCRIPTION,
   rulesSection,
-  GATE_LIMIT,
   versionFrom,
   actionLabel,
-  applyTaskCreate,
-  applyTaskUpdate,
-  applyTodos,
   asksUser,
   barSegments,
   cleanName,
@@ -22,7 +18,6 @@ import {
   fitName,
   formatDuration,
   friendlyError,
-  isGateExempt,
   looksLikeUserDenial,
   SOURCE_SHORT,
   TABLE_GAP,
@@ -32,6 +27,8 @@ import {
   GRILL_NOTE,
   tableWidths,
   pageRows,
+  planFromReply,
+  todoAction,
   meter,
   migratedValues,
   newChecklist,
@@ -39,8 +36,19 @@ import {
   reportProgress,
   shortName,
   stepsOf,
+  ANSWER_LABEL,
+  WAITING_LABEL,
+  backgroundSpawn,
+  backgroundStart,
+  cheapModel,
+  bgVerdict,
+  finishState,
+  settleActivity,
+  startActivity,
   startJob,
   stepNumber,
+  trackBackground,
+  type BgVerdict,
   sweep,
   visibleRows,
   ASSUME_SECTION,
@@ -121,7 +129,6 @@ const styleA = atom({ plugin: 'session-panel', key: 'viewStyle' } as const, 'che
 const finishedA = atom({ plugin: 'session-panel', key: 'finished' } as const, [] as CleanFinished[])
 const prefsA = atom({ plugin: 'session-panel', key: 'prefs' } as const, DEFAULT_PREFS as Prefs)
 const enhancerA = atom({ plugin: 'session-panel', key: 'enhancer' } as const, { original: null, passText: null, notes: [], busy: false } as EnhancerState)
-const gateDeniedA = atom({ plugin: 'session-panel', key: 'gateDenied' } as const, 0)
 const trackA = atom({ plugin: 'session-panel', key: 'assumptionTrack' } as const, newTrack() as AssumptionTrack)
 const versionA = atom({ plugin: 'session-panel', key: 'version' } as const, '')
 /** The row whose full text is open, or null. One row at a time. */
@@ -140,10 +147,18 @@ const ASK = 'mcp__session-panel__ask_choices'
 
 let timer: Timer | undefined
 let doneTimer: Timer | undefined
+let waitTimer: Timer | undefined
+let callSeq = 0
 let lastInputAt = 0
+/** Ids of subagents the engine's agent.spawn answered for in the background; the Agent call that started one is a background activity. */
+const backgroundSpawned = new Set<string>()
+
+let writes: Promise<unknown> = Promise.resolve()
 
 function patch($: Hooked, fn: (c: CleanChecklist) => CleanChecklist) {
-  return update($, checklistA, fn)
+  const run = writes.then(() => update($, checklistA, fn))
+  writes = run.catch(() => undefined)
+  return run
 }
 
 function runClock($: Hooked) {
@@ -174,6 +189,51 @@ async function bell($: Hooked) {
     ? ['powershell', '-NoProfile', '-Command', '[console]::Beep(880,200)']
     : ['afplay', '/System/Library/Sounds/Ping.aiff']
   $.process.run(argv, { timeoutMs: 5000 }).catch(() => undefined)
+}
+
+async function finishJob($: Hooked, c: CleanChecklist, now: number, done: { tasks: CleanTask[]; note: string }) {
+  stopClock()
+  backgroundSpawned.clear()
+  await patch($, cl => ({ ...cl, tasks: done.tasks, phase: 'done', finishedAt: now, action: '', question: null, isCollapsed: false, note: done.note }))
+  const seconds = Math.max(0, Math.round((now - c.startedAt) / 1000))
+  const record: CleanFinished = {
+    id: `j${c.jobId}`,
+    title: c.title === '' ? 'Working on it' : c.title,
+    seconds,
+    steps: done.tasks.filter(t => t.status === 'done' && t.name !== ANSWER_LABEL).map(t => t.name),
+    ...(done.note === '' ? {} : { note: done.note }),
+  }
+  await update($, finishedA, f => [...f, record].slice(-3))
+  doneTimer?.cancel()
+  doneTimer = $.clock.after(5000, () => {
+    void patch($, cl => (cl.phase === 'done' ? { ...cl, isCollapsed: true } : cl))
+  })
+}
+
+async function agentVerdict($: Hooked, cl: CleanChecklist): Promise<BgVerdict> {
+  if (cl.bgAgents.length === 0) return 'none'
+  try {
+    return bgVerdict(cl.bgAgents, await $.agent.list())
+  } catch {
+    return 'unknown'
+  }
+}
+
+const UNKNOWN_POLLS = 3
+
+// A job waiting only on its own background agents re-checks the engine's agent list; a background shell has no end signal, so it never re-checks.
+function watchAgents($: Hooked, jobId: number, unknownSoFar = 0) {
+  waitTimer?.cancel()
+  waitTimer = $.clock.after(3000, () => {
+    void (async () => {
+      const cl = await read($, checklistA)
+      if (cl.jobId !== jobId || cl.action !== WAITING_LABEL || cl.bgCommands.length > 0) return
+      const verdict = await agentVerdict($, cl)
+      if (verdict === 'working') return watchAgents($, jobId)
+      if (verdict === 'unknown' && unknownSoFar + 1 < UNKNOWN_POLLS) return watchAgents($, jobId, unknownSoFar + 1)
+      await finishJob($, cl, await $.clock.now(), finishState(cl, verdict))
+    })().catch(() => undefined)
+  })
 }
 
 async function needsYou($: Hooked, reason: string, question: CleanChecklist['question'] = null) {
@@ -282,7 +342,7 @@ function engineIo($: Hooked): EnhancerIo {
     },
     messages: async () => (await $.session.messages()).map(m => ({ role: m.role, text: m.text })),
     fork: async prompt => (await $.model.fork({ prompt })) as Awaited<ReturnType<EnhancerIo['fork']>>,
-    complete: async (model, prompt) => (await $.model.complete({ model, prompt })) as Awaited<ReturnType<EnhancerIo['complete']>>,
+    complete: async (model, prompt) => (await $.model.complete({ model: model === 'haiku' ? cheapModel(await $.env.get('ANTHROPIC_DEFAULT_HAIKU_MODEL').catch(() => undefined)) : model, prompt })) as Awaited<ReturnType<EnhancerIo['complete']>>,
     askUser: (question, options) => $.ui.ask(question, options),
   }
 }
@@ -693,7 +753,8 @@ async function finishAssumptions($: Hooked, e: { agentId?: string }) {
 }
 
 function title0(cl: CleanChecklist): string {
-  return cl.title === '' ? 'Working on it' : cl.title
+  const base = cl.title === '' ? 'Working on it' : cl.title
+  return cl.phase === 'done' && !cl.isCollapsed && cl.note !== '' ? `${base} · ${cl.note}` : base
 }
 
 export function registerSessionPanel(on: On, options: Record<string, unknown> = {}) {
@@ -729,8 +790,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     if (typeof savedAsk === 'boolean') await update($, askEnabledA, () => savedAsk)
     await $.tool.register({
       name: 'plan_steps',
-      description:
-        'Session Panel: list the steps of the job in order, 1 to 8 short plain-English names starting with a verb (no paths, file names, commands or code). The first step starts at once. Call this first for every request.',
+      description: PLAN_STEPS_DESCRIPTION,
       inputSchema: {
         type: 'object',
         properties: { steps: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 } },
@@ -740,7 +800,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     await $.tool.register({
       name: 'report_progress',
       description:
-        'Session Panel: report progress on a planned step by its name and a percent from 0 to 100. Use 100 the moment the step is finished.',
+        'Optional. Report progress on a step by its name and a percent from 0 to 100, in the same message as a real tool call. Never send it alone.',
       inputSchema: {
         type: 'object',
         properties: { task: { type: 'string' }, percent: { type: 'number' } },
@@ -889,19 +949,22 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     if (text === '' || text.startsWith('/')) return result
     const now = await $.clock.now()
     const before = await read($, checklistA)
-    const isContinue = before.phase === 'needs-you' || before.phase === 'working'
-    if (isContinue) {
+    if (before.action === WAITING_LABEL) {
+      waitTimer?.cancel()
+      await finishJob($, before, now, finishState(before, 'unknown'))
+    } else if (before.phase === 'needs-you' || before.phase === 'working') {
+      await patch($, cl => (cl.action === WAITING_LABEL ? { ...cl, action: '' } : cl))
       await resume($)
       runClock($)
       return result
     }
     doneTimer?.cancel()
-    await patch($, c => startJob(c, now))
+    await patch($, c => startJob(c, now, e.turnId))
     const jobId = (await read($, checklistA)).jobId
     runClock($)
     void (async () => {
       const r = await $.model.complete({
-        model: 'haiku',
+        model: cheapModel(await $.env.get('ANTHROPIC_DEFAULT_HAIKU_MODEL').catch(() => undefined)),
         effort: 'low',
         maxTokens: 30,
         timeoutMs: 15000,
@@ -912,6 +975,35 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       await patch($, c => (c.jobId === jobId ? { ...c, title } : c))
     })().catch(() => undefined)
     return result
+  })
+
+  // ---------- the optional plan line: read as it streams, every chunk passed on unchanged ----------
+  on('turn.step', async function* ($, e, next) {
+    const stream = next(e)
+    const blocks: string[] = []
+    const order: number[] = []
+    let settled = false
+    const mayPlan = e.index === 0 && e.agentId === undefined && (await read($, checklistA)).planTurn === e.turnId
+    for await (const chunk of stream) {
+      yield chunk
+      if (!mayPlan || settled || chunk.kind !== 'text') continue
+      let slot = order.indexOf(chunk.index)
+      if (slot < 0) {
+        order.push(chunk.index)
+        blocks.push('')
+        slot = blocks.length - 1
+      }
+      blocks[slot] += chunk.text
+      const names = planFromReply(0, blocks)
+      if (names === null) continue
+      settled = true
+      if (!(await read($, enabledA))) continue
+      const planned = planSteps(await read($, checklistA), names)
+      if (planned === null) continue
+      await patch($, c => (c.hasPlan ? c : { ...planned, planTurn: '' }))
+      runClock($)
+    }
+    return stream.result
   })
 
   // ---------- permission prompts ----------
@@ -975,28 +1067,29 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     return next(e)
   })
 
-  // ---------- the gate and the bookkeeping for every other tool ----------
+  // ---------- the bookkeeping for every tool ----------
   on('tool.call', async ($, e, next) => {
     if (!(await read($, enabledA)) || e.agentId !== undefined) return next(e)
     const tool = String(e.tool)
-    const c = await read($, checklistA)
-    const isInJob = c.phase === 'working' || c.phase === 'needs-you' || c.phase === 'stuck'
-    // The gate counts its denials. A plan, or the end of the job, resets the count. After GATE_LIMIT denials in a row the
-    // tool goes through, so a session that cannot see plan_steps is never trapped.
-    if (!isInJob || c.hasPlan) await update($, gateDeniedA, () => 0)
-    if (isInJob && !c.hasPlan && !isGateExempt(tool)) {
-      const denied = (await read($, gateDeniedA)) + 1
-      await update($, gateDeniedA, () => denied)
-      if (denied <= GATE_LIMIT) return { deny: GATE_MESSAGE }
-      if (denied === GATE_LIMIT + 1) $.ui.toast('Session Panel: no plan_steps call after 3 tries, so tools are open.')
-    }
 
     const isOurs = tool === PLAN || tool === REPORT || tool === ASK
+    let activityId = ''
     if (!isOurs) {
-      await patch($, cl => ({
-        ...cl,
-        action: tool === 'ToolSearch' || tool === 'TodoWrite' || tool.startsWith('Task') ? cl.action : actionLabel(tool),
-      }))
+      const todoLine = tool === 'TodoWrite' ? todoAction((e as { todos?: unknown }).todos) : ''
+      const isWork = tool !== 'ToolSearch' && !tool.startsWith('Task') && tool !== 'TodoWrite'
+      if (isWork) activityId = `c${++callSeq}`
+      await patch($, cl => {
+        const base = isWork && cl.phase !== 'idle' ? startActivity(cl, activityId, tool) : cl
+        return {
+          ...base,
+          action:
+            tool === 'ToolSearch' || tool.startsWith('Task')
+              ? base.action
+              : tool === 'TodoWrite'
+                ? todoLine || base.action
+                : actionLabel(tool),
+        }
+      })
     }
     if (tool === 'AskUserQuestion') {
       const qs = (e as { questions?: Array<{ question?: string }> }).questions
@@ -1006,19 +1099,21 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const res = await next(e)
     await recordEdits($, e, res)
     if (isOurs) return res
-
     const isFailure = res.deny === undefined && res.isError === true
+    const started: { command?: string } = res.deny === undefined ? backgroundStart(tool, res.result) : {}
+    const spawnedId = (res.result as { agentId?: unknown } | undefined)?.agentId
+    const isBackground = started.command !== undefined || (tool === 'Agent' && typeof spawnedId === 'string' && backgroundSpawned.has(spawnedId))
+    if (started.command !== undefined) await patch($, cl => trackBackground(cl, started))
+    if (activityId !== '') {
+      const outcome = res.deny !== undefined || isFailure ? 'failed' : isBackground ? 'background' : 'ok'
+      await patch($, cl => settleActivity(cl, activityId, outcome))
+    }
+
     if (res.deny === undefined && !isFailure) {
       if (tool === 'Edit' || tool === 'Write' || tool === 'NotebookEdit') {
         const file = String((e as { file_path?: string; notebook_path?: string }).file_path ?? (e as { notebook_path?: string }).notebook_path ?? '')
         if (file !== '') await patch($, cl => (cl.changedFiles.includes(file) ? cl : { ...cl, changedFiles: [...cl.changedFiles, file] }))
       }
-      if (tool === 'TodoWrite') await patch($, cl => applyTodos(cl, (e as { todos?: unknown }).todos))
-      if (tool === 'TaskCreate') {
-        const m = /#?(\d+)/.exec(res.text ?? '')
-        await patch($, cl => applyTaskCreate(cl, (e as { subject?: unknown }).subject, m?.[1] ?? String(cl.tasks.length + 1)))
-      }
-      if (tool === 'TaskUpdate') await patch($, cl => applyTaskUpdate(cl, e as { taskId?: unknown; status?: unknown; subject?: unknown }))
     }
     await patch($, cl => {
       let out: CleanChecklist = cl
@@ -1037,6 +1132,16 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         ? { ...out, failStreak: streak, phase: 'stuck', stuckReason: 'a step keeps failing, Claude is trying another way' }
         : { ...out, failStreak: streak }
     })
+    return res
+  })
+
+  on('agent.spawn', async ($, e, next) => {
+    const res = await next(e)
+    const id = backgroundSpawn(e, res as { deny?: unknown; agentId?: string })
+    if (id === undefined) return res
+    backgroundSpawned.add(id)
+    if (!(await read($, enabledA))) return res
+    await patch($, cl => (cl.phase === 'idle' ? cl : trackBackground(cl, { agent: id })))
     return res
   })
 
@@ -1079,22 +1184,16 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       // Unfinished steps only mean "waiting for you" when Claude actually asked something; a final answer with no
       // question means the job is done, even if the last step was never reported at 100.
       await needsYou($, 'Claude is waiting for your reply')
+    } else if (c.bgCommands.length > 0) {
+      await patch($, cl => ({ ...cl, phase: 'working', action: WAITING_LABEL }))
     } else {
-      stopClock()
-      await patch($, cl => ({
-        ...cl,
-        phase: 'done',
-        finishedAt: now,
-        action: '',
-        isCollapsed: false,
-        tasks: cl.tasks.map(t => ({ ...t, status: 'done' as const, percent: 100, hasReported: true })),
-      }))
-      const seconds = Math.max(0, Math.round((now - c.startedAt) / 1000))
-      await update($, finishedA, f => [...f, { id: `j${c.jobId}`, title: c.title === '' ? 'Working on it' : c.title, seconds, steps: c.tasks.map(t => t.name) }].slice(-3))
-      doneTimer?.cancel()
-      doneTimer = $.clock.after(5000, () => {
-        void patch($, cl => (cl.phase === 'done' ? { ...cl, isCollapsed: true } : cl))
-      })
+      const verdict = await agentVerdict($, c)
+      if (verdict === 'working' || verdict === 'unknown') {
+        await patch($, cl => ({ ...cl, phase: 'working', action: WAITING_LABEL }))
+        watchAgents($, c.jobId)
+      } else {
+        await finishJob($, c, now, finishState(c, verdict))
+      }
     }
     return result
   })
@@ -1613,6 +1712,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       )
     }
 
+    // Until the 5 s collapse, a finished job's note is shown as its own line (no bar, no 100%); after it, history carries it.
+    const pendingNote = cl.phase === 'done' && !cl.isCollapsed && cl.note !== ''
     if (style === 'bars') {
       const live = cl.phase === 'working' || cl.phase === 'needs-you' || cl.phase === 'stuck' || cl.phase === 'stopped'
       const active = cl.tasks.find(t => t.status === 'active')
@@ -1641,7 +1742,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         label: string
         onDismiss: () => void
       }
-      const items: Item[] = finished.map(f => ({
+      const items: Item[] = finished.filter(f => !(pendingNote && f.id === `j${cl.jobId}`)).map(f => ({
         id: f.id,
         name: f.title,
         pillText: `✓ ${formatDuration(f.seconds * 1000)}`,
@@ -1729,8 +1830,9 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
         ) : null
       return frame(
         <Box flexDirection="column" width={width}>
-          {rows.length === 0 ? <Text dimColor>Waiting for your next request.</Text> : null}
+          {rows.length === 0 && !pendingNote ? <Text dimColor>Waiting for your next request.</Text> : null}
           {rows}
+          {pendingNote ? <Text dimColor wrap="truncate">{`  ${cl.note}`}</Text> : null}
           {cl.phase === 'stuck' ? (
             <Text dimColor>{`⚠ ${cl.stuckReason}. Press Esc to stop, or type a message to steer.`}</Text>
           ) : null}
@@ -1751,7 +1853,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
           : cl.phase === 'stopped'
             ? pillOf('Stopped', 'gray')
             : pillOf('Working', 'magenta')
-    const stepNote = isSingle || cl.tasks.length === 0 ? '' : ` · Step ${stepNumber(cl)} of ${cl.tasks.length}`
+    const stepNote = cl.fallback || isSingle || cl.tasks.length === 0 ? '' : ` · Step ${stepNumber(cl)} of ${cl.tasks.length}`
     const detail =
       cl.phase === 'needs-you'
         ? `${cl.needsYouReason}  ↓ Answer below`
@@ -1762,6 +1864,11 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
             : cl.action !== ''
               ? `${cl.action}…`
               : ''
+    const doneHead = pendingNote ? (
+      <Box flexDirection="row">
+        <Text bold wrap="truncate">{` ${title}`}</Text>
+      </Box>
+    ) : null
     const liveHead = isLive ? (
       <Box flexDirection="column">
         <Box flexDirection="row">
@@ -1839,13 +1946,14 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const historyEls = finished.map(f => {
       const isJustDone = cl.phase === 'done' && f.id === `j${cl.jobId}`
       const changed = isJustDone && files > 0 ? ` · changed ${files} ${files === 1 ? 'file' : 'files'}` : ''
+      const note = f.note && !(isJustDone && pendingNote) ? ` · ${f.note}` : ''
       return (
         <Box key={`old-${f.id}`} flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" width={width}>
             <Text wrap="truncate">
               <Text weight="bold" color={color('success')}>{'✓ '}</Text>
               <Text>{f.title}</Text>
-              <Text dimColor tabular>{` · took ${formatDuration(f.seconds * 1000)}${changed}`}</Text>
+              <Text dimColor tabular>{` · took ${formatDuration(f.seconds * 1000)}${changed}${note}`}</Text>
             </Text>
             <Button
               key={`x-${f.id}`}
@@ -1864,6 +1972,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     return frame(
       <Box flexDirection="column" width={width}>
         {historyEls}
+        {doneHead}
         {liveHead}
         {picker}
         {showRows && doneCount > 0 ? <Text dimColor color={color('success')}>{`✓ ${doneCount} steps done`}</Text> : null}
