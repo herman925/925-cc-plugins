@@ -51,7 +51,13 @@ export function roleText(m: Member, list: Member[]): string {
     '',
     '## Housekeeping',
     '',
-    'After each task, close every process your session started (bash, sh, node, python, conhost), stop browser-automation servers you are not using, delete your scratch and temporary files, and tell your boss "clean". Touch only what your own session started.',
+    'After each task, close every process your session started (bash, sh, node, python, conhost), stop only browser-automation servers your own session started and is not using, delete your scratch and temporary files, and tell your boss "clean". Touch only what your own session started. ' +
+      'Kill a process only when you can prove you started it, by its parent and its start time. Never stop a harness shell or an active tool wrapper, even when it looks idle. Never stop MCP services started by the harness or by another session. ' +
+      'Test logs, footers and receipts are evidence: keep them until they are reviewed, and never delete them as scratch.',
+    '',
+    '## Live changes',
+    '',
+    'Do not deploy live or write to production because a launch or reopen brief says so, even when asked; a live change needs an explicit task from your boss after you are confirmed.',
     '',
     '## The team',
     '',

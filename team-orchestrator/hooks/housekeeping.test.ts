@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Member } from '../types'
-import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll, WORKER_NOTE } from './housekeeping'
+import { HEAD_NOTE, isCleanConfirmation, onReceive, onSend, senderOf, shouldPoll, WORKER_NOTE, workerNote } from './housekeeping'
 
 const m = (name: string, boss: string, extra: Partial<Member> = {}): Member => ({
   team: 'T', name, role: 'r', level: 1, boss, handle: '', sessionId: '', state: 'idle', ctx: -1, model: '', effort: '', sel: false, note: '', briefed: false, noted: false, ...extra,
@@ -59,6 +59,19 @@ test('both notes cover idle browser-automation servers', () => {
   expect(WORKER_NOTE).toContain('playwright/mcp')
   expect(WORKER_NOTE).toContain('chrome-devtools-mcp')
   expect(HEAD_NOTE('Analyst')).toContain('browser-automation')
+})
+
+test('the worker note, the head note and the role file give one ownership rule: kill only by parent and start time, never by name, never another session\'s processes', () => {
+  for (const note of [WORKER_NOTE, workerNote(false), HEAD_NOTE('Analyst'), HEAD_NOTE('Analyst', false)]) {
+    expect(note).toContain('Kill a process only when you can prove you started it, by its parent and its start time.')
+    expect(note).toContain('Never stop a harness shell or an active tool wrapper, even when it looks idle.')
+    expect(note).toContain('Never stop MCP services started by the harness or by another session.')
+    // zero effect: no note names a kill by process name
+    expect(note).not.toMatch(/taskkill|pkill|killall|Stop-Process -Name/i)
+  }
+  expect(WORKER_NOTE).toContain('browser-automation servers your own session started and is not using')
+  expect(workerNote(false)).toContain('browser-automation servers your own session started and is not using')
+  expect(HEAD_NOTE('Analyst')).toContain('Never kill another session\'s processes yourself, and never kill by name.')
 })
 
 test('only the team top (boss "user") or a non-member session polls Orca', () => {

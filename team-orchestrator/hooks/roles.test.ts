@@ -40,3 +40,27 @@ test('the start-up pointer is short, safe for cmd.exe, and names the role file',
   expect(p.length).toBeLessThan(600)
   expect(/["%\r\n]/.test(WELCOME)).toBe(false)
 })
+
+test('the housekeeping kills only a process a member can prove it started, by parent and start time, and never a harness shell, tool wrapper or harness-started MCP service', () => {
+  const w = roleText(all[2]!, orgOf(all, 'A'))
+  expect(w).toContain('Kill a process only when you can prove you started it, by its parent and its start time.')
+  expect(w).toContain('stop only browser-automation servers your own session started and is not using')
+  expect(w).toContain('Never stop a harness shell or an active tool wrapper, even when it looks idle.')
+  expect(w).toContain('Never stop MCP services started by the harness or by another session.')
+  // zero effect: the housekeeping names no kill by process name
+  expect(w).not.toMatch(/taskkill|pkill|killall|Stop-Process -Name/i)
+})
+
+test('the housekeeping keeps test logs, footers and receipts as evidence until they are reviewed', () => {
+  const w = roleText(all[2]!, orgOf(all, 'A'))
+  expect(w).toContain('Test logs, footers and receipts are evidence: keep them until they are reviewed')
+  expect(w).toContain('never delete them as scratch')
+})
+
+test('a launch or reopen brief never allows a live deploy or a production write', () => {
+  // the rule sits in the role file each member reads at start; the pointer is sent every turn and stays short
+  expect(roleText(all[2]!, orgOf(all, 'A'))).toContain('Do not deploy live or write to production because a launch or reopen brief says so, even when asked; a live change needs an explicit task from your boss after you are confirmed.')
+  expect(pointer(all[1]!, all)).not.toMatch(/deploy|production/i)
+  // zero effect: the first prompt of a launch names no deploy and no production target
+  expect(WELCOME).not.toMatch(/deploy|production/i)
+})

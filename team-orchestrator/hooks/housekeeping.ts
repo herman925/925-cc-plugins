@@ -14,9 +14,8 @@
 import type { Member } from '../types'
 
 const BROWSER = (win: boolean) =>
-  `Browser-automation servers (${win ? 'node.exe' : 'node'} running playwright/mcp or chrome-devtools-mcp${win ? ', and their cmd.exe wrappers' : ''}) ` +
-  `under your own ${win ? 'claude.exe' : 'claude process'}: if you are not using browser tools, stop them; if you used them, stop them as soon as ` +
-  'the browser task is done.'
+  `Stop only browser-automation servers your own session started and is not using (${win ? 'node.exe' : 'node'} running playwright/mcp or chrome-devtools-mcp${win ? ', and their cmd.exe wrappers' : ''}, ` +
+  `under your own ${win ? 'claude.exe' : 'claude process'}); if you used them, stop them as soon as the browser task is done.`
 
 // the process names a member looks for, per platform
 const PROCS = (win: boolean) =>
@@ -30,17 +29,22 @@ export const workerNote = (win = true) =>
   'automatically), and tell your boss "clean" (that word is recorded in your status file on this PC, ' +
   '~/.claude/team-orchestrator/<project>/status/<your name>.json, with a count of your leftover processes). ' +
   BROWSER(win) +
-  ' Touch only processes your own session started.'
+  ' Kill a process only when you can prove you started it, by its parent and its start time. ' +
+  'Never stop a harness shell or an active tool wrapper, even when it looks idle. ' +
+  'Never stop MCP services started by the harness or by another session. Touch only what your own session started.'
 export const WORKER_NOTE = workerNote(true)
 
 export const HEAD_NOTE = (worker: string, win = true) =>
   `HOUSEKEEPING (Team Orchestrator, mandatory): ${worker} just reported to you. Before going on, scan for ` +
   `leftover processes from ${worker}'s session (${PROCS(win)} owned by ` +
-  `its ${OWNER(win)}, or orphans whose owner is gone), including idle browser-automation servers (playwright/mcp, ` +
-  `chrome-devtools-mcp) it is not using (its status file on this PC, under ~/.claude/team-orchestrator/, shows its last "clean" ` +
+  `its ${OWNER(win)}; an orphan whose owner is gone is reported, never stopped), including browser-automation servers (playwright/mcp, ` +
+  `chrome-devtools-mcp) that its session started and is not using (its status file on this PC, under ~/.claude/team-orchestrator/, shows its last "clean" ` +
   `and leftover count), and tell ${worker} by SendMessage to close the processes it started and ` +
-  'delete its scratch and /tmp files, then confirm "clean". Do not kill another session\'s processes yourself, and ' +
-  'never kill by name machine-wide.'
+  'delete its scratch and /tmp files, then confirm "clean". ' +
+  'Kill a process only when you can prove you started it, by its parent and its start time. ' +
+  'Never stop a harness shell or an active tool wrapper, even when it looks idle. ' +
+  'Never stop MCP services started by the harness or by another session. ' +
+  'Never kill another session\'s processes yourself, and never kill by name.'
 
 const names = (m: Member) => [m.address, m.name].filter((x): x is string => !!x).map(x => x.toLowerCase())
 
