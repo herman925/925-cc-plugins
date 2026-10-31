@@ -6,7 +6,7 @@ Command, from `925-jev-router/`:
 node --test test/*.test.mjs
 ```
 
-Result: 40 tests, 40 pass, 0 fail (Node v22.23.4). No network. The previous 32 M1 tests remain in this run.
+Result: 56 tests, 56 pass, 0 fail (Node v22.23.4). No network. The previous 40 M2 tests remain in this run. `test/request-context.test.mjs` adds 16.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -20,6 +20,7 @@ Result: 40 tests, 40 pass, 0 fail (Node v22.23.4). No network. The previous 32 M
 | Synthetic harness | `test/harness.test.mjs` drives two in-memory transport failures and lands on `strong-worker` from the fixture, not on `model_list`. A synthetic 401 rejects. | Pass |
 | M2 mock Apply / read-back | `test/mock-apply.test.mjs` posts and reads `/jev/v1/projects/{id}/...` in process. Missing and wrong bearer values are 401. The stored record survives a bad hash, an unknown alias, and a path/policy mismatch. The response copy can be mutated without changing the next read. The synthetic token is not in the record. String `"null"`, a scalar, and an array return 400 `apply_shape` and leave the stored revision unchanged. An alias that only exists on the configured list is not added to `candidates`. | Pass |
 | M2 hook wire | `test/wire.test.mjs` applies, reads back, then runs hook → decision → execution rewrite. `large-leader` stays pinned with selector call count 0. A sentinel choice rewrites the model and records one selector call. No agent id still selects. A second apply that drops `cheap-worker` makes the next execution use `strong-worker`. | Pass |
-| #167 interface | [docs/m2-request-context.md](docs/m2-request-context.md) records the binding rules and the assertion map. Header parsing and stickiness are not implemented. | Design only |
+| #167 interface | [docs/m2-request-context.md](docs/m2-request-context.md) records the binding rules. [docs/m3-request-context.md](docs/m3-request-context.md) maps each Planned row to an offline test. | Implemented offline |
+| M3 request context | `test/request-context.test.mjs` covers case-insensitive headers, binding isolation, prompt stickiness, subagent parent agent id, missing/blank/conflict errors, a conservative pin, shared in-flight selection, auxiliary traffic with and without a pin, failed-flight cleanup, cached-model revocation, a 64-pin / 15-minute cache, and harness `execution.model` plus `selectorCalls`. Identity headers do not grant Apply. | Pass |
 
-Not done, on purpose: live LiteLLM registration, live TypeSafe HTTP, Auth A/B choice, header identity (#167), new credentials, deploy.
+Not done, on purpose: live LiteLLM registration, live TypeSafe HTTP, Auth A/B choice, live header smoke (#167), new credentials, deploy.

@@ -7,3 +7,11 @@ export { canonicalJson, policyHash, createDraft, applyDraft, createMemoryGateway
 export { createMockControlPlane } from './mock-apply.mjs';
 export { CONFIG_DIR, CONFIG_FILE, projectConfigPath, loadProjectPolicy, planPreCall, asyncPreCallHook } from './hook.mjs';
 export { runSyntheticPreCall } from './harness.mjs';
+export {
+  PIN_TTL_MS,
+  CACHE_LIMIT,
+  normalizeHeaders,
+  readIdentity,
+  headersAuthorizeApply,
+  createRequestContext,
+} from './request-context.mjs';

@@ -1,5 +1,7 @@
 # Request context and header binding (design only)
 
+M3 implements this interface in `src/request-context.mjs`. Results and the assertion map are in [m3-request-context.md](m3-request-context.md). This file stays the M2 design record.
+
 Status: interface confirmation for M2. No header parser, no sticky cache, and no Claude or LiteLLM wire client is implemented. [#167](https://github.com/herman925/925-cc-plugins/issues/167) stays with Crabbie. [#168](https://github.com/herman925/925-cc-plugins/issues/168) auth A versus B is not chosen.
 
 The hook still classifies a call only by the requested model id. It does not read session, agent, or prompt headers.

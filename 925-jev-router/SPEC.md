@@ -124,7 +124,15 @@ The caller must present `Authorization: Bearer` plus the synthetic token passed 
 
 `runSyntheticPreCall` wires three stages on that read-back policy: the hook classifies leader versus sentinel, the decision adapter builds the System One body from the eligible set, and execution rewrites `data.model`. A non-sentinel leader does not call the selector. A sentinel request with no agent id stays on the sentinel path. This in-process mock is not a real LiteLLM or TypeSafe test.
 
-Request-context and header binding for [#167](https://github.com/herman925/925-cc-plugins/issues/167) are specified in [docs/m2-request-context.md](docs/m2-request-context.md). That behavior is not implemented in the hook.
+## M3 offline identity and stickiness
+
+[#167](https://github.com/herman925/925-cc-plugins/issues/167) correlation is implemented in `src/request-context.mjs` and covered by `test/request-context.test.mjs`. The design record remains [docs/m2-request-context.md](docs/m2-request-context.md). The assertion map is [docs/m3-request-context.md](docs/m3-request-context.md).
+
+The binding is authenticated caller, project, applied revision, session, and agent. Prompt mode adds the prompt id. Header names are matched case-insensitively. `X-Jev-Parent-Agent` wins over `X-Jev-Agent`, so a subagent prompt does not drop the parent. One prompt keeps its selection across tool-result calls and retries. A new prompt may select again, including onto the same model.
+
+Same-key concurrent first requests share one in-flight selection and commit one pin. Different keys stay isolated. A failed selection leaves no pin. A cached model that is expired, omitted from the eligible set, or no longer eligible is dropped before execution. Auxiliary or compaction traffic with no live pin returns `auxiliary_unpinned` and does not invent a leader. The cache holds 64 pins for 15 minutes from commit. Both limits are injectable.
+
+Those headers are correlation hints. `headersAuthorizeApply` is always false. They do not grant Apply. Auth A versus Auth B is still undecided. The hook file does not read these headers. The synthetic harness consults the store only when the fixture passes `headers` or `contextStore`. A non-sentinel model still bypasses that store.
 
 ## Non-goals
 
@@ -137,7 +145,7 @@ Request-context and header binding for [#167](https://github.com/herman925/925-c
 
 ## Still open
 
-[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria, [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) native-header implementation and smoke, [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
+[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria, [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live header smoke (offline binding is M3), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
 
 ## Smoke criteria
 
