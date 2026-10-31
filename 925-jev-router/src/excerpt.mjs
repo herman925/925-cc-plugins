@@ -8,7 +8,7 @@ const ASSIGNMENT = new RegExp(
   String.raw`(?<![A-Za-z0-9_])(?:"${SECRET_NAME}"|'${SECRET_NAME}'|${SECRET_NAME})\s*[:=]\s*${QUOTED_VALUE}`,
   'gi',
 );
-const UNQUOTED_AUTHORIZATION = /(?<![A-Za-z0-9_])authorization\s*:\s*(?!["'])[^\r\n]*/gi;
+const UNQUOTED_AUTHORIZATION = /(?<![A-Za-z0-9_])authorization[ \t]*:(?![ \t]*["'])[ \t]*[^\r\n]*/gi;
 const REDACTORS = [
   UNQUOTED_AUTHORIZATION,
   ASSIGNMENT,

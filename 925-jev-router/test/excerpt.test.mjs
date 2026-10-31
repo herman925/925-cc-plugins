@@ -89,6 +89,17 @@ test('outgoing body drops unquoted Authorization and single-quoted password JSON
   }
 });
 
+test('quoted multiline Authorization does not leak the next line into the outgoing body', () => {
+  const secret = 'demoSensitiveToken123';
+  const text = `Authorization: "Bearer firstLine\n${secret}"\nKeep task.`;
+  const excerpt = credentialFreeExcerpt(text);
+  assert.equal(excerpt.includes(secret), false);
+  assert.equal(excerpt.includes('Keep task.'), true);
+  const outgoing = JSON.stringify(buildSystemOneBody({ policy, taskText: text }).state.messages);
+  assert.equal(outgoing.includes(secret), false);
+  assert.equal(outgoing.includes('Keep task.'), true);
+});
+
 test('system one body uses candidate criteria and omits project identity', () => {
   const body = buildSystemOneBody({
     policy,
