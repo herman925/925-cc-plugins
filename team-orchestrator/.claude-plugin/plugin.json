@@ -6,10 +6,9 @@
   "userConfig": {
     "projectWorkspaceModes": {
       "type": "string",
-      "multiple": true,
       "title": "Saved project workspace choices",
-      "description": "Project-specific shared/classic workspace preferences in this installation. Managed by Create team and Settings. Does not grant management permission or change defaults for other projects.",
-      "default": []
+      "description": "Project-specific workspace choices, stored as JSON text and managed by Create team and Settings in this installation. Does not grant management permission or change defaults for other projects.",
+      "default": "[]"
     },
     "sharedStorePreview": {
       "type": "boolean",

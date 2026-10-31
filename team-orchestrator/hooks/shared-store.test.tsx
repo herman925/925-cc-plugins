@@ -80,7 +80,7 @@ test('the band opens clickable preview options while off, without a slash comman
  await band.press({key:'band-settings'});await band.press({key:'settings-connection'})
  expect(await band.find({key:'shared-preview-on'})).toBeDefined()
  await band.press({key:'shared-preview-on'})
- expect(sets.some(e=>e.key==='team-orchestrator.projectWorkspaceModes'&&e.value.includes('shared|c:/proj'))).toBe(true)
+ expect(sets.some(e=>e.key==='team-orchestrator.projectWorkspaceModes'&&JSON.parse(e.value).includes('shared|c:/proj'))).toBe(true)
  expect(sets.some(e=>e.key==='team-orchestrator.sharedStorePreview')).toBe(false)
  expect(calls.length).toBe(0)
  expect([...files.keys()].some(k=>k.includes('controller-actions'))).toBe(false)

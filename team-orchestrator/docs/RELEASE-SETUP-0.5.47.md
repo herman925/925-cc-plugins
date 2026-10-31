@@ -30,4 +30,4 @@ Settings groups Display, Connection and existing Classic teams. The native setup
 
 ## Validation scope
 
-Local Mod suite: **395 passed, 0 failed, 41 files**. Manifest/hooks validation passed with existing metadata warnings. Packaged store check verified all **16** unchanged modules. This UI release does not establish new Docker, minimum-Node, migration, whole-Orca restart, scheduler or cross-client lifecycle acceptance. Independent native validation evidence is recorded separately before publication.
+Local Mod suite: **397 passed, 0 failed, 41 files**. Manifest/hooks validation passed with existing metadata warnings. Packaged store check verified all **16** unchanged modules. This UI release does not establish new Docker, minimum-Node, migration, whole-Orca restart, scheduler or cross-client lifecycle acceptance. Independent native validation evidence is recorded separately before publication.

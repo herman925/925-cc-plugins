@@ -22,7 +22,7 @@ import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from 
 import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
-import {projectWorkspaceEnabled,withProjectWorkspace} from './project-workspace'
+import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
 import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,setupInline,useInlineSetup} from './team-setup'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
 
@@ -49,19 +49,19 @@ async function putFile($: any, path: string, text: string): Promise<void> {
   }
 }
 const cfg = { orcaCommand: '', version: '', versionRead: false }
-const sharedConfig = { enabled:false, node:'node', projectModes:[] as string[] }
+const sharedConfig = { enabled:false, node:'node', projectModes:[] as string[], projectModesError:'' }
 const SHARED_PREVIEW_KEY = 'team-orchestrator.sharedStorePreview'
 const SHARED_NODE_KEY = 'team-orchestrator.sharedStoreNode'
 async function sharedEnabled($:any) {
-  return projectWorkspaceEnabled(sharedConfig.enabled,sharedConfig.projectModes,String(await $.session.root()))
+  return !sharedConfig.projectModesError&&projectWorkspaceEnabled(sharedConfig.enabled,sharedConfig.projectModes,String(await $.session.root()))
 }
-async function savePluginOption($:any,key:string,value:string|boolean|string[]) {
+async function savePluginOption($:any,key:string,value:string|boolean) {
   const result=await $.config.set({key,value})
   if(result?.deny)throw new Error(String(result.deny))
 }
 async function sharedControls($:any):Promise<SharedControls> {
-  const setEnabled=async(value:boolean)=>{const modes=withProjectWorkspace(sharedConfig.projectModes,String(await $.session.root()),value);await savePluginOption($,'team-orchestrator.projectWorkspaceModes',modes);sharedConfig.projectModes=modes}
-  return {enabled:await sharedEnabled($),node:sharedConfig.node,orca:cfg.orcaCommand||await orcaBin($),setEnabled,
+  const setEnabled=async(value:boolean)=>{if(sharedConfig.projectModesError)throw Error(sharedConfig.projectModesError);const modes=withProjectWorkspace(sharedConfig.projectModes,String(await $.session.root()),value);await savePluginOption($,'team-orchestrator.projectWorkspaceModes',JSON.stringify(modes));sharedConfig.projectModes=modes}
+  return {enabled:await sharedEnabled($),preferenceError:sharedConfig.projectModesError,node:sharedConfig.node,orca:cfg.orcaCommand||await orcaBin($),setEnabled,
     rememberProject:async()=>{if(!projectWorkspaceEnabled(false,sharedConfig.projectModes,String(await $.session.root())))await setEnabled(true)},
     setNode:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');await savePluginOption($,SHARED_NODE_KEY,value);sharedConfig.node=value},
     setOrca:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');if(value){const problem=await orcaProblem($,value);if(problem)throw new Error(problem)}await savePluginOption($,ORCA_KEY,value);cfg.orcaCommand=value}}
@@ -2961,9 +2961,9 @@ const safely = async (fn: () => Promise<any>): Promise<any> => {
 export const register: Register = (on, options) => {
   cfg.orcaCommand = String((options as any)?.orcaCommand ?? '').trim()
   sharedConfig.enabled = (options as any)?.sharedStorePreview === true
-  sharedConfig.projectModes = Array.isArray((options as any)?.projectWorkspaceModes)?(options as any).projectWorkspaceModes.filter((v:any)=>typeof v==='string'):[]
+  try{sharedConfig.projectModes=parseProjectWorkspaceModes((options as any)?.projectWorkspaceModes);sharedConfig.projectModesError=''}catch{sharedConfig.projectModes=[];sharedConfig.projectModesError='Saved project workspace choices are invalid. Correct the JSON list in Saved project workspace choices in configuration before continuing. Existing preferences have not been overwritten.'}
   sharedConfig.node = String((options as any)?.sharedStoreNode ?? 'node').trim() || 'node'
-  on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})))
+  on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>{if(sharedConfig.projectModesError)return {deny:sharedConfig.projectModesError};return callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})}))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false
   seenRoster.base = undefined
@@ -3462,9 +3462,10 @@ export const register: Register = (on, options) => {
   })
   on('config.set',{key:'team-orchestrator.projectWorkspaceModes'} as any,async($,e,next)=>{
     const value=(e as any).value
-    if(!Array.isArray(value)||value.some(v=>typeof v!=='string'||/[\u0000-\u001f]/.test(v)))return {deny:'Use a list of project workspace choices.'} as any
+    let modes:string[]
+    try{if(typeof value!=='string')throw Error();modes=parseProjectWorkspaceModes(value)}catch{return {deny:'Use a JSON list of project workspace choices.'} as any}
     const result=await next(e)
-    if(!(result as any)?.deny)sharedConfig.projectModes=[...value]
+    if(!(result as any)?.deny){sharedConfig.projectModes=modes;sharedConfig.projectModesError=''}
     return result
   })
   on('config.set', {key:SHARED_NODE_KEY} as any,async($,e,next)=>{

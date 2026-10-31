@@ -73,7 +73,7 @@ test('Review saves project mode explicitly and never writes global defaults or a
  expect(sets.length).toBe(0);expect(calls.length).toBe(0)
  await band.press({key:'setup-enable-project'})
  expect(sets.length).toBe(1);expect(sets[0].key).toBe('team-orchestrator.projectWorkspaceModes')
- expect(sets[0].value).toEqual(['shared|c:/proj'])
+ expect(sets[0].value).toBe(JSON.stringify(['shared|c:/proj']))
  expect(await band.find({key:'shared-approve-controller'})).toBeDefined()
  expect(await band.find({key:'workspace-create'})).toBeUndefined()
  expect(calls.some(c=>c.mode==='approveController'||c.request?.command?.type==='createFreshTeam')).toBe(false)

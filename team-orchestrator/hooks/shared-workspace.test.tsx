@@ -169,7 +169,7 @@ test('Create remembers this project even when the inherited global default is al
  expect(f.configSets.length).toBe(0)
  await band.press({key:'workspace-create'})
  expect(f.configSets.length).toBe(1);expect(f.configSets[0].key).toBe('team-orchestrator.projectWorkspaceModes')
- expect(f.configSets[0].value).toEqual(['shared|c:/proj'])
+ expect(f.configSets[0].value).toBe(JSON.stringify(['shared|c:/proj']))
  expect(f.calls.filter(c=>c.request?.command?.type==='createFreshTeam').length).toBe(1)
 })
 test('a failed project preference save prevents creation and retains the draft',options,async($:any,on:any)=>{

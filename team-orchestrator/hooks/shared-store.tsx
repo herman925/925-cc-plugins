@@ -25,7 +25,7 @@ const status = atom({plugin:'team-orchestrator',key:'sharedStoreStatus'} as cons
 const displayedProof = atom({plugin:'team-orchestrator',key:'sharedStoreProof'} as const,{ok:false,reason:'Open Team workspace to verify this conversation.'} as SharedProof)
 type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
 const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false} as SharedUi)
-export type SharedControls = {enabled:boolean;node:string;orca:string;setEnabled:(enabled:boolean)=>Promise<void>;rememberProject?:()=>Promise<void>;setNode:(value:string)=>Promise<void>;setOrca:(value:string)=>Promise<void>}
+export type SharedControls = {enabled:boolean;preferenceError?:string;node:string;orca:string;setEnabled:(enabled:boolean)=>Promise<void>;rememberProject?:()=>Promise<void>;setNode:(value:string)=>Promise<void>;setOrca:(value:string)=>Promise<void>}
 export type SharedAccess = {enabled:boolean;node:string;orca:string;revalidate:()=>Promise<SharedProof>}
 export async function setSharedStoreProof($:any,proof:SharedProof) { await update($,displayedProof,()=>proof) }
 async function beginSharedAction($:any,action:string) {
@@ -102,6 +102,7 @@ export async function sharedStoreOptionsView($:any,ui:any,dependencies:SharedCon
    {!compact&&<Button key="shared-connection" label={state.connection?'Connection ▴':'Connection ▾'} onPress={async()=>{await update($,uiState,old=>({...old,connection:!old.connection}))}}/>}
   </Box>
   {!compact&&<Text dimColor>Project preference · management permission is separate</Text>}
+  {dependencies.preferenceError&&<Text color="yellow">{dependencies.preferenceError}</Text>}
   {actions}
   {(expanded||state.connection)&&<Box flexDirection="column">
    <Box flexWrap="wrap" columnGap={1}>
@@ -187,6 +188,7 @@ export async function sharedPermissionView($:any,ui:any,dependencies:SharedAcces
  const access=await sharedAccessState($),{proof,state,message}=access
  return <Box borderStyle="round" borderColor={state.approved?'green':'cyan'} paddingX={1} flexDirection="column">
   <Text weight="bold">Project access</Text>
+  {dependencies.preferenceError&&<Text color="yellow">{dependencies.preferenceError}</Text>}
   <Text>{proof.ok?proof.root:'Project identity will be checked before permission is requested.'}</Text>
   {!dependencies.enabled?<Box flexDirection="column"><Text>Use shared teams in this project. Other projects keep their defaults.</Text><Button key="setup-enable-project" label="Use shared workspace for this project" variant="primary" onPress={async()=>{try{await dependencies.setEnabled(true);await refreshSharedStore($,{...dependencies,enabled:true})}catch(error){await sharedFeedback($,String(error),'yellow')}}}/></Box>
   :!state.checked?<Box flexDirection="column"><Button key="shared-refresh" label={state.busy?'Checking…':'Check project access'} variant="primary" onPress={async()=>refreshSharedStore($,dependencies)}/>{!proof.ok&&<Text color="yellow">{proof.reason}</Text>}</Box>
