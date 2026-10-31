@@ -1,0 +1,10 @@
+{
+  "name": "925-jev-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "M1 scaffold: LiteLLM pre-call stub, project allowlist, Draft-only picker. TypeSafe selects; LiteLLM executes.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

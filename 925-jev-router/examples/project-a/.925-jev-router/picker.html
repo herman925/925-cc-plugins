@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>925-jev-router Draft picker</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font: 16px/1.45 system-ui, sans-serif; }
+    main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+    .note { padding: 0.75rem 1rem; border: 1px solid #888; border-radius: 6px; margin: 0 0 1rem; }
+    label { display: block; font-weight: 600; margin: 0.9rem 0 0.3rem; }
+    input, select, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 0.4rem 0.5rem; }
+    textarea { min-height: 6rem; }
+    button { margin-top: 1rem; font: inherit; padding: 0.45rem 0.9rem; }
+    pre { white-space: pre-wrap; word-break: break-word; padding: 0.75rem; background: #1111; border-radius: 6px; }
+    .err { color: #b00020; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>925-jev-router Draft</h1>
+    <p class="note">Local Save writes a Draft <code>config.json</code> only. Apply is deferred until the gateway read-back API is coded. This page does not call a gateway and does not collect credentials or gateway tokens. Put the saved file in this <code>.925-jev-router/</code> folder.</p>
+    <form id="draft-form" action="#" method="post">
+      <label for="project_id">project_id</label>
+      <input id="project_id" name="project_id" autocomplete="off" value="orca-ade-example" required>
+      <label for="candidates">candidates (one alias per line)</label>
+      <textarea id="candidates" name="candidates">cheap-worker
+strong-worker</textarea>
+      <label for="fallback">fallback</label>
+      <input id="fallback" name="fallback" autocomplete="off" value="strong-worker">
+      <label for="default_worker_mode">default_worker_mode</label>
+      <select id="default_worker_mode" name="default_worker_mode">
+        <option value="routed" selected>routed</option>
+        <option value="per-session">per-session</option>
+        <option value="per-turn">per-turn</option>
+      </select>
+      <label for="agents">agents (optional JSON)</label>
+      <textarea id="agents" name="agents">{
+  "reviewer": { "mode": "fixed", "model": "strong-worker" },
+  "coder": { "mode": "per-turn" }
+}</textarea>
+      <button id="local-save" type="button">Local Save</button>
+    </form>
+    <p id="status" role="status"></p>
+    <pre id="preview"></pre>
+  </main>
+  <script src="draft-form.js"></script>
+  <script>
+    var statusNode = document.getElementById('status');
+    var preview = document.getElementById('preview');
+    document.getElementById('draft-form').addEventListener('submit', function (event) {
+      event.preventDefault();
+    });
+    document.getElementById('local-save').addEventListener('click', function () {
+      var result = globalThis.JevRouterDraft.validate({
+        schema_version: 1,
+        project_id: document.getElementById('project_id').value.trim(),
+        candidatesText: document.getElementById('candidates').value,
+        fallback: document.getElementById('fallback').value,
+        default_worker_mode: document.getElementById('default_worker_mode').value,
+        agentsText: document.getElementById('agents').value
+      });
+      if (!result.ok) {
+        preview.textContent = '';
+        statusNode.className = 'err';
+        statusNode.textContent = result.errors.map(function (item) { return item.message; }).join('\n');
+        return;
+      }
+      var json = JSON.stringify(result.policy, null, 2) + '\n';
+      preview.textContent = json;
+      statusNode.className = '';
+      var blob = new Blob([json], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = 'config.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      statusNode.textContent = 'Local Draft saved as config.json. This is not Applied. Apply is deferred.';
+    });
+  </script>
+</body>
+</html>

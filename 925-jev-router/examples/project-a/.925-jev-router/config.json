@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "project_id": "orca-ade-example",
+  "candidates": ["cheap-worker", "strong-worker"],
+  "fallback": "strong-worker",
+  "default_worker_mode": "routed",
+  "agents": {
+    "reviewer": { "mode": "fixed", "model": "strong-worker" },
+    "coder": { "mode": "per-turn" }
+  }
+}
