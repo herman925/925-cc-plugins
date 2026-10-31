@@ -104,6 +104,29 @@ test('a rejected apply does not change the stored record, and the response is a 
   assert.equal(second.body.revision, 2);
 });
 
+test('null, scalar, and array apply bodies are structured errors and do not change the store', () => {
+  const control = plane();
+  const document = policy();
+  assert.equal(apply(control, document).status, 200);
+  const headers = { Authorization: `Bearer ${token}` };
+  const path = '/jev/v1/projects/orca-ade-example/apply';
+  const bodies = ['null', '42', '[1]', null, 42, [1]];
+  for (const body of bodies) {
+    const rejected = control.request({ method: 'POST', path, headers, body });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error, 'apply_shape');
+    assert.equal(typeof rejected.body.message, 'string');
+  }
+  const read = control.request({
+    method: 'GET',
+    path: '/jev/v1/projects/orca-ade-example/applied',
+    headers,
+  });
+  assert.equal(read.status, 200);
+  assert.equal(read.body.revision, 1);
+  assert.deepEqual(read.body.policy.candidates, ['cheap-worker', 'strong-worker']);
+});
+
 test('gateway alias existence is not project approval', () => {
   const control = plane();
   const applied = apply(control, policy());

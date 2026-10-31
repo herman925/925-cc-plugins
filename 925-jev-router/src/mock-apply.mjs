@@ -30,17 +30,18 @@ function authorized(headers, token) {
 }
 
 function readBody(body) {
+  let value = body;
   if (typeof body === 'string') {
     try {
-      return JSON.parse(body);
+      value = JSON.parse(body);
     } catch {
       throw new PolicyError('apply_shape', 'Apply body is not valid JSON.');
     }
   }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new PolicyError('apply_shape', 'Apply body must be a JSON object.');
   }
-  return body;
+  return value;
 }
 
 export function createMockControlPlane({ token, configuredAliases, now = () => '2026-10-31T03:00:00.000Z' } = {}) {

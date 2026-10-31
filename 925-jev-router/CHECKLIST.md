@@ -6,7 +6,7 @@ Command, from `925-jev-router/`:
 node --test test/*.test.mjs
 ```
 
-Result: 39 tests, 39 pass, 0 fail (Node v22.23.4). No network. The previous 32 M1 tests remain in this run.
+Result: 40 tests, 40 pass, 0 fail (Node v22.23.4). No network. The previous 32 M1 tests remain in this run.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ Result: 39 tests, 39 pass, 0 fail (Node v22.23.4). No network. The previous 32 M
 | Draft-only picker | `test/picker.test.mjs` builds a Draft from the form helper, re-validates it with the schema, rejects a sentinel and a provider URL, and reads `picker.html` for Local Save, no Apply button, and no gateway call or token field. A headless Chrome click on Local Save downloaded `config.json` and showed that Draft in the preview. Putting `jev-router` in candidates cleared the preview and showed the sentinel error. | Pass |
 | Draft → Applied shape | `test/records.test.mjs` applies a Draft twice on an in-memory map. Revisions are 1 then 2, `policy_hash` is stable, a policy change changes the hash, read-back returns the latest record, and a credential-shaped `applied_by` is rejected. Mutating the apply return (including `revision` and nested `agents`) and mutating the read return leaves the next read unchanged, and the following apply is revision 2. | Pass |
 | Synthetic harness | `test/harness.test.mjs` drives two in-memory transport failures and lands on `strong-worker` from the fixture, not on `model_list`. A synthetic 401 rejects. | Pass |
-| M2 mock Apply / read-back | `test/mock-apply.test.mjs` posts and reads `/jev/v1/projects/{id}/...` in process. Missing and wrong bearer values are 401. The stored record survives a bad hash, an unknown alias, and a path/policy mismatch. The response copy can be mutated without changing the next read. The synthetic token is not in the record. An alias that only exists on the configured list is not added to `candidates`. | Pass |
+| M2 mock Apply / read-back | `test/mock-apply.test.mjs` posts and reads `/jev/v1/projects/{id}/...` in process. Missing and wrong bearer values are 401. The stored record survives a bad hash, an unknown alias, and a path/policy mismatch. The response copy can be mutated without changing the next read. The synthetic token is not in the record. String `"null"`, a scalar, and an array return 400 `apply_shape` and leave the stored revision unchanged. An alias that only exists on the configured list is not added to `candidates`. | Pass |
 | M2 hook wire | `test/wire.test.mjs` applies, reads back, then runs hook → decision → execution rewrite. `large-leader` stays pinned with selector call count 0. A sentinel choice rewrites the model and records one selector call. No agent id still selects. A second apply that drops `cheap-worker` makes the next execution use `strong-worker`. | Pass |
 | #167 interface | [docs/m2-request-context.md](docs/m2-request-context.md) records the binding rules and the assertion map. Header parsing and stickiness are not implemented. | Design only |
 
