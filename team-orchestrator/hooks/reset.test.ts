@@ -19,7 +19,7 @@ const land = (files: Map<string, string>, tag: string, ops: any[]) => {
 const row = (files: Map<string, string>, name: string) => rawSaved(files).find((x: any) => x.name === name)
 const refresh = async ($: any) => {
   const band = await mountBand($, 300)
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
 }
 const engine = (on: any) => {

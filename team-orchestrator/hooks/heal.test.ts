@@ -44,7 +44,7 @@ test('the top\'s refresh clears a stale "not yet" only on proof that the member\
   status(files, 'Hualong PC Worker A', ID4, 10 * MIN) // silent for 10 minutes, and no process holds its id: no proof
   status(files, 'Hualong PC Worker B', ID2, 4_000) // fresh, but another session id than the roster's: no proof
   const band = await mountBand($, 300)
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
   // healed as its lost start would have written it (pending off, briefed); its other fields stay
   expect(row(files, 'Hualong Workers')).toMatchObject({ pending: false, briefed: true, sessionId: ID2, handle: 'term_w', short: 'W' })

@@ -52,7 +52,7 @@ test('a member recorded with no machine gets this PC once its transcript shows i
   files.set(`${prefix}C:/home/.claude/projects/proj/${ID1}.jsonl`, '')
   env.COMPUTERNAME = 'PC-A'
   const band = await mountBand($)
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
   const rows: any[] = JSON.parse(roster(files))
   expect(rows.find(r => r.name === 'Hualong CEO')?.machine).toBe('PC-A')

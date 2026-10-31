@@ -28,7 +28,7 @@ const engine = (on: any, sid: string) => {
 }
 const message = ($: any, to: string, text = 'build it') => $.tool.call({ tool: 'mcp__team-orchestrator__team_message', to, message: text } as any)
 const refresh = async (band: any) => {
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
 }
 /** Workers' status file: last written `ago` ms ago */

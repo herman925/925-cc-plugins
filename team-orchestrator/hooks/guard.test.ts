@@ -240,7 +240,7 @@ test('Settings: each member has Allow subagents and Allow writes, off at first, 
   calls(on, toasts, ID1)
   await adopt($, withIds(HUALONG))
   const band = await mountBand($)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   for (const r of HUALONG) {
     expect(await band.find({ key: `perm-agent-Hualong|${r.name}` })).toBeDefined()
     expect(await band.find({ key: `perm-write-Hualong|${r.name}` })).toBeDefined()

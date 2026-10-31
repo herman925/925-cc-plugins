@@ -29,7 +29,7 @@ test('a reopen\'s new session id survives the same round\'s search by name', asy
   files.set(ROSTER, JSON.stringify(rawSaved(files).map((x: any) => (x.name === 'Hualong Workers' ? { ...x, sessionId: '', handle: '', pending: true } : x))))
   files.set(`${TEAM}/queue/${fileName(Date.now(), 'q1')}`, JSON.stringify({ to: 'Hualong Workers', from: 'Hualong CEO', message: 'hi', created: Date.now(), state: 'pending', tries: 0 }))
   const band = await mountBand($, 300)
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
   expect(made).not.toBe('')
   expect(row(files, 'Hualong Workers')).toMatchObject({ handle: 'term_ae5', pending: false })

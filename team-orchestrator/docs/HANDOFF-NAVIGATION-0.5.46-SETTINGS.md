@@ -1,0 +1,7 @@
+# Final Settings consolidation — 0.5.46
+
+This is the final one-file runtime delta to `HANDOFF-NAVIGATION-0.5.46.md`. Herman was notified about the additional footer duplicate and the focused testing handoff. Original candidate hashes/report remain unchanged; overlay `validation/navigation-0.5.46/settings-consolidation-hashes.json` for the new `hooks/register.tsx` hash.
+
+Code review found an additional old `key="settings"` shortcut beside the roster Refresh button. It also opened global Settings, so it has been removed. The header tab is the single Settings button while open; the band shortcut is the single button while closed. Tests that used the footer shortcut now navigate through `tab-settings`, preserving their role/permission/lifecycle assertions. Two old inventory assertions now expect the header tab and explicitly reject the footer alias. The new navigation cases likewise assert the footer shortcut is absent.
+
+Please copy the final register.tsx into the owned source fixture and verify its override hash. The other runtime UI file and manifest are unchanged from the first navigation candidate. Use the final full-suite log `local-mod-final.log`; do not count an earlier run during the alias removal as final acceptance. Continue the same focused native checks; no store/native/API change, PostgreSQL run, lifecycle rerun or real-project mutation is requested. No additional creation/approval click is needed to establish these navigation changes.

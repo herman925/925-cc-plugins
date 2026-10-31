@@ -1,0 +1,13 @@
+{
+  "closedTabs": {
+    "off-tab-roster-closed.json": true,
+    "off-tab-new-closed.json": true,
+    "off-tab-settings-closed.json": true,
+    "off-tab-shared-closed.json": true
+  },
+  "globalHashesUnchanged": true,
+  "unapprovedCreationHidden": true,
+  "friendlyNoStoreDetails": true,
+  "narrowColumns": 60,
+  "narrowApproveVisible": true
+}

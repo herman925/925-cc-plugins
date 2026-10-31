@@ -163,11 +163,11 @@ export async function sharedStoreView($:any,ui:any,dependencies:SharedAccess & S
    {await sharedStoreOptionsView($,ui,dependencies,false,true,actions)}
    {state.notice?<Text color={state.tone}>{state.notice}</Text>:<Text dimColor>{approved?'Controller approved for this conversation':ready&&state.member?'Member access verified · controller approval is optional':ready?'Approval grants project team management':state.busy==='verify'?'Checking project, conversation and saved approval…':'Fresh scratch teams · approval is a separate action'}</Text>}
   </Box>
+  {ready&&proof.ok&&(approved||state.member)&&await sharedWorkspaceView($,ui,{...dependencies,proof,controllerGeneration:approved})}
   {state.details&&<Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
    <Text weight="bold">Connection details</Text>
    <Text>{proof.ok?`Project: ${proof.root}\nConversation: ${proof.sessionId}\nTerminal: ${proof.handle}`:proof.reason}</Text>
-   {message&&<Text dimColor>{message}</Text>}
+   {message&&<Text dimColor>{message.includes('"code":"STORE_NOT_FOUND"')?'No shared store yet. Approve controller to set up this project.':message}</Text>}
   </Box>}
-  {ready&&proof.ok&&await sharedWorkspaceView($,ui,{...dependencies,proof,controllerGeneration:approved})}
  </Box>
 }

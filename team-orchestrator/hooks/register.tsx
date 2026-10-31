@@ -3108,7 +3108,7 @@ export const register: Register = (on, options) => {
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
     // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
-    if ((await readSettings($)).layout === 'dock') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
+    if ((await readSettings($)).layout === 'dock' && await read($,view)!=='closed') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
@@ -3567,7 +3567,7 @@ export const register: Register = (on, options) => {
     const open = v !== 'closed'
     const t: number = await read($, frame)
     const lit = t % 6 < 3 ? t % 6 : -1
-    const go = (to: View) => update($, view, () => to)
+    const go = (to: View) => setPanelView($,to)
     await readVersion($)
     // a filled title pill like Session Panel's (a Button takes no background), with the open/close button beside it
     const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
@@ -3579,7 +3579,7 @@ export const register: Register = (on, options) => {
           </Text>
           <Text> </Text>
           <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={() => void (async () => go(open ? 'closed' : 'roster'))()} />
-          <Button key="band-settings" label="⚙ Settings" onPress={async()=>go('settings')}/>
+          {!open&&<Button key="band-settings" label="⚙ Settings" onPress={async()=>go('settings')}/>}
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
             <Text>
@@ -3590,7 +3590,7 @@ export const register: Register = (on, options) => {
                   {i === lit ? '●' : '○'}
                 </Text>
               ))}
-              <Text dimColor> no team yet · press t to spawn a head + workers as Orca tabs</Text>
+              <Text dimColor>{sharedConfig.enabled?' Shared teams · open Shared store':' no team yet · press t to spawn a head + workers as Orca tabs'}</Text>
             </Text>
           ) : (
             <Text>
@@ -3615,7 +3615,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {e.props.placement === 'inline' && <Text dimColor>Docks beside the transcript only in the fullscreen layout, from 110 columns; here it sits above the prompt.</Text>}
-        {await panel($, ui, v === 'closed' ? 'roster' : v, e.props.bodyColumns || 100)}
+        {v!=='closed'&&await panel($, ui, v, e.props.bodyColumns || 100)}
       </Box>
     )
   })
@@ -3634,13 +3634,25 @@ async function docked($: any) {
   return panes.some(p => p.id === DOCK && p.isPlaced)
 }
 
+async function setPanelView($:any,to:View) {
+  await update($,view,()=>to)
+  if((await readSettings($)).layout==='dock') {
+    if(to==='closed')await $.ui.close({id:DOCK})
+    else await $.ui.open({id:DOCK,title:'Team Orchestrator'})
+  }
+}
+async function togglePanelView($:any,to:View) {
+  const next=await read($,view)===to?'closed':to
+  await setPanelView($,next)
+  return next
+}
+async function toggleSharedPanel($:any) {
+  if(await togglePanelView($,'shared')==='shared')await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})
+}
+
 async function panel($: any, ui: any, v: View, cols: number) {
   const { Box, Text, Button } = ui
-  const go = (to: View) => update($, view, () => to)
-  const openShared = async () => {
-    await go('shared')
-    await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})
-  }
+  const go = (to: View) => togglePanelView($,to)
   await readVersion($)
   return (
     <Box flexDirection="column">
@@ -3650,16 +3662,16 @@ async function panel($: any, ui: any, v: View, cols: number) {
             ◆ TEAM ORCHESTRATOR
           </Text>
           <Text dimColor>{cfg.version ? ` v${cfg.version}` : ''}{'  '}</Text>
-          <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
-          <Button key="tab-new" label="New team" onPress={() => void go('new')} />
-          <Button key="tab-settings" label="Settings" onPress={() => void go('settings')} />
-          <Button key="tab-shared" label="Shared store" variant={v==='shared'?'primary':undefined} onPress={openShared} />
+          <Button key="tab-roster" label="Roster" variant={v==='roster'?'primary':undefined} onPress={() => void go('roster')} />
+          {!sharedConfig.enabled&&<Button key="tab-new" label="New team" variant={v==='new'?'primary':undefined} onPress={() => void go('new')} />}
+          <Button key="tab-settings" label="Settings" variant={v==='settings'?'primary':undefined} onPress={() => void go('settings')} />
+          <Button key="tab-shared" label="Shared store" variant={v==='shared'?'primary':undefined} onPress={async()=>toggleSharedPanel($)} />
         </Box>
-        <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
+        <Button key="close" label="x Close" role="dismiss" onPress={async()=>setPanelView($,'closed')} />
       </Box>
       {(await read($, spawn)).names.length > 0
         ? await spawnView($, ui)
-        : v === 'shared' ? await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)}) : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+        : v === 'shared' ? await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)}) : v === 'new' ? sharedConfig.enabled ? <Box><Text>Open Shared store to create a shared team after controller approval.</Text></Box> : await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
     </Box>
   )
 }
@@ -3872,6 +3884,11 @@ function Choice(ui: any, id: string, options: string[], value: string, pick: (v:
 // moves the form and the view; nothing launches.
 function emptyState($: any, ui: any, t: number) {
   const { Box, Text, Button } = ui
+  if(sharedConfig.enabled)return <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
+    <Text weight="bold">Shared team setup</Text>
+    <Text>Open Shared store to check access. Team creation appears after controller approval.</Text>
+    <Button key="empty-open-shared" label="Open shared workspace" onPress={async()=>toggleSharedPanel($)}/>
+  </Box>
   const pick = (p: (typeof PRESETS)[number]) =>
     void (async () => {
       await update($, form, old => ({ ...old, ...p.form }))
@@ -4825,7 +4842,6 @@ async function rosterView($: any, ui: any, cols: number) {
       <Box>
         <Button key="refresh" label="Refresh" onPress={() => void refresh($)} />
         <Button key="none" label="Clear selection" onPress={() => void tick(() => false)} />
-        <Button key="settings" label="Settings" onPress={() => void update($, view, () => 'settings')} />
       </Box>
     </Box>
   )

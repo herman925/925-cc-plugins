@@ -1,0 +1,5 @@
+{
+  "team-orchestrator/.claude-plugin/plugin.json": "6c56cd8a4f9762915e8d855ae3cdded479ad998431d2ce4d52ca36ed0ee08222",
+  "team-orchestrator/hooks/shared-store.tsx": "bb10cff624ffc2b2c2173f0928e804f613e847677fa8e63ae874fefa617da9ac",
+  "team-orchestrator/hooks/register.tsx": "a9cc2037f0be7aecadde30386d0f41888b953b8606ec5c3a2ee708b7ae35a12f"
+}
