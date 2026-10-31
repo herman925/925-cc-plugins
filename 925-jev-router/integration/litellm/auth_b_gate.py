@@ -1,15 +1,20 @@
 """Thin Auth B adapter over LiteLLM 1.106.2 key lookup and route checks.
 
-The route decision is ``RouteChecks.should_call_route`` /
-``RouteChecks.check_route_access``. Empty ``allowed_routes`` fail open
-inside ``is_virtual_key_allowed_to_call_route``; this adapter still calls
-that path, then denies because ``check_route_access`` on an empty
-collection is false. Jev Apply and read-back must be the exact sibling
-paths, so a native prefix match on an extra segment is not a grant.
+``validate_resolved_virtual_key`` runs against a duck-typed prisma client
+whose user, team, and project reads return no row. A returned key is the
+only success. Expired, blocked, other native rejects, and unexpected
+dependency errors all deny. Empty ``allowed_routes`` still fail open inside
+``is_virtual_key_allowed_to_call_route``; this adapter calls that path, then
+denies because ``check_route_access`` on an empty collection is false.
+
+Jev Apply and read-back need the exact sibling path in ``allowed_routes``
+and ``key.project_id`` equal to the path project. A parent prefix is not a
+grant. The mock Apply handler is called only after an allow.
 
 No dashboard key, Vault item, gateway config, or ``custom_auth`` hook.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -17,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
+import litellm
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -148,6 +154,16 @@ def _exception_text(exc):
     return " ".join(str(part) for part in parts if part)
 
 
+def _prisma_lock():
+    """One lock per running loop so prisma_client swaps do not cross tests."""
+    loop = asyncio.get_running_loop()
+    lock = getattr(loop, "_jev_auth_b_prisma_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        setattr(loop, "_jev_auth_b_prisma_lock", lock)
+    return lock
+
+
 async def _reject_non_virtual_key(store, token, method, path):
     """Run the proxy builder's pre-db ``sk-`` shape check and nothing further.
 
@@ -157,29 +173,30 @@ async def _reject_non_virtual_key(store, token, method, path):
     """
     import litellm.proxy.proxy_server as proxy_server
 
-    previous_master = proxy_server.master_key
-    previous_client = proxy_server.prisma_client
-    previous_login = os.environ.get("EXPERIMENTAL_UI_LOGIN")
-    proxy_server.master_key = _SHAPE_CHECK_MASTER
-    proxy_server.prisma_client = store
-    os.environ["EXPERIMENTAL_UI_LOGIN"] = "false"
-    try:
-        await user_api_key_auth_builder(
-            request=_request(method, path or "/"),
-            api_key=f"Bearer {token}",
-            azure_api_key_header="",
-            anthropic_api_key_header=None,
-            google_ai_studio_api_key_header=None,
-            azure_apim_header=None,
-            request_data={},
-        )
-    finally:
-        proxy_server.master_key = previous_master
-        proxy_server.prisma_client = previous_client
-        if previous_login is None:
-            os.environ.pop("EXPERIMENTAL_UI_LOGIN", None)
-        else:
-            os.environ["EXPERIMENTAL_UI_LOGIN"] = previous_login
+    async with _prisma_lock():
+        previous_master = proxy_server.master_key
+        previous_client = proxy_server.prisma_client
+        previous_login = os.environ.get("EXPERIMENTAL_UI_LOGIN")
+        proxy_server.master_key = _SHAPE_CHECK_MASTER
+        proxy_server.prisma_client = store
+        os.environ["EXPERIMENTAL_UI_LOGIN"] = "false"
+        try:
+            await user_api_key_auth_builder(
+                request=_request(method, path or "/"),
+                api_key=f"Bearer {token}",
+                azure_api_key_header="",
+                anthropic_api_key_header=None,
+                google_ai_studio_api_key_header=None,
+                azure_apim_header=None,
+                request_data={},
+            )
+        finally:
+            proxy_server.master_key = previous_master
+            proxy_server.prisma_client = previous_client
+            if previous_login is None:
+                os.environ.pop("EXPERIMENTAL_UI_LOGIN", None)
+            else:
+                os.environ["EXPERIMENTAL_UI_LOGIN"] = previous_login
 
 
 def _proxy_exception(exc):
@@ -228,32 +245,79 @@ async def _lookup(store, digest, executed):
     return IdentityStore.key_from_principal(principal_obj)
 
 
-async def _blocked(key, method, path, executed):
-    """Call ``validate_resolved_virtual_key``. Only the native blocked error is revoked.
+def _chain(exc):
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ if current.__cause__ is not None else current.__context__
 
-    A non-blocked key continues into project and budget lookups. This mock
-    store has no Prisma ``db`` handle, so that continuation raises. The
-    blocked predicate has already run by then. The route decision stays with
-    ``RouteChecks``.
+
+def _denial(exc):
+    """Map a validator failure to a closed decision. The exception text is not logged."""
+    texts = []
+    proxy = None
+    native = False
+    for current in _chain(exc):
+        texts.append(_exception_text(current))
+        args = getattr(current, "args", ())
+        if args:
+            texts.append(" ".join(str(arg) for arg in args if arg))
+        if isinstance(current, ProxyException):
+            proxy = current
+            native = True
+            kind = getattr(current, "type", None)
+            texts.append(str(getattr(kind, "value", kind)))
+        if isinstance(current, HTTPException):
+            native = True
+        if isinstance(current, litellm.BudgetExceededError):
+            native = True
+    blob = " ".join(part for part in texts if part)
+    if "Key is blocked" in blob:
+        return "revoked", "key-blocked"
+    kind = getattr(proxy, "type", None) if proxy is not None else None
+    kind_value = str(getattr(kind, "value", kind))
+    if kind_value == "expired_key" or "Expired Key" in blob:
+        return "expired", "expired-key"
+    if native:
+        return "rejected", "native-denial"
+    return "rejected", "unexpected-error"
+
+
+async def _validate(store, key, method, path, executed):
+    """Run the native validator to completion.
+
+    ``store.prisma`` answers user, team, and project reads with no row. A
+    returned ``UserAPIKeyAuth`` is success. Every exception denies, and the
+    route checks do not run.
     """
-    try:
-        await validate_resolved_virtual_key(
-            request=_request(method, path or "/"),
-            request_data={},
-            valid_token=key,
-            api_key="",
-            route=path or "/",
-            start_time=datetime.now(timezone.utc),
-            parent_otel_span=None,
-            end_user_id=None,
-            end_user_params={},
-            _end_user_object=None,
-        )
-    except Exception as exc:
-        executed.append(_FN_VALIDATE)
-        return "Key is blocked" in _exception_text(exc) or "Key is blocked" in str(exc)
-    executed.append(_FN_VALIDATE)
-    return False
+    import litellm.proxy.proxy_server as proxy_server
+
+    async with _prisma_lock():
+        previous_client = proxy_server.prisma_client
+        proxy_server.prisma_client = store.prisma
+        try:
+            try:
+                validated = await validate_resolved_virtual_key(
+                    request=_request(method, path or "/"),
+                    request_data={},
+                    valid_token=key,
+                    api_key="",
+                    route=path or "/",
+                    start_time=datetime.now(timezone.utc),
+                    parent_otel_span=None,
+                    end_user_id=None,
+                    end_user_params={},
+                    _end_user_object=None,
+                )
+            except Exception as exc:
+                executed.append(_FN_VALIDATE)
+                return None, _denial(exc)
+            executed.append(_FN_VALIDATE)
+            return validated, None
+        finally:
+            proxy_server.prisma_client = previous_client
 
 
 def _routes_empty(key):
@@ -286,9 +350,13 @@ async def authorize(store, authorization, method, path):
     if key is None:
         return _finish(False, "invalid", None, executed)
 
+    looked_up = _principal(key)
+    validated, denial = await _validate(store, key, verb or "GET", canonical, executed)
+    if denial is not None:
+        code, note = denial
+        return _finish(False, code, looked_up, executed, note)
+    key = validated
     principal = _principal(key)
-    if await _blocked(key, verb or "GET", canonical, executed):
-        return _finish(False, "revoked", principal, executed, "key-blocked")
 
     if canonical is None:
         return _finish(False, "malformed", principal, executed)
@@ -319,6 +387,16 @@ async def authorize(store, authorization, method, path):
 
     match = JEV_CONTROL.fullmatch(canonical)
     if match is not None:
+        routes = list(key.allowed_routes or [])
+        granted = canonical in routes and RouteChecks.check_route_access(
+            route=canonical,
+            allowed_routes=routes,
+        )
+        executed.append(_FN_CHECK)
+        if not granted:
+            return _finish(False, "route_denied", principal, executed, "exact-grant")
+        if key.project_id != match.group(1):
+            return _finish(False, "route_denied", principal, executed, "project-binding")
         action = match.group(2)
         if action == "apply" and verb != "POST":
             return _finish(False, "route_denied", principal, executed, "method")
@@ -326,3 +404,23 @@ async def authorize(store, authorization, method, path):
             return _finish(False, "route_denied", principal, executed, "method")
 
     return _finish(True, "ok", principal, executed)
+
+
+async def dispatch_control(store, authorization, method, path, bridge, body=None):
+    """Call the mock Apply handler only when ``authorize`` allows that control route.
+
+    A denial returns before ``bridge.apply`` / ``bridge.read``. The handler's
+    synthetic verifier stays inside the bridge.
+    """
+    decision = await authorize(store, authorization, method, path)
+    if not decision.allow:
+        return decision, False, None
+    canonical = canonicalize(path)
+    if canonical is None or JEV_CONTROL.fullmatch(canonical) is None:
+        return decision, False, None
+    verb = str(method or "").upper()
+    if verb == "POST":
+        response = bridge.apply(canonical, body)
+    else:
+        response = bridge.read(canonical)
+    return decision, True, response

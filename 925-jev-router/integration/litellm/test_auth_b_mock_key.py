@@ -5,13 +5,15 @@ Synthetic fixtures only. Does not mint a key, read Vault, or call a gateway.
 
 import logging
 import unittest
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from litellm.proxy._types import GenerateKeyRequest, LiteLLMKeyType, UserAPIKeyAuth
 from litellm.proxy.auth.route_checks import RouteChecks
 from litellm.proxy.management_endpoints.key_management_endpoints import handle_key_type
 
-from auth_b_gate import authorize, canonicalize
+from auth_b_control import SYNTHETIC_VERIFIER, MockApplyBridge
+from auth_b_gate import authorize, canonicalize, dispatch_control
 from auth_b_mock_store import MockKeyStore
 
 PROJECT = "orca-ade-example"
@@ -30,9 +32,32 @@ MISSING_KEY = "sk-jev-authb-missing-not-a-real-key"
 EMPTY = "sk-jev-authb-empty-not-a-real-key"
 NONE_ROUTES = "sk-jev-authb-noroutes-not-a-real-key"
 PERMS = "sk-jev-authb-perms-not-a-real-key"
+EXPIRED = "sk-jev-authb-expired-not-a-real-key"
+PARENT = "sk-jev-authb-parent-not-a-real-key"
+WILD = "sk-jev-authb-wild-not-a-real-key"
+BOUND = "sk-jev-authb-bound-not-a-real-key"
+UNBOUND = "sk-jev-authb-unbound-not-a-real-key"
 NOT_SK = "not-a-virtual-key"
+PARENT_GRANT = f"/jev/v1/projects/{PROJECT}"
+WILD_GRANT = f"/jev/v1/projects/{PROJECT}/*"
 
-SECRETS = (SCOPED, INFER, READ, BLOCKED, MISSING_KEY, EMPTY, NONE_ROUTES, PERMS, NOT_SK)
+SECRETS = (
+    SCOPED,
+    INFER,
+    READ,
+    BLOCKED,
+    MISSING_KEY,
+    EMPTY,
+    NONE_ROUTES,
+    PERMS,
+    EXPIRED,
+    PARENT,
+    WILD,
+    BOUND,
+    UNBOUND,
+    NOT_SK,
+    SYNTHETIC_VERIFIER,
+)
 
 _FN_SHOULD = "litellm.proxy.auth.route_checks.RouteChecks.should_call_route"
 _FN_CHECK = "litellm.proxy.auth.route_checks.RouteChecks.check_route_access"
@@ -133,6 +158,48 @@ class AuthBMockKeyTests(unittest.IsolatedAsyncioTestCase):
             team_id="team-orca",
             allowed_routes=[],
             permissions={"apply": True},
+        )
+        self.store.insert(
+            EXPIRED,
+            token_id="tok-expired-orca",
+            user_id="user-orca",
+            project_id=PROJECT,
+            team_id="team-orca",
+            allowed_routes=[APPLY, APPLIED, "llm_api_routes"],
+            permissions={"jev": "apply-and-read"},
+            expires=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        )
+        self.store.insert(
+            PARENT,
+            token_id="tok-parent-orca",
+            user_id="user-orca",
+            project_id=PROJECT,
+            team_id="team-orca",
+            allowed_routes=[PARENT_GRANT, "llm_api_routes"],
+        )
+        self.store.insert(
+            WILD,
+            token_id="tok-wild-orca",
+            user_id="user-orca",
+            project_id=PROJECT,
+            team_id="team-orca",
+            allowed_routes=[WILD_GRANT],
+        )
+        self.store.insert(
+            BOUND,
+            token_id="tok-bound-orca",
+            user_id="user-orca",
+            project_id=PROJECT,
+            team_id="team-orca",
+            allowed_routes=[OTHER_APPLY],
+        )
+        self.store.insert(
+            UNBOUND,
+            token_id="tok-unbound-orca",
+            user_id="user-orca",
+            project_id=None,
+            team_id="team-orca",
+            allowed_routes=[APPLY],
         )
 
     def assertNoSecretLogs(self):
@@ -356,6 +423,148 @@ class AuthBMockKeyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 403)
         self.assertIn("Virtual key is not allowed to call this route", str(caught.exception.detail))
         self.assertNotIn(INFER, str(caught.exception.detail))
+
+    async def test_expired_key_is_denied_before_route_checks(self):
+        decision = await self._auth(EXPIRED, "POST", APPLY)
+        self.assertFalse(decision.allow)
+        self.assertEqual(decision.code, "expired")
+        self.assertEqual(decision.note, "expired-key")
+        self.assertEqual(decision.principal["token_id"], "tok-expired-orca")
+        self.assertIn(_FN_VALIDATE, decision.executed)
+        self.assertNotIn(_FN_SHOULD, decision.executed)
+        self.assertNoSecretLogs()
+
+    async def test_unexpected_validator_error_fails_closed(self):
+        self.store.project_fault = "sentinel-unexpected-db"
+        records = []
+
+        class Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = Capture()
+        logger = logging.getLogger("jev.auth_b")
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        self.addCleanup(logger.removeHandler, handler)
+        decision = await self._auth(SCOPED, "POST", APPLY)
+        self.assertFalse(decision.allow)
+        self.assertEqual(decision.code, "rejected")
+        self.assertEqual(decision.note, "unexpected-error")
+        self.assertIn(_FN_VALIDATE, decision.executed)
+        self.assertNotIn(_FN_SHOULD, decision.executed)
+        self.assertNotIn("sentinel-unexpected-db", "\n".join(records))
+        self.assertNoSecretLogs()
+
+    async def test_parent_and_wildcard_grants_do_not_permit_apply(self):
+        self.assertTrue(
+            RouteChecks._route_matches_allowed_route(route=APPLY, allowed_route=PARENT_GRANT)
+        )
+        parent = await self._auth(PARENT, "POST", APPLY)
+        self.assertFalse(parent.allow)
+        self.assertEqual(parent.code, "route_denied")
+        self.assertEqual(parent.note, "exact-grant")
+        self.assertIn(_FN_SHOULD, parent.executed)
+        self.assertIn(_FN_CHECK, parent.executed)
+        wild = await self._auth(WILD, "POST", APPLY)
+        self.assertFalse(wild.allow)
+        self.assertEqual(wild.note, "exact-grant")
+        self.assertIn(_FN_CHECK, wild.executed)
+        chat = await self._auth(PARENT, "POST", CHAT)
+        self.assertTrue(chat.allow)
+        self.assertNoSecretLogs()
+
+    async def test_project_binding_rejects_other_project_grant(self):
+        other = await self._auth(BOUND, "POST", OTHER_APPLY)
+        self.assertFalse(other.allow)
+        self.assertEqual(other.code, "route_denied")
+        self.assertEqual(other.note, "project-binding")
+        self.assertEqual(other.principal["project_id"], PROJECT)
+        self.assertIn(OTHER_APPLY, other.principal["allowed_routes"])
+        self.assertIn(_FN_SHOULD, other.executed)
+        self.assertIn(_FN_CHECK, other.executed)
+        missing = await self._auth(UNBOUND, "POST", APPLY)
+        self.assertFalse(missing.allow)
+        self.assertEqual(missing.note, "project-binding")
+        self.assertIsNone(missing.principal["project_id"])
+        own = await self._auth(SCOPED, "POST", APPLY)
+        self.assertTrue(own.allow)
+        self.assertEqual(own.principal["project_id"], PROJECT)
+        self.assertNoSecretLogs()
+
+    async def test_dispatch_mutates_only_after_allow(self):
+        policy = {
+            "schema_version": 1,
+            "project_id": PROJECT,
+            "candidates": ["cheap-worker", "strong-worker"],
+            "fallback": "strong-worker",
+            "default_worker_mode": "routed",
+        }
+        bridge = MockApplyBridge()
+        self.addCleanup(bridge.close)
+
+        async def denied(secret, method, path):
+            before = bridge.calls
+            decision, invoked, response = await dispatch_control(
+                self.store, f"Bearer {secret}", method, path, bridge, policy
+            )
+            self.assertFalse(decision.allow)
+            self.assertFalse(invoked)
+            self.assertIsNone(response)
+            self.assertEqual(bridge.calls, before)
+
+        await denied(EXPIRED, "POST", APPLY)
+        await denied(PARENT, "POST", APPLY)
+        await denied(BOUND, "POST", OTHER_APPLY)
+        await denied(INFER, "POST", APPLY)
+        self.assertEqual(bridge.calls, 0)
+
+        empty_decision, empty_invoked, empty = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(empty_decision.allow)
+        self.assertTrue(empty_invoked)
+        self.assertEqual(empty["status"], 404)
+        self.assertEqual(bridge.calls, 1)
+
+        first_decision, first_invoked, first = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertTrue(first_decision.allow)
+        self.assertTrue(first_invoked)
+        self.assertEqual(first["status"], 200)
+        self.assertEqual(first["body"]["revision"], 1)
+        self.assertEqual(first["body"]["project_id"], PROJECT)
+        self.assertEqual(bridge.calls, 2)
+
+        read_decision, read_invoked, read = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(read_decision.allow)
+        self.assertTrue(read_invoked)
+        self.assertEqual(read["status"], 200)
+        self.assertEqual(read["body"]["revision"], 1)
+        self.assertEqual(bridge.calls, 3)
+
+        await denied(EXPIRED, "POST", APPLY)
+        await denied(INFER, "GET", APPLIED)
+        still_decision, still_invoked, still = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(still_decision.allow)
+        self.assertTrue(still_invoked)
+        self.assertEqual(still["body"]["revision"], 1)
+        self.assertEqual(bridge.calls, 4)
+
+        second_decision, second_invoked, second = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertTrue(second_decision.allow)
+        self.assertTrue(second_invoked)
+        self.assertEqual(second["status"], 200)
+        self.assertEqual(second["body"]["revision"], 2)
+        self.assertEqual(bridge.calls, 5)
+        self.assertNoSecretLogs()
 
 
 if __name__ == "__main__":

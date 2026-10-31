@@ -22,7 +22,7 @@ Auth B command, from `925-jev-router/`, same venv:
 .venv-m4/bin/python integration/litellm/test_auth_b_mock_key.py
 ```
 
-Result: 10 tests, 10 pass, 0 fail. In-memory key rows only. No proxy boot. The 25-test proxy suite above is unchanged.
+Result: 15 tests, 15 pass, 0 fail. In-memory key rows only. No proxy boot. The 25-test proxy suite above is unchanged. Node remains 63 pass, 0 fail.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -58,6 +58,9 @@ Result: 10 tests, 10 pass, 0 fail. In-memory key rows only. No proxy boot. The 2
 | Auth B inference-only | `handle_key_type` LLM_API yields `llm_api_routes`. Chat and `/v1/messages` are allowed. Apply and read-back are 403 from `RouteChecks.should_call_route`. | Pass |
 | Auth B read-only | Exact `.../applied` plus `info_routes` allows read-back and `GET /key/info`. `POST .../apply`, `/key/generate`, `/team/new`, and `/user/new` are denied. | Pass |
 | Auth B admin, cross-project, empty scope | A scoped key denies `/key/generate`, `/team/new`, and `/user/new`. Another project and the neighbor id `orca-ade-example-evil` are denied. Empty, missing, and permissions-only routes are `scope_missing` after `should_call_route` fail-opens and `check_route_access` returns false. | Pass |
-| Auth B path prefix | `..`, `%2e%2e`, `%252e`, and `%2f` tricks are malformed and are not passed to `should_call_route`. The native prefix matcher would allow `.../applied/../apply` and `.../apply/extra`. The extra segment is still denied. The parent prefix is not granted. Logs contain the public token id and permissions and do not contain the raw bearer. | Pass |
+| Auth B path prefix | `..`, `%2e%2e`, `%252e`, and `%2f` tricks are malformed and are not passed to `should_call_route`. The native prefix matcher would allow `.../applied/../apply` and `.../apply/extra`. The extra segment is still denied. Logs contain the public token id and permissions and do not contain the raw bearer. | Pass |
+| Auth B native denials | An `expires` of `2000-01-01` is `expired` / `expired-key` from `validate_resolved_virtual_key` before `should_call_route`. `blocked=True` stays `revoked` / `key-blocked`. A project-table `RuntimeError` is `rejected` / `unexpected-error`. The sentinel text is absent from `jev.auth_b` logs. | Pass |
+| Auth B exact grant and project | A grant of `/jev/v1/projects/orca-ade-example` prefix-matches Apply in `RouteChecks` and is still `exact-grant`. A `.../*` wildcard is `exact-grant`. `project_id=orca-ade-example` plus an explicit other-project apply grant is `project-binding`. A missing `project_id` on the exact orca apply path is `project-binding`. The scoped key still allows its own Apply. | Pass |
+| Auth B mock Apply wire | `dispatch_control` calls `createMockControlPlane` only after an allow. Expired, parent-grant, other-project, and inference-only requests leave the bridge call count unchanged. A valid scoped Apply then read-back returns revision 1. A later denial leaves revision 1. A second valid Apply returns revision 2. | Pass |
 
 Not done, on purpose: live provider traffic, live `api.typesafe.ai`, a deployed-gateway read (Hostinger timeout; no box SSH), a live Auth B dashboard key, live Claude header capture (#167), new credentials, deploy. Deployment match between the in-repo decide contract and the ops-note host `api.hjc925.cloud` is unverified. M4 and M5 do not claim `/anthropic/v1/messages`. M5 does not claim a real Claude client sent these headers. Auth B does not claim a live virtual key.
