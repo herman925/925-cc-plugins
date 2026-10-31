@@ -1,0 +1,2 @@
+# Disposable project virtualenv only. Do not install this into the system Python.
+litellm[proxy]==1.106.2

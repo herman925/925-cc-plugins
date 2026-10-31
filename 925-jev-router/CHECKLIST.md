@@ -8,6 +8,14 @@ node --test test/*.test.mjs
 
 Result: 63 tests, 63 pass, 0 fail (Node v22.23.4). No network. The previous 40 M2 tests remain in this run. `test/request-context.test.mjs` is 23.
 
+M4 command, from `925-jev-router/`, with `.venv-m4` already installed from `requirements-m4.txt`:
+
+```bash
+.venv-m4/bin/python integration/litellm/test_m4_proxy.py
+```
+
+Result: 9 tests, 9 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. The Node suite above is unchanged.
+
 | Criterion | What was checked | Result |
 | --- | --- | --- |
 | SPEC freeze | `SPEC.md` records the closed locks from #157, #161, #162, #163, #165, #166, plus the #168 record shape. Hostinger is named as today’s home only. | Present |
@@ -22,5 +30,11 @@ Result: 63 tests, 63 pass, 0 fail (Node v22.23.4). No network. The previous 40 M
 | M2 hook wire | `test/wire.test.mjs` applies, reads back, then runs hook → decision → execution rewrite. `large-leader` stays pinned with selector call count 0. A sentinel choice rewrites the model and records one selector call. No agent id still selects. A second apply that drops `cheap-worker` makes the next execution use `strong-worker`. | Pass |
 | #167 interface | [docs/m2-request-context.md](docs/m2-request-context.md) records the binding rules. [docs/m3-request-context.md](docs/m3-request-context.md) maps each Planned row to an offline test. | Implemented offline |
 | M3 request context | `test/request-context.test.mjs` covers case-insensitive headers, binding isolation, prompt stickiness, child agent id with parent lineage, missing/blank/conflict errors, control-character rejection, a conservative pin, shared in-flight selection with per-waiter eligibility, auxiliary traffic, failed-flight cleanup, policy intersection, applied project/revision match, fixed-agent identity, cached-model revocation, separate 64-pin and 64-flight caps, a flight timer that settles with no other request, late results that cannot commit, replacement survival, and harness `execution.model` plus `selectorCalls`. Identity headers do not grant Apply. | Pass |
+| M4 chat rewrite | `integration/litellm/test_m4_proxy.py` posts `/v1/chat/completions` with `jev-router`. The mock upstream records one execution of `cheap-worker`. The TypeSafe stub is called once. Criteria keys are exactly `cheap-worker` and `strong-worker`. | Pass |
+| M4 leader | The same suite posts `large-leader`. Selector calls and TypeSafe calls stay 0. One upstream execution uses `large-leader`. | Pass |
+| M4 fail-open | Two stub 503s rewrite to `strong-worker` with two selector calls and one upstream execution. An ineligible choice uses the same eligible fallback, not `cheap-worker`. | Pass |
+| M4 `/v1/messages` | Non-stream, stream, and a tool-use plus tool-result history all rewrite to `cheap-worker`. The hook return still carries `lookup` and `tool_result`. The mock body does too. LiteLLM 1.106.2 delivers those executions to the mock `/v1/responses` path. `/anthropic/v1/messages` was not called. | Pass |
+| M4 sentinel inert | A second proxy loaded from `config.nocallback.yaml` returns an error for `jev-router`. The mock upstream execution count does not change, and the Node hook receives no request. | Pass |
+| M4 no blind retry | After the mock emits one stream chunk and closes, the upstream execution count stays 1 and the client body has no `[DONE]`. | Pass |
 
-Not done, on purpose: live LiteLLM registration, live TypeSafe HTTP, Auth A/B choice, live header smoke (#167), new credentials, deploy.
+Not done, on purpose: live provider traffic, live `api.typesafe.ai`, Auth A/B choice, live header smoke (#167), wiring M3 stickiness through the proxy, new credentials, deploy. M4 does not claim `/anthropic/v1/messages`.

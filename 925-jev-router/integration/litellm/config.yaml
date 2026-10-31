@@ -1,0 +1,48 @@
+# Local M4 proxy. Sentinel jev-router is registered so the callback can run,
+# and its api_base is a closed loopback port. With no callback the request
+# cannot reach the mock upstream.
+model_list:
+  - model_name: jev-router
+    litellm_params:
+      model: openai/jev-router
+      api_base: http://127.0.0.1:9/v1
+      api_key: synthetic-inert-not-a-real-key
+  - model_name: cheap-worker
+    litellm_params:
+      model: openai/cheap-worker
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+  - model_name: strong-worker
+    litellm_params:
+      model: openai/strong-worker
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+  - model_name: large-leader
+    litellm_params:
+      model: openai/large-leader
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+
+litellm_settings:
+  callbacks:
+    - callback_bridge.proxy_handler_instance
+  num_retries: 0
+  drop_params: true
+
+router_settings:
+  num_retries: 0
+  allowed_fails: 100
+  retry_policy:
+    BadRequestErrorRetries: 0
+    AuthenticationErrorRetries: 0
+    TimeoutErrorRetries: 0
+    RateLimitErrorRetries: 0
+    ContentPolicyViolationErrorRetries: 0
+    InternalServerErrorRetries: 0
+    ServiceUnavailableErrorRetries: 0
+    NotFoundErrorRetries: 0
+    DefaultRetries: 0
+
+general_settings:
+  master_key: synthetic-jev-m4-proxy-key
+  background_health_checks: false

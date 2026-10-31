@@ -134,6 +134,18 @@ Same-key concurrent first requests share one in-flight selection and commit one 
 
 Those headers are correlation hints. `headersAuthorizeApply` is always false. They do not grant Apply. Auth A versus Auth B is still undecided. The hook file does not read these headers. The synthetic harness consults the store only when the fixture passes `headers` or `contextStore`. A non-sentinel model still bypasses that store.
 
+## M4 local LiteLLM proxy
+
+M4 runs pinned `litellm[proxy]==1.106.2` from PyPI inside a disposable project virtualenv (`.venv-m4`, not installed system-wide). The suite is `integration/litellm/`. It binds `127.0.0.1` only. The TypeSafe stub and the execute stub are local processes. They do not call `api.typesafe.ai` or a provider. Installing the package is not test traffic. How to create the venv and run the suite is [docs/m4-litellm-local-mock.md](docs/m4-litellm-local-mock.md).
+
+`callback_bridge.py` implements `CustomLogger.async_pre_call_hook`. It posts the JSON-safe request to `hook_server.mjs`. That adapter calls `planPreCall` in `src/hook.mjs`, which is the function `asyncPreCallHook` delegates to, and the callback copies the returned model onto the proxy request. Allowlist, excerpt, and fail-open stay in the Node modules. The adapter loads `examples/project-a/.925-jev-router/config.json`, applies it with the existing in-process mock Apply, and passes the read-back policy as `context.policy`.
+
+`config.yaml` registers sentinel `jev-router` with `api_base` `http://127.0.0.1:9/v1`, a closed port. `cheap-worker`, `strong-worker`, and `large-leader` point at the mock upstream. `config.nocallback.yaml` is the same list without the callback. Router retries are 0.
+
+M3 stickiness is not on this path. `src/hook.mjs` does not read `X-Jev-*` headers, and the proxy bridge does not call `src/request-context.mjs`. Pins, shared flights, and prompt stickiness remain in-process only.
+
+The suite calls `POST /v1/chat/completions` and `POST /v1/messages` (non-stream, stream, and tool-use plus tool-result). On LiteLLM 1.106.2, `/v1/messages` for an `openai/` deployment is translated to the OpenAI Responses API (`/v1/responses`) on the mock. `/anthropic/v1/messages` is not requested and is not claimed. This is not live smoke ([#160](https://github.com/herman925/925-cc-plugins/issues/160)).
+
 ## Non-goals
 
 - CiteReflex SaaS product brain.
@@ -141,11 +153,11 @@ Those headers are correlation hints. `headersAuthorizeApply` is always false. Th
 - Custom MCP for Grok Bot.
 - Drop-in of gargpratyush/jev-router or stock prismhq/jev-router OpenRouter execute.
 - Replacement gateway or fleet controller.
-- Live LiteLLM registration, live TypeSafe calls, Hostinger deploy, credential creation.
+- Live provider traffic, live `api.typesafe.ai` calls, Hostinger deploy, credential creation. M4 is a disposable local proxy and loopback mocks only.
 
 ## Still open
 
-[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria, [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live header smoke (offline binding is M3), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
+[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria (M4 is the local mock, not that smoke), [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live header smoke (offline binding is M3; the M4 proxy does not wire it), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
 
 ## Smoke criteria
 

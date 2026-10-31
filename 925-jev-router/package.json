@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "M1 scaffold: LiteLLM pre-call stub, project allowlist, Draft-only picker. TypeSafe selects; LiteLLM executes.",
+  "description": "LiteLLM pre-call hook. TypeSafe selects; LiteLLM executes. M4 local proxy is integration/litellm.",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:m4": ".venv-m4/bin/python integration/litellm/test_m4_proxy.py"
   }
 }

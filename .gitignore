@@ -3,3 +3,6 @@ node_modules/
 .claude-plugin/types/
 **/.claude-plugin/types/
 desktop.ini
+.venv-m4/
+__pycache__/
+*.pyc

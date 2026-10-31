@@ -1,0 +1,34 @@
+# Same deployments as config.yaml with the callback omitted.
+# jev-router still points at the closed port and must not reach the mock upstream.
+model_list:
+  - model_name: jev-router
+    litellm_params:
+      model: openai/jev-router
+      api_base: http://127.0.0.1:9/v1
+      api_key: synthetic-inert-not-a-real-key
+  - model_name: cheap-worker
+    litellm_params:
+      model: openai/cheap-worker
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+  - model_name: strong-worker
+    litellm_params:
+      model: openai/strong-worker
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+  - model_name: large-leader
+    litellm_params:
+      model: openai/large-leader
+      api_base: os.environ/JEV_MOCK_UPSTREAM_BASE
+      api_key: synthetic-upstream-test-key
+
+litellm_settings:
+  num_retries: 0
+  drop_params: true
+
+router_settings:
+  num_retries: 0
+
+general_settings:
+  master_key: synthetic-jev-m4-proxy-key
+  background_health_checks: false
