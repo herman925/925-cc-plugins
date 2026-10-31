@@ -56,7 +56,7 @@ LiteLLM 1.106.2, imported from `.venv-m4`. The store's `get_data` serves `combin
 | Function | How the suite uses it |
 | --- | --- |
 | `litellm.proxy._types.hash_token` | `authorize` hashes an `sk-` fixture before lookup. The raw bearer is not logged. |
-| `litellm.proxy.auth.auth_checks.get_key_object` | Lookup against the mock store. A miss raises `ProxyException` (`token_not_found_in_db`). The metrics wrapper then imports Prisma, which this venv does not have, so `ModuleNotFoundError` propagates with that `ProxyException` on `__context__`. The adapter still treats it as invalid. |
+| `litellm.proxy.auth.auth_checks.get_key_object` | Lookup against the mock store. A miss raises `ProxyException` (`token_not_found_in_db`). The metrics wrapper then imports Prisma, which this venv does not have, so `ModuleNotFoundError` propagates with that `ProxyException` on `__context__`. The adapter still treats that miss as invalid. A dependency error from `get_data` is not a miss: `authorize` returns `rejected` / `unexpected-error` and does not log the exception text. |
 | `litellm.proxy.auth.resolvers.store.IdentityStore.resolve` | Called after `get_key_object` on the same cache. A hit projects the principal. A miss raises `KeyNotFoundError`. |
 | `litellm.proxy.auth.user_api_key_auth.user_api_key_auth_builder` | Non-`sk-` fixtures only. The builder rejects them before `get_data` with a masked key (`not-****-key`) and `expected to start with 'sk-'`. |
 | `litellm.proxy.auth.user_api_key_auth.validate_resolved_virtual_key` | Called for every resolved key, with an empty `api_key` argument so the raw bearer is not passed in. For that call the adapter installs a duck-typed prisma client whose user, team, and project reads return no row, then restores the previous client. A returned `UserAPIKeyAuth` is the only success. `blocked is True` is `revoked` (`key-blocked`). `expires` before now raises `ProxyException` type `expired_key` (`Authentication Error - Expired Key`) and the adapter denies `expired` / `expired-key` before route checks. Other `ProxyException`, `HTTPException`, and `BudgetExceededError` results are `rejected` / `native-denial`. Any other exception, including a project-table `RuntimeError`, is `rejected` / `unexpected-error`. The exception text is not logged. |
@@ -72,9 +72,11 @@ Jev control must be exactly `/jev/v1/projects/{id}/applied` or `/jev/v1/projects
 
 `dispatch_control` calls `createMockControlPlane` through `mock_apply_bridge.mjs` only after `authorize` allows that control route. The bridge supplies the handler's existing synthetic verifier. A denied Apply or read-back does not call the bridge, so the stored revision does not change. A valid scoped Apply then read-back returns revision 1, a later denial leaves that revision, and a second valid Apply returns revision 2.
 
+`policyHash` runs inside the bridge. An empty policy object throws before the handler's own catch. The bridge returns that as status 400 with `error` and `message`, and the Node process stays up, so the previous revision remains and the next valid Apply still advances it. A lookup-stage dependency error never reaches the bridge.
+
 Scoped fixture routes are the two exact sibling paths plus `llm_api_routes`. That key accepts apply, read-back, `/v1/chat/completions`, and `/v1/messages`, and denies `/key/generate`, `/team/new`, `/user/new`, another project, and the neighbor project id `orca-ade-example-evil`.
 
-Logs from `jev.auth_b` are `decision` plus `token_id`, `user_id`, `project_id`, `team_id`, `allowed_routes`, `blocked`, and `permissions`. They do not include the raw bearer, the synthetic verifier, or validator exception text.
+Logs from `jev.auth_b` are `decision` plus `token_id`, `user_id`, `project_id`, `team_id`, `allowed_routes`, `blocked`, and `permissions`. They do not include the raw bearer, the synthetic verifier, validator exception text, or lookup-stage exception text.
 
 ## Not done
 

@@ -566,6 +566,121 @@ class AuthBMockKeyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.calls, 5)
         self.assertNoSecretLogs()
 
+    async def test_empty_policy_apply_stays_up_and_keeps_revision(self):
+        policy = {
+            "schema_version": 1,
+            "project_id": PROJECT,
+            "candidates": ["cheap-worker", "strong-worker"],
+            "fallback": "strong-worker",
+            "default_worker_mode": "routed",
+        }
+        bridge = MockApplyBridge()
+        self.addCleanup(bridge.close)
+        decision, invoked, first = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertTrue(decision.allow)
+        self.assertTrue(invoked)
+        self.assertEqual(first["status"], 200)
+        self.assertEqual(first["body"]["revision"], 1)
+
+        bad_decision, bad_invoked, bad = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, {}
+        )
+        self.assertTrue(bad_decision.allow)
+        self.assertTrue(bad_invoked)
+        self.assertEqual(bad["status"], 400)
+        self.assertEqual(bad["body"]["error"], "policy_schema")
+        self.assertIsNone(bridge.proc.poll())
+
+        kept_decision, kept_invoked, kept = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(kept_decision.allow)
+        self.assertTrue(kept_invoked)
+        self.assertEqual(kept["status"], 200)
+        self.assertEqual(kept["body"]["revision"], 1)
+
+        again_decision, again_invoked, again = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertTrue(again_decision.allow)
+        self.assertTrue(again_invoked)
+        self.assertEqual(again["status"], 200)
+        self.assertEqual(again["body"]["revision"], 2)
+        read_decision, read_invoked, read = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(read_decision.allow)
+        self.assertTrue(read_invoked)
+        self.assertEqual(read["status"], 200)
+        self.assertEqual(read["body"]["revision"], 2)
+        self.assertNoSecretLogs()
+
+    async def test_lookup_dependency_error_fails_closed_without_handler(self):
+        policy = {
+            "schema_version": 1,
+            "project_id": PROJECT,
+            "candidates": ["cheap-worker", "strong-worker"],
+            "fallback": "strong-worker",
+            "default_worker_mode": "routed",
+        }
+        bridge = MockApplyBridge()
+        self.addCleanup(bridge.close)
+        seeded, seeded_invoked, seeded_body = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertTrue(seeded.allow)
+        self.assertTrue(seeded_invoked)
+        self.assertEqual(seeded_body["body"]["revision"], 1)
+        calls_after_seed = bridge.calls
+
+        records = []
+
+        class Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = Capture()
+        logger = logging.getLogger("jev.auth_b")
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        self.addCleanup(logger.removeHandler, handler)
+
+        self.store.lookup_fault = f"sentinel-lookup-dependency {SCOPED}"
+        decision = await self._auth(SCOPED, "POST", APPLY)
+        self.assertFalse(decision.allow)
+        self.assertEqual(decision.code, "rejected")
+        self.assertEqual(decision.note, "unexpected-error")
+        self.assertIsNone(decision.principal)
+        self.assertIn(_FN_GET_KEY, decision.executed)
+        self.assertNotIn(_FN_VALIDATE, decision.executed)
+        self.assertNotIn(_FN_SHOULD, decision.executed)
+        self.assertNotIn("sentinel-lookup-dependency", str(decision))
+
+        denied, invoked, response = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "POST", APPLY, bridge, policy
+        )
+        self.assertFalse(denied.allow)
+        self.assertEqual(denied.code, "rejected")
+        self.assertEqual(denied.note, "unexpected-error")
+        self.assertFalse(invoked)
+        self.assertIsNone(response)
+        self.assertEqual(bridge.calls, calls_after_seed)
+
+        self.store.lookup_fault = None
+        kept, kept_invoked, kept_body = await dispatch_control(
+            self.store, f"Bearer {SCOPED}", "GET", APPLIED, bridge
+        )
+        self.assertTrue(kept.allow)
+        self.assertTrue(kept_invoked)
+        self.assertEqual(kept_body["status"], 200)
+        self.assertEqual(kept_body["body"]["revision"], 1)
+        joined = "\n".join(records)
+        self.assertNotIn("sentinel-lookup-dependency", joined)
+        self.assertNotIn(SCOPED, joined)
+        self.assertNoSecretLogs()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

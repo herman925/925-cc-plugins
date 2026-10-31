@@ -62,6 +62,7 @@ class MockKeyStore:
     def __init__(self):
         self._rows = {}
         self.project_fault = None
+        self.lookup_fault = None
         self.prisma = MockAuthPrisma(self)
 
     def insert(
@@ -95,6 +96,8 @@ class MockKeyStore:
         return token_id
 
     async def get_data(self, *, token, table_name, **kwargs):
+        if self.lookup_fault:
+            raise RuntimeError(self.lookup_fault)
         if table_name != "combined_view":
             return None
         return self._rows.get(token)

@@ -36,18 +36,24 @@ lines.on('line', (line) => {
   }
   const headers = { authorization: `Bearer ${token}` };
   if (msg.op === 'apply') {
-    const result = control.request({
-      method: 'POST',
-      path: msg.path,
-      headers,
-      body: {
-        schema_version: 1,
-        policy: msg.policy,
-        policy_hash: policyHash(msg.policy),
-        source: 'html-picker',
-      },
-    });
-    send({ ok: true, status: result.status, body: result.body });
+    try {
+      const result = control.request({
+        method: 'POST',
+        path: msg.path,
+        headers,
+        body: {
+          schema_version: 1,
+          policy: msg.policy,
+          policy_hash: policyHash(msg.policy),
+          source: 'html-picker',
+        },
+      });
+      send({ ok: true, status: result.status, body: result.body });
+    } catch (error) {
+      const code = error && typeof error.code === 'string' ? error.code : 'apply_shape';
+      const message = error && typeof error.message === 'string' ? error.message : 'Apply body is not valid.';
+      send({ ok: true, status: 400, body: { error: code, message } });
+    }
     return;
   }
   if (msg.op === 'read') {

@@ -226,21 +226,29 @@ async def _lookup(store, digest, executed):
             user_api_key_cache=cache,
         )
     except Exception as exc:
+        executed.append(_FN_GET_KEY)
         if _proxy_exception(exc) is None:
             raise
         key = None
-    executed.append(_FN_GET_KEY)
+    else:
+        executed.append(_FN_GET_KEY)
     if key is None:
         try:
             await IdentityStore(store, cache).resolve(hashed_token=digest)
         except Exception as exc:
+            executed.append(_FN_IDENTITY)
             if _proxy_exception(exc) is None:
                 raise
-            executed.append(_FN_IDENTITY)
             return None
         executed.append(_FN_IDENTITY)
         return None
-    principal_obj = await IdentityStore(store, cache).resolve(hashed_token=digest)
+    try:
+        principal_obj = await IdentityStore(store, cache).resolve(hashed_token=digest)
+    except Exception as exc:
+        executed.append(_FN_IDENTITY)
+        if _proxy_exception(exc) is None:
+            raise
+        return None
     executed.append(_FN_IDENTITY)
     return IdentityStore.key_from_principal(principal_obj)
 
@@ -346,7 +354,10 @@ async def authorize(store, authorization, method, path):
 
     executed.append(_FN_HASH)
     digest = hash_token(token)
-    key = await _lookup(store, digest, executed)
+    try:
+        key = await _lookup(store, digest, executed)
+    except Exception:
+        return _finish(False, "rejected", None, executed, "unexpected-error")
     if key is None:
         return _finish(False, "invalid", None, executed)
 
