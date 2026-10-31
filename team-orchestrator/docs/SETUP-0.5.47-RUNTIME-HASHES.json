@@ -1,0 +1,9 @@
+{
+  "team-orchestrator/.claude-plugin/plugin.json": "f4550ce4cdbcd267b54276c5d9058673772e6267a1f42266c228b481d58d7c79",
+  "team-orchestrator/hooks/register.tsx": "41fa5ce3251cd50de83dd7566cd938a5c1cc8b4f63b65128b628a6c0aae70f98",
+  "team-orchestrator/hooks/shared-store.tsx": "7aea540f6add35903af759d7233164741729f9e187bd20ca35ae7e7c6114a21a",
+  "team-orchestrator/hooks/shared-workspace.tsx": "5a404167683fa61d1da7de8b36d54614743a6b208943248b5e10f22b982a53b5",
+  "team-orchestrator/hooks/team-setup.tsx": "ec30afad7a98fd099066e7ae680bd586f964a7ea8d1b31c9482a9ae352572ef3",
+  "team-orchestrator/hooks/project-workspace.ts": "c0a7a812ad77cd2168ec5f94112b14b9e293480cf9080e3693f10f56340f1d5a",
+  "team-orchestrator/types/index.d.ts": "6e9f5a0d37ea541628c7b9971107dbf2236391cd7567956723aae155d7cafa60"
+}
