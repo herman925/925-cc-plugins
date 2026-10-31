@@ -106,6 +106,40 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
    assert.equal((await f.rows("SELECT pickup_observed_at_ms FROM assignments WHERE assignment_id='assignment'"))[0].pickup_observed_at_ms,null);
   }finally{await db.close();}
  });
+ test('verified caller self-binding retains controller and displayed-generation checks',async t=>{
+  const f=await setup(t);await f.approve();await f.call(f.fresh);
+  f.native.current=f.actor('outsider');await assert.rejects(f.bind('head','outsider'),code('API_CONTROLLER_REQUIRED'));
+  f.native.current=f.actor('controller');await f.bind('head','controller');
+  assert.equal((await f.call({type:'inspectCaller'})).result.member.member_id,'head');
+  const command={type:'bindMember',teamId:'team',memberId:'head',expectedConfigVersion:7,expectedMemberGeneration:1,expectedBindingGeneration:1,expectedControllerGeneration:1};
+  for(const field of ['expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration','expectedControllerGeneration']){
+   await assert.rejects(f.call({...command,[field]:99},{target:'controller'}),code('API_STALE_AUTHORITY'));
+  }
+  assert.equal(Number((await f.rows("SELECT generation FROM member_bindings WHERE member_id='head'"))[0].generation),1);
+ });
+ test('workspace discovery exposes approved teams and only the current member task boundary',async t=>{
+  const f=await setup(t);await f.ready();
+  f.native.current=f.actor('controller');
+  await f.call({...f.fresh,teamId:'second-team',name:'Second',members:[{memberId:'second-head',name:'Second head',bossMemberId:null,role:'Review',officialText:'Second head role'}]});
+  assert.deepEqual((await f.call({type:'inspectCaller'})).result.teams.map(t=>t.team_id).sort(),['second-team','team']);
+  assert.equal((await f.call({type:'inspectTeam',teamId:'team'})).result.work.length,0);
+  f.native.current=f.actor('outsider');
+  assert.deepEqual((await f.call({type:'inspectCaller'})).result.teams,[]);
+  await assert.rejects(f.call({type:'inspectTeam',teamId:'team'}),code('API_BINDING_REQUIRED'));
+  for(const [who,count] of [['head',1],['worker',1],['other',0]]){
+   f.native.current=f.actor(who);
+   assert.deepEqual((await f.call({type:'inspectCaller'})).result.teams.map(t=>t.team_id),['team']);
+   await assert.rejects(f.call({type:'inspectTeam',teamId:'second-team'}),code('API_MEMBER_SCOPE'));
+   const result=(await f.call({type:'inspectTeam',teamId:'team'})).result;
+   assert.equal(result.work.length,count);
+   if(count)assert.equal(result.work[0].brief.expected_result,'5 with evidence');
+  }
+  f.native.current={...f.actor('head'),incarnationId:'replaced'};
+  await assert.rejects(f.call({type:'inspectTeam',teamId:'team'}),code('API_STALE_BINDING'));
+  f.native.current=f.actor('head');
+  await rawWrite(f,"UPDATE members SET boss_member_id='other' WHERE member_id='worker'");
+  assert.equal((await f.call({type:'inspectTeam',teamId:'team'})).result.work.length,0);
+ });
  test('failed fresh-team creation rolls back all roster and approval-independent changes',async t=>{
   const f=await setup(t);await f.approve();
   await assert.rejects(f.call({...f.fresh,members:[f.fresh.members[0],{...f.fresh.members[1],name:'Head'}]}),code('STORE_MEMBER_NAME_EXISTS'));

@@ -1,0 +1,9 @@
+{
+  "team-orchestrator/hooks/shared-workspace.tsx": "bfc5d0a949e1dfb86ca033f0af7da061a2bb2733665e0b13f95e90d8dbd5a3fb",
+  "shared/team-store/src/api-domain.mjs": "468973563b0b9a0a4d14c8248f4dd3a2e6b21bb24b0b1e34bad603802bf7ef01",
+  "shared/team-store/mod-bridge.mjs": "5e15d03a74de85a849fe0526392b6dab0bcde51ba21b03e721cb80474612e5e1",
+  "team-orchestrator/hooks/shared-bridge.ts": "955ecb4d2e8582fbc801fb5407a8b0ab21c483e36228170f5884b9c4abadc092",
+  "team-orchestrator/hooks/register.tsx": "338fc662ed99d1427a2b265d010b0423833cbab874b47a247e7a6a109b404266",
+  "shared/team-store/mod-native.mjs": "9e1824765dc072905d337257baa0cd9f4c0c115e406e81e3169c574c511e5aee",
+  "team-orchestrator/hooks/shared-store.tsx": "6d292416529dd406ae87de0e21a5260f9afe3758c933781b57ca10376a005219"
+}

@@ -1,0 +1,16 @@
+{
+  "apiVisibleTeams": 1,
+  "apiVisibleAssignments": 1,
+  "nativeBindings": 2,
+  "configVersion": 5,
+  "beforeHeadStatus": "open",
+  "workerOutcome": "succeeded",
+  "beforeHeadAcceptance": null,
+  "finalTaskStatus": "succeeded",
+  "finalAcceptance": "accepted",
+  "roleEvidenceReadBeforeFixture": true,
+  "workerWriteCalls": 0,
+  "globalHashesUnchanged": true,
+  "rawTableCountsVerified": false,
+  "fixtureWords": 12
+}

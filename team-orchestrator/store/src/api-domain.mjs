@@ -120,12 +120,13 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   if (type === 'inspectCaller') {
     const [approval] = await db.query('SELECT generation,revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
     const [binding] = await db.query('SELECT * FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
-    if (!binding) return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null};
+    const teams = approval && Number(approval.revoked)===0 ? await db.query('SELECT team_id,name,function_text,config_version FROM teams ORDER BY name,team_id') : [];
+    if (!binding) return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,teams};
     const row = await reference(db,'members','member_id',binding.member_id);
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
     const team = await reference(db,'teams','team_id',member.team_id);
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
-    return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0};
+    return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
   }
   if (['revokeController','createFreshTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {
@@ -153,7 +154,24 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const [approval] = await db.query('SELECT revoked FROM controller_approvals WHERE controller_id=:id', { id:controllerId(actor) });
     if (!approval || Number(approval.revoked) !== 0) await memberActor(db,actor,command,false);
     const team = await reference(db,'teams','team_id',command.teamId);
-    return { team, members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY member_id',{id:command.teamId}), bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}), roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id:command.teamId}) };
+    // Controller approval alone grants roster inspection, never task evidence.
+    // Match inspectAssignment's current member/head boundary, including native
+    // incarnation checks. The UI projection is bounded, newest first.
+    const [bound] = await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
+    const work=[];
+    if (bound) {
+      const m=await reference(db,'members','member_id',bound.member_id);
+      if(m.team_id===command.teamId) {
+        const {member}=await memberActor(db,actor,command,false);
+        const visible=await db.query(`SELECT a.* FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN runs r ON r.run_id=t.run_id JOIN members m ON m.member_id=a.member_id
+          WHERE r.team_id=:team AND (a.member_id=:member OR (a.assigned_by_member_id=:member AND m.boss_member_id=:member)) ORDER BY a.admitted_at_ms DESC,a.assignment_id LIMIT 100`,{team:command.teamId,member:member.member_id});
+        for(const assignment of visible) {
+          const [acceptance]=await db.query('SELECT * FROM task_acceptances WHERE task_id=:id',{id:assignment.task_id});
+          work.push({assignment,task:await reference(db,'tasks','task_id',assignment.task_id),brief:await reference(db,'task_briefs','task_id',assignment.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',assignment.assignment_id),acceptance:acceptance??null});
+        }
+      }
+    }
+    return { team, members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id:command.teamId}), bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}), roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id:command.teamId}),work };
   }
   if (type === 'inspectAssignment') {
     const {member} = await memberActor(db,actor,command,false);

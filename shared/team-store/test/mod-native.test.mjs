@@ -26,7 +26,7 @@ test('native proof uses exact conversation/incarnation, live registry and runtim
   const request=JSON.parse(bytes.toString());assert.equal(request.authToken,metadata.authToken);
   if(mode==='epoch')await writeFile(metadataPath,JSON.stringify({...metadata,runtimeId:'replacement'}));
   const shown=mode==='wrong-conversation'?{...tab,agentStatus:{...tab.agentStatus,providerSession:{id:'other'}}}:mode==='wrong-incarnation'?{...tab,incarnationId:'old'}:mode==='idle'?{...tab,agentStatus:{terminalHandle:'terminal',agentType:'claude'}}:tab;
-  const result=request.method==='terminal.show'?{terminal}:{tabs:mode==='duplicate'?[shown,shown]:mode==='absent'?[]:[shown]};
+  const result=request.method==='terminal.show'?{terminal}:{tabs:mode==='duplicate'?[shown,shown]:mode==='absent'?[]:mode==='other-idle'?[shown,{...shown,agentStatus:{terminalHandle:'other',agentType:'claude'}}]:[shown]};
   socket.end(JSON.stringify({id:request.id,ok:true,result,_meta:{runtimeId:metadata.runtimeId}})+'\n');
  });});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
@@ -36,23 +36,41 @@ test('native proof uses exact conversation/incarnation, live registry and runtim
  const native=await createModNative({env},dependencies);
  const reference={projectRoot:root,conversationId:'conversation',terminalHandle:'terminal',contextId:'context'};
  assert.equal((await native.verifyCaller(reference)).incarnationId,'instance');
- for(const bad of ['wrong-conversation','wrong-incarnation','duplicate','absent'])await t.test(`refuses ${bad} native evidence for caller and target`,async()=>{mode=bad;await assert.rejects(native.verify(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');});
+ for(const bad of ['wrong-conversation','wrong-incarnation','duplicate','absent'])await t.test(`refuses ${bad} native evidence for caller and target`,async()=>{mode=bad;await assert.rejects(native.verify(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');});
+ await t.test('idle self is offered once and reverified while every other target keeps explicit provider proof',async()=>{
+  mode='normal';assert.deepEqual((await native.listTargets(reference)).map(s=>s.reference.conversationId),['conversation']);
+  assert.equal((await native.listTargets(reference))[0].label,'This verified conversation');
+  mode='idle';assert.deepEqual((await native.listTargets(reference)).map(s=>s.reference),[reference]);
+  assert.equal((await native.verifyBinding(reference,reference)).conversationId,'conversation');
+  mode='other-idle';assert.deepEqual((await native.listTargets(reference)).map(s=>s.reference),[reference]);
+  await assert.rejects(native.verifyBinding({...reference,terminalHandle:'other',conversationId:'other'},reference),e=>e.code==='API_NATIVE_UNVERIFIED');mode='idle';
+  for(const field of Object.keys(reference)){
+   const changed={...reference,[field]:field==='projectRoot'?`${root}/.`:'other'};
+   await assert.rejects(native.verifyBinding(changed,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  }
+  for(const invalid of [{...reference,caller:true},{...reference,conversationId:null},{...reference,contextId:''},Object.create(reference)])await assert.rejects(native.verifyBinding(invalid,reference),e=>['API_INPUT_INVALID','API_NATIVE_UNVERIFIED'].includes(e.code));
+  const picked=(await native.listTargets(reference))[0].reference;mode='wrong-conversation';
+  await assert.rejects(native.verifyBinding(picked,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  mode='normal';
+ });
  await t.test('idle caller requires its exact parent process creation fingerprint',async()=>{
   mode='idle';assert.equal((await native.verifyCaller(reference)).conversationId,'conversation');
   await assert.rejects(native.verify(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
-  birth='replacement';await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
-  birth=null;await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');birth=registryRow.procStart;
-  await writeFile(registryPath,JSON.stringify({...registryRow,procStart:undefined}));await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  birth='replacement';await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  birth=null;await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');birth=registryRow.procStart;
+  await writeFile(registryPath,JSON.stringify({...registryRow,procStart:undefined}));await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
   await writeFile(registryPath,JSON.stringify(registryRow));
  });
  await t.test('idle caller cannot substitute another parent or inherited terminal context',async()=>{
-  mode='idle';await writeFile(registryPath,JSON.stringify({...registryRow,pid:process.pid}));await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  mode='idle';await writeFile(registryPath,JSON.stringify({...registryRow,pid:process.pid}));await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
   await writeFile(registryPath,JSON.stringify(registryRow));
   const wrong=await createModNative({env:{...env,ORCA_TERMINAL_HANDLE:'different'}},dependencies);
-  await assert.rejects(wrong.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  await assert.rejects(wrong.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(wrong.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+  const wrongContext=await createModNative({env:{...env,ORCA_WORKTREE_ID:'different'}},dependencies);
+  await assert.rejects(wrongContext.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
  });
  mode='normal';await writeFile(registryPath,JSON.stringify({pid:process.pid,sessionId:'conversation',cwd:root}));
  assert.equal((await native.verify(reference)).conversationId,'conversation');
  await assert.rejects(native.verifyCaller(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
- mode='epoch';await assert.rejects(native.verify(reference),e=>e.code==='API_NATIVE_UNVERIFIED');
+ mode='epoch';await assert.rejects(native.verify(reference),e=>e.code==='API_NATIVE_UNVERIFIED');await assert.rejects(native.verifyBinding(reference,reference),e=>e.code==='API_NATIVE_UNVERIFIED');
 });

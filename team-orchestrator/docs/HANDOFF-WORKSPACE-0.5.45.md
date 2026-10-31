@@ -1,0 +1,35 @@
+# Independent test handoff — shared team workspace 0.5.45
+
+Herman authorized this increment and was notified before this handoff. You lead independent testing; Codex retains implementation ownership. Repository: `C:/Users/Herman/Downloads/925-cc-plugins`, branch `feat/shared-team-workspace`, based on published main `f2e4fbcaaaabc710cd3ea8a7210022a52fd286ee`. Candidate Mod version 0.5.45; preview remains off by default. Nothing from this increment is committed/pushed yet. Root `docs/validation/` is a pre-existing unrelated untracked draft: preserve it.
+
+## Implemented scope
+
+- Shared store now has a team workspace: editable fresh-team form, role instructions and boss-first hierarchy, visible configurable windows/capacity, roster cards with Bound/Unbound status, native session choices, direct-report task assignment, task status/detail, worker pickup/reporting and separate head review/reason.
+- All writes use the existing typed API commands and displayed generations; native actor proof is freshly revalidated. Controller approval alone does not grant task acceptance or evidence access.
+- `inspectCaller.teams` discovers project teams for active controllers, one own team for verified members, none for unbound/unapproved callers. `inspectTeam.work` is limited to the 100 newest assignments visible under inspectAssignment's assignee/current-admitting-head boundary. Unbound controllers receive no task evidence. No schema or command-catalogue change.
+- Private `listSessions` is UI-only and read-only. Following your review `msg_c4c85e296122`, **This verified conversation** appears once, including a supported idle caller. Exact equality of all four own nonempty string fields is required for the self route; extra/malformed fields refuse. Binding repeats native caller verification at submit, never trusts picker evidence. Every non-identical target stays on strict explicit-provider verification. A present conflicting provider ID refuses even for self. Existing controller/home/generation/lease checks are unchanged.
+- Unknown bridge/commit/rollback results retain the original request/id and pause further mutations. Check receipt reconciles; an unknown receipt offers an explicit same-request retry. No automatic new operation. Whole-app persistence of panel pending state is not claimed.
+- Bound workers see Member access verified; controller approval is optional. Native buttons/fields and status cards replace manual IDs/JSON. Diagnostics remain under Details. Repeated rendering performs no process calls or state updates.
+
+Sources: `hooks/shared-workspace.tsx` (new UI), `hooks/shared-bridge.ts` (unchanged sharedCall extracted), `hooks/shared-store.tsx`, self-contained `types/index.d.ts`, authoritative shared `mod-native.mjs`, `mod-bridge.mjs`, `src/api-domain.mjs` and their 16-module package. `hooks/register.tsx` is byte-unchanged from 0.5.44. See `shared-team-workspace.md` and `VALIDATION-WORKSPACE-0.5.45.md`.
+
+## Local evidence
+
+- 379 Mod tests passed, 0 failed, 39 files, 25.23 seconds.
+- Full SQLite: 122 passed, 0 failed, 6 PostgreSQL skips. Focused API/native: 19 passed, 0 failed.
+- Validation passes with existing directory metadata warnings. All 16 packaged modules match. Diff check passes.
+- Six new UI cases cover creation/drafts/hierarchy/windows, native binding/generations, direct-head assignment and separate review, worker role/brief/outcome with no self-acceptance, unknown-creation reply reconciliation, and invalid inputs/unverifiable discovery. API/native regressions additionally cover multi-team/task visibility, stale/changed authority, self-binding generations, four one-field mismatches, extra/inherited/malformed properties, stale picker/provider conflict, missing/wrong birth, wrong direct parent/inherited terminal/context, runtime epoch/incarnation and no idle-other-target fallback.
+- Logs: `docs/validation/workspace-0.5.45/` inside the Mod directory.
+
+## Requested bounded independent acceptance
+
+1. Review the added read projections and exact-self binding route, independently run the full Mod suite and full SQLite + real PostgreSQL suite; check packaging, validation and runtime source/copy hashes. Use a dedicated disposable PostgreSQL database and stop only your own test server afterward. No Docker or minimum-Node revalidation required unless new evidence warrants it.
+2. Create fresh disposable native test conversations/project with a starting snapshot. Use per-invocation source-plugin options, not global install or saved user config changes. Preserve all earlier retained fixtures. Actual panel actions are authorized simulated-user fixture actions; do not invent a user answer to an unrelated question or treat any generic question as controller approval.
+3. Use real panel controls to approve controllers, create a named team with head+worker, bind each to a native session (exercise **This verified conversation**), and confirm database/receipt evidence. For an idle other session without explicit native association, do not weaken verification; it may approve itself as a second controller and self-bind through its own panel. Both controller approvals remain active.
+4. Bound head assigns a small read-only fixture task through the panel. Worker refreshes Tasks, reads its role/brief before fixture work and reports explicit summary/evidence. Worker has no acceptance control. Head independently reviews and accepts through its own panel. Verify separate assignment-attempt outcome and task-acceptance rows and a succeeded task, exactly once. Show strict transcript order if claiming model role/brief-before-fixture work; a UI draw alone does not establish model understanding.
+5. Inspect actual native controls at a normal width and about 60 columns. Verify creation fields, session choices, roster/task navigation and primary actions are usable by native click/keyboard and scrolling; do not count hidden-handler invocation as UI acceptance. Capture only the owned fixture, and verify the image is the intended surface before treating it as evidence. Record honest fold/scroll limits rather than requiring every form field onscreen at once.
+6. Independently probe refusal/unknown-receipt behavior where practical. Never mutate live user stores or manufacture native identity. If a product defect appears, report it with evidence and wait for Codex repair; preserve the candidate and fixture. Write a complete evidence report at an absolute path and send that path/hash/counters to Codex; keep reports immutable after sending.
+
+## Boundaries
+
+No migration, scheduler/replay/delivery, automatic task-window fencing, worker launching, rejected-task recovery, Orca plugin integration, whole-Orca restart, release installation or broad lifecycle acceptance is claimed. Fresh-team form defaults are editable and documented, not migration decisions. Keep real settings/install records and credentials unchanged; do not copy credential files. Retain test sessions for inspection. No commit, merge, push, global install/config change or app restart is requested from the tester. Codex will publish related work after independent evidence settles.
