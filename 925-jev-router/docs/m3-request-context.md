@@ -1,6 +1,6 @@
 # M3 request context
 
-Status: implemented offline in `src/request-context.mjs`. The harness consults it only when a fixture passes `headers` or `contextStore`. This is synthetic correlation for [#167](https://github.com/herman925/925-cc-plugins/issues/167). It is not Auth A or Auth B, and it is not a Claude or LiteLLM client. [#168](https://github.com/herman925/925-cc-plugins/issues/168) stays with Herman.
+Status: implemented offline in `src/request-context.mjs`. The harness consults it only when a fixture passes `headers` or `contextStore`. This is synthetic correlation for [#167](https://github.com/herman925/925-cc-plugins/issues/167). It is not Auth B and it is not a Claude or LiteLLM client. The offline Auth B proof is [auth-b-mock-key.md](auth-b-mock-key.md). [#168](https://github.com/herman925/925-cc-plugins/issues/168) stays with Herman.
 
 The M2 design record is [m2-request-context.md](m2-request-context.md).
 

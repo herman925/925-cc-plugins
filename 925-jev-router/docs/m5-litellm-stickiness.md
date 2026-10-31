@@ -19,4 +19,4 @@ Two concurrent requests for one binding share one TypeSafe call. Each request ca
 
 ## Not claimed
 
-These headers are synthetic fixtures on the local proxy. This is not a capture from a live Claude client, and it does not show that Claude Code emits them to this gateway. LiteLLM's cleaned header map keeps one value per name, so a duplicated wire header is not visible as two values. The adapter rejects a list of distinct values when it receives one. `/anthropic/v1/messages` was not requested. Auth A versus Auth B is unchanged.
+These headers are synthetic fixtures on the local proxy. This is not a capture from a live Claude client, and it does not show that Claude Code emits them to this gateway. LiteLLM's cleaned header map keeps one value per name, so a duplicated wire header is not visible as two values. The adapter rejects a list of distinct values when it receives one. `/anthropic/v1/messages` was not requested. Auth B's offline mock-key proof is [auth-b-mock-key.md](auth-b-mock-key.md). Deployment match for the decide path is unverified.

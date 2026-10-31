@@ -87,6 +87,6 @@ On LiteLLM 1.106.2, `/v1/messages` for an `openai/` deployment is translated to 
 ## Limitations
 
 - `src/hook.mjs` does not read headers. M5 composes the M3 store in `hook_server.mjs`. See [m5-litellm-stickiness.md](m5-litellm-stickiness.md).
-- A rewritten model on the mock is not a live provider call. A fresh mock Apply read-back is not live Auth A/B.
+- A rewritten model on the mock is not a live provider call. A fresh mock Apply read-back is not the Auth B dashboard key. That offline proof is [auth-b-mock-key.md](auth-b-mock-key.md). The local TypeSafe stub is not Herman's deployed Jev API.
 - The sentinel is inert because `jev-inert` raises `sentinel_inert` before any socket, not because the name is absent from `model_list`.
 - This does not satisfy live smoke (#160).

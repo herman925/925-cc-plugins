@@ -2,7 +2,7 @@
 
 M3 implements this interface in `src/request-context.mjs`. Results and the assertion map are in [m3-request-context.md](m3-request-context.md). This file stays the M2 design record.
 
-Status: interface confirmation for M2. No header parser, no sticky cache, and no Claude or LiteLLM wire client is implemented. [#167](https://github.com/herman925/925-cc-plugins/issues/167) stays with Crabbie. [#168](https://github.com/herman925/925-cc-plugins/issues/168) auth A versus B is not chosen.
+Status: interface confirmation for M2. No header parser, no sticky cache, and no Claude or LiteLLM wire client is implemented. [#167](https://github.com/herman925/925-cc-plugins/issues/167) stays with Crabbie. [#168](https://github.com/herman925/925-cc-plugins/issues/168) live Apply auth is still open. The offline Auth B proof is [auth-b-mock-key.md](auth-b-mock-key.md).
 
 The hook still classifies a call only by the requested model id. It does not read session, agent, or prompt headers.
 
@@ -16,7 +16,7 @@ One prompt includes the tool-result calls and retries that follow it. The agent 
 
 Missing, blank, or conflicting ids produce an explicit conservative pin or a clear error. The router must not silently switch model on every HTTP request. Those headers are correlation hints. They are not authorization.
 
-The control-plane `Authorization` bearer on the mock Apply route is a separate fake verifier. It is not a Claude identity header and it is not Auth A or Auth B.
+The control-plane `Authorization` bearer on the mock Apply route is a separate fake verifier. It is not a Claude identity header and it is not the Auth B virtual key. Decide-call access stays separate. The offline proof is [auth-b-mock-key.md](auth-b-mock-key.md).
 
 ## Expected client facts (not wire evidence)
 

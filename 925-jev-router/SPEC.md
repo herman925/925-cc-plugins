@@ -18,7 +18,7 @@ LiteLLM stays the gateway. TypeSafe selects. LiteLLM executes through the existi
 | Leader | Orca/Claude → LiteLLM → fixed large-model provider. No Jev. |
 | Routed worker | Orca/Claude → LiteLLM sentinel hook → TypeSafe chooses a model → LiteLLM calls that model |
 
-- **Decide:** TypeSafe System One direct. `Authorization: Bearer $TYPESAFE_API_KEY`, `POST https://api.typesafe.ai/v1/systemone`. Contract: closed [#162](https://github.com/herman925/925-cc-plugins/issues/162). M1 builds that body in memory and does not send it.
+- **Decide:** TypeSafe System One direct. `Authorization: Bearer $TYPESAFE_API_KEY`, `POST https://api.typesafe.ai/v1/systemone`. Contract: closed [#162](https://github.com/herman925/925-cc-plugins/issues/162). This is the new-repo decide contract only. It is not Herman's deployed Jev API. Deployment match is unverified. M1 builds that body in memory and does not send it. The loopback adapter does not add a second decide client.
 - **Execute:** Herman’s existing OpenAI-compatible and/or Claude-compatible APIs via LiteLLM. Hook attachment: closed [#163](https://github.com/herman925/925-cc-plugins/issues/163) (`CustomLogger.async_pre_call_hook` via `litellm_settings.callbacks`). M1 exports the hook function and does not register it on a live proxy.
 - **Clients:** Orca-launched harnesses (for example Claude Code) via base URL + sentinel model id.
 - **Sentinel:** working name `jev-router`. Final string is still open [#156](https://github.com/herman925/925-cc-plugins/issues/156). The sentinel must not appear in `candidates`. If a sentinel request does not resolve to an approved execute model, the hook errors. It must not leave the stub model in place.
@@ -61,12 +61,12 @@ M1 stub, from the proposed routing note on [#155](https://github.com/herman925/9
 Request body the adapter builds:
 
 - `model`: `jev-latest` (the Jev id, not an execute alias).
-- `state.messages`: at most one user text, the credential-free excerpt. No `project_id` field and no session id field.
+- `state.messages`: at most one user text, the best-effort redacted excerpt. No `project_id` field and no session id field. The helper is still named `credentialFreeExcerpt`. That name is not a guarantee.
 - `questions.model`: `type: "choice"`. `criteria` keys are the validated eligible subset only (each key ≤ 255 characters), not the wider `candidates` list and not LiteLLM `model_list`. There is no top-level allowlist field.
 
 Chosen execute id: `answers.model.choice`. Confidence is recorded when present and is not treated as a quality proof.
 
-Excerpt rule: at most 500 Unicode characters of user-visible task text, after credential redaction (keys, tokens, passwords, `.env`-style assignments including quoted and multiline values, JSON fields, outgoing payload fields, URLs with userinfo, `Bearer` values). Full prompts and repo dumps are out. The adapter reads the latest user message only. It does not copy request headers into `state`.
+Excerpt rule: at most 500 Unicode characters of user-visible task text, after best-effort redaction with a bounded pattern list (keys, tokens, passwords, `.env`-style assignments including quoted and multiline values, JSON fields, outgoing payload fields, URLs with userinfo, `Bearer` values). That redaction is not a guarantee that the excerpt is credential-free. Full prompts and repo dumps are out. The adapter reads the latest user message only. It does not copy request headers into `state`.
 
 ### Hook ([#163](https://github.com/herman925/925-cc-plugins/issues/163))
 
@@ -95,7 +95,7 @@ Applied record, produced only by the in-memory `applyDraft` helper in tests:
 
 `createMemoryGateway` stores that record in a `Map` and reads it back by `project_id`. `apply` and `read` each return a defensive copy. Mutating a returned record does not change the stored one. Unknown projects read as empty. This is the shape test. It is not an HTTP server.
 
-Auth A versus Auth B is undecided ([#168](https://github.com/herman925/925-cc-plugins/issues/168)). Crabbie recommends a dedicated server-side control-plane credential later. M2 does not adopt either option. The offline handler uses a fake verifier and a synthetic token supplied by the test. It does not read a gateway admin credential, does not create a new one, and does not put one in HTML or browser storage. A new secret or permission stops the work and goes to Herman.
+Herman's preferred Apply shape is Auth B: a LiteLLM-managed dedicated virtual key, a thin backend adapter, and explicit Apply and read-back. No separate Jev key UI and no global `custom_auth`. The offline proof is [docs/auth-b-mock-key.md](docs/auth-b-mock-key.md). It does not mint a key and does not close [#168](https://github.com/herman925/925-cc-plugins/issues/168). The in-process mock Apply handler still uses a synthetic token supplied by the test. It does not read a gateway admin credential, does not create a new one, and does not put one in HTML or browser storage. Decide-call access stays separate from that Apply key. A new secret or permission stops the work and goes to Herman.
 
 ## M1 scaffold
 
@@ -132,7 +132,7 @@ The binding is authenticated caller, project, applied revision, session, and age
 
 Same-key concurrent first requests share one in-flight selection and commit one pin. Each waiter revalidates that model against its own eligible set before execution. Different keys stay isolated. A failed selection leaves no pin. Before every fresh, shared, or cached execution, the harness validates the synthetic Applied policy, intersects the requested eligible set with that policy, and requires the header project and revision to match the Applied record. A cached model that is expired, omitted from that eligible set, or no longer eligible is dropped before execution. The header agent is the same id used for a fixed agent override. A conflicting fixture agent is rejected. Auxiliary or compaction traffic with no live pin returns `auxiliary_unpinned` and does not invent a leader. Identity fields reject control characters and the binding key is a JSON tuple. Committed pins and tracked flights each have their own cap of 64. A flight arms its own deadline timer, settles initiator and waiters without another request, and checks elapsed time again before commit. A late selector result cannot pin, and the selector call is not cancelled. An older flight's cleanup cannot drop a replacement. Both limits are injectable.
 
-Those headers are correlation hints. `headersAuthorizeApply` is always false. They do not grant Apply. Auth A versus Auth B is still undecided. The hook file does not read these headers. The synthetic harness consults the store only when the fixture passes `headers` or `contextStore`. A non-sentinel model still bypasses that store.
+Those headers are correlation hints. `headersAuthorizeApply` is always false. They do not grant Apply. Jev settings authorization is separate from the decide call. The offline Auth B proof is [docs/auth-b-mock-key.md](docs/auth-b-mock-key.md). The hook file does not read these headers. The synthetic harness consults the store only when the fixture passes `headers` or `contextStore`. A non-sentinel model still bypasses that store.
 
 ## M4 local LiteLLM proxy
 
@@ -152,7 +152,11 @@ M5 keeps the M3 store. `hook_server.mjs` calls it around `planPreCall`. The clie
 
 A validated child `mode` wins before `default_worker_mode`. `fixed` bypasses TypeSafe even when the default is `routed`, and the routed path still receives the child agent. `per-turn` pins by prompt. `per-session` pins by session and ignores a later prompt id. `routed` does not pin. The example default is `routed`, so header-less M4 traffic still selects on every call. A sticky mode with no native identity fails closed and does not call TypeSafe. The child agent id stays the binding agent. The parent id is lineage only. A non-sentinel model and a fixed agent still bypass selection and do not pin. Same-key concurrent requests share one flight, and the waiter uses the eligible list captured for that request. Before the selected model is returned for execution, the adapter rechecks the current Applied revision. A model the new policy no longer allows is replanned or refused, so an Apply during selection does not execute the revoked alias. A loopback eligible fixture is captured for that request and intersected with the Applied candidates. Planning, replanning, fixed resolution, fallback, and the final execution check all use that intersection. It is not widened back to every Applied candidate. The proxy client cannot set the fixture. A later Apply also bumps the revision, so the next call does not reuse the previous pin. A short flight deadline settles without another request, and a late selector result does not pin.
 
-These are synthetic headers on the local proxy. They are not a capture from a live Claude client. Auth A versus Auth B is unchanged. The details are [docs/m5-litellm-stickiness.md](docs/m5-litellm-stickiness.md).
+These are synthetic headers on the local proxy. They are not a capture from a live Claude client. Auth B's offline mock-key proof is [docs/auth-b-mock-key.md](docs/auth-b-mock-key.md). It does not configure a live virtual key. Stickiness details are [docs/m5-litellm-stickiness.md](docs/m5-litellm-stickiness.md).
+
+## Auth B offline mock key
+
+The preferred Apply check is a dashboard-managed LiteLLM virtual key and the thin adapter under `integration/litellm/`. This repo does not add a Jev key UI or a global `custom_auth`. In-repo decide stays on `planPreCall` and `POST /v1/systemone`. That path is the new-repo contract (`api.typesafe.ai`, env name `TYPESAFE_API_KEY`). It is not evidence of the deployed Jev API. Ops notes (about 15 Oct `endpoints.md`, about 31 Oct `gateway-facts.md`) describe a different public path, `https://api.hjc925.cloud` `POST /v1/systemone` via jev-gateway to OpenRouter, with caller-auth name `925LLM_API_KEY`. Those notes are not in this repo, no value is recorded, and live VPS config was not read. Deployment match is unverified. The redacted inventory is [docs/auth-b-mock-key.md](docs/auth-b-mock-key.md).
 
 ## Non-goals
 
@@ -165,7 +169,7 @@ These are synthetic headers on the local proxy. They are not a capture from a li
 
 ## Still open
 
-[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria (M4 is the local mock, not that smoke), [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live Claude header smoke (M3 is in-process; M5 uses synthetic native headers on the local proxy only), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
+[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria (M4 is the local mock, not that smoke), [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live Claude header smoke (M3 is in-process; M5 uses synthetic native headers on the local proxy only), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. The offline Auth B pack does not mint the dashboard key. Whether the deployed decide path is `api.typesafe.ai` or the ops-note host `api.hjc925.cloud` is unverified. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
 
 ## Smoke criteria
 
