@@ -1,0 +1,1396 @@
+Runtime: C:\Users\Herman\AppData\Local\Temp\team-store-node-22.13-a93715fa6c6e447287101e4ffbc62c48\node.exe
+Version: v22.13.0
+SHA256: 364dbc8442f8d5c04fd4226bcfcf8e60d3268627eb1d7be214a91bb7d74cdbb9
+TAP version 13
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite authenticated API
+    # Subtest: complete fresh team flow records worker outcome separately from head acceptance
+    ok 1 - complete fresh team flow records worker outcome separately from head acceptance
+      ---
+      duration_ms: 432.5877
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: self-asserted caller, approval, paths and raw mutations cannot become authority
+    ok 2 - self-asserted caller, approval, paths and raw mutations cannot become authority
+      ---
+      duration_ms: 136.1046
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: separate controllers coexist and approval survives a freshly verified same-conversation resume
+    ok 3 - separate controllers coexist and approval survives a freshly verified same-conversation resume
+      ---
+      duration_ms: 306.0299
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a stale native incarnation, member generation or binding generation is refused
+    ok 4 - a stale native incarnation, member generation or binding generation is refused
+      ---
+      duration_ms: 433.9245
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: another worker cannot pick up or report, and a worker cannot admit work to a peer
+    ok 5 - another worker cannot pick up or report, and a worker cannot admit work to a peer
+      ---
+      duration_ms: 379.0168
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: same-operation replay is idempotent; changed body and revoked roles do not replay
+    ok 6 - same-operation replay is idempotent; changed body and revoked roles do not replay
+      ---
+      duration_ms: 412.747
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: pickup expiry and explicit failed/rejected results are preserved
+    ok 7 - pickup expiry and explicit failed/rejected results are preserved
+      ---
+      duration_ms: 542.5783
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: current authority is checked after waiting for the common database lock
+    ok 8 - current authority is checked after waiting for the common database lock
+      ---
+      duration_ms: 422.4994
+      ...
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:7484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: failed fresh-team creation rolls back all roster and approval-independent changes
+    ok 9 - failed fresh-team creation rolls back all roster and approval-independent changes
+      ---
+      duration_ms: 225.6869
+      ...
+    1..9
+ok 1 - sqlite authenticated API
+  ---
+  duration_ms: 3292.5249
+  type: 'suite'
+  ...
+# Subtest: postgres authenticated API
+ok 2 - postgres authenticated API # SKIP
+  ---
+  duration_ms: 0.0498
+  type: 'suite'
+  ...
+# Subtest: finite safe integers, nonempty UTF-8 identifiers, and overflow fail closed
+ok 3 - finite safe integers, nonempty UTF-8 identifiers, and overflow fail closed
+  ---
+  duration_ms: 1.0032
+  ...
+# Subtest: local SQLite works from an isolated source tree with no node_modules
+ok 4 - local SQLite works from an isolated source tree with no node_modules
+  ---
+  duration_ms: 589.7598
+  ...
+# Subtest: PostgreSQL driver is requested only on the explicit hosted path and fails clearly if unavailable
+ok 5 - PostgreSQL driver is requested only on the explicit hosted path and fails clearly if unavailable
+  ---
+  duration_ms: 0.6359
+  ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite runtime bootstrap
+    # Subtest: an empty store needs explicit creation; install uses the shared schema and can reopen data
+    ok 1 - an empty store needs explicit creation; install uses the shared schema and can reopen data
+      ---
+      duration_ms: 170.6254
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a repeated explicit schema installation refuses and preserves data
+    ok 2 - a repeated explicit schema installation refuses and preserves data
+      ---
+      duration_ms: 85.0318
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: unknown schema versions are refused before writes, without changing legacy files
+    ok 3 - unknown schema versions are refused before writes, without changing legacy files
+      ---
+      duration_ms: 481.7929
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: foreign or incomplete stores are never initialized over existing data
+    ok 4 - foreign or incomplete stores are never initialized over existing data
+      ---
+      duration_ms: 108.519
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a wrong format is refused and is not rewritten
+    ok 5 - a wrong format is refused and is not rewritten
+      ---
+      duration_ms: 109.3805
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a supported metadata row cannot disguise missing contract tables
+    ok 6 - a supported metadata row cannot disguise missing contract tables
+      ---
+      duration_ms: 83.9125
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: the engine supplies an integer UTC clock without the application wall clock
+    ok 7 - the engine supplies an integer UTC clock without the application wall clock
+      ---
+      duration_ms: 89.7912
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a failed installation transaction leaves no partial schema
+    ok 8 - a failed installation transaction leaves no partial schema
+      ---
+      duration_ms: 34.4271
+      ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a lost installation commit response is unknown and reopening does not repeat DDL
+    ok 9 - a lost installation commit response is unknown and reopening does not repeat DDL
+      ---
+      duration_ms: 112.5927
+      ...
+    1..9
+ok 6 - sqlite runtime bootstrap
+  ---
+  duration_ms: 1277.3814
+  type: 'suite'
+  ...
+# Subtest: postgres runtime bootstrap
+ok 7 - postgres runtime bootstrap # SKIP
+  ---
+  duration_ms: 0.0344
+  type: 'suite'
+  ...
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:17648) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: SQLite enables foreign keys on runtime connections
+ok 8 - SQLite enables foreign keys on runtime connections
+  ---
+  duration_ms: 88.7922
+  ...
+# Subtest: PostgreSQL empty-store inspection includes user routines, not just tables
+ok 9 - PostgreSQL empty-store inspection includes user routines, not just tables # SKIP
+  ---
+  duration_ms: 0.1352
+  ...
+# Subtest: SQLite refuses a project storage directory redirected outside the project
+ok 10 - SQLite refuses a project storage directory redirected outside the project
+  ---
+  duration_ms: 2.7299
+  ...
+# Subtest: PostgreSQL refuses a database whose session default disables foreign-key enforcement
+ok 11 - PostgreSQL refuses a database whose session default disables foreign-key enforcement # SKIP
+  ---
+  duration_ms: 0.3772
+  ...
+# Subtest: one common table source renders explicit collations and equivalent immutability guards
+ok 12 - one common table source renders explicit collations and equivalent immutability guards
+  ---
+  duration_ms: 0.9465
+  ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite shared contract
+    # Subtest: schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+    ok 1 - schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+      ---
+      duration_ms: 352.8398
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 3 admissions require real members and a future explicit pickup deadline
+    ok 2 - schema 3 admissions require real members and a future explicit pickup deadline
+      ---
+      duration_ms: 577.7553
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+    ok 3 - schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+      ---
+      duration_ms: 594.3091
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 3 gates keep resolution data consistent without implying a task transition
+    ok 4 - schema 3 gates keep resolution data consistent without implying a task transition
+      ---
+      duration_ms: 607.911
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 3 membership, roles, exemptions and installed writer families have database constraints
+    ok 5 - schema 3 membership, roles, exemptions and installed writer families have database constraints
+      ---
+      duration_ms: 637.1856
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: metadata is explicit, singular, and never overwritten on a second install
+    ok 6 - metadata is explicit, singular, and never overwritten on a second install
+      ---
+      duration_ms: 439.3486
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: delivery states reject unknown spellings, NULL, and missing identifiers
+    ok 7 - delivery states reject unknown spellings, NULL, and missing identifiers
+      ---
+      duration_ms: 448.7008
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: identifier equality is case-sensitive, including foreign-key references
+    ok 8 - identifier equality is case-sensitive, including foreign-key references
+      ---
+      duration_ms: 397.6648
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a gate must reference a real task, and a referenced task cannot disappear
+    ok 9 - a gate must reference a real task, and a referenced task cannot disappear
+      ---
+      duration_ms: 405.8039
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: the second assignment for a task is refused
+    ok 10 - the second assignment for a task is refused
+      ---
+      duration_ms: 424.6754
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: independent connections racing for one assignment have one committed winner
+    ok 11 - independent connections racing for one assignment have one committed winner
+      ---
+      duration_ms: 1252.107
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a competing live lease is refused and the holder remains identifiable
+    ok 12 - a competing live lease is refused and the holder remains identifiable
+      ---
+      duration_ms: 423.8153
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: independent connections racing for an expired lease have one winner
+    ok 13 - independent connections racing for an expired lease have one winner
+      ---
+      duration_ms: 385.9283
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: lease renewal preserves its generation and cannot revive an expired token
+    ok 14 - lease renewal preserves its generation and cannot revive an expired token
+      ---
+      duration_ms: 364.1735
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a mutation holds the lease lock through commit before another holder can acquire it
+    ok 15 - a mutation holds the lease lock through commit before another holder can acquire it
+      ---
+      duration_ms: 569.4398
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: expired or stale lease holders cannot mutate a thread or admit an assignment
+    ok 16 - expired or stale lease holders cannot mutate a thread or admit an assignment
+      ---
+      duration_ms: 288.8302
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: independent connections answering a thread have exactly one winner
+    ok 17 - independent connections answering a thread have exactly one winner
+      ---
+      duration_ms: 319.6938
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a stale row generation cannot answer an open thread
+    ok 18 - a stale row generation cannot answer an open thread
+      ---
+      duration_ms: 279.4945
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a conditional write that RETURNING accepted is still undone by rollback
+    ok 19 - a conditional write that RETURNING accepted is still undone by rollback
+      ---
+      duration_ms: 277.6531
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a failed second write rolls back the assignment and first gate together
+    ok 20 - a failed second write rolls back the assignment and first gate together
+      ---
+      duration_ms: 265.8449
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: acknowledgement is conditional, and both terminal delivery states stay closed
+    ok 21 - acknowledgement is conditional, and both terminal delivery states stay closed
+      ---
+      duration_ms: 269.3068
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: rebind fences outstanding batches and refuses stale consumer actions
+    ok 22 - rebind fences outstanding batches and refuses stale consumer actions
+      ---
+      duration_ms: 277.0623
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a lost rebind rolls back provisional fencing
+    ok 23 - a lost rebind rolls back provisional fencing
+      ---
+      duration_ms: 259.7678
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: operation ids refuse a different fingerprint and replay the original saved result
+    ok 24 - operation ids refuse a different fingerprint and replay the original saved result
+      ---
+      duration_ms: 274.3298
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a rolled-back mutation leaves neither its effect nor an operation receipt
+    ok 25 - a rolled-back mutation leaves neither its effect nor an operation receipt
+      ---
+      duration_ms: 281.4072
+      ...
+# (node:86324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a committed operation receipt survives a later failed transaction unchanged
+    ok 26 - a committed operation receipt survives a later failed transaction unchanged
+      ---
+      duration_ms: 279.2757
+      ...
+    1..26
+ok 13 - sqlite shared contract
+  ---
+  duration_ms: 10956.2606
+  type: 'suite'
+  ...
+# Subtest: postgres shared contract
+ok 14 - postgres shared contract # SKIP
+  ---
+  duration_ms: 0.0378
+  type: 'suite'
+  ...
+# (node:56256) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:56256) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:56256) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed
+ok 15 - SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed
+  ---
+  duration_ms: 296.0993
+  ...
+# Subtest: PostgreSQL unique violations are domain conflicts rather than transient retries
+ok 16 - PostgreSQL unique violations are domain conflicts rather than transient retries # SKIP
+  ---
+  duration_ms: 0.1519
+  ...
+# Subtest: PostgreSQL actual serializable update conflicts expose retryable 40001
+ok 17 - PostgreSQL actual serializable update conflicts expose retryable 40001 # SKIP
+  ---
+  duration_ms: 0.1223
+  ...
+# Subtest: PostgreSQL actual deadlock exposes retryable 40P01 and releases the aborted writer
+ok 18 - PostgreSQL actual deadlock exposes retryable 40P01 and releases the aborted writer # SKIP
+  ---
+  duration_ms: 0.0953
+  ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite schema 3 configuration
+    # Subtest: older binary freshly rereads newest config generation still refused
+    ok 1 - older binary freshly rereads newest config generation still refused
+      ---
+      duration_ms: 300.9257
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: writer release fences are numeric and independent for Mod and plugin
+    ok 2 - writer release fences are numeric and independent for Mod and plugin
+      ---
+      duration_ms: 400.74
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: missing known writer fences and raised protocol floors refuse explicitly
+    ok 3 - missing known writer fences and raised protocol floors refuse explicitly
+      ---
+      duration_ms: 300.7916
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: configuration CAS, references and writer fence advance roll back atomically
+    ok 4 - configuration CAS, references and writer fence advance roll back atomically
+      ---
+      duration_ms: 294.2044
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: pickup minutes are explicit positive integers and all settings round trip
+    ok 5 - pickup minutes are explicit positive integers and all settings round trip
+      ---
+      duration_ms: 132.1164
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: global names, boss references and cycles refuse with member identities
+    ok 6 - global names, boss references and cycles refuse with member identities
+      ---
+      duration_ms: 284.997
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: registered home is immutable and advisory notes cannot change official role or permissions
+    ok 7 - registered home is immutable and advisory notes cannot change official role or permissions
+      ---
+      duration_ms: 294.2141
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+    ok 8 - new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+      ---
+      duration_ms: 317.1583
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 4 requires explicit answer, task-off and replay settings
+    ok 9 - schema 4 requires explicit answer, task-off and replay settings
+      ---
+      duration_ms: 115.1084
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+    ok 10 - schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+      ---
+      duration_ms: 314.715
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+    ok 11 - schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+      ---
+      duration_ms: 220.0205
+      ...
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: schema 4 missing message immutability guards refuse before lease or data writes
+    ok 12 - schema 4 missing message immutability guards refuse before lease or data writes
+      ---
+      duration_ms: 213.0322
+      ...
+    1..12
+ok 19 - sqlite schema 3 configuration
+  ---
+  duration_ms: 3189.7049
+  type: 'suite'
+  ...
+# Subtest: postgres schema 3 configuration
+ok 20 - postgres schema 3 configuration # SKIP
+  ---
+  duration_ms: 0.0309
+  type: 'suite'
+  ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite separate machine observations
+    # Subtest: own format, version, UUID directory and machine binding are checked before writing
+    ok 1 - own format, version, UUID directory and machine binding are checked before writing
+      ---
+      duration_ms: 233.9556
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: unknown schema is refused without a reset or binding replacement
+    ok 2 - unknown schema is refused without a reset or binding replacement
+      ---
+      duration_ms: 166.9006
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: unknown states preserve raw values; binding alone invents no liveness
+    ok 3 - unknown states preserve raw values; binding alone invents no liveness
+      ---
+      duration_ms: 127.9321
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: old sessions, binding generations and row generations cannot write after rebind
+    ok 4 - old sessions, binding generations and row generations cannot write after rebind
+      ---
+      duration_ms: 158.608
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: older machine binary freshly rereads newest observation generation still refused
+    ok 5 - older machine binary freshly rereads newest observation generation still refused
+      ---
+      duration_ms: 179.3838
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: machine fences are independent by family, missing known rows and old protocols refuse
+    ok 6 - machine fences are independent by family, missing known rows and old protocols refuse
+      ---
+      duration_ms: 316.9489
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: failed batches roll back observations, receipts and the new writer high-water release
+    ok 7 - failed batches roll back observations, receipts and the new writer high-water release
+      ---
+      duration_ms: 239.2996
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: local receipt replay is idempotent, immutable and does not establish shared acknowledgement
+    ok 8 - local receipt replay is idempotent, immutable and does not establish shared acknowledgement
+      ---
+      duration_ms: 386.0511
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: policy is mandatory, synchronous and checked again on read, replay and retry
+    ok 9 - policy is mandatory, synchronous and checked again on read, replay and retry
+      ---
+      duration_ms: 301.8604
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: busy transactions retry within a bound and do not publish partial state
+    ok 10 - busy transactions retry within a bound and do not publish partial state
+      ---
+      duration_ms: 129.0362
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: lost commit responses reconcile same request and absent receipts remain unknown
+    ok 11 - lost commit responses reconcile same request and absent receipts remain unknown
+      ---
+      duration_ms: 176.5329
+      ...
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:80072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: unsafe keys, non-UUID identities and junction directory aliases refuse
+    ok 12 - unsafe keys, non-UUID identities and junction directory aliases refuse
+      ---
+      duration_ms: 77.0946
+      ...
+    1..12
+ok 21 - sqlite separate machine observations
+  ---
+  duration_ms: 2495.8271
+  type: 'suite'
+  ...
+# Subtest: native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+    # Subtest: refuses wrong-conversation native evidence for caller and target
+    ok 1 - refuses wrong-conversation native evidence for caller and target
+      ---
+      duration_ms: 7.1617
+      ...
+    # Subtest: refuses wrong-incarnation native evidence for caller and target
+    ok 2 - refuses wrong-incarnation native evidence for caller and target
+      ---
+      duration_ms: 6.6423
+      ...
+    # Subtest: refuses duplicate native evidence for caller and target
+    ok 3 - refuses duplicate native evidence for caller and target
+      ---
+      duration_ms: 5.5231
+      ...
+    # Subtest: refuses absent native evidence for caller and target
+    ok 4 - refuses absent native evidence for caller and target
+      ---
+      duration_ms: 5.9551
+      ...
+    # Subtest: idle caller requires its exact parent process creation fingerprint
+    ok 5 - idle caller requires its exact parent process creation fingerprint
+      ---
+      duration_ms: 16.3718
+      ...
+    # Subtest: idle caller cannot substitute another parent or inherited terminal context
+    ok 6 - idle caller cannot substitute another parent or inherited terminal context
+      ---
+      duration_ms: 9.6063
+      ...
+    1..6
+ok 22 - native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+  ---
+  duration_ms: 83.6981
+  ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite schema 4 lifecycle layout
+    # Subtest: deliveries is the sole batch-state table and messages have no delivery status
+    ok 1 - deliveries is the sole batch-state table and messages have no delivery status
+      ---
+      duration_ms: 575.1047
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a delivery and its sole message are mutually required at commit
+    ok 2 - a delivery and its sole message are mutually required at commit
+      ---
+      duration_ms: 579.6735
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: membership cannot disagree, move between batches, or add a second message
+    ok 3 - membership cannot disagree, move between batches, or add a second message
+      ---
+      duration_ms: 593.5314
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: message identity, content, routing and membership reject UPDATE DELETE and replacement
+    ok 4 - message identity, content, routing and membership reject UPDATE DELETE and replacement
+      ---
+      duration_ms: 639.2752
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: batch replay and acknowledgement and thread closure leave message bytes unchanged
+    ok 5 - batch replay and acknowledgement and thread closure leave message bytes unchanged
+      ---
+      duration_ms: 605.8132
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: closed message kinds and canonical endpoint references apply in either direction
+    ok 6 - closed message kinds and canonical endpoint references apply in either direction
+      ---
+      duration_ms: 499.2444
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: thread ownership requires a team, optionally a task in its Run and team
+    ok 7 - thread ownership requires a team, optionally a task in its Run and team
+      ---
+      duration_ms: 441.4886
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: assignment retry history has one root and a same-task non-self predecessor without forks
+    ok 8 - assignment retry history has one root and a same-task non-self predecessor without forks
+      ---
+      duration_ms: 461.81
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: NULL task windows mean off without admitting an enabled deadline before pickup
+    ok 9 - NULL task windows mean off without admitting an enabled deadline before pickup
+      ---
+      duration_ms: 1263.302
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: question deadlines bind delivery time independently of task pickup
+    ok 10 - question deadlines bind delivery time independently of task pickup
+      ---
+      duration_ms: 451.0215
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: window and replay settings have no invented required defaults
+    ok 11 - window and replay settings have no invented required defaults
+      ---
+      duration_ms: 373.8828
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: gate JSON remains opaque; client obligations and gate application are explicit
+    ok 12 - gate JSON remains opaque; client obligations and gate application are explicit
+      ---
+      duration_ms: 358.1996
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: new numeric columns cannot store fractional windows, counters or timestamps
+    ok 13 - new numeric columns cannot store fractional windows, counters or timestamps
+      ---
+      duration_ms: 403.0928
+      ...
+# (node:22512) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: an immutability refusal rolls back a newly created message-delivery pair
+    ok 14 - an immutability refusal rolls back a newly created message-delivery pair
+      ---
+      duration_ms: 298.6118
+      ...
+    1..14
+ok 23 - sqlite schema 4 lifecycle layout
+  ---
+  duration_ms: 7546.2384
+  type: 'suite'
+  ...
+# Subtest: postgres schema 4 lifecycle layout
+ok 24 - postgres schema 4 lifecycle layout # SKIP
+  ---
+  duration_ms: 0.055
+  type: 'suite'
+  ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite production store
+    # Subtest: a fixed primitive batch commits and reopens through the public interface
+    ok 1 - a fixed primitive batch commits and reopens through the public interface
+      ---
+      duration_ms: 273.2038
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: canonical identity tolerates key order and changed submission metadata, never changed semantics
+    ok 2 - canonical identity tolerates key order and changed submission metadata, never changed semantics
+      ---
+      duration_ms: 223.7116
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+    ok 3 - an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+      ---
+      duration_ms: 302.1656
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+    ok 4 - no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+      ---
+      duration_ms: 287.7848
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: authorization is rechecked on every retry
+    ok 5 - authorization is rechecked on every retry
+      ---
+      duration_ms: 220.9551
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: authorization is required again for a replay and a read
+    ok 6 - authorization is required again for a replay and a read
+      ---
+      duration_ms: 176.767
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a live lease loudly refuses another machine and another token on the same machine
+    ok 7 - a live lease loudly refuses another machine and another token on the same machine
+      ---
+      duration_ms: 275.4316
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: renewal keeps its generation and expiry is exclusive; reacquisition increments it
+    ok 8 - renewal keeps its generation and expiry is exclusive; reacquisition increments it
+      ---
+      duration_ms: 180.6041
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a failed prerequisite rolls back earlier mutations and leaves no receipt
+    ok 9 - a failed prerequisite rolls back earlier mutations and leaves no receipt
+      ---
+      duration_ms: 211.9195
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+    ok 10 - bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+      ---
+      duration_ms: 255.8686
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: retry exhaustion is bounded and does not leave a partial operation
+    ok 11 - retry exhaustion is bounded and does not leave a partial operation
+      ---
+      duration_ms: 226.0785
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a retryable COMMIT failure rolls back and retries the entire operation
+    ok 12 - a retryable COMMIT failure rolls back and retries the entire operation
+      ---
+      duration_ms: 211.4626
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: uniqueness is a domain refusal and is never automatically retried
+    ok 13 - uniqueness is a domain refusal and is never automatically retried
+      ---
+      duration_ms: 188.5747
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+    ok 14 - a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+      ---
+      duration_ms: 185.6107
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: an absent receipt is unknown, not proof to resend automatically
+    ok 15 - an absent receipt is unknown, not proof to resend automatically
+      ---
+      duration_ms: 217.9672
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: the lease lock precedes the clock and an expired mutation leaves no effect
+    ok 16 - the lease lock precedes the clock and an expired mutation leaves no effect
+      ---
+      duration_ms: 161.3928
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: generation overflow is refused without wrapping or partially updating
+    ok 17 - generation overflow is refused without wrapping or partially updating
+      ---
+      duration_ms: 214.1275
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a backward database clock rolls back the transaction
+    ok 18 - a backward database clock rolls back the transaction
+      ---
+      duration_ms: 133.3912
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: a failed rollback quarantines the connection and never automatically retries
+    ok 19 - a failed rollback quarantines the connection and never automatically retries
+      ---
+      duration_ms: 224.8341
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: an expired rebind rolls back fencing and leaves the old consumer active
+    ok 20 - an expired rebind rolls back fencing and leaves the old consumer active
+      ---
+      duration_ms: 246.2367
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: version one is refused rather than migrated implicitly to the receipt schema
+    ok 21 - version one is refused rather than migrated implicitly to the receipt schema
+      ---
+      duration_ms: 214.7727
+      ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: an unsupported version is refused even by an already-open client and even on replay
+    ok 22 - an unsupported version is refused even by an already-open client and even on replay
+      ---
+      duration_ms: 798.669
+      ...
+    1..22
+ok 25 - sqlite production store
+  ---
+  duration_ms: 5433.6174
+  type: 'suite'
+  ...
+# Subtest: postgres production store
+ok 26 - postgres production store # SKIP
+  ---
+  duration_ms: 0.0283
+  type: 'suite'
+  ...
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:31604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: SQLite runtime retries a real competing writer lock without duplicating the operation
+ok 27 - SQLite runtime retries a real competing writer lock without duplicating the operation
+  ---
+  duration_ms: 469.1759
+  ...
+# Subtest: PostgreSQL renewal samples its clock after a real row-lock wait and cannot revive an expired lease
+ok 28 - PostgreSQL renewal samples its clock after a real row-lock wait and cannot revive an expired lease # SKIP
+  ---
+  duration_ms: 0.0885
+  ...
+1..28
+# tests 125
+# suites 13
+# pass 119
+# fail 0
+# cancelled 0
+# skipped 6
+# todo 0
+# duration_ms 11030.4561

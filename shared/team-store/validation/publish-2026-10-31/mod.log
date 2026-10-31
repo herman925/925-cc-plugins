@@ -1,0 +1,503 @@
+Validating plugin manifest: C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator\.claude-plugin\plugin.json
+
+‼ Found 1 warning:
+
+  > author: No author information provided. Consider adding author details for plugin attribution
+
+  > types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  > types ./types/index.d.ts declares state: team-orchestrator.form, team-orchestrator.members, team-orchestrator.note, team-orchestrator.bulk, team-orchestrator.view, team-orchestrator.teamName, team-orchestrator.frame, team-orchestrator.menu, team-orchestrator.settings, team-orchestrator.act, team-orchestrator.spawn, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.sharedStoreStatus, team-orchestrator.sharedStoreProof
+
+Validating hooks: C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator\hooks\hooks.json
+
+  > ./register.tsx hooks: tool.call{tool=mcp__team-orchestrator__shared_team}, session.start, tool.call{tool=mcp__team-orchestrator__team_adopt}, tool.call{tool=mcp__team-orchestrator__team_remove}, tool.call{tool=mcp__team-orchestrator__member_remove}, tool.call{tool=mcp__team-orchestrator__member_move}, tool.call{tool=?}, tool.call{tool=SendMessage}, turn.complete, turn.start, tool.call, tool.describe{tool=SendMessage}, tool.describe{tool=mcp__team-orchestrator__team_message}, tool.call{tool=mcp__team-orchestrator__team_message}, tool.call{tool=mcp__team-orchestrator__team_take_top}, tool.describe{tool=mcp__team-orchestrator__team_take_top}, tool.call{tool=mcp__team-orchestrator__member_claim}, tool.describe{tool=mcp__team-orchestrator__member_claim}, tool.call{tool=mcp__team-orchestrator__team_launch}, tool.call{tool=mcp__team-orchestrator__member_add}, tool.describe{tool=mcp__team-orchestrator__member_add}, config.set{key="team-orchestrator.orcaCommand"}, command.run{command=team}, pro… [+116 chars]
+  > ./register.tsx answers its own command: command.run{command=team}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__shared_team}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_adopt}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_remove}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_remove}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_move}
+  > ./register.tsx gating hook without .catch: tool.call{tool=?}
+  > ./register.tsx gating hook without .catch: tool.call{tool=SendMessage}
+  > ./register.tsx gating hook without .catch: tool.call
+  > ./register.tsx gating hook with .catch: tool.call{tool=mcp__team-orchestrator__team_message}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_take_top}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_claim}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_launch}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_add}
+  > ./register.tsx gating hook without .catch: config.set{key="team-orchestrator.orcaCommand"}
+  > ./register.tsx gating hook without .catch: prompt.submit
+  > ./register.tsx gating hook without .catch: ui.close{id=team-dock}
+  > ./register.tsx calls: $.clock.every, $.clock.sleep (via launch), $.command.register, $.config.set (via orcaSetup), $.env.get, $.fs.exists (via checkGrants, effective, exclude, guard, migrate, moveFiles, readClaims, readJson, readSettingsFile, readStatus, writeRoles, writeRoster, writerRole), $.fs.list (via pendingChanges, readAssumptions, readQueue, readRegistry, transcripts), $.fs.read (via checkGrants, effective, exclude, migrate, moveFiles, readAssumptions, readClaims, readJson, readRegistry, readSettingsFile, readStatus, readVersion, writeRoles, writeRoster), $.fs.write (via putFile, sharedStoreView), $.process.run (via exclude, machineOf, orca, orcaProblem, processes, putFile, registers, sharedCall, tails), $.prompt.submit (via emptyState, formView), $.session.cwd (via readOnlyProjectScope), $.session.id, $.session.root (via exclude, readOnlyProjectScope, refresh, rootOf), $.session.send, $.session.usage, $.state.get, $.state.set, $.store.get (via readGrantRecord), $.store.set (vi… [+150 chars]
+  > ./register.tsx env writes: nothing
+  > ./register.tsx env reads: ANTHROPIC_DEFAULT_FABLE_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, CLAUDE_CONFIG_DIR, COMPUTERNAME, HOME, HOSTNAME, NO_COLOR, ORCA_TERMINAL_HANDLE, ORCA_WORKTREE_ID, OS, USERPROFILE
+  > ./register.tsx state writes: team-orchestrator.act, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.bulk, team-orchestrator.form, team-orchestrator.frame, team-orchestrator.members, team-orchestrator.menu, team-orchestrator.note, team-orchestrator.settings, team-orchestrator.sharedStoreProof, team-orchestrator.sharedStoreStatus, team-orchestrator.spawn, team-orchestrator.view
+  > ./register.tsx state reads: team-orchestrator.act, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.bulk, team-orchestrator.form, team-orchestrator.frame, team-orchestrator.members, team-orchestrator.menu, team-orchestrator.note, team-orchestrator.settings, team-orchestrator.sharedStoreProof, team-orchestrator.sharedStoreStatus, team-orchestrator.spawn, team-orchestrator.teamName, team-orchestrator.view
+
+Plugin directory checks for C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.
+
+× Found 1 problem the plugin directory refuses a submission for:
+
+  > LICENSE: License missing (LICENSE_MISSING). This plugin has no LICENSE file and plugin.json has no `license`. The directory requires one of them.
+    Fix: Add a LICENSE file to the plugin folder, or set `license` (an SPDX id) in plugin.json. A LICENSE at the repository root also counts for a plugin in a sub-folder.
+
+‼ Found 1 plugin directory warning:
+
+  > .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.
+    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.
+
+About these checks:
+
+  > The repository root was taken to be C:\Users\Herman\Downloads\925-cc-plugins, the nearest parent folder with a .git folder or file. No license file that counts (a regular file with one of the file names the plugin directory accepts) was found there either. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.
+  > hooks/hooks.json names a hooks module (a code file listed under `modules`). The plugin directory has rules of its own for such code, and these checks apply none of them, so passing here does not mean the directory accepts the plugin. The developer portal's own validation applies those rules.
+
+These plugin directory checks do not change the result below. To fail on problems the directory refuses a submission for, run this command with --profile directory.
+
+The directory also runs a safety scan and a policy review that this command does not.
+
+√ Validation passed with warnings
+
+hooks\adding.test.ts:
+(pass) purview: a lead over two teams has both and not a third; the top has every team below it; a worker may not ask [4.68ms]
+(pass) a level is a hint for the panel, not a right: only actual reports make a member a manager [1.05ms]
+(pass) a new member needs a running team, a name free in the whole project, a boss in that team and a known effort [1.27ms]
+(pass) a launch into a team already there: add makes every member new, merge keeps the members there; nobody is replaced [8.18ms]
+(pass) a lead over two teams asks for members in both, is refused for a third, and nothing is added before the user approves [2115.57ms]
+(pass) the team top adds only after asking the user in that turn; a worker may not ask at all [1913.75ms]
+(pass) default boss of a request: the head or lead that asks, even for a team below it; a boss outside its purview is refused [1382.36ms]
+(pass) New member in Team actions adds a not-yet member with its role file, under the head unless you pick another boss [1508.68ms]
+(pass) a launch under a taken team name is refused and removes nobody [1120.12ms]
+(pass) add keeps the members there and adds every launched member as a new one, not yet started [754.70ms]
+(pass) merge keeps the members there as they are and adds only the launched members it does not have [660.66ms]
+(pass) the guard locks requests/: no member writes a request file by tool or shell; a plain read passes; the top may [1.25ms]
+(pass) a request file not written by member_add is not applied: its asker must be on the roster and allowed to ask [1336.63ms]
+(pass) a re-added name starts fresh: the old member's status file is reset, so refresh has no old session id to take [1030.16ms]
+(pass) replace: a taken name in the same team is swapped for a fresh member, its queued messages failed [841.30ms]
+
+hooks\assumptions.test.ts:
+(pass) a file reads as its session id and only its open entries, with their text, kind and turn [4.49ms]
+(pass) a file that cannot be read as an assumptions file is ignored [0.85ms]
+(pass) two files of one session (plain name and tagged name) make one list, each entry once [0.78ms]
+(pass) the two one-line messages are exact [0.53ms]
+(pass) the row says "N open" for a member, found by its session id; confirmed and wrong entries do not count [941.76ms]
+(pass) the open list shows each open entry; Confirm and Wrong send one line to the member and write no file [1168.05ms]
+(pass) a session that is neither the member's boss nor the team top sees the count and the list, but no Confirm or Wrong [1340.39ms]
+(pass) the boss of the member sees Confirm and Wrong, and the answer goes to the member [1225.26ms]
+(pass) the setting is off by default: no file is read, and no count, button, list or note shows [1314.93ms]
+(pass) on with Session Panel enabled here: the files are read on refresh and the count shows; enabling says it needs Session Panel [1051.96ms]
+(pass) on without Session Panel: nothing is read and no assumption UI shows; enabling says it stays inactive until Session Panel is installed and enabled [1178.04ms]
+(pass) Delete is shown only to the member's boss or the team top, next to Confirm and Wrong [720.76ms]
+(pass) Keep cancels: the head is asked once, and nothing is sent [0.75ms]
+(pass) Delete sends exactly SESSION-PANEL: delete <id>, after one question [0.36ms]
+(pass) a question that cannot be asked sends nothing [0.42ms]
+(pass) the files are read on a roster refresh, not on a redraw [984.70ms]
+
+hooks\cleanup-cycle.test.ts:
+(pass) completion reports can include cleanup once; clean-only and progress messages do not trigger another note [1099.59ms]
+(pass) turn completion and incoming reports perform no process census or automatic kills [1074.59ms]
+(pass) team_message records a cleanup report only after confirmed delivery to the worker own boss [1386.32ms]
+(pass) a queued team_message with cleanup text does not mark the report delivered [1209.25ms]
+(pass) cleanup deletes remain ordinary asks even when AutoScratch is enabled, with deny decisions unchanged [1017.28ms]
+
+hooks\copies.test.ts:
+(pass) a remote startHere request at capacity is not queued; retry after capacity frees starts it fresh [1068.23ms]
+(pass) startHere on a member of this PC whose session has stopped resumes its saved session and sends to it [1418.47ms]
+(pass) startHere cannot exceed Max open; a proven-dead local member is marked closed, then the fresh start queues at cap [829.65ms]
+(pass) a running member the roster still calls "not started", whose tab Orca does not find, is sent to and never started again [1164.78ms]
+(pass) a start reaches the roster even when the status write after it fails [1003.86ms]
+(pass) the first message waits for the new session to register, not only for its tab to go idle [1193.20ms]
+
+hooks\crash.test.ts:
+(pass) a crash (no process holds the session): the member is marked closed, reopened with --resume and the message delivered [1132.00ms]
+(pass) startHere on a member proved dead resumes its saved session, and the reply says so [1574.16ms]
+(pass) startHere resumes a member proved dead by its status-file session id when the roster has none [1135.60ms]
+(pass) a member that answers within 90 s is sent to at once: no process lookup [986.37ms]
+(pass) a hung member (its process runs, its status is silent): queued with a note to the sender, the top told once; delivered when it answers [1472.48ms]
+(pass) a member not proved to live on this PC is never reopened; nor is one whose process check fails: queued, and the sender told why [1051.33ms]
+(pass) a tab closed by hand: once proved dead the member is marked closed, and its queued message reopens it [1190.00ms]
+
+hooks\crypto.test.ts:
+(pass) x25519 matches RFC 7748 6.1 [43.88ms]
+(pass) argon2id matches RFC 9106 5.3 [33.32ms]
+(pass) scrypt matches RFC 7914 12 [191.73ms]
+(pass) base64url round-trips every length and refuses anything not strict [5.98ms]
+(pass) seal/open round-trips text and 4 KB of bytes, and each seal is different [55.12ms]
+(pass) a sealed message that was altered, cut, or sealed to another key is refused, never garbage [15.27ms]
+(pass) bundle round-trips at the default cost, and unlock finishes in under 6 s [9654.11ms]
+(pass) the header carries m, t, p and a fresh salt, readable without the passphrase [1307.07ms]
+(pass) a wrong passphrase fails cleanly [139.04ms]
+(pass) a tampered bundle is refused: damaged in copying, altered on purpose, or asking for too much work [209.87ms]
+(pass) a bundle of an unknown version, or not a bundle at all, says so [23.61ms]
+(pass) a bundle pasted with line breaks and spaces unlocks, and the passphrase is Unicode-normalised [47.59ms]
+(pass) the async pair round-trips, and gives byte-identical bundles to the sync pair for the same salt [2473.47ms]
+(pass) without setTimeout the async pair falls back to the sync path, with the same output [129.92ms]
+(pass) the async pair fails with the same faults as the sync pair [162.97ms]
+(pass) passphrase strength scores and explains, and only warns [12.97ms]
+
+hooks\guard.test.ts:
+(pass) only a prompt the person typed at the terminal (composer) carries a grant; the next prompt replaces it [4.25ms]
+(pass) a boss is a member somebody reports to; a worker is not [0.42ms]
+(pass) a memory folder is <claude dir>/projects/<project>/memory/…, and nothing that climbs out of it [0.86ms]
+(pass) judge: Agent is refused for every member; a Write is refused for a boss only, outside its memory [1.93ms]
+(pass) judge: the built-in helpers statusline-setup and claude-code-guide pass; general-purpose stays blocked without Allow subagents [1.02ms]
+(pass) judge: a standing switch or a one-turn grant lets it through, and says which [0.55ms]
+(pass) the creation classifier reads the executed word: a wrapper is unwrapped twice, quoted text is data [1.35ms]
+(pass) a member with reports cannot use Agent by default, nor Write, Edit or NotebookEdit [1290.18ms]
+(pass) a member may not register an Orca project or worktree, and no grant opens it [1692.05ms]
+(pass) a session that is not on the roster is not judged for a registration [642.74ms]
+(pass) in the engine: a member without Allow subagents may start statusline-setup, not general-purpose [1140.74ms]
+(pass) a roster member with nobody under it may Write and Edit, but not use Agent [1083.73ms]
+(pass) a head may write in its own memory folder and nowhere else [1017.60ms]
+(pass) a session that is not on the roster is never judged [785.83ms]
+(pass) with no roster at all nothing is judged [627.51ms]
+(pass) the session is found by its name when the roster has no session id for it [643.70ms]
+(pass) Settings: each member has Allow subagents and Allow writes, off at first, kept in the roster file [1163.49ms]
+(pass) a switch set in the roster file by another session is seen at once [531.80ms]
+(pass) #allow-subagent in the person's own prompt allows Agent for that turn only [806.00ms]
+(pass) the words in a message from another session, a plugin's prompt or a tool result allow nothing [482.39ms]
+(pass) the guard covers every roster member: a worker is refused Agent whatever its level [375.51ms]
+
+hooks\heal.test.ts:
+(pass) the top's refresh clears a stale "not yet" only on proof that the member's session runs [1571.73ms]
+
+hooks\housekeeping.test.ts:
+(pass) only explicit cleanup fields are stored as worker reports; they are never OS verified [5.08ms]
+(pass) do not infer completion or clean status from ordinary prose [0.73ms]
+(pass) incomplete or remaining resources override a clean label [2.12ms]
+(pass) long completion reports parse without a length cutoff; trailing words do not become new requests [0.57ms]
+
+hooks\identity.test.ts:
+(pass) ladder: tab + id + name is the member, full rights, nothing changes [5.91ms]
+(pass) ladder: tab + id with a new name (/rename) is full, and the roster follows and relabels: name, address, reports [1.25ms]
+(pass) ladder: a /rename to another member's name is not followed: it stays X and never gets Y's rights [0.62ms]
+(pass) ladder: tab + name with a new id (/clear) is full, and the roster takes the new session id [0.71ms]
+(pass) ladder: id + name in another tab is X when X's tab is gone (handle = this tab), held when X's tab is live [1.79ms]
+(pass) ladder: tab only (a fresh claude in X's tab) is X re-attached: it takes the id, and the name when it has one [1.46ms]
+(pass) ladder: id only, or name only, is held (restricted) and changes nothing [2.99ms]
+(pass) ladder: nothing matches, or no roster at all: not on the team [0.57ms]
+(pass) ladder: the strongest row wins: X's conversation resumed in Y's tab is X, not Y [0.45ms]
+(pass) no tab (outside Orca) is unknown: with registry proof id + name is full; without it, held [0.55ms]
+(pass) no tab with registry proof: the id alone is full (no name to follow); a name alone is full with the new id unless X is live [0.72ms]
+(pass) a member recorded with no tab: the registry proof stands in for the tab; without it, the id + name row applies [0.66ms]
+(pass) two members that fit equally well: neither is granted [0.53ms]
+(pass) judgeHeld: Write, Edit, NotebookEdit and Agent are refused, standing switches do not count, the one-turn word does [1.25ms]
+(pass) topOf walks up to the member that reports to the user [1.21ms]
+(pass) a held session is denied Write and team_message, writes no status as X, and the top is told once [2515.22ms]
+(pass) /clear in the same tab cannot replace the saved session id without confirmation [1099.94ms]
+(pass) a reused member tab cannot bind a fresh session without confirmation [1127.69ms]
+(pass) an observed title change preserves canonical names, reports, roles and notes [969.26ms]
+
+hooks\jump.test.ts:
+(pass) pressing the marker on a roster row or on a chart node opens that member tab, and says so in its card [1650.57ms]
+(pass) the chart marker is a button of its own; the dot and the name stay coloured text [1138.74ms]
+
+hooks\launch.test.ts:
+(pass) Create starts the CEO and the heads, briefs them, and leaves the workers for their first message [1626.05ms]
+
+hooks\layout.test.ts:
+(pass) at 60 columns: the narrow tier, within the width, headers over their cells, nothing wraps [7.85ms]
+(pass) at 72 columns: the medium tier, within the width, headers over their cells, nothing wraps [4.43ms]
+(pass) at 90 columns: the wide tier, within the width, headers over their cells, nothing wraps [4.53ms]
+(pass) at 140 columns: the wide tier, within the width, headers over their cells, nothing wraps [3.02ms]
+(pass) the tiers drop BRIEF as the width shrinks; the narrow tier is dot, percent, family, letter [1.63ms]
+(pass) the settings toggles apply on top of the tier, and the room they free goes to the names [0.48ms]
+(pass) a long name is cut with "…" and still leaves one space before the status [0.35ms]
+(pass) org chart labels, one team named Hualong: the team prefix goes, each label is unique and at least two characters [1.42ms]
+(pass) org chart labels stay unique across teams that share member names [0.48ms]
+(pass) org chart labels for names the plugin makes and names people pick: short, unique, two characters at least [1.10ms]
+(pass) org chart labels, real team names Hualong-HQ and Hualong-PC: CEO, Workers, W5, Boss, WA, WB [0.30ms]
+(pass) org chart labels, the roster file of 2026-10-05 (teams Hualong-HQ and Hualong-PC): CEO, Workers, Messenger, Lead, WA, WB [0.26ms]
+(pass) side by side shows a 2 x 2 grid for four teams on a 1920 x 1080 screen, and never fewer than two cards when two fit at all [0.34ms]
+
+hooks\lifecycle.test.ts:
+(pass) a coordinator reopening a member opens it in that member's own workspace, and its home is unchanged [1462.28ms]
+(pass) an invalid target in a bulk restart closes nothing and changes nothing [1592.18ms]
+(pass) an explicit rename keeps the member's own notes, and a taken name is not taken [1004.54ms]
+(pass) a worker cannot remove, move or rename a member: only the team top may [990.73ms]
+
+hooks\linux.test.ts:
+(pass) on Linux the machine is uname -n, asked once per load [1378.05ms]
+(pass) on macOS the machine is the LocalHostName, which does not follow the network [1216.15ms]
+(pass) a machine called localhost names no machine: the roster records none [1130.51ms]
+(pass) a member recorded with no machine gets this PC once its transcript shows it ran here; one without stays unknown [1365.48ms]
+(pass) a machine is the same by its name before any domain, in any case [0.87ms]
+(pass) members start with the browser-automation plugins the person enabled turned off, by a settings file of their own [1182.10ms]
+
+hooks\lock.test.ts:
+(pass) a team file is roster.json or settings.json in a team-orchestrator folder, however it is spelt [5.42ms]
+(pass) a command names a team file by its name, or by the team folder with a wildcard or variable [1.30ms]
+(pass) a command that only mentions the words, or the folder with a wildcard in another word, names no team file [0.64ms]
+(pass) source folders whose names contain the team name are not team-file commands [0.45ms]
+(pass) exact team directory segments remain protected with shell syntax and Windows aliases [0.57ms]
+(pass) real edits to the team files stay blocked: Write, Edit, Set-Content, a redirect, rm of the changes folder [0.85ms]
+(pass) a command that changes into the team folder is a team-file command, whatever its wildcards and separators [2.18ms]
+(pass) plainly read-only means cat, type, Get-Content, ls, dir, grep, Select-String or jq without -i [1.32ms]
+(pass) judgeTeamFiles: every member but the team top is refused; a held session is refused even as the top [0.93ms]
+(pass) the grant record: a change the mod writes is recorded; one pulled in from the file and written back is not [3.33ms]
+(pass) a scope refusal identifies the team-file guard and the command it checked [1139.16ms]
+(pass) a worker may not change roster.json or settings.json by Write, Edit, Bash or PowerShell, but may read them [1591.53ms]
+(pass) #allow-write and Allow writes do not open the team files to a member [1341.12ms]
+(pass) the team top and a session not on the roster may change the team files [985.50ms]
+(pass) a session that is not on the roster is not judged on the team files [1023.27ms]
+(pass) a member's rights changed in roster.json outside the mod are reported to the team top, not reverted [1320.64ms]
+(pass) a change the person makes through Settings is the mod's own and is not reported [960.29ms]
+(pass) a subagent's Write (agentId) is judged by its spawner's standing Allow writes [715.47ms]
+(pass) a workflow agent's calls carry the spawner's one-turn grant while it lasts, and lose it when the turn ends [621.45ms]
+(pass) a helper is never taken as "not on the team": a worker's subagent is refused Agent and the team files [660.85ms]
+
+hooks\mend.test.ts:
+(pass) a write refused with EACCES mends the folders on the way and writes once more [1420.92ms]
+
+hooks\mention.test.ts:
+(pass) @team forwards the rest of the message to the head via SendMessage and drops the prompt [1256.10ms]
+(pass) a prompt without a team mention is untouched [765.63ms]
+(pass) a launch of two teams under a CEO keeps names unique and @team reaches the head of that team [1154.12ms]
+
+hooks\models.test.ts:
+(pass) official config: the short shown name gets its claude- id back [1548.36ms]
+(pass) custom config: a name set in ANTHROPIC_DEFAULT_HAIKU_MODEL is passed as set, not given a claude- prefix [1372.70ms]
+(pass) custom config: names from the other ANTHROPIC_DEFAULT_* variables are passed as set too [1110.93ms]
+(pass) custom config: a family alias or short name starts with that family's ANTHROPIC_DEFAULT_*_MODEL value [1056.10ms]
+(pass) modelArg: official names unchanged with no env; the env value wins for its family only [57.17ms]
+
+hooks\naming.test.ts:
+(pass) a reopened member whose name has spaces is started with its whole name quoted [1502.44ms]
+(pass) a reopened member whose name has no spaces is started with that name [1263.90ms]
+
+hooks\platform.test.ts:
+(pass) the start-up pointer is safe for cmd.exe and for sh or zsh [2.77ms]
+(pass) the crash check still looks up known process ids only and proves liveness conservatively [4.45ms]
+
+hooks\readiness.test.ts:
+(pass) a created tab whose session never registered stays starting, keeps its identity, and its message waits [1562.19ms]
+(pass) a message held for a starting member keeps its place and spends none of its tries [1551.89ms]
+(pass) a second message to an unready member starts no second tab and waits too [1129.61ms]
+(pass) a launch intent left unresolved by a crash blocks a second terminal create [766.43ms]
+
+hooks\register.test.ts:
+(pass) with no team, the band button opens the welcome screen with the three shapes [1029.77ms]
+(pass) a shape on the welcome screen opens the form with that shape chosen [716.53ms]
+(pass) a model cell opens a list, and choosing from it closes the list [810.97ms]
+(pass) once a team exists the roster and bulk tools show and the welcome screen is gone [891.59ms]
+(pass) the first write lists the roster file in the repo info/exclude, after the lines already there [1062.74ms]
+(pass) a line already in info/exclude is not added again [727.32ms]
+(pass) a worktree in a subfolder writes the prefixed line to the exclude file git names (the common dir) [552.96ms]
+(pass) outside a git repo nothing but the team folder is written (roster and role files; no exclude file) [669.14ms]
+(pass) adopt fills an empty handle from the tab title (glyph stripped) and an empty session id from the transcript title [573.53ms]
+(pass) adopt keeps a member it cannot find and says why on its row [477.79ms]
+(pass) refresh replaces a dead handle with the one live tab of that name [509.42ms]
+(pass) several tabs of one name: the handle stays and the row says so [399.23ms]
+(pass) several tabs of one name: the one in the worktree the transcript last ran in wins [435.12ms]
+(pass) adopt again keeps the saved model and effort of a member [392.97ms]
+(pass) the only tab of that name sits in another worktree: it is not adopted [376.75ms]
+(pass) a live handle that points into another worktree is replaced by the tab in the member's own worktree [462.83ms]
+(pass) a live handle in the member's own worktree is kept, even when another tab has the same name [232.95ms]
+(pass) a session id found by name skips a newer transcript of the same name that last ran outside the project [231.55ms]
+(pass) no tab of that name: the old handle stays and the row says so [213.02ms]
+(pass) the status line is read first [273.39ms]
+(pass) with no status line the transcript gives model, effort and context; past 200k the window is 1M [239.90ms]
+(pass) neither the status line nor a transcript: the row says the status line is not readable [202.26ms]
+(pass) team_remove takes one team off the roster file and the roster, and closes nothing [265.09ms]
+(pass) member_remove takes one member off; the last team removed leaves an empty roster file [301.89ms]
+(pass) the roster rows and team cards remove too [284.93ms]
+(pass) names take one colour per level in the table and the chart, the same in every team; deeper levels share the last [219.89ms]
+(pass) the effort value is coloured on a scale from low (cool) to max (hot); a row has only its tick box and the jump marker, Open is in Team actions [546.18ms]
+(pass) defaults keep the old look: chart shown, every column, cards stacked [239.32ms]
+(pass) settings hide the chart and columns, and stay after a refresh and a new drawing [265.07ms]
+(pass) side by side: two cards share a row at the narrower tiers, and a very narrow terminal stays stacked [219.42ms]
+(pass) dock right puts the panel in the dock pane, which says when it cannot sit beside the transcript [204.09ms]
+(pass) member_move moves one member under the target head, or a named boss, and sets the level from the boss [284.81ms]
+(pass) each team card has one Team actions menu that opens and closes by press, and Settings sits beside Refresh [225.22ms]
+(pass) move selected here: a head whose reports stay behind is refused; ticking them too moves the whole branch [226.09ms]
+(pass) remove selected and remove team ask first: Cancel keeps, Confirm takes them off the roster [264.21ms]
+(pass) change boss offers only members of the same team that are not the ticked ones or below them [251.13ms]
+(pass) add member lists live tabs that are not on the roster, and adopts the picked one into that team [265.95ms]
+(pass) an action that needs ticked rows says so instead of opening [183.11ms]
+(pass) at 60 columns every row fits inside its card and the org chart shows unique labels [135.88ms]
+(pass) with another AbovePrompt handler registered, both bands render, the Team Orchestrator line on top [103.97ms]
+(pass) a failing neighbour does not hide the Team Orchestrator band [115.81ms]
+(pass) the old single roster file moves into the folder once, keeping a backup and leaving a pointer [151.52ms]
+(pass) a stale session root cannot migrate team files or launch in the wrong Orca home [112.02ms]
+(pass) an exact native root without a proven context kind cannot select a launch destination [104.01ms]
+(pass) an unreadable provider session id blocks effects despite a valid native home [118.19ms]
+(pass) an unreadable local registry blocks managed effects despite a valid native home [101.98ms]
+(pass) a readable registry without the current provider id is distinct from an unreadable registry [93.79ms]
+(pass) a nested checkout cannot replace its enclosing registered project root [111.13ms]
+(pass) Windows native home accepts backslash session root and forward-slash Orca path [166.87ms]
+(pass) Windows session working folder accepts equivalent separator forms [146.59ms]
+(pass) native root matching is case-sensitive [107.49ms]
+(pass) a POSIX backslash is not treated as a slash in native root comparison [96.15ms]
+(pass) a verified native home accepts its project root when the Git main root differs [151.01ms]
+(pass) team_adopt refuses a list that would remove existing members of the team, names them, and writes nothing [109.58ms]
+(pass) team_adopt with a named remove removes only the named member [138.58ms]
+(pass) team_adopt ignores a named remove for a member that does not exist [132.60ms]
+(pass) member_claim on an unreadable claims.json returns the refusal and writes nothing (guard, not RED) [110.87ms]
+(pass) a close sent to a stale handle does not mark a live member closed, and a message never starts a second copy [145.15ms]
+(pass) an evictee without a saved worktree scope is not closed [156.33ms]
+(pass) a scoped inventory without the exact evictee handle cannot authorize closure [140.13ms]
+(pass) at capacity a worker is not closed and the message queues [140.80ms]
+(pass) at capacity a worker remains when its close cannot be verified [121.33ms]
+(pass) at capacity malformed post-close inventory cannot trigger an eviction [136.85ms]
+(pass) at capacity a terminal inventory failure does not trigger a close [131.23ms]
+(pass) at capacity even a closable worker stays open and the target queues [160.58ms]
+(pass) a bulk rename restart keeps the member's saved model and effort when they are left on keep [176.29ms]
+(pass) dock right packs cards like side by side; stacked keeps one full-width card per row [175.98ms]
+(pass) adopt refuses a name with characters a shell could act on, and adopts nobody [180.91ms]
+(pass) team_adopt reply matches the roster file: saved handles follow the live tabs it adopted [119.44ms]
+(pass) team_message with startHere to closed members with resumable session ids starts no fresh copy and adds no roster row [111.91ms]
+(pass) an evictee without a saved worktree scope is not closed [155.73ms]
+(pass) at the cap, an idle candidate is not inspected or closed; the incoming message queues [157.57ms]
+(pass) an idle worker and old clean record never justify auto-eviction at the cap [170.34ms]
+(pass) at capacity, admission queues without attempting a close even if the tab cannot be verified [137.87ms]
+(pass) at capacity, malformed inventory does not trigger a close or a second launch [129.96ms]
+(pass) at capacity, terminal-list failure leaves the worker alone and keeps the message queued [124.52ms]
+(pass) a member resumed by a message gets its idle clock from the resume, not from its earlier turn [107.81ms]
+(pass) a member held by an undecided identity claim is never auto-closed, and the at-cap message queues [91.72ms]
+(pass) an idle worker and old clean record never justify auto-eviction at the cap [135.00ms]
+(pass) a member session start restarts its idle clock, so an old clean and turn end cannot make it closable [129.63ms]
+(pass) a claim outside this team does not affect its member status; at the cap the target queues without eviction [93.25ms]
+(pass) an unreadable claims file blocks eviction and the message waits in the queue [94.35ms]
+(pass) a held member without a status file still counts toward Max open; another start waits in the queue [96.82ms]
+(pass) a new hold leaves a corrupt claims file byte-identical [81.97ms]
+(pass) a claim decided "is" does not authorize auto-eviction [102.27ms]
+(pass) a claim decision does not authorize admission by evicting another member [102.15ms]
+(pass) a claim decided "new" does not authorize auto-eviction [98.44ms]
+(pass) a claim decision does not authorize admission by evicting another member [100.53ms]
+(pass) a claim decided "reject" does not authorize auto-eviction [103.87ms]
+(pass) a claim decision does not authorize admission by evicting another member [92.35ms]
+
+hooks\reopen-id.test.ts:
+(pass) a reopen's new session id survives the same round's search by name [1884.53ms]
+
+hooks\reopen.test.ts:
+(pass) a member reopened by a message is not picked by auto-close for its old idle time [1326.80ms]
+
+hooks\requeue.test.ts:
+(pass) member_remove fails the queued messages for that member and leaves the others [1201.74ms]
+
+hooks\reset.test.ts:
+(pass) a change folded in while the top's refresh waits on Orca is not undone by that refresh [1339.42ms]
+(pass) a member's row sent again as an "add" never rolls its fields back; a new member is still added [1248.97ms]
+
+hooks\roles.test.ts:
+(pass) the top gets interactive user-question guidance without requiring a grill skill; lower members still relay [3.49ms]
+(pass) a role file knows the member, its boss, its reports and the team, including a CEO's heads in other teams [1.31ms]
+(pass) a rewrite keeps the person's notes below the marker and replaces only the generated part [0.58ms]
+(pass) a role file calls a member a head or a lead only when others report to it, not by its level [0.30ms]
+(pass) the start-up pointer is short, safe for cmd.exe, and names the role file [0.47ms]
+(pass) the housekeeping kills only a process a member can prove it started, by parent and start time, and never a harness shell, tool wrapper or harness-started MCP service [0.53ms]
+(pass) the housekeeping keeps test logs, footers and receipts as evidence until they are reviewed [0.42ms]
+(pass) a launch or reopen brief never allows a live deploy or a production write [0.37ms]
+
+hooks\route.test.ts:
+(pass) modelArg: only the old short form gets "claude-" back; full ids, [1m] and gateway names pass as typed [31.55ms]
+(pass) windowFor: the member's own reported window wins over the guess [0.78ms]
+(pass) cliOf: Orca's agentIdentity first, else the one CLI the tab's command line names [1.40ms]
+(pass) isManaged and locationOf: local by default, remote on another PC, other-cli for another CLI [0.81ms]
+(pass) worktreeHolds and pathInWorktreeId: a workspace counts only while its folder contains the project root [0.57ms]
+(pass) team_message reaches a running local member by its session id: no ListAgents, no SendMessage by name [1099.18ms]
+(pass) a failed send says why; a member with no session id yet is not messaged by name [1055.83ms]
+(pass) a member recorded remote is not messaged: the messenger route (#72) is not built yet [693.18ms]
+(pass) a codex tab adopted today is marked "not managed": never messaged, reopened, closed, briefed or tab-polled [843.74ms]
+(pass) a reopen preserves the registered home when its saved workspace is unavailable [606.60ms]
+(pass) a member writes its own context window into its status file; the roster counts against it [644.72ms]
+(pass) a fresh reopen sends to the new session id, not the old one [709.63ms]
+
+hooks\scratch.test.ts:
+(pass) cleanup deletes preserve normal permission decisions for every path, even when AutoScratch is on [922.52ms]
+(pass) a synced orca that does not run on Windows is switched to orca.exe, with a toast [782.64ms]
+(pass) a saved command that fails while the default fails too is only reported [491.51ms]
+(pass) a saved command that works is left alone [1910.34ms]
+
+hooks\seg.test.ts:
+(pass) in Settings the chosen option of Show / Hide is #ff5440 and the other stays a plain button; pressing it moves the colour [1077.29ms]
+(pass) the layout row gets the same colour from the same helper [894.30ms]
+
+hooks\send.test.ts:
+(pass) SendMessage to a closed member answers with an object, as SendMessage does [1182.89ms]
+
+hooks\shared-store.test.tsx:
+(pass) the shared store blocks raw state and private approval access even for a controller [3.04ms]
+(pass) the disabled preview cannot invoke its private bridge [872.66ms]
+(pass) a specific approval panel click mints scoped evidence; opening the panel does not approve [626.80ms]
+(pass) model arguments cannot choose the private approval mode or replace native caller facts [354.94ms]
+(pass) redrawing the shared approval view performs no native subprocess verification [405.21ms]
+(pass) shared managers retain the existing write and Agent restrictions and composer-only grants [562.63ms]
+
+hooks\short.test.ts:
+(pass) a short name the person gave is used exactly as typed, and is not marked automatic [29.05ms]
+(pass) with no short names, one team named Hualong, the rule gives what it gave before, and says every label is automatic [1.51ms]
+(pass) the person sets some and not others: the rest stay automatic and keep away from the names taken [1.21ms]
+(pass) the same short name on two members: both keep it and both are flagged, nothing is renamed [1.19ms]
+(pass) the rule steps round the short names already taken, also across teams [1.66ms]
+(pass) Herman's example: "HK University of Hong Kong president" is "HK president" only because a person said so, or by luck of the words [0.49ms]
+(pass) a short name is cut with "…" only on request, and a short one is left alone [0.30ms]
+(pass) team_adopt takes a short name, saves it, keeps it when the member is adopted again, and an empty one clears it [1299.83ms]
+(pass) team_launch takes a short name per member and saves it [834.37ms]
+(pass) member_move keeps the short name [906.61ms]
+(pass) Set short name: tick one row, type, Save; an empty name clears; ticking none or two says so [816.23ms]
+(pass) the chart shows the short name as typed and dims the automatic ones [521.00ms]
+(pass) two members with one short name: the chart shows both with "!" and each row says so [482.56ms]
+(pass) a long short name is cut with "…" when the chart would not fit, and shown whole when it does [395.08ms]
+(pass) the explaining hints are gone: no LIVE ORG subtitle, no legend note, no second "selected" count in the bottom bar [410.26ms]
+
+hooks\status.test.ts:
+(pass) status files are one per member, with file-safe names [4.08ms]
+(pass) a member silent for over five minutes shows offline; closed stays closed [1.58ms]
+(pass) the tab check runs only when an open member has been silent over two minutes, and backs off when Orca is slow [0.70ms]
+(pass) auto-close is paused until native cleanup ownership is verified; legacy clean/count fields never authorize it [1.17ms]
+(pass) at the open-session cap, admission queues instead of evicting a worker based on an old clean [0.85ms]
+(pass) unknown or offline roster members still occupy capacity; no admission evicts to make room [0.46ms]
+(pass) on-demand Create starts the top and, under a CEO, the team heads; leads and workers wait [0.62ms]
+(pass) sessions start in batches of the set size [0.45ms]
+(pass) a message goes to the session on this machine, never a Remote Control copy of the same name [0.60ms]
+(pass) a start or reopen passes a model name the API accepts, never the short name shown on screen [2.97ms]
+(pass) a tick more than three minutes late is sleep; windows older than a day drop out; ages skip the time asleep [0.70ms]
+(pass) waking up closes nothing: idle and silent ages leave the sleep out, so nobody is closed, offline or crash-checked on wake [0.70ms]
+(pass) a hung top cannot cause automatic closure while cleanup verification is unavailable [0.29ms]
+
+hooks\vault.test.ts:
+(pass) key names are plain: letters, digits, dot, dash, underscore; no path, no .. [3.84ms]
+(pass) base64 round-trips any text, and the PowerShell script encodes as UTF-16LE [1.43ms]
+(pass) Windows: DPAPI through PowerShell, the secret on stdin only, the folder local and never roaming [4.31ms]
+(pass) Windows: the key is served once on an owner-only named pipe with a random name, never a file [2.58ms]
+(pass) macOS: the Keychain through security, the secret in its stdin command, never in argv; no Touch ID [1.11ms]
+(pass) Linux: secret-tool with the secret on stdin; a silent miss means the Secret Service is up [0.71ms]
+(pass) the fallback file is 0600 in a 0700 folder, written whole, the secret on stdin [0.76ms]
+(pass) the fallback refuses every synced folder: Google Drive (G:, My Drive), OneDrive, iCloud Drive, Dropbox, Box [3.16ms]
+(pass) answers: tagged lines, PowerShell 5.1 CLIXML errors as words, the OS [0.95ms]
+(pass) an SSH key is used only as a matching ed25519 or ed25519-sk pair, checked without its passphrase [1.64ms]
+(pass) Windows wrappers: put, get, remove through DPAPI; LOCALAPPDATA in OneDrive is refused [5.16ms]
+(pass) Windows: a DPAPI failure comes back as words, without the CLIXML wrapping [0.85ms]
+(pass) Windows: servePipe resolves with the pipe once it exists, then reports it served [2.54ms]
+(pass) Windows: servePipe for a missing key rejects [1.85ms]
+(pass) macOS wrappers: the Keychain, the write confirmed by reading it back; a pipe is refused [2.08ms]
+(pass) macOS: a locked Keychain that drops the write is reported, not taken as stored [0.67ms]
+(pass) Linux wrappers: the Secret Service when it answers [1.43ms]
+(pass) Linux with no Secret Service: the owner-only file under ~/.config, and never a synced or linked-in folder [1.25ms]
+(pass) macOS can be told to use the fallback file (a locked keychain over SSH) [0.42ms]
+(pass) useSshKey records a valid ed25519 pair beside the keys, and refuses anything else [1.52ms]
+
+hooks\version.test.ts:
+(pass) the band shows a filled title pill with the version, and the button beside it opens the panel [793.04ms]
+(pass) the panel header shows the version too [355.56ms]
+
+hooks\writers.test.ts:
+(pass) a change file holds only the fields a session changed; change files apply in time order, field by field [5.69ms]
+(pass) registered home is included on first add and cannot be replaced or cleared by later change files [0.94ms]
+(pass) versions: an older mod is told apart from a newer one; the stamp keeps the newest writer and the first top machine [0.82ms]
+(pass) the queue: delivered, back to pending when there is no room, failed after three failed tries, pruned after a day or a week [0.89ms]
+(pass) status files go under the config folder, in a project folder named the way Claude names its projects folders [0.53ms]
+(pass) identify: a member from another PC is never matched by tab or registry; one with no machine takes this one [1.36ms]
+(pass) a member's change goes to a change file: its own view has it at once, the roster file waits, the top's refresh applies it [1186.23ms]
+(pass) change files from several sessions are applied by the top oldest first, field by field [920.56ms]
+(pass) a team setting changed by a member waits as a change file; the top writes it into settings.json [737.65ms]
+(pass) a session whose mod is older than the roster's writer writes no team file, and says so once [746.26ms]
+(pass) the queue: one file per message; the top delivers, retries, marks failed after three tries and tells the head, and prunes [990.76ms]
+(pass) status files live on the machine; an older version's file in the project is read once and moved [885.36ms]
+(pass) a member on another PC is shown "on" that PC and never reopened, closed or messaged from here; a fresh copy only on request [436.40ms]
+(pass) the top machine is another PC: the top here writes change files, says which PC holds the top, and takes over only with Herman's answer [532.11ms]
+(pass) another session forging a change file is stopped: members may not write changes/ or meta.json [288.20ms]
+
+ 366 pass
+ 0 fail
+Ran 366 tests across 38 files. [29.03s]

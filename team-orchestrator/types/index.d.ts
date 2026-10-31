@@ -103,7 +103,7 @@ export type Act = {
   tabs: { handle: string; title: string }[]
   msg: string
 }
-export type View = 'closed' | 'roster' | 'new' | 'settings'
+export type View = 'closed' | 'roster' | 'new' | 'settings' | 'shared'
 /** a Create in progress: the members it starts now, the batch being started (1-based) and how many batches; empty when none */
 export type Spawn = { names: string[]; batch: number; of: number }
 export type Settings = {
@@ -133,6 +133,8 @@ declare module 'claude-code' {
       assumptions: Record<string, { id: string; text: string; kind: string; turn: number }[]>
       /** the assumptions view is on here: the team's switch is on and Session Panel is on in this session (#89) */
       assumptionsOn: boolean
+      sharedStoreStatus: string
+      sharedStoreProof: { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
     }
   }
 }

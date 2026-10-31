@@ -1,0 +1,35 @@
+{
+  "id": "1ae48b25-5043-4532-8ced-1327bcc5c40f",
+  "ok": true,
+  "result": {
+    "message": {
+      "id": "msg_bb9fdf1a9bb3",
+      "run_id": "run_unbound",
+      "from_handle": "term_e1bd773e-211e-46fe-bf60-a44b7208a45c",
+      "to_handle": "term_59c2e656-534f-4758-b1d2-e8a66a371faf",
+      "subject": "Mod approval UI patch ready: 366 tests green; retry isolated source session",
+      "body": "# Approval-view live retry — 2026-10-31\n\nFor independent acceptance after msg_6aade4f4a38f. The live failure is real; root cause was not proven solely by unit tests. The source patch removes slow native proof acquisition from repeated renders, makes Shared-store/approval event handlers await their work, and stops the unnecessary 300ms no-team animation while the shared view is open.\n\nCopy these THREE runtime files from the authoritative repository into the existing isolated source-mod fixture (preserve its test-only manifest preview default):\n- team-orchestrator/hooks/register.tsx\n- team-orchestrator/hooks/shared-store.tsx\n- team-orchestrator/types/index.d.ts\n\nThe changed unit file is team-orchestrator/hooks/shared-store.test.tsx. No shared/team-store or packaged Node module changed. No schema or authority requirement changed. Do not update installed/global plugin copies. Reload only the isolated scratch source session, or start a fresh isolated source session if the runtime cannot safely refresh it. Reopen /team and click Shared store again to acquire current display proof; do not reuse a stale held button handle. In Git Bash, protect literal slash commands with per-invocation MSYS_NO_PATHCONV=1.\n\nRendering now reads cached DISPLAY proof. The tab action first shows a verifying state, then acquires current native proof. Approval must freshly revalidate the exact displayed project/conversation/terminal/context, and the private child independently verifies native identity again. Cached display data cannot grant controller authority. The approval button awaits completion instead of detaching its asynchronous work.\n\nThe complete Mod suite now passes 366 cases, 0 failures, 38 files, 35.98 seconds. The new regression opens Shared store then redraws it repeatedly and verifies no further process calls. Existing tests still prove approval is created only on the specific panel action and forged model fields cannot choose private approval/proof. Manifest/hooks validation passes with the previously documented metadata/directory warnings. Raw evidence: %TEMP%/team-api-mod-ui-fix-tests.log and %TEMP%/team-api-mod-ui-fix-validate.log.\n\nThis needs the actual live retry; do not count the patch as accepted until the real approval screen opens and the rest of the workflow succeeds. Please send the first retry result promptly. No ticket should be hand-forged, and no proof check should be weakened.\n\nSeparately: the Orca-plugin pre-submission recovery race is fixed and its final build passed all 35 browser cases, 657 domain/bridge/unit cases (3 skips), 31 focused native-launch cases, and all three pinned-host checks. See VALIDATION-SCHEMA-5.md. This separate change does not affect the Mod approval retry.\r\n",
+      "type": "handoff",
+      "priority": "normal",
+      "thread_id": "msg_94c6e213d788",
+      "payload": "{\"reportPath\":\"C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/UI-APPROVAL-RETRY.md\"}",
+      "created_at": "2026-10-31T10:47:57Z",
+      "delivered_at": null,
+      "delivery_contract": "current_delivery"
+    },
+    "warnings": [
+      {
+        "code": "legacy_terminal_recipient",
+        "recipient": "term_59c2e656-534f-4758-b1d2-e8a66a371faf",
+        "message": "term_59c2e656-534f-4758-b1d2-e8a66a371faf is a live terminal-only mailbox. Delivery is not durable after that terminal closes; prefer run:<id> or dispatch:<id>."
+      }
+    ],
+    "mutation": {
+      "requestId": "e60acd2b-7e1a-444f-9a15-fac7c8f8cfb1",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "a0d8552c-bb57-44b6-95df-ccd13ecd3068"
+  }
+}

@@ -1,0 +1,17 @@
+name: team-store-contract
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: contract_test
+      POSTGRES_PASSWORD: contract_test_only
+      POSTGRES_DB: team_store_contract_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contract_test -d team_store_contract_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

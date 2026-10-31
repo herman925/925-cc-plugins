@@ -145,6 +145,19 @@ test('the rules section always tells Claude to ask: AskUserQuestion unless the p
   expect(rulesSection(false, false)).not.toContain('ask_choices')
 })
 
+test('interactive question guidance waits for async answers and discovers permitted equivalent tools independently of skills', () => {
+  for (const box of [true, false]) {
+    const rules = rulesSection(box, false)
+    for (const tool of ['AskUserQuestion', 'request_user_input', 'request_user_input_async', 'clarify']) expect(rules).toContain(tool)
+    expect(rules).toContain('MCP or equivalent interactive question tool')
+    expect(rules).toContain('No interviewing skill is required')
+    expect(rules).toContain('keep the turn open using the available wait/resume mechanism')
+    expect(rules).toContain('Do not send a final response, end the turn, close the session or open a duplicate question')
+    expect(rules).toContain('Only if no permitted interactive question tool exists')
+    expect(rules).toContain('preselection, cancellation and timeout never mean approval')
+  }
+})
+
 test('backgroundSpawn: only a main-loop background spawn that started an agent answers its id', () => {
   const main = { background: true }
   expect(backgroundSpawn(main, { agentId: 'a1' })).toBe('a1')

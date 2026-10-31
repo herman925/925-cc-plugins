@@ -19,9 +19,9 @@ async function fixture(id, mode) {
   if (!fixtures.has(id)) fixtures.set(id, (async () => {
     const profile = await mkdtemp(join(tmpdir(), 'orca-panel-fixture-'));
     const store = await openTeamStore({ userData: profile });
-    let nestedDepth=1;let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = ['terminal-context','depth-local','depth-denied'].includes(mode) || mode?.startsWith('runtime-reconnect') || mode?.startsWith('roster-') || mode?.startsWith('idle-replacement') || mode?.startsWith('goal-lifecycle') || mode?.startsWith('capabilities-') || mode?.startsWith('dispatch-') ? 'local' : 'ssh:demo';
+    let nestedDepth=1;let runtimeEpoch='fixture-runtime';let creates = 0; let title = ''; const launches = new Map(); const sessionIds = new Set(); let host = mode==='remote-catalog' ? 'ssh:demo' : 'local';
     const cli = async args => {
-      if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
+      if (args[0] === 'worktree') { const id = args[3].replace(/^id:/, ''); return { worktree: { id, path:profile, repoId: 'repo', displayName: id.startsWith('folder:') ? 'Demo folder' : 'Demo workspace', hostId: host, branch: id.startsWith('folder:') ? '' : 'main' } }; }
       if (args[0] === 'repo') { assert.equal(args[3], 'id:repo'); return { repo: { id: 'repo', kind: mode === 'composite-folder' ? 'folder' : 'git' } }; }
       throw Error('CLI launch fallback is forbidden');
     };
@@ -141,7 +141,7 @@ async function fixture(id, mode) {
         return {dispatchId:params.dispatch,state:mode==='dispatch-stop-unknown'?'stop_unknown':'stopped',processAction:'closed_agent_terminal',close:{ptyKilled:mode!=='dispatch-stop-unknown'}};
       }
       if (method === 'status.get') return { runtimeId: runtimeEpoch, capabilities: [...(mode==='dispatch-queued'?['agent-session.queued-messages.v1']:[]),'orchestration.contract.v1', 'agent-session.structured.v1', 'terminal.prompt-delivery.v1', 'agent.launch.v2', 'agent.launch.replay-required.v1', 'agent.launch.prompt-carry.v1', 'agent-session.structured.registered-agents.v1'] };
-      if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), hostId: host } };
+      if (method === 'worktree.show') return { worktree: { id: params.worktree.replace(/^id:/, ''), path:profile, hostId: host } };
       if (method === 'settings.get') return { settings: { disabledTuiAgents: [] } };
       if (method === 'ssh.getState') return { state: { status: 'connected', connectionGeneration: 1 } };
       if (method.startsWith('preflight.')) return ['codex', 'claude'];

@@ -1,0 +1,56 @@
+npm notice run team-orchestrator-orca-plugin@0.1.24 npx
+npm notice run playwright test --workers=4 --output=test-results-schema5-final
+[WebServer] npm notice run team-orchestrator-orca-plugin@0.1.24 preview
+[WebServer] npm notice run node scripts/preview.mjs
+[WebServer] (node:27436) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 35 tests using 4 workers
+
+(node:84932) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:25120) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:56368) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:86784) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  1 test\browser\availability.spec.mjs:4:1 › a bridge error shows one warning without navigation, false empty state or internal diagnostics (476ms)
+  ok  2 test\browser\storage.spec.mjs:3:1 › initial staffing and per-level CLI/model/effort choices persist without member editors (36.7s)
+  ok  3 test\browser\panel.spec.mjs:4:1 › Roster contains only launched teams and member monitoring; creation belongs to New team (38.1s)
+  ok  5 test\browser\availability.spec.mjs:14:1 › failed reload hides cached teams; retry reveals them only after storage succeeds (38.6s)
+  ok  6 test\browser\storage.spec.mjs:12:1 › failed save keeps the new-team form and never launches a member (3.5s)
+  ok  8 test\browser\storage.spec.mjs:15:1 › storage recovery stays behind unavailable-state Details (1.2s)
+  ok  4 test\browser\dispatch-depth.spec.mjs:4:1 › local multi-lead launch prepares dispatch depth before the first member and keeps the exact roster (46.5s)
+  ok  9 test\browser\dispatch-depth.spec.mjs:17:1 › a rejected native depth setting stops the team immediately and explains the failure (3.7s)
+  ok  7 test\browser\panel.spec.mjs:15:1 › launch automatically initializes the highest supervisor and never needs a submitted panel objective (35.7s)
+  ok 10 test\browser\panel.spec.mjs:23:84 › roster-idle reports native state for the supervisor (35.6s)
+  ok 11 test\browser\panel.spec.mjs:23:84 › roster-asking reports native state for the supervisor (35.7s)
+  ok 12 test\browser\panel.spec.mjs:27:1 › terminal context is unavailable rather than fabricated, and launch preferences are labeled as configured (35.9s)
+  ok 13 test\browser\panel.spec.mjs:33:1 › polling refreshes the roster and follows the selected project without submitting work (35.7s)
+  ok 14 test\browser\panel.spec.mjs:40:30 › member monitoring stays inside 320px panel (34.9s)
+  ok 15 test\browser\panel.spec.mjs:40:30 › member monitoring stays inside 960px panel (34.5s)
+  ok 16 test\browser\panel.spec.mjs:45:1 › unconfirmed launch remains visible as Unknown without a duplicate launch on reload (36.5s)
+  ok 17 test\browser\panel.spec.mjs:50:1 › connection diagnostics are optional in Settings and missing interfaces hide the roster (1.7s)
+  ok 18 test\browser\panel.spec.mjs:55:1 › member names and vertical tree nodes open exact sessions through refresh and reload (42.7s)
+  ok 19 test\browser\panel.spec.mjs:86:1 › failed supervisor navigation reports the error without launching or recovering a member (35.8s)
+  ok 20 test\browser\panel.spec.mjs:93:1 › Add team opens a simple form and automatically loads separate CLI catalogs (2.4s)
+  ok 21 test\browser\panel.spec.mjs:107:1 › model discovery retries automatically when the host catalog is still loading (13.6s)
+  ok 22 test\browser\panel.spec.mjs:118:1 › remote model catalog does not offer unverified local model names (2.4s)
+  ok 23 test\browser\panel.spec.mjs:123:1 › lead count determines hierarchy and keeps workers independently adjustable (2.7s)
+  ok 24 test\browser\panel.spec.mjs:133:1 › changing the lead count keeps model preferences attached to their roles (2.5s)
+  ok 25 test\browser\panel.spec.mjs:143:1 › launch captures the current project after a switch without manual confirmation (15.1s)
+  ok 26 test\browser\panel.spec.mjs:156:1 › New team follows the active project without losing typed setup (5.2s)
+  ok 27 test\browser\panel.spec.mjs:162:1 › a missing current project prevents saving or launching against the previously detected one (2.6s)
+  ok 28 test\browser\panel.spec.mjs:169:1 › more than one lead saves and launches a three-level team with exactly one head (46.9s)
+  ok 29 test\browser\panel.spec.mjs:179:1 › lead names validate against the selected count and update the preview without moving input focus (2.6s)
+  ok 30 test\browser\panel.spec.mjs:190:1 › chosen models remain stable past discovery expiry and unchanged-project polling preserves the form DOM (2.6s)
+  ok 31 test\browser\panel.spec.mjs:203:1 › New team requires an existing project session even when Default is selected (2.3s)
+  ok 32 test\browser\panel.spec.mjs:211:39 › worker navigation uses the bound terminal session (35.9s)
+  ok 33 test\browser\panel.spec.mjs:211:39 › worker navigation uses the bound structured session (36.7s)
+  ok 34 test\browser\panel.spec.mjs:219:1 › terminal context shows provider counts and refreshes without inventing a window (39.8s)
+  ok 35 test\browser\panel.spec.mjs:227:1 › Claude context connects an existing statusline, reports 1M percentages and disconnects to transcript counts (52.3s)
+
+  Slow test file: test\browser\panel.spec.mjs (11.1m)
+  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel
+  35 passed (11.2m)

@@ -1,0 +1,120 @@
+{
+  "oldPid": 48824,
+  "newPid": 21768,
+  "oldProcessStart": "134379208371650875",
+  "newProcessStart": "134379211013811735",
+  "sameConversation": true,
+  "approvalUnchanged": true,
+  "receipts": [
+    {
+      "operationId": "s5-C-after-resume",
+      "kind": "api",
+      "result": {
+        "controllerGeneration": 1,
+        "member": null
+      }
+    },
+    {
+      "operationId": "s5-C-team-after-resume",
+      "kind": "api",
+      "result": {
+        "team": {
+          "team_id": "s5-live",
+          "name": "S5Live",
+          "function_text": "Independent source-Mod acceptance",
+          "config_version": 5,
+          "written_by_client": "team-orchestrator",
+          "written_by_version": "0.5.42"
+        },
+        "members": [
+          {
+            "member_id": "s5-head",
+            "team_id": "s5-live",
+            "name": "S5Head",
+            "boss_member_id": null,
+            "role": "Review",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+            "home_context_kind": "unknown",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\AppData\\Local\\Temp\\schema5-ceo-acceptance-eokqi0\\live-project",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          {
+            "member_id": "s5-worker",
+            "team_id": "s5-live",
+            "name": "S5Worker",
+            "boss_member_id": "s5-head",
+            "role": "Execute",
+            "level": 2,
+            "model": "default",
+            "effort": "default",
+            "worktree": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+            "home_context_kind": "unknown",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\AppData\\Local\\Temp\\schema5-ceo-acceptance-eokqi0\\live-project",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          }
+        ],
+        "bindings": [
+          {
+            "member_id": "s5-head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "65199823-8eb0-4ae4-83e6-4d7728752d15",
+            "execution_host_id": "local",
+            "context_id": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+            "terminal_handle": "term_3a05373a-bade-4458-8a9a-0a6b1ade67f7",
+            "incarnation_id": "1b04addb-f40a-4537-a9ec-bdf9fa9ade32",
+            "generation": 1
+          },
+          {
+            "member_id": "s5-worker",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "d7d7b451-3d8f-4c43-8aad-1697e2f858b0",
+            "execution_host_id": "local",
+            "context_id": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+            "terminal_handle": "term_fef5811b-74aa-4d5f-a806-62f1b7c663e2",
+            "incarnation_id": "a9b65818-4e12-4176-bbcd-7bf15906e527",
+            "generation": 1
+          }
+        ],
+        "roles": [
+          {
+            "member_id": "s5-head",
+            "official_text": "Review admitted worker evidence and record a separate acceptance decision. Do not perform the worker task.",
+            "advisory_notes": "",
+            "official_generation": 1,
+            "notes_generation": 1
+          },
+          {
+            "member_id": "s5-worker",
+            "official_text": "Call verifyAssignment and read the returned official role and task brief BEFORE any fixture/file command. Never run them in parallel. Perform only the admitted read-only task. Report explicit outcome with evidence; never accept your own work.",
+            "advisory_notes": "",
+            "official_generation": 1,
+            "notes_generation": 1
+          }
+        ]
+      }
+    }
+  ]
+}

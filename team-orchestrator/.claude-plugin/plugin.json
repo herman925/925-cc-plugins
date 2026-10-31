@@ -1,9 +1,21 @@
 {
   "name": "team-orchestrator",
-  "version": "0.5.42",
+  "version": "0.5.43",
   "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs.",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "sharedStorePreview": {
+      "type": "boolean",
+      "title": "Shared store preview",
+      "description": "Opt in to creating fresh scratch teams in the shared store. Approve this conversation in the Shared store panel first. Existing teams are not migrated.",
+      "default": false
+    },
+    "sharedStoreNode": {
+      "type": "string",
+      "title": "Shared store Node command",
+      "description": "Node 22.13 or newer executable for the opt-in shared store adapter. Invoked directly with structured stdin.",
+      "default": "node"
+    },
     "orcaCommand": {
       "type": "string",
       "title": "Orca command",

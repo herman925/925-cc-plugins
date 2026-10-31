@@ -1,0 +1,149 @@
+// Contract foundation for issue #154. Neither shipped client imports this yet.
+// There is one DDL source. The only substitution is the engine's identity collation.
+export const FORMAT = 'team-orchestrator-shared';
+export const SCHEMA_VERSION = 2;
+export const PROJECT_DIRECTORY = '.team-orchestrator';
+export const PROJECT_DATABASE = 'team.sqlite';
+export const MACHINE_DATABASE = 'machine.sqlite';
+
+export const DDL = `
+CREATE TABLE store_metadata (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  format TEXT NOT NULL CHECK (format = 'team-orchestrator-shared'),
+  schema_version BIGINT NOT NULL CHECK (schema_version >= 1)
+);
+CREATE TABLE store_lease (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  holder_machine_id TEXT COLLATE {{identity_collation}},
+  holder_token TEXT COLLATE {{identity_collation}},
+  generation BIGINT NOT NULL CHECK (generation >= 0 AND generation <= 9007199254740991),
+  expires_at_ms BIGINT NOT NULL CHECK (expires_at_ms >= 0 AND expires_at_ms <= 9007199254740991),
+  CHECK ((holder_machine_id IS NULL AND holder_token IS NULL AND expires_at_ms = 0)
+      OR (holder_machine_id IS NOT NULL AND length(holder_machine_id) > 0
+          AND holder_token IS NOT NULL AND length(holder_token) > 0 AND expires_at_ms > 0))
+);
+CREATE TABLE runs (
+  run_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(run_id) > 0),
+  consumer_generation BIGINT NOT NULL CHECK (consumer_generation >= 1 AND consumer_generation <= 9007199254740991)
+);
+CREATE TABLE tasks (
+  task_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(task_id) > 0),
+  run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
+  UNIQUE (task_id, run_id)
+);
+-- An admitted assignment is a durable record, not proof of worker understanding.
+-- Pickup, timeout, retry, and settlement states are deliberately not invented here.
+CREATE TABLE assignments (
+  assignment_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(assignment_id) > 0),
+  task_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE REFERENCES tasks (task_id),
+  member_id TEXT COLLATE {{identity_collation}} NOT NULL CHECK (length(member_id) > 0),
+  admitted_at_ms BIGINT NOT NULL CHECK (admitted_at_ms >= 0 AND admitted_at_ms <= 9007199254740991)
+);
+CREATE TABLE threads (
+  thread_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(thread_id) > 0),
+  run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
+  status TEXT COLLATE {{identity_collation}} NOT NULL CHECK (status IN ('open', 'answered', 'fenced')),
+  generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
+  answer TEXT,
+  CHECK ((status = 'answered' AND answer IS NOT NULL) OR (status IN ('open', 'fenced') AND answer IS NULL))
+);
+CREATE TABLE deliveries (
+  delivery_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(delivery_id) > 0),
+  run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
+  consumer_generation BIGINT NOT NULL CHECK (consumer_generation >= 1 AND consumer_generation <= 9007199254740991),
+  status TEXT COLLATE {{identity_collation}} NOT NULL CHECK (status IN ('outstanding', 'acknowledged', 'fenced')),
+  generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991)
+);
+CREATE TABLE decision_gates (
+  gate_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(gate_id) > 0),
+  task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
+  question TEXT NOT NULL CHECK (length(question) > 0)
+);
+CREATE TABLE operations (
+  operation_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(operation_id) > 0),
+  request_fingerprint TEXT NOT NULL,
+  result TEXT NOT NULL,
+  committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0 AND committed_at_ms <= 9007199254740991)
+);
+INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 2);
+INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
+VALUES (1, NULL, NULL, 0, 0);
+`;
+
+export function ddlFor(engine) {
+  if (engine !== 'sqlite' && engine !== 'postgres') throw new Error(`Unsupported team-store engine: ${engine}`);
+  const collation = engine === 'sqlite' ? 'BINARY' : '"C"';
+  return DDL.replaceAll('{{identity_collation}}', collation);
+}
+
+// These are protocol statements, not a store API. Bind values; never interpolate them.
+// :now_ms must come from the database clock in the transaction, not a remote machine.
+const leaseGuard = `EXISTS (
+  SELECT 1 FROM store_lease
+  WHERE singleton = 1 AND holder_machine_id = :machine_id AND holder_token = :holder_token
+    AND generation = :lease_generation AND expires_at_ms > :now_ms
+)`;
+const currentConsumer = `EXISTS (
+  SELECT 1 FROM runs WHERE runs.run_id = :run_id AND consumer_generation = :consumer_generation
+)`;
+
+export const SQL = Object.freeze({
+  readVersion: 'SELECT format, schema_version FROM store_metadata WHERE singleton = 1',
+  readOperation: 'SELECT request_fingerprint, result, committed_at_ms FROM operations WHERE operation_id = :operation_id',
+  readLease: 'SELECT holder_machine_id, holder_token, generation, expires_at_ms FROM store_lease WHERE singleton = 1',
+  // Portable row-lock acquisition. EXISTS alone does not serialize the lease
+  // against another PostgreSQL transaction. Sample the clock AFTER this returns.
+  lockLease: `UPDATE store_lease SET generation = generation
+    WHERE singleton = 1 AND holder_machine_id = :machine_id AND holder_token = :holder_token
+      AND generation = :lease_generation
+    RETURNING expires_at_ms`,
+  acquireLease: `UPDATE store_lease
+    SET holder_machine_id = :machine_id, holder_token = :holder_token,
+        generation = generation + 1, expires_at_ms = :expires_at_ms
+    WHERE singleton = 1 AND generation = :expected_generation AND expires_at_ms <= :now_ms
+      AND :expires_at_ms > :now_ms
+    RETURNING generation`,
+  renewLease: `UPDATE store_lease SET expires_at_ms = :expires_at_ms
+    WHERE singleton = 1 AND holder_machine_id = :machine_id AND holder_token = :holder_token
+      AND generation = :lease_generation AND expires_at_ms > :now_ms
+      AND :expires_at_ms > expires_at_ms
+    RETURNING generation`,
+  admitAssignment: `INSERT INTO assignments (assignment_id, task_id, member_id, admitted_at_ms)
+    SELECT :assignment_id, :task_id, :member_id, :now_ms WHERE ${leaseGuard}
+    RETURNING assignment_id`,
+  answerThread: `UPDATE threads SET status = 'answered', answer = :answer, generation = generation + 1
+    WHERE thread_id = :thread_id AND run_id = :run_id AND status = 'open' AND generation = :expected_generation
+      AND ${currentConsumer} AND ${leaseGuard}
+    RETURNING generation`,
+  acknowledgeDelivery: `UPDATE deliveries SET status = 'acknowledged', generation = generation + 1
+    WHERE delivery_id = :delivery_id AND run_id = :run_id AND status = 'outstanding'
+      AND generation = :expected_generation AND consumer_generation = :consumer_generation
+      AND ${currentConsumer} AND ${leaseGuard}
+    RETURNING generation`,
+  fenceDeliveries: `UPDATE deliveries SET status = 'fenced', generation = generation + 1
+    WHERE run_id = :run_id AND consumer_generation = :consumer_generation AND status = 'outstanding'
+      AND ${currentConsumer} AND ${leaseGuard}
+    RETURNING delivery_id`,
+  rebindConsumer: `UPDATE runs SET consumer_generation = consumer_generation + 1
+    WHERE run_id = :run_id AND consumer_generation = :consumer_generation AND ${leaseGuard}
+    RETURNING consumer_generation`,
+});
+
+// Normative companion to the DDL. The next store increment must implement and test
+// these rules; constraints alone cannot enforce every multi-statement transition.
+export const RULES = Object.freeze({
+  version: 'Read format and schema_version before any write, including lease acquisition. Refuse unknown versions without DDL, reset, downgrade, or legacy-file writes. Schema installation is for a verified empty store only.',
+  identity: 'Use lower_snake_case SQL names and case-sensitive opaque identifier values. Bind nonempty, NUL-free UTF-8 strings. Do not normalize member identity from a display name or filesystem case.',
+  numbers: 'Bind finite, nonnegative safe integers for counters and UTC epoch milliseconds. Consumer and row generations start at one. Refuse generation overflow; never wrap or reset.',
+  foreignKeys: 'Enable and verify SQLite foreign_keys on every connection before BEGIN. Refuse a connection if enforcement cannot be enabled. PostgreSQL constraints must remain enabled.',
+  lease: 'Acquire and renew with conditional writes. A live lease refuses every competing holder, including a different token on the same machine. Report the recorded machine and expiry. Every shared mutation transaction must lockLease first, before locking any entity row. Zero rows refuses the transaction. Sample the database clock after that potentially blocking lock, then check expiry within the mutation; a stale pre-lock timestamp is invalid. Expiry is exclusive. Hold the lease row lock through COMMIT so acquisition cannot interleave with the mutation. EXISTS alone is insufficient under PostgreSQL MVCC. Reacquisition increments its generation; renewal preserves it. Never hold a write transaction across non-database external effects: agent calls, HTTP requests to other services, filesystem writes outside the database, or message sends. Database protocol reads and writes are permitted.',
+  commit: 'Success means COMMIT succeeded. RETURNING rows are provisional until commit. Zero rows on a conditional write is a conflict, not success. Roll back the entire transaction on any failed prerequisite. Never launch, send, or acknowledge an external effect based on provisional rows.',
+  assignment: 'The task has one stable admitted-assignment row. A uniqueness conflict is not permission to reassign or relaunch. Admission records system acceptance, not worker pickup or understanding. Attempt history and reassignment require the later lifecycle contract.',
+  thread: 'Answer only an open thread at its expected row and consumer generations under the current lease. Only one committed writer wins. Answered and fenced threads cannot be reopened by protocol statements.',
+  delivery: 'Acknowledged and fenced deliveries are terminal. Acknowledgement uses the expected row and consumer generations under the current lease. Fencing is not acknowledgement. Terminal historical rows remain intact.',
+  rebind: 'In one transaction, fence the old consumer generation\'s outstanding deliveries, then increment the Run consumer generation by compare-and-set. Roll back both if the rebind loses or the lease expires. New consumers cannot acknowledge old deliveries. Message replay and redelivery policy are not defined by this foundation.',
+  retry: 'SQLite busy/locked and PostgreSQL 40001/40P01 require a bounded whole-transaction retry after rollback, with the same operation identity and freshly read generations. A lost commit response is unknown: reconcile before retrying. A uniqueness violation is a domain conflict, not a transient retry. No retry may duplicate an external effect.',
+  receipts: 'Write the operation id, canonical request fingerprint, serialized outcome and database commit timestamp atomically in the mutation transaction. Fingerprint the operation kind, authenticated principal id and every outcome-determining request value, including expected row generations; object key order must not matter. Exclude database-generated timestamps, refreshed lease bindings, and explicitly nonsemantic request metadata such as submission timestamps. Same id and fingerprint replays the recorded result after current authorization and version checks. Same id and a different fingerprint is a conflict, never an overwrite. After a lost commit reply, reconcile using that same operation id; an absent receipt alone does not prove an in-flight operation rolled back. Serialize with the lease and recheck the receipt before any repeated mutation.',
+  storage: 'Use project-root .team-orchestrator/team.sqlite on a local filesystem, or an explicitly configured project PostgreSQL database. Never concurrently write copied or file-synchronized SQLite replicas. Machine-local observations belong in machine.sqlite; local receipts do not establish a shared delivery transition. The migration must leave legacy folders intact.',
+  authority: 'A lease or an admitted assignment never grants tool, role, or filesystem permissions. Preserve existing guards, user grants, protected managers, and the peer-message early return. At capacity wait; never evict or automatically close.',
+});

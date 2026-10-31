@@ -10,6 +10,7 @@
 
 import type { Member } from '../types'
 import { roleFile } from './status'
+import { USER_QUESTION_GUIDANCE } from './question-guidance'
 
 export const MARKER = '<!-- END OF THE GENERATED PART. The Team Orchestrator rewrites everything above this line when the team changes. Write your own notes below it. -->'
 
@@ -52,6 +53,7 @@ export function roleText(m: Member, list: Member[]): string {
       : ['- Talk only to your boss, with SendMessage. Do not message your boss\'s boss, other leads or other workers unless your boss names one to you.']),
     '- If SendMessage says a teammate\'s name is ambiguous or unknown, use team_message with the plain name instead.',
     '- Never type into another member\'s terminal (orca terminal send) to message it.',
+    ...(m.boss === 'user' ? ['', '## User decisions', '', USER_QUESTION_GUIDANCE] : []),
     '',
     '## Housekeeping',
     '',

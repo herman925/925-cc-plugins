@@ -1,0 +1,16 @@
+[
+  {
+    "assignment_id": "s5-assignment-1",
+    "task_id": "s5-task-1",
+    "member_id": "s5-worker",
+    "admitted_at_ms": 1793446439167,
+    "assigned_by_member_id": "s5-head",
+    "pickup_deadline_ms": 1793446559167,
+    "pickup_observed_at_ms": null,
+    "pickup_expired_at_ms": null,
+    "returned_to_member_id": null,
+    "previous_assignment_id": null,
+    "task_window_minutes": null,
+    "task_deadline_ms": null
+  }
+]

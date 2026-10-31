@@ -3,13 +3,15 @@ import { createServer, createConnection } from 'node:net';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createNativeRpc } from '../src/local/native-runtime.mjs';
 
 // Actual pinned migration fence, durable mutation executor and SQLite receipt store.
 // Only the final stop effect is inert; this does not prove native process ownership.
 export async function verifyStopContract(host) {
- const profile=await mkdtemp(join(tmpdir(),'stop-contract-')),endpoint=join(profile,'rpc.sock');
+ const profile=await mkdtemp(join(tmpdir(),'stop-contract-'));
+ const pipe=process.platform==='win32',endpoint=pipe?`\\\\.\\pipe\\team-stop-contract-${randomUUID()}`:join(profile,'rpc.sock');
  const db=new DatabaseSync(':memory:');db.exec(host.createCoreTablesSql());host.migrateMutationReceiptCapacity(db);
  const native={db};for(const name of ['getOrCreateLocalMutationCallerFingerprint','beginMutationReceipt','completeMutationReceipt','discardPendingMutationReceipt','getMutationReceipt'])native[name]=host[name];
  const runtime={getOrchestrationDb:()=>native,getRuntimeId:()=> 'contract-runtime'};
@@ -24,8 +26,8 @@ export async function verifyStopContract(host) {
   if(dropReceipt){if(response.ok!==true)console.error('Unexpected pinned stop response before loss:',response);dropReceipt=false;socket.destroy();}else socket.end(JSON.stringify(response)+'\n');
  }));
  try{
-  await new Promise(resolve=>server.listen(endpoint,resolve));
-  await writeFile(join(profile,'orca-runtime.json'),JSON.stringify({pid:process.pid,runtimeId:'contract-runtime',authToken:'isolated',transport:{kind:'unix',endpoint}}));
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
+  await writeFile(join(profile,'orca-runtime.json'),JSON.stringify({pid:process.pid,runtimeId:'contract-runtime',authToken:'isolated',transport:{kind:pipe?'named-pipe':'unix',endpoint}}));
   const rpc=createNativeRpc({userData:profile,parentPid:process.pid,consent:async()=>{}});
   const requestId='550e8400-e29b-41d4-a716-446655440000',params={dispatch:'exact-owned-dispatch'};
   const raw=request=>new Promise((resolve,reject)=>{const socket=createConnection(endpoint),chunks=[];socket.on('connect',()=>socket.write(JSON.stringify(request)+'\n'));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>resolve(JSON.parse(Buffer.concat(chunks).toString())));socket.on('error',reject);});

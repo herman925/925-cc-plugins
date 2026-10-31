@@ -1,0 +1,93 @@
+--- a/shared/team-store/contract.mjs
++++ b/shared/team-store/contract.mjs
+@@ -1,7 +1,7 @@
+ // Contract foundation for issue #154. Neither shipped client imports this yet.
+ // There is one DDL source. The only substitution is the engine's identity collation.
+ export const FORMAT = 'team-orchestrator-shared';
+-export const SCHEMA_VERSION = 1;
++export const SCHEMA_VERSION = 2;
+ export const PROJECT_DIRECTORY = '.team-orchestrator';
+ export const PROJECT_DATABASE = 'team.sqlite';
+ export const MACHINE_DATABASE = 'machine.sqlite';
+@@ -59,7 +59,13 @@
+   task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
+   question TEXT NOT NULL CHECK (length(question) > 0)
+ );
+-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 1);
++CREATE TABLE operations (
++  operation_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(operation_id) > 0),
++  request_fingerprint TEXT NOT NULL,
++  result TEXT NOT NULL,
++  committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0 AND committed_at_ms <= 9007199254740991)
++);
++INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 2);
+ INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
+ VALUES (1, NULL, NULL, 0, 0);
+ `;
+@@ -83,6 +89,7 @@
+ 
+ export const SQL = Object.freeze({
+   readVersion: 'SELECT format, schema_version FROM store_metadata WHERE singleton = 1',
++  readOperation: 'SELECT request_fingerprint, result, committed_at_ms FROM operations WHERE operation_id = :operation_id',
+   readLease: 'SELECT holder_machine_id, holder_token, generation, expires_at_ms FROM store_lease WHERE singleton = 1',
+   // Portable row-lock acquisition. EXISTS alone does not serialize the lease
+   // against another PostgreSQL transaction. Sample the clock AFTER this returns.
+@@ -129,13 +136,14 @@
+   identity: 'Use lower_snake_case SQL names and case-sensitive opaque identifier values. Bind nonempty, NUL-free UTF-8 strings. Do not normalize member identity from a display name or filesystem case.',
+   numbers: 'Bind finite, nonnegative safe integers for counters and UTC epoch milliseconds. Consumer and row generations start at one. Refuse generation overflow; never wrap or reset.',
+   foreignKeys: 'Enable and verify SQLite foreign_keys on every connection before BEGIN. Refuse a connection if enforcement cannot be enabled. PostgreSQL constraints must remain enabled.',
+-  lease: 'Acquire and renew with conditional writes. A live lease refuses every competing holder, including a different token on the same machine. Report the recorded machine and expiry. Every shared mutation transaction must lockLease first, before locking any entity row. Zero rows refuses the transaction. Sample the database clock after that potentially blocking lock, then check expiry within the mutation; a stale pre-lock timestamp is invalid. Expiry is exclusive. Hold the lease row lock through COMMIT so acquisition cannot interleave with the mutation. EXISTS alone is insufficient under PostgreSQL MVCC. Reacquisition increments its generation; renewal preserves it. Do not hold a write transaction over a network or agent operation.',
++  lease: 'Acquire and renew with conditional writes. A live lease refuses every competing holder, including a different token on the same machine. Report the recorded machine and expiry. Every shared mutation transaction must lockLease first, before locking any entity row. Zero rows refuses the transaction. Sample the database clock after that potentially blocking lock, then check expiry within the mutation; a stale pre-lock timestamp is invalid. Expiry is exclusive. Hold the lease row lock through COMMIT so acquisition cannot interleave with the mutation. EXISTS alone is insufficient under PostgreSQL MVCC. Reacquisition increments its generation; renewal preserves it. Never hold a write transaction across non-database external effects: agent calls, HTTP requests to other services, filesystem writes outside the database, or message sends. Database protocol reads and writes are permitted.',
+   commit: 'Success means COMMIT succeeded. RETURNING rows are provisional until commit. Zero rows on a conditional write is a conflict, not success. Roll back the entire transaction on any failed prerequisite. Never launch, send, or acknowledge an external effect based on provisional rows.',
+   assignment: 'The task has one stable admitted-assignment row. A uniqueness conflict is not permission to reassign or relaunch. Admission records system acceptance, not worker pickup or understanding. Attempt history and reassignment require the later lifecycle contract.',
+   thread: 'Answer only an open thread at its expected row and consumer generations under the current lease. Only one committed writer wins. Answered and fenced threads cannot be reopened by protocol statements.',
+   delivery: 'Acknowledged and fenced deliveries are terminal. Acknowledgement uses the expected row and consumer generations under the current lease. Fencing is not acknowledgement. Terminal historical rows remain intact.',
+   rebind: 'In one transaction, fence the old consumer generation\'s outstanding deliveries, then increment the Run consumer generation by compare-and-set. Roll back both if the rebind loses or the lease expires. New consumers cannot acknowledge old deliveries. Message replay and redelivery policy are not defined by this foundation.',
+   retry: 'SQLite busy/locked and PostgreSQL 40001/40P01 require a bounded whole-transaction retry after rollback, with the same operation identity and freshly read generations. A lost commit response is unknown: reconcile before retrying. A uniqueness violation is a domain conflict, not a transient retry. No retry may duplicate an external effect.',
++  receipts: 'Write the operation id, canonical request fingerprint, serialized outcome and database commit timestamp atomically in the mutation transaction. Fingerprint the operation kind, authenticated principal id and every outcome-determining request value, including expected row generations; object key order must not matter. Exclude database-generated timestamps, refreshed lease bindings, and explicitly nonsemantic request metadata such as submission timestamps. Same id and fingerprint replays the recorded result after current authorization and version checks. Same id and a different fingerprint is a conflict, never an overwrite. After a lost commit reply, reconcile using that same operation id; an absent receipt alone does not prove an in-flight operation rolled back. Serialize with the lease and recheck the receipt before any repeated mutation.',
+   storage: 'Use project-root .team-orchestrator/team.sqlite on a local filesystem, or an explicitly configured project PostgreSQL database. Never concurrently write copied or file-synchronized SQLite replicas. Machine-local observations belong in machine.sqlite; local receipts do not establish a shared delivery transition. The migration must leave legacy folders intact.',
+   authority: 'A lease or an admitted assignment never grants tool, role, or filesystem permissions. Preserve existing guards, user grants, protected managers, and the peer-message early return. At capacity wait; never evict or automatically close.',
+ });
+--- a/shared/team-store/test/contract.test.mjs
++++ b/shared/team-store/test/contract.test.mjs
+@@ -243,5 +243,40 @@
+       assert.equal(Number(delivery.generation), 1);
+       assert.equal(Number((await db.query("SELECT consumer_generation FROM runs WHERE run_id = 'run'"))[0].consumer_generation), 1);
+     });
++
++    test('operation ids refuse a different fingerprint and replay the original saved result', async t => {
++      const { db } = await seeded(t, engine);
++      await db.exec(`INSERT INTO operations VALUES ('operation', 'fingerprint-A', '{"answer":"saved"}', 1000)`);
++      await assert.rejects(db.exec(`INSERT INTO operations VALUES ('operation', 'fingerprint-B', '{"answer":"different"}', 1001)`), constraint);
++      const [receipt] = await db.query(SQL.readOperation, { operation_id: 'operation' });
++      assert.equal(receipt.request_fingerprint, 'fingerprint-A');
++      assert.deepEqual(JSON.parse(receipt.result), { answer: 'saved' });
++      assert.equal(Number(receipt.committed_at_ms), 1000);
++    });
++
++    test('a rolled-back mutation leaves neither its effect nor an operation receipt', async t => {
++      const { db } = await seeded(t, engine);
++      await db.exec('BEGIN');
++      await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'provisional' });
++      await db.exec(`INSERT INTO operations VALUES ('uncommitted', 'fingerprint', '{"answer":"provisional"}', 1000)`);
++      await db.exec('ROLLBACK');
++      assert.deepEqual(await db.query(SQL.readOperation, { operation_id: 'uncommitted' }), []);
++      assert.equal((await db.query("SELECT status FROM threads WHERE thread_id = 'thread'"))[0].status, 'open');
++    });
++
++    test('a committed operation receipt survives a later failed transaction unchanged', async t => {
++      const { db } = await seeded(t, engine);
++      await db.exec('BEGIN');
++      await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'committed' });
++      await db.exec(`INSERT INTO operations VALUES ('committed', 'fingerprint', '{"answer":"committed"}', 1000)`);
++      await db.exec('COMMIT');
++      await db.exec('BEGIN');
++      await assert.rejects(db.exec(`INSERT INTO operations VALUES ('committed', 'other', '{}', 1001)`), constraint);
++      await db.exec('ROLLBACK');
++      const [receipt] = await db.query(SQL.readOperation, { operation_id: 'committed' });
++      assert.equal(receipt.request_fingerprint, 'fingerprint');
++      assert.deepEqual(JSON.parse(receipt.result), { answer: 'committed' });
++      assert.equal((await db.query("SELECT answer FROM threads WHERE thread_id = 'thread'"))[0].answer, 'committed');
++    });
+   });
+ }

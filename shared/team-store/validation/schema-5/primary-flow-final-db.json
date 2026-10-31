@@ -1,0 +1,54 @@
+{
+  "tasks": [
+    {
+      "task_id": "s5-task-1",
+      "run_id": "s5-run-1",
+      "status": "succeeded",
+      "outcome": "succeeded"
+    }
+  ],
+  "attempts": [
+    {
+      "assignment_id": "s5-assignment-1",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "Read fixture.txt read-only for task s5-task-1. First line: 'Schema five source Mod acceptance fixture.' Whitespace-separated word count: 13.",
+      "evidence": "Read-only read of fixture.txt, no edit. Exact first line: 'Schema five source Mod acceptance fixture.' Whitespace-separated word count: 13. Cross-checks: 2 lines, 97 bytes, sha256 7575e60e54d54bbb9a59d1e873ba652bed9f0742135cd183d2330db58b0a3b71. No write performed.",
+      "reported_at_ms": 1793446566505
+    }
+  ],
+  "acceptances": [
+    {
+      "task_id": "s5-task-1",
+      "assignment_id": "s5-assignment-1",
+      "accepted_by_member_id": "s5-head",
+      "decision": "accepted",
+      "reason": "Reviewed stored worker evidence: 13 words, exact fixture first line and SHA256 match independent measurement; role/brief preceded read-only work.",
+      "decided_at_ms": 1793446834028
+    }
+  ],
+  "bindings": [
+    {
+      "member_id": "s5-head",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "65199823-8eb0-4ae4-83e6-4d7728752d15",
+      "execution_host_id": "local",
+      "context_id": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+      "terminal_handle": "term_3a05373a-bade-4458-8a9a-0a6b1ade67f7",
+      "incarnation_id": "1b04addb-f40a-4537-a9ec-bdf9fa9ade32",
+      "generation": 1
+    },
+    {
+      "member_id": "s5-worker",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "d7d7b451-3d8f-4c43-8aad-1697e2f858b0",
+      "execution_host_id": "local",
+      "context_id": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+      "terminal_handle": "term_fef5811b-74aa-4d5f-a806-62f1b7c663e2",
+      "incarnation_id": "a9b65818-4e12-4176-bbcd-7bf15906e527",
+      "generation": 1
+    }
+  ]
+}
