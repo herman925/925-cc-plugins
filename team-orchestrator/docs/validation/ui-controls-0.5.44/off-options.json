@@ -1,0 +1,12 @@
+{
+  "pluginConfigs": {
+    "team-orchestrator@inline": {
+      "options": {
+        "orcaCommand": "orca.exe",
+        "sharedStoreNode": "C:/Program Files/nodejs/node.exe",
+        "sharedStorePreview": false
+      }
+    }
+  },
+  "theme": "dark"
+}

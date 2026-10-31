@@ -20,7 +20,8 @@ import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from './assumptions'
 import type { OpenAssumption } from './assumptions'
-import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, setSharedStoreProof } from './shared-store'
+import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore } from './shared-store'
+import type { SharedControls } from './shared-store'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -46,6 +47,21 @@ async function putFile($: any, path: string, text: string): Promise<void> {
 }
 const cfg = { orcaCommand: '', version: '', versionRead: false }
 const sharedConfig = { enabled:false, node:'node' }
+const SHARED_PREVIEW_KEY = 'team-orchestrator.sharedStorePreview'
+const SHARED_NODE_KEY = 'team-orchestrator.sharedStoreNode'
+async function applySharedEnabled($:any,value:boolean) {
+  sharedConfig.enabled=value
+}
+async function savePluginOption($:any,key:string,value:string|boolean) {
+  const result=await $.config.set({key,value})
+  if(result?.deny)throw new Error(String(result.deny))
+}
+async function sharedControls($:any):Promise<SharedControls> {
+  return {enabled:sharedConfig.enabled,node:sharedConfig.node,orca:cfg.orcaCommand||await orcaBin($),
+    setEnabled:async(value:boolean)=>{await savePluginOption($,SHARED_PREVIEW_KEY,value);await applySharedEnabled($,value)},
+    setNode:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');await savePluginOption($,SHARED_NODE_KEY,value);sharedConfig.node=value},
+    setOrca:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');if(value){const problem=await orcaProblem($,value);if(problem)throw new Error(problem)}await savePluginOption($,ORCA_KEY,value);cfg.orcaCommand=value}}
+}
 // the version shown in the panel, read once per load from this plugin's own manifest, so it always matches what is installed
 async function readVersion($: any) {
   if (cfg.versionRead) return
@@ -2118,10 +2134,11 @@ let turn: Grants = NO_GRANTS
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
   const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
   const command = shell ? String(e.command ?? '') : ''
-  if(sharedConfig.enabled){
-    const protectedState=sharedStoreProtection(tool,pathOf(e),command)
-    if(protectedState)return `Blocked ${tool}: ${protectedState}`
-    if(tool===AGENT_TOOL || (WRITE_TOOLS as readonly string[]).includes(tool) || (shell && createsManaged(command))){
+  const protectedState=sharedStoreProtection(tool,pathOf(e),command)
+  if(protectedState)return `Blocked ${tool}: ${protectedState}`
+  if(tool===AGENT_TOOL || (WRITE_TOOLS as readonly string[]).includes(tool) || (shell && createsManaged(command))){
+    // Disabling the preview does not remove an existing member's authority rules.
+    if(sharedConfig.enabled || await $.fs.exists(`${await $.session.root()}/.team-orchestrator/team.sqlite`)){
       const scope=await preflight($)
       if(!scope.ok)return `Blocked ${tool}: shared caller verification failed: ${scope.reason}`
       if(await $.fs.exists(`${scope.root}/.team-orchestrator/team.sqlite`)){
@@ -3111,7 +3128,7 @@ export const register: Register = (on, options) => {
         const [m, v, n] = [await read($, members), await read($, view), await read($, note)]
         const busy = n.startsWith('⏳') || (await read($, spawn)).names.length > 0
         const quiet = Date.now() - typedAt > 1500
-        if (busy || (v !== 'shared' && ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet)))) await update($, frame, x => x + 1)
+        if (busy || (v !== 'shared' && v !== 'settings' && ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet)))) await update($, frame, x => x + 1)
       })(),
     )
     // a member's own process starts: its idle clock starts now, whatever its last turn or clean said (guardrail #11)
@@ -3426,7 +3443,23 @@ export const register: Register = (on, options) => {
       const problem = await orcaProblem($, value)
       if (problem) return { deny: `${problem} Give the full path to Orca's command-line tool, or leave it empty to detect it.` } as any
     }
-    return next(e)
+    const result=await next(e)
+    if(!(result as any)?.deny)cfg.orcaCommand=value
+    return result
+  })
+  on('config.set', {key:SHARED_PREVIEW_KEY} as any,async($,e,next)=>{
+    const value=(e as any).value
+    if(typeof value!=='boolean')return {deny:'Choose On or Off.'} as any
+    const result=await next(e)
+    if(!(result as any)?.deny)sharedConfig.enabled=value
+    return result
+  })
+  on('config.set', {key:SHARED_NODE_KEY} as any,async($,e,next)=>{
+    const value=String((e as any).value??'').trim()||'node'
+    if(/[\r\n\0]/.test(value)||value.length>1024)return {deny:'Use a single executable name or path.'} as any
+    const result=await next({...e,value} as any)
+    if(!(result as any)?.deny)sharedConfig.node=value
+    return result
   })
 
   on('command.run', { command: 'team' }, async ($, e) => {
@@ -3540,12 +3573,13 @@ export const register: Register = (on, options) => {
     const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
     return (
       <Box flexDirection="column">
-        <Box>
+        <Box flexWrap="wrap">
           <Text weight="bold" inverse={plainLook} backgroundColor={plainLook ? undefined : 'cyan'} color={plainLook ? undefined : 'black'}>
             {` ◆ Team Orchestrator${cfg.version ? ` v${cfg.version}` : ''} `}
           </Text>
           <Text> </Text>
           <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={() => void (async () => go(open ? 'closed' : 'roster'))()} />
+          <Button key="band-settings" label="⚙ Settings" onPress={async()=>go('settings')}/>
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
             <Text>
@@ -3604,15 +3638,14 @@ async function panel($: any, ui: any, v: View, cols: number) {
   const { Box, Text, Button } = ui
   const go = (to: View) => update($, view, () => to)
   const openShared = async () => {
-    await setSharedStoreProof($,{ok:false,reason:'Verifying the current native project and conversation…'})
     await go('shared')
-    await setSharedStoreProof($,await preflight($))
+    await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})
   }
   await readVersion($)
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
-        <Box>
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between" flexDirection={cols<110?'column':'row'}>
+        <Box flexWrap="wrap">
           <Text weight="bold" color="cyan">
             ◆ TEAM ORCHESTRATOR
           </Text>
@@ -3620,13 +3653,13 @@ async function panel($: any, ui: any, v: View, cols: number) {
           <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
           <Button key="tab-new" label="New team" onPress={() => void go('new')} />
           <Button key="tab-settings" label="Settings" onPress={() => void go('settings')} />
-          {sharedConfig.enabled?<Button key="tab-shared" label="Shared store" onPress={openShared} />:null}
+          <Button key="tab-shared" label="Shared store" variant={v==='shared'?'primary':undefined} onPress={openShared} />
         </Box>
         <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
       </Box>
       {(await read($, spawn)).names.length > 0
         ? await spawnView($, ui)
-        : v === 'shared' ? await sharedStoreView($,ui,{enabled:sharedConfig.enabled,revalidate:()=>preflight($),node:sharedConfig.node,orca:await orcaBin($)}) : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+        : v === 'shared' ? await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)}) : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
     </Box>
   )
 }
@@ -3706,6 +3739,8 @@ async function settingsView($: any, ui: any) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
       <Text color="cyan">┤ SETTINGS ├</Text>
+      {await sharedStoreOptionsView($,ui,await sharedControls($),true)}
+      <Button key="settings-shared-open" label="Open shared workspace →" onPress={async()=>{await update($,view,()=> 'shared');await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})}}/>
       <Box>
         <Text weight="bold">{'Layout'.padEnd(13)}</Text>
         {Seg(ui, 'layout', [['stacked', 'Stacked'], ['columns', 'Side by side'], ['dock', 'Dock right']], s.layout, v => void layout(v))}

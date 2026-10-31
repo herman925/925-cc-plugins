@@ -1,0 +1,12 @@
+{
+  "globalHashesUnchanged": true,
+  "options": {
+    "orcaCommand": "orca.exe",
+    "sharedStoreNode": "C:/Program Files/nodejs/node.exe",
+    "sharedStorePreview": false
+  },
+  "approvalRows": 1,
+  "teamRows": 0,
+  "isolatedStoreAbsent": true,
+  "isolatedTicketsAbsent": true
+}

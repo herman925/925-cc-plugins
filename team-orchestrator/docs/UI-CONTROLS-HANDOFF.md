@@ -1,0 +1,19 @@
+# Clickable shared-store controls — independent UI acceptance
+
+User asked for options without slash commands and a control panel rather than a wall of text. This is the related follow-up to the accepted schema-5 preview; current source branch is `feat/shared-store-controls`, intended Mod version 0.5.44. No core store/runtime or other product has changed.
+
+Source delta from published main: `team-orchestrator/hooks/register.tsx`, `hooks/shared-store.tsx`, `hooks/shared-store.test.tsx`, `types/index.d.ts`, `.claude-plugin/plugin.json`, plus README/control documentation. Use a NEW isolated source copy; do not change retained A/B/C or installed/global plugin copies. Preserve the default preview=false; that state must be tested.
+
+New UI: always-visible band **⚙ Settings** button; Shared store tab available while Off; explicit On/Off buttons; Node/Orca fields with separate Save actions; responsive bordered status/option/access cards; Check access; separate Approve controller; technical identifiers/raw receipts behind Details. Opening Settings, enabling the preview or saving fields must never mint approval evidence. Switching Off must block typed API calls while preserving any existing shared-member and raw-store guards. The catalogue is registered at startup because dynamic tool registration is unavailable in an ordinary UI callback. Repeated renders must perform no native subprocess calls.
+
+Local suite passes 372 tests, including six new behavior checks; final versioned verification is being recorded separately. Manifest/hook validation passes with the existing directory metadata warnings. No store schema, native verifier, packaged Node module or database API changed.
+
+Use a fresh disposable project and isolated configuration for persistence testing. Do not change Herman's real plugin options/settings or credentials to run this. If configuration/auth isolation cannot be established safely, report that boundary instead of writing global configuration. Existing per-invocation source flags are fine. Never print secret/auth values or copy them into repository evidence. Do not approve a controller except through the actual source panel in the disposable fixture.
+
+Required checks:
+
+1. With preview OFF by default, open Settings using its band button (no slash commands), then Shared store using the visible tab/button. Read back actual UI and capture a screenshot. Check a narrow terminal and a normal-width terminal; controls and labels must remain usable.
+2. Turn On through the actual UI and verify the saved canonical option, effective API availability and rendered On state. No team/store/approval ticket may be created by this toggle. Turn Off and verify calls are disabled and saved approval/member guards are not revoked. Verify option persistence across a fixture reload if isolated config allows it.
+3. Edit the Node field; typing must not persist or execute a draft. Save it once, verify exact executable value (spaces preserved, no shell). Verify failed save leaves the previous effective option. Orca's existing executable validation remains.
+4. Check access in a fresh project; unavailable store is a normal unapproved state. Approve only with its explicit button. Confirm the native proof/ticket/database receipt using the prior acceptance rules. After success show Approved rather than raw JSON; Details reveals diagnostic data on demand. If an unknown result is encountered, require Check access before another approval attempt.
+5. Send the first useful UI result promptly, then a bounded final report with screenshots, precise actual versus mocked evidence, retained resource inventory and any defects. Do not close retained sessions, modify globals, start a broad lifecycle rerun, commit or push. Codex will integrate/publish this UI follow-up after acceptance.
