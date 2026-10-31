@@ -140,7 +140,7 @@ const engine = (on: any, sid: { id: string }, failTo = '') => {
   return seen
 }
 const refresh = async (band: any) => {
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
 }
 const row = (rows: any[], name: string) => rows.find((x: any) => x.name === name)
@@ -152,7 +152,7 @@ test('a member\'s change goes to a change file: its own view has it at once, the
   await adopt($, ids(HUALONG))
   const before = files.get(ROSTER)
   const band = await mountBand($, 300)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   await band.press({ key: 'perm-write-Hualong|Hualong Worker 5' })
   // the file is the top's; the change waits beside it, with the one field
   expect(files.get(ROSTER)).toBe(before)
@@ -201,7 +201,7 @@ test('a team setting changed by a member waits as a change file; the top writes 
   engine(on, sid)
   await adopt($, ids(HUALONG))
   const band = await mountBand($, 300)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   await band.press({ key: 'ts-auto-0' })
   expect(files.has(`${TEAM}/settings.json`)).toBe(false)
   expect(pendingChanges(files).map(c => [c.change.kind, (c.change as any).patch])).toEqual([['settings', { autoClose: false }]])
@@ -221,7 +221,7 @@ test('a session whose mod is older than the roster\'s writer writes no team file
   files.set(`${TEAM}/meta.json`, JSON.stringify({ schemaVersion: 3, writtenBy: '0.6.0', topMachine: '' }))
   const before = files.get(ROSTER)
   const band = await mountBand($, 300)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   await band.press({ key: 'perm-agent-Hualong|Hualong Worker 5' })
   await band.press({ key: 'perm-write-Hualong|Hualong Worker 5' })
   await refresh(band)
@@ -334,7 +334,7 @@ test('the top machine is another PC: the top here writes change files, says whic
   await refresh(band)
   expect(seen.toasts.filter(t => t.includes('the team top runs on PC-A')).length).toBe(1)
   const before = files.get(ROSTER)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   await band.press({ key: 'perm-write-Hualong|Hualong Worker 5' })
   expect(files.get(ROSTER)).toBe(before)
   expect(pendingChanges(files).length).toBe(1)

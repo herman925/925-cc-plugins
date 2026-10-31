@@ -143,7 +143,7 @@ test('a codex tab adopted today is marked "not managed": never messaged, reopene
   expect(seen.sends.length).toBe(0)
   const verb = (v: string) => files.calls.filter(a => a[1] === 'terminal' && a[2] === v && a.includes('term_x'))
   const band = await mountBand($, 300)
-  await band.press({ key: 'tab-roster' })
+  if (!await band.find({ key: 'refresh' })) await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })
   expect(JSON.stringify(await band.drawn())).toContain('not managed (codex)')
   // its tab is never shown, read, closed, sent to (briefing) or created

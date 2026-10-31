@@ -10,7 +10,7 @@ test('in Settings the chosen option of Show / Hide is #ff5440 and the other stay
   sessionAs(on)
   await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c1' }])
   const band = await mountBand($, 120)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   const at = async (key: string) => JSON.stringify(await band.find({ key }))
   // the org chart starts shown: Show is chosen
   expect(await at('chart-1')).toContain(CHOSEN)
@@ -29,7 +29,7 @@ test('the layout row gets the same colour from the same helper', async ($, on) =
   sessionAs(on)
   await adopt($, [{ name: 'Hualong CEO', role: 'ceo', level: 1, boss: 'user', handle: 'term_c2' }])
   const band = await mountBand($, 120)
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   expect(JSON.stringify(await band.find({ key: 'layout-stacked' }))).toContain(CHOSEN)
   expect(JSON.stringify(await band.find({ key: 'layout-columns' }))).not.toContain(CHOSEN)
 })

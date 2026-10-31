@@ -76,7 +76,7 @@ test('once a team exists the roster and bulk tools show and the welcome screen i
   } as any)
   // adopting a team already opens the roster, so the band is drawn open
   const band = await mountBand($)
-  for (const key of ['refresh', 'none', 'settings', 'tact-0']) {
+  for (const key of ['refresh', 'none', 'tab-settings', 'tact-0']) {
     expect(await band.find({ key })).toBeDefined()
   }
   expect(await band.find({ key: 'preset-Squad' })).toBeUndefined()
@@ -616,10 +616,11 @@ const teamAct = async (band: any, ti: number, v: string) => {
   expect(await band.find({ key: `tact-${ti}-${v}` })).toBeUndefined()
 }
 
-test('each team card has one Team actions menu that opens and closes by press, and Settings sits beside Refresh', async ($, on) => {
+test('each team card has one Team actions menu that opens and closes by press, with Settings only in the tab bar', async ($, on) => {
   await alphaBeta($, on)
   const band = await mountBand($)
-  for (const key of ['tact-0', 'tact-1', 'refresh', 'settings']) expect(await band.find({ key })).toBeDefined()
+  for (const key of ['tact-0', 'tact-1', 'refresh', 'tab-settings']) expect(await band.find({ key })).toBeDefined()
+  expect(await band.find({key:'settings'})).toBeUndefined()
   for (const key of ['selteam-0', 'rmteam-0', 'actions']) expect(await band.find({ key })).toBeUndefined()
   await band.press({ key: 'tact-0' })
   for (const v of ['selall', 'selwork', 'add', 'movehere', 'remove', 'boss', 'brief', 'briefsel', 'bulk', 'open', 'rmteam']) expect(await band.find({ key: `tact-0-${v}` })).toBeDefined()
@@ -631,7 +632,7 @@ test('each team card has one Team actions menu that opens and closes by press, a
   await teamAct(band, 1, 'selwork')
   expect((await band.find({ key: 'sel-Beta|BW' }) as any).props.label).toBe('[x]')
   expect((await band.find({ key: 'sel-Beta|BHead' }) as any).props.label).toBe('[ ]')
-  await band.press({ key: 'settings' })
+  await band.press({ key: 'tab-settings' })
   expect(await band.find({ key: 'layout-columns' })).toBeDefined()
 })
 
@@ -1291,7 +1292,6 @@ test('a bulk rename restart keeps the member\'s saved model and effort when they
 test('dock right packs cards like side by side; stacked keeps one full-width card per row', async ($, on) => {
   await twoSmallTeams($, on)
   const band = await bandAt($, 120)
-  await band.press({ key: 'tab-roster' })
   expect(cardWidths(await band.drawn())).toEqual([120, 120])
   await band.press({ key: 'tab-settings' })
   await band.press({ key: 'layout-dock' })
