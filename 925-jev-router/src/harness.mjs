@@ -1,17 +1,49 @@
 import { PolicyError } from './errors.mjs';
-import { SENTINEL_MODEL } from './schema.mjs';
+import { SENTINEL_MODEL, validatePolicy } from './schema.mjs';
 import { planPreCall } from './hook.mjs';
-import { createRequestContext } from './request-context.mjs';
+import { createRequestContext, readIdentity } from './request-context.mjs';
 
 const CONTEXT_ERRORS = Object.freeze({
   binding_incomplete: 'Request identity is missing or blank. Refusing to switch model per request.',
   binding_conflict: 'Request identity headers conflict. Refusing to switch model per request.',
+  binding_mismatch: 'Header project or revision does not match the applied policy.',
   auxiliary_unpinned: 'Auxiliary traffic has no pin. Refusing to invent a leader selection.',
   selection_rejected: 'Selection did not produce an eligible model. No pin was committed.',
   selection_failed: 'Selection failed before a pin was committed.',
+  admission_rejected: 'In-flight selection cap is full. Refusing to start another selector.',
+  admission_expired: 'In-flight selection missed its deadline and was not committed.',
 });
 
-async function executePlan(fixture) {
+function trustedApplied(fixture) {
+  const applied = fixture.applied && typeof fixture.applied === 'object' ? fixture.applied : null;
+  const rawPolicy = applied?.policy ?? fixture.policy;
+  if (!rawPolicy) {
+    throw new PolicyError('policy_missing', 'Applied policy is required before identity execution.');
+  }
+  const policy = validatePolicy(rawPolicy);
+  if (applied?.project_id != null && applied.project_id !== policy.project_id) {
+    throw new PolicyError('binding_mismatch', 'Applied project does not match the policy project.');
+  }
+  const revisionSource = applied?.revision ?? fixture.revision;
+  if (revisionSource == null || String(revisionSource).trim() === '') {
+    throw new PolicyError('binding_incomplete', 'Applied revision is required before identity execution.');
+  }
+  return { policy, project: policy.project_id, revision: String(revisionSource).trim() };
+}
+
+function intersectEligible(policy, requested) {
+  if (requested == null) return [...policy.candidates];
+  if (!Array.isArray(requested)) {
+    throw new PolicyError('no_eligible_model', 'Eligible set must be a list of project candidates.');
+  }
+  const allowed = [];
+  for (const alias of requested) {
+    if (policy.candidates.includes(alias) && !allowed.includes(alias)) allowed.push(alias);
+  }
+  return allowed;
+}
+
+async function executePlan(fixture, execution = null) {
   const responses = [...(fixture.transportResponses ?? [])];
   const calls = [];
   const transport = async (body, meta) => {
@@ -32,9 +64,9 @@ async function executePlan(fixture) {
   };
   const planned = await planPreCall(fixture.request, {
     projectRoot: fixture.projectRoot,
-    policy: fixture.policy,
-    eligible: fixture.eligible,
-    agent: fixture.agent,
+    policy: execution?.policy ?? fixture.policy,
+    eligible: execution ? execution.eligible : fixture.eligible,
+    agent: execution ? execution.agent : fixture.agent,
     transport,
   });
   return { planned, calls };
@@ -63,6 +95,7 @@ function pinnedResult(fixture, resolved) {
     jev: true,
     attempt: 0,
     agent: resolved.agent,
+    parentAgent: resolved.parentAgent ?? null,
   };
   return {
     data: { ...fixture.request, model: resolved.model },
@@ -77,6 +110,7 @@ function pinnedResult(fixture, resolved) {
     },
     context: {
       agent: resolved.agent,
+      parentAgent: resolved.parentAgent ?? null,
       binding: resolved.binding,
       shared: resolved.shared,
       cached: true,
@@ -93,12 +127,22 @@ export async function runSyntheticPreCall(fixture) {
   }
 
   const store = fixture.contextStore ?? createRequestContext(fixture.contextOptions);
-  const eligible = fixture.eligible ?? fixture.policy?.candidates;
+  const promptMode = fixture.contextOptions?.promptMode ?? true;
+  const trusted = trustedApplied(fixture);
+  const identity = readIdentity(fixture.headers, { promptMode });
+  if (identity.project && identity.revision && (identity.project !== trusted.project || identity.revision !== trusted.revision)) {
+    throw new PolicyError('binding_mismatch', CONTEXT_ERRORS.binding_mismatch);
+  }
+  if (fixture.agent != null && text(fixture.agent) !== identity.agent) {
+    throw new PolicyError('binding_conflict', 'Agent id does not match the validated request identity.');
+  }
+  const eligible = intersectEligible(trusted.policy, fixture.eligible);
+  const execution = { policy: trusted.policy, eligible, agent: identity.agent };
   const resolved = await store.resolve({
     headers: fixture.headers,
     eligible,
     select: async () => {
-      const executed = await executePlan(fixture);
+      const executed = await executePlan(fixture, execution);
       return { model: executed.planned.data.model, planned: executed.planned, calls: executed.calls };
     },
   });
@@ -112,9 +156,14 @@ export async function runSyntheticPreCall(fixture) {
     ...wireResult(resolved.planned, resolved.calls, fixture, resolved.calls.length),
     context: {
       agent: resolved.agent,
+      parentAgent: resolved.parentAgent ?? null,
       binding: resolved.binding,
       shared: false,
       cached: false,
     },
   };
+}
+
+function text(value) {
+  return String(value ?? '').trim();
 }

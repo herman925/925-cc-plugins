@@ -3,10 +3,10 @@ import { SENTINEL_MODEL } from './schema.mjs';
 
 /** Pin lifetime from commit. A read does not extend it. */
 export const PIN_TTL_MS = 15 * 60 * 1000;
-/** Oldest committed pin is dropped after this many live bindings. */
+/** Cap for committed pins and for in-flight selections. */
 export const CACHE_LIMIT = 64;
 
-const UNIT = '\u001f';
+const CONTROL = /[\u0000-\u001F\u007F]/;
 const REQUIRED = ['caller', 'project', 'revision', 'session', 'agent'];
 const HEADER_FIELDS = Object.freeze({
   caller: 'x-jev-caller',
@@ -24,6 +24,8 @@ const MESSAGES = Object.freeze({
   binding_conflict: 'Request identity headers conflict. Refusing to switch model per request.',
   auxiliary_unpinned: 'Auxiliary traffic has no pin. Refusing to invent a leader selection.',
   selection_rejected: 'Selection did not produce an eligible model. No pin was committed.',
+  admission_rejected: 'In-flight selection cap is full. Refusing to start another selector.',
+  admission_expired: 'In-flight selection missed its deadline and was not committed.',
 });
 
 function text(value) {
@@ -64,22 +66,36 @@ function field(headers, key) {
 
 export function readIdentity(headers, { promptMode = true } = {}) {
   const normalized = normalizeHeaders(headers);
-  const parentAgent = field(normalized, 'parentAgent');
-  return {
+  const identity = {
     caller: field(normalized, 'caller'),
     project: field(normalized, 'project'),
     revision: field(normalized, 'revision'),
     session: field(normalized, 'session'),
-    agent: parentAgent || field(normalized, 'agent'),
+    agent: field(normalized, 'agent'),
+    parentAgent: field(normalized, 'parentAgent'),
     prompt: promptMode ? field(normalized, 'prompt') : '',
     traffic: field(normalized, 'traffic').toLowerCase(),
   };
+  const values = [
+    identity.caller,
+    identity.project,
+    identity.revision,
+    identity.session,
+    identity.agent,
+    identity.parentAgent,
+    identity.prompt,
+    identity.traffic,
+  ];
+  if (values.some(value => value && CONTROL.test(value))) {
+    throw new PolicyError('binding_conflict', 'Request identity contains a control character.');
+  }
+  return identity;
 }
 
 function bindingKey(identity, promptMode) {
   const parts = [identity.caller, identity.project, identity.revision, identity.session, identity.agent];
   if (promptMode) parts.push(identity.prompt);
-  return parts.join(UNIT);
+  return JSON.stringify(parts);
 }
 
 function missingFields(identity, promptMode) {
@@ -98,6 +114,7 @@ function failure(code, identity, binding = null) {
     code,
     model: null,
     agent: identity?.agent || null,
+    parentAgent: identity?.parentAgent || null,
     selectorInvoked: false,
     shared: false,
     binding,
@@ -105,10 +122,19 @@ function failure(code, identity, binding = null) {
   };
 }
 
+function lineage(result, identity) {
+  return {
+    ...result,
+    agent: result.agent || identity?.agent || null,
+    parentAgent: identity?.parentAgent || null,
+  };
+}
+
 export function createRequestContext({
   promptMode = true,
   ttlMs = PIN_TTL_MS,
   limit = CACHE_LIMIT,
+  inflightDeadlineMs = ttlMs,
   now = () => Date.now(),
 } = {}) {
   const pins = new Map();
@@ -137,6 +163,24 @@ export function createRequestContext({
     return eligibleHit(record.model, eligible);
   }
 
+  function sweep(clock) {
+    for (const [flightKey, flight] of inflight) {
+      if (clock - flight.startedAt <= inflightDeadlineMs) continue;
+      flight.expired = true;
+      inflight.delete(flightKey);
+      flight.publish(failure('admission_expired', flight.identity, flightKey));
+    }
+  }
+
+  function acceptShared(result, identity, eligible, key) {
+    const shared = lineage({ ...result, selectorInvoked: false, shared: true }, identity);
+    if (!result?.ok) return shared;
+    if (!eligibleHit(result.model, eligible)) {
+      return lineage({ ...failure('selection_rejected', identity, key), shared: true }, identity);
+    }
+    return shared;
+  }
+
   async function resolve({ headers, eligible, select } = {}) {
     let identity;
     try {
@@ -153,6 +197,7 @@ export function createRequestContext({
     const key = bindingKey(identity, promptMode);
     const auxiliary = identity.traffic === 'auxiliary' || identity.traffic === 'compaction';
     const clock = now();
+    sweep(clock);
 
     if (auxiliary) {
       const hit = pins.get(key);
@@ -161,7 +206,7 @@ export function createRequestContext({
         return failure('auxiliary_unpinned', identity, key);
       }
       touch(key);
-      return {
+      return lineage({
         ok: true,
         model: hit.model,
         agent: identity.agent,
@@ -169,14 +214,14 @@ export function createRequestContext({
         shared: false,
         binding: key,
         cached: true,
-      };
+      }, identity);
     }
 
     const existing = pins.get(key);
     if (existing) {
       if (live(existing, clock, eligible)) {
         touch(key);
-        return {
+        return lineage({
           ok: true,
           model: existing.model,
           agent: identity.agent,
@@ -184,36 +229,49 @@ export function createRequestContext({
           shared: false,
           binding: key,
           cached: true,
-        };
+        }, identity);
       }
       pins.delete(key);
     }
 
     const pending = inflight.get(key);
     if (pending) {
-      const result = await pending;
-      return { ...result, selectorInvoked: false, shared: true };
+      const result = await pending.promise;
+      return acceptShared(result, identity, eligible, key);
+    }
+    if (inflight.size >= limit) {
+      return failure('admission_rejected', identity, key);
     }
 
     let publish;
-    const flight = new Promise(resolveFlight => {
+    const promise = new Promise(resolveFlight => {
       publish = resolveFlight;
     });
+    const flight = { promise, publish, startedAt: clock, expired: false, identity };
     inflight.set(key, flight);
 
     try {
       const selected = await select();
+      if (flight.expired) {
+        return lineage({ ...failure('admission_expired', identity, key), selectorInvoked: true }, identity);
+      }
       const model = selected?.model;
       if (typeof model !== 'string' || model.length === 0 || model === SENTINEL_MODEL || (eligible != null && !eligibleHit(model, eligible))) {
         const rejected = failure('selection_rejected', identity, key);
         publish(rejected);
         return { ...rejected, selectorInvoked: true };
       }
-      remember(key, { model, agent: identity.agent, at: now() });
+      remember(key, {
+        model,
+        agent: identity.agent,
+        parentAgent: identity.parentAgent || null,
+        at: now(),
+      });
       publish({
         ok: true,
         model,
         agent: identity.agent,
+        parentAgent: identity.parentAgent || null,
         selectorInvoked: false,
         shared: true,
         binding: key,
@@ -222,6 +280,7 @@ export function createRequestContext({
         ok: true,
         model,
         agent: identity.agent,
+        parentAgent: identity.parentAgent || null,
         selectorInvoked: true,
         shared: false,
         binding: key,
@@ -229,16 +288,19 @@ export function createRequestContext({
         calls: selected.calls ?? null,
       };
     } catch (error) {
-      publish(failure(error?.code || 'selection_failed', identity, key));
+      if (!flight.expired) {
+        flight.publish(failure(error?.code || 'selection_failed', identity, key));
+      }
       throw error;
     } finally {
-      inflight.delete(key);
+      if (inflight.get(key) === flight) inflight.delete(key);
     }
   }
 
   return {
     resolve,
     size: () => pins.size,
+    inflightSize: () => inflight.size,
     headersAuthorizeApply,
   };
 }

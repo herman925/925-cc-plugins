@@ -162,29 +162,39 @@ test('prompt ids may span subagents without dropping the agent id', async () => 
   const childA = await pick(store, headers({
     'X-Jev-Agent': 'child-a',
     'X-Jev-Parent-Agent': parent,
-    'X-Jev-Prompt': 'prompt-child-a',
+    'X-Jev-Prompt': 'prompt-shared',
   }), 'unused', { select });
-  const samePromptOtherChild = await pick(store, headers({
-    'X-Jev-Agent': 'child-b',
-    'X-Jev-Parent-Agent': parent,
-    'X-Jev-Prompt': 'prompt-child-a',
-  }), 'strong-worker', { select });
   const childB = await pick(store, headers({
     'X-Jev-Agent': 'child-b',
     'X-Jev-Parent-Agent': parent,
-    'X-Jev-Prompt': 'prompt-child-b',
+    'X-Jev-Prompt': 'prompt-shared',
   }), 'unused', { select });
-  assert.equal(childA.agent, parent);
-  assert.equal(samePromptOtherChild.agent, parent);
-  assert.equal(childB.agent, parent);
-  assert.equal(samePromptOtherChild.selectorInvoked, false);
-  assert.equal(samePromptOtherChild.model, 'cheap-worker');
-  assert.equal(childB.selectorInvoked, true);
-  assert.equal(calls, 2);
+  const again = await pick(store, headers({
+    'X-Jev-Agent': 'child-a',
+    'X-Jev-Parent-Agent': parent,
+    'X-Jev-Prompt': 'prompt-shared',
+  }), 'strong-worker', { select });
+  const parentOnly = await pick(store, headers({
+    'X-Jev-Agent': '   ',
+    'X-Jev-Parent-Agent': parent,
+    'X-Jev-Prompt': 'prompt-shared',
+  }), 'unused', { select });
+  assert.equal(childA.agent, 'child-a');
+  assert.equal(childB.agent, 'child-b');
+  assert.equal(childA.parentAgent, parent);
+  assert.equal(childB.parentAgent, parent);
   assert.notEqual(childA.binding, childB.binding);
-  assert.equal(childA.binding.split('\u001f')[4], parent);
-  assert.equal(childB.binding.split('\u001f')[4], parent);
-  assert.equal(childA.binding.split('\u001f').includes('child-a'), false);
+  assert.equal(JSON.parse(childA.binding)[4], 'child-a');
+  assert.equal(JSON.parse(childB.binding)[4], 'child-b');
+  assert.equal(JSON.parse(childA.binding).includes(parent), false);
+  assert.equal(again.selectorInvoked, false);
+  assert.equal(again.model, 'cheap-worker');
+  assert.equal(again.agent, 'child-a');
+  assert.equal(again.parentAgent, parent);
+  assert.equal(parentOnly.ok, false);
+  assert.equal(parentOnly.code, 'binding_incomplete');
+  assert.equal(calls, 2);
+  assert.equal(store.size(), 2);
 });
 
 test('a new prompt may select again without requiring a different model', async () => {
@@ -348,6 +358,7 @@ test('auxiliary traffic before a pin does not invent a leader', async () => {
     contextStore: store,
     headers: headers({ 'X-Jev-Traffic': 'compaction' }),
     policy,
+    revision: 1,
     request: request(),
     transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
   }), error => error instanceof PolicyError && error.code === 'auxiliary_unpinned');
@@ -399,6 +410,7 @@ test('an ineligible cached model is revoked before execution', async () => {
     contextStore: store,
     headers: headers(),
     policy,
+    revision: 1,
     eligible: ['cheap-worker', 'strong-worker'],
     request: request('Revoke the cached worker.'),
     transportResponses: [{ answers: { model: { choice: 'strong-worker' } } }],
@@ -448,6 +460,7 @@ test('harness records the downstream model and selector call count', async () =>
     contextStore: store,
     headers: headers(),
     policy,
+    revision: 1,
     request: request('Rename the helper.'),
     transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
   });
@@ -455,6 +468,7 @@ test('harness records the downstream model and selector call count', async () =>
     contextStore: store,
     headers: headers({ 'X-Jev-Traffic': 'tool-result' }),
     policy,
+    revision: 1,
     request: request('Rename the helper.'),
     transportResponses: [{ answers: { model: { choice: 'mid-worker' } } }],
   });
@@ -474,6 +488,7 @@ test('a sentinel with incomplete identity is not the leader path', async () => {
     contextStore: store,
     headers: headers({ 'X-Jev-Agent': '  ', 'X-Jev-Parent-Agent': '' }),
     policy,
+    revision: 1,
     request: request(),
     transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
   }), error => error instanceof PolicyError && error.code === 'binding_incomplete');
@@ -490,4 +505,245 @@ test('a sentinel with incomplete identity is not the leader path', async () => {
   assert.equal(leader.wire.selectorCalls, 0);
   assert.equal(leader.wire.execution.model, 'large-leader');
   assert.equal(store.size(), 0);
+});
+
+test('a shared waiter revalidates eligibility before execution', async () => {
+  const store = createRequestContext();
+  let release;
+  const gate = new Promise(resolve => {
+    release = resolve;
+  });
+  let calls = 0;
+  const select = async () => {
+    calls += 1;
+    await gate;
+    return { model: 'cheap-worker' };
+  };
+  const first = store.resolve({
+    headers: headers(),
+    eligible: ['cheap-worker', 'strong-worker'],
+    select,
+  });
+  const waiter = store.resolve({
+    headers: headers(),
+    eligible: ['strong-worker'],
+    select,
+  });
+  assert.equal(calls, 1);
+  release();
+  const [leader, shared] = await Promise.all([first, waiter]);
+  assert.equal(leader.ok, true);
+  assert.equal(leader.model, 'cheap-worker');
+  assert.equal(leader.selectorInvoked, true);
+  assert.equal(shared.ok, false);
+  assert.equal(shared.code, 'selection_rejected');
+  assert.equal(shared.model, null);
+  assert.equal(shared.shared, true);
+  assert.equal(shared.selectorInvoked, false);
+  assert.equal(calls, 1);
+  assert.equal(store.size(), 1);
+});
+
+test('execution intersects eligibility with the applied policy', async () => {
+  const store = createRequestContext();
+  await pick(store, headers(), 'cheap-worker');
+  const narrowed = {
+    ...policy,
+    candidates: ['strong-worker'],
+    fallback: 'strong-worker',
+  };
+  const ran = await runSyntheticPreCall({
+    contextStore: store,
+    headers: headers(),
+    policy: narrowed,
+    revision: 1,
+    eligible: ['cheap-worker', 'strong-worker'],
+    request: request('Use the current policy.'),
+    transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
+  });
+  assert.equal(ran.wire.execution.model, 'strong-worker');
+  assert.notEqual(ran.wire.execution.model, 'cheap-worker');
+  assert.equal(ran.data.model, 'strong-worker');
+
+  await assert.rejects(() => runSyntheticPreCall({
+    contextStore: store,
+    headers: headers({ 'X-Jev-Project': 'other-proj' }),
+    policy,
+    revision: 1,
+    request: request(),
+  }), error => error instanceof PolicyError && error.code === 'binding_mismatch');
+  await assert.rejects(() => runSyntheticPreCall({
+    contextStore: store,
+    headers: headers({ 'X-Jev-Revision': '9' }),
+    applied: { project_id: 'proj-1', revision: 1, policy },
+    request: request(),
+  }), error => error instanceof PolicyError && error.code === 'binding_mismatch');
+  await assert.rejects(() => runSyntheticPreCall({
+    headers: headers(),
+    applied: { project_id: 'other-proj', revision: 1, policy },
+    request: request(),
+  }), error => error instanceof PolicyError && error.code === 'binding_mismatch');
+  const matched = await runSyntheticPreCall({
+    headers: headers({ 'X-Jev-Revision': '4' }),
+    applied: { project_id: 'proj-1', revision: 4, policy },
+    request: request('Trust the applied revision.'),
+    transportResponses: [{ answers: { model: { choice: 'mid-worker' } } }],
+  });
+  assert.equal(matched.wire.execution.model, 'mid-worker');
+  assert.equal(matched.context.agent, 'agent-1');
+});
+
+test('a fixed agent override uses the validated header identity', async () => {
+  const fixedPolicy = {
+    ...policy,
+    agents: { reviewer: { mode: 'fixed', model: 'strong-worker' } },
+  };
+  const ran = await runSyntheticPreCall({
+    headers: headers({ 'X-Jev-Agent': 'reviewer' }),
+    policy: fixedPolicy,
+    revision: 1,
+    request: request('Review the patch.'),
+    transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
+  });
+  assert.equal(ran.wire.hook, 'fixed-agent');
+  assert.equal(ran.wire.selectorCalls, 0);
+  assert.equal(ran.wire.execution.model, 'strong-worker');
+  assert.equal(ran.context.agent, 'reviewer');
+
+  const store = createRequestContext();
+  await assert.rejects(() => runSyntheticPreCall({
+    contextStore: store,
+    headers: headers({ 'X-Jev-Agent': 'reviewer' }),
+    agent: 'other-agent',
+    policy: fixedPolicy,
+    revision: 1,
+    request: request(),
+    transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
+  }), error => error instanceof PolicyError && error.code === 'binding_conflict');
+  assert.equal(store.size(), 0);
+
+  const child = await runSyntheticPreCall({
+    headers: headers({
+      'X-Jev-Agent': 'worker-1',
+      'X-Jev-Parent-Agent': 'reviewer',
+    }),
+    policy: fixedPolicy,
+    revision: 1,
+    request: request('Child work.'),
+    transportResponses: [{ answers: { model: { choice: 'cheap-worker' } } }],
+  });
+  assert.equal(child.wire.hook, 'sentinel');
+  assert.equal(child.wire.selectorCalls, 1);
+  assert.equal(child.wire.execution.model, 'cheap-worker');
+  assert.equal(child.context.agent, 'worker-1');
+  assert.equal(child.context.parentAgent, 'reviewer');
+});
+
+test('identity keys reject controls and do not collide', async () => {
+  const store = createRequestContext();
+  let calls = 0;
+  const select = async () => {
+    calls += 1;
+    return { model: calls === 1 ? 'cheap-worker' : 'mid-worker' };
+  };
+  const left = await pick(store, headers({ 'X-Jev-Caller': 'a\u001fb', 'X-Jev-Project': 'c' }), 'unused', { select });
+  const right = await pick(store, headers({ 'X-Jev-Caller': 'a', 'X-Jev-Project': 'b\u001fc' }), 'unused', { select });
+  const newline = await pick(store, headers({ 'X-Jev-Session': 'sess\n1' }), 'unused', { select });
+  assert.equal(left.ok, false);
+  assert.equal(left.code, 'binding_conflict');
+  assert.equal(left.model, null);
+  assert.equal(right.code, 'binding_conflict');
+  assert.equal(newline.code, 'binding_conflict');
+  assert.equal(calls, 0);
+  assert.equal(store.size(), 0);
+
+  const quoted = await pick(store, headers({ 'X-Jev-Caller': 'a","b', 'X-Jev-Project': 'c' }), 'unused', { select });
+  const other = await pick(store, headers({ 'X-Jev-Caller': 'a', 'X-Jev-Project': 'b","c' }), 'unused', { select });
+  assert.equal(quoted.ok, true);
+  assert.equal(other.ok, true);
+  assert.notEqual(quoted.binding, other.binding);
+  assert.equal(JSON.parse(quoted.binding)[0], 'a","b');
+  assert.equal(JSON.parse(other.binding)[1], 'b","c');
+  assert.equal(calls, 2);
+  assert.equal(store.size(), 2);
+});
+
+test('in-flight admission is bounded and expired flights do not commit', async () => {
+  let clock = 0;
+  const store = createRequestContext({ limit: 2, inflightDeadlineMs: 1000, now: () => clock });
+  let release;
+  const gate = new Promise(resolve => {
+    release = resolve;
+  });
+  let calls = 0;
+  const select = async () => {
+    calls += 1;
+    await gate;
+    return { model: 'cheap-worker' };
+  };
+  const pending = [];
+  for (let index = 0; index < 80; index += 1) {
+    pending.push(store.resolve({
+      headers: headers({ 'X-Jev-Prompt': `prompt-${index}` }),
+      eligible: ELIGIBLE,
+      select,
+    }));
+  }
+  assert.equal(calls, 2);
+  assert.equal(store.size(), 0);
+  assert.equal(store.inflightSize(), 2);
+  const joined = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-0' }),
+    eligible: ELIGIBLE,
+    select,
+  });
+  assert.equal(calls, 2);
+  assert.equal(store.inflightSize(), 2);
+  release();
+  const results = await Promise.all([...pending, joined]);
+  const rejected = results.filter(result => result.code === 'admission_rejected');
+  const committed = results.filter(result => result.ok);
+  assert.equal(rejected.length, 78);
+  assert.equal(committed.length, 3);
+  assert.equal(calls, 2);
+  assert.equal(store.size(), 2);
+  assert.equal(store.inflightSize(), 0);
+  assert.equal(committed.every(result => result.model === 'cheap-worker'), true);
+
+  let lateClock = 0;
+  const late = createRequestContext({ limit: 1, inflightDeadlineMs: 500, now: () => lateClock });
+  let releaseLate;
+  const lateGate = new Promise(resolve => {
+    releaseLate = resolve;
+  });
+  const first = late.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-a' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await lateGate;
+      return { model: 'cheap-worker' };
+    },
+  });
+  assert.equal(late.inflightSize(), 1);
+  lateClock = 501;
+  const second = await late.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-b' }),
+    eligible: ELIGIBLE,
+    select: async () => ({ model: 'mid-worker' }),
+  });
+  assert.equal(second.ok, true);
+  assert.equal(second.model, 'mid-worker');
+  releaseLate();
+  const expired = await first;
+  assert.equal(expired.ok, false);
+  assert.equal(expired.code, 'admission_expired');
+  assert.equal(expired.model, null);
+  const retry = await late.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-a' }),
+    eligible: ELIGIBLE,
+    select: async () => ({ model: 'strong-worker' }),
+  });
+  assert.equal(retry.selectorInvoked, true);
+  assert.equal(retry.model, 'strong-worker');
+  assert.notEqual(retry.model, 'cheap-worker');
 });
