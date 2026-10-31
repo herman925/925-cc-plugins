@@ -1,5 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import { notReadOnly } from './guard'
+import {sharedCall} from './shared-bridge'
+import type {SharedProof} from './shared-bridge'
+import {sharedWorkspaceView} from './shared-workspace'
+export {sharedCall} from './shared-bridge'
+export type {SharedProof} from './shared-bridge'
 
 // This extends the Mod's existing best-effort literal path/shell checks. It is
 // not an OS sandbox against arbitrary code running as the same account.
@@ -16,11 +21,10 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
  return undefined
 }
 
-export type SharedProof = { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
 const status = atom({plugin:'team-orchestrator',key:'sharedStoreStatus'} as const,'')
 const displayedProof = atom({plugin:'team-orchestrator',key:'sharedStoreProof'} as const,{ok:false,reason:'Open Shared store to verify this conversation.'} as SharedProof)
-type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null}
-const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null} as SharedUi)
+type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
+const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false} as SharedUi)
 export type SharedControls = {enabled:boolean;node:string;orca:string;setEnabled:(enabled:boolean)=>Promise<void>;setNode:(value:string)=>Promise<void>;setOrca:(value:string)=>Promise<void>}
 type SharedAccess = {enabled:boolean;node:string;orca:string;revalidate:()=>Promise<SharedProof>}
 export async function setSharedStoreProof($:any,proof:SharedProof) { await update($,displayedProof,()=>proof) }
@@ -43,17 +47,6 @@ const commandSchema={type:'object',additionalProperties:false,properties:{
  settings:{type:'object',additionalProperties:false,properties:{autoClose:{type:'boolean'},idleMinutes:{type:'integer',minimum:0},reopen:{type:'string',enum:['resume','fresh']},maxOpen:{type:'integer',minimum:0},launch:{type:'string',enum:['demand','all']},batch:versionField,autoScratch:{type:'boolean'},assumptions:{type:'boolean'},scratchDir:stringField,pickupWindowMinutes:versionField,answerWindowMinutes:versionField,taskWindowMinutes:{type:['integer','null'],minimum:1},replayIntervalMs:versionField,exemptMemberIds:{type:'array',items:stringField}},required:['autoClose','idleMinutes','reopen','maxOpen','launch','batch','autoScratch','assumptions','scratchDir','pickupWindowMinutes','answerWindowMinutes','taskWindowMinutes','replayIntervalMs','exemptMemberIds']}
 },required:['type']}
 
-export async function sharedCall($:any, proof:SharedProof, request:any, options:{node:string;orca:string;mode?:string;uiApprovalId?:string}) {
- if(!proof.ok)return {ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:proof.reason}}
- const envelope={mode:options.mode??'execute',proof:proofOf(proof),request,orcaCommand:options.orca,...(options.uiApprovalId?{uiApprovalId:options.uiApprovalId}:{})}
- const result=await $.process.run([options.node,`${$.plugin.root}/store/mod-bridge.mjs`],{stdin:JSON.stringify(envelope),timeoutMs:30000}).catch(()=>undefined)
- if(!result)return {ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'The shared store adapter did not answer. Preserve the operation id and reconcile; do not repeat external effects.'}}
- try{
-  const value=JSON.parse(String(result.stdout).trim())
-  if(typeof value.ok!=='boolean' || (value.ok && result.exitCode!==0))throw Error()
-  return value
- }catch{return {ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'The shared store adapter returned no confirmed receipt. Reconcile the same operation id.'}}}
-}
 
 export async function startSharedStore($:any,_enabled:boolean) {
   // Register the catalogue at startup, when the host supports registration.
@@ -72,7 +65,7 @@ export async function callSharedStore($:any,e:any,enabled:boolean,dependencies:{
 // Explicit actions own all I/O. Repeated renders only read display state.
 export async function refreshSharedStore($:any,dependencies:SharedAccess) {
  if(!dependencies.enabled || !await beginSharedAction($,'verify'))return
- await update($,uiState,old=>({...old,checked:false,approved:null}))
+ await update($,uiState,old=>({...old,checked:false,approved:null,member:false}))
  await setSharedStoreProof($,{ok:false,reason:'Checking this project and conversation…'})
  try {
   const proof=await dependencies.revalidate();await setSharedStoreProof($,proof)
@@ -81,7 +74,7 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
   await update($,status,()=>JSON.stringify(result))
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
-   await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null}))
+   await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
  finally {await update($,uiState,old=>({...old,busy:''}))}
@@ -96,7 +89,7 @@ export async function sharedStoreOptionsView($:any,ui:any,dependencies:SharedCon
    if(kind==='enabled')await dependencies.setEnabled(value)
    else if(kind==='node')await dependencies.setNode(String(value).trim()||'node')
    else await dependencies.setOrca(String(value).trim())
-   await update($,uiState,old=>({...old,checked:false,approved:null,nodeDraft:kind==='node'?null:old.nodeDraft,orcaDraft:kind==='orca'?null:old.orcaDraft}))
+   await update($,uiState,old=>({...old,checked:false,approved:null,member:false,nodeDraft:kind==='node'?null:old.nodeDraft,orcaDraft:kind==='orca'?null:old.orcaDraft}))
    await sharedFeedback($,kind==='enabled'?(value?'Preview is on. Check access before approving.':'Preview is off. Your saved approval is kept.'):'Connection option saved.','green')
   } catch(error) {await update($,status,()=>JSON.stringify({error:{code:'CONFIG_SAVE_FAILED',message:String(error)}}));await sharedFeedback($,'Option could not be saved. Your previous setting is still in use.','red')}
   finally {await update($,uiState,old=>({...old,busy:''}))}
@@ -151,12 +144,12 @@ export async function sharedStoreView($:any,ui:any,dependencies:SharedAccess & S
  }
  const ready=dependencies.enabled&&proof.ok&&state.checked
  const approved=ready?state.approved:null
- const label=!dependencies.enabled?'OFF':state.busy==='verify'?'CHECKING':approved?'APPROVED':ready?'NEEDS APPROVAL':'CHECK ACCESS'
- const color=approved?'green':!dependencies.enabled?'gray':'yellow'
+ const label=!dependencies.enabled?'OFF':state.busy==='verify'?'CHECKING':approved?'APPROVED':ready&&state.member?'MEMBER':ready?'NEEDS APPROVAL':'CHECK ACCESS'
+ const color=approved||ready&&state.member?'green':!dependencies.enabled?'gray':'yellow'
  const actions=<Box flexDirection="column">
   <Box flexWrap="wrap" columnGap={1}>
    {dependencies.enabled&&<Button key="shared-refresh" label={state.busy==='verify'?'Checking…':'Check access'} onPress={async()=>refreshSharedStore($,dependencies)}/>}
-   {ready&&!approved&&<Button key="shared-approve-controller" label={state.busy==='approve'?'Approving…':'Approve controller'} variant="primary" onPress={approve}/>}
+   {ready&&!approved&&<Button key="shared-approve-controller" label={state.busy==='approve'?'Approving…':state.member?'Approve controller (optional)':'Approve controller'} variant={state.member?undefined:'primary'} onPress={approve}/>}
   </Box>
   <Box flexWrap="wrap" columnGap={1}>
    <Button key="shared-connection" label={state.connection?'Connection ▴':'Connection ▾'} onPress={async()=>{await update($,uiState,old=>({...old,connection:!old.connection}))}}/>
@@ -168,12 +161,13 @@ export async function sharedStoreView($:any,ui:any,dependencies:SharedAccess & S
    <Box flexWrap="wrap" columnGap={1}><Text weight="bold" color="cyan">Shared workspace</Text><Text color={color} weight="bold">● {label}</Text></Box>
    <Text dimColor>{proof.ok?`Project: ${proof.root.replaceAll('\\','/').split('/').filter(Boolean).slice(-1)[0]||proof.root}`:'Project not verified · use Check access when On'}</Text>
    {await sharedStoreOptionsView($,ui,dependencies,false,true,actions)}
-   {state.notice?<Text color={state.tone}>{state.notice}</Text>:<Text dimColor>{approved?'Controller approved for this conversation':ready?'Approval grants project team management':state.busy==='verify'?'Checking project, conversation and saved approval…':'Fresh scratch teams · approval is a separate action'}</Text>}
+   {state.notice?<Text color={state.tone}>{state.notice}</Text>:<Text dimColor>{approved?'Controller approved for this conversation':ready&&state.member?'Member access verified · controller approval is optional':ready?'Approval grants project team management':state.busy==='verify'?'Checking project, conversation and saved approval…':'Fresh scratch teams · approval is a separate action'}</Text>}
   </Box>
   {state.details&&<Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
    <Text weight="bold">Connection details</Text>
    <Text>{proof.ok?`Project: ${proof.root}\nConversation: ${proof.sessionId}\nTerminal: ${proof.handle}`:proof.reason}</Text>
    {message&&<Text dimColor>{message}</Text>}
   </Box>}
+  {ready&&proof.ok&&await sharedWorkspaceView($,ui,{...dependencies,proof,controllerGeneration:approved})}
  </Box>
 }

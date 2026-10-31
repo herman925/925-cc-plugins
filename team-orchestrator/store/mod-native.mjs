@@ -81,11 +81,35 @@ export async function createModNative({orcaCommand=process.env.ORCA_CLI_COMMAND|
   if(providerId===undefined){
    // Idle Orca projections omit providerSession. Only the actual hook child can
    // substitute its own OS parent + registry creation fingerprint. A requested
-   // target, copied ID or terminal title cannot use this route.
+   // other target, copied ID or terminal title cannot use this route. Exact
+   // self-binding below repeats this same caller verification.
    let birth;try{birth=await (dependencies.processStart??processStart)(process.ppid);}catch{}
    if(typeof records[0].procStart!=='string'||!/^\d+$/.test(records[0].procStart)||!birth||birth!==records[0].procStart)deny('The idle Claude caller process creation fingerprint is unverified.');
   }
   return normalizeActor({projectRoot:root,machineId:hostname(),provider:'claude',conversationId:input.conversationId,executionHostId:'local',contextId:input.contextId,terminalHandle:terminal.handle,incarnationId:terminal.incarnationId});
  };
- return Object.freeze({verify:input=>verify(input),verifyCaller:input=>verify(input,true)});
+ const referenceKeys=['projectRoot','conversationId','terminalHandle','contextId'];
+ const verifyBinding=async(input,callerReference)=>{
+  exact(input,referenceKeys);exact(callerReference,referenceKeys);
+  if(referenceKeys.some(key=>!Object.hasOwn(input,key)||!Object.hasOwn(callerReference,key)||typeof input[key]!=='string'||!input[key]||typeof callerReference[key]!=='string'||!callerReference[key]))deny('Binding references require four nonempty own string fields.');
+  // Only the privately supplied exact caller reference may use caller proof.
+  // Reverify now; picker display state never becomes binding authority.
+  const current=await verify(callerReference,true);
+  return referenceKeys.every(key=>input[key]===callerReference[key])?current:verify(input);
+ };
+ const listTargets=async input=>{
+  const caller=await verify(input,true);
+  const response=await rpc('session.tabs.list',{worktree:caller.contextId.startsWith('folder:')?caller.contextId:`id:${caller.contextId}`});
+  const sessions=[{reference:Object.fromEntries(referenceKeys.map(key=>[key,input[key]])),label:'This verified conversation'}];
+  const seen=new Set([JSON.stringify(referenceKeys.map(key=>input[key]))]);
+  for(const tab of response.tabs??[]) {
+   const status=tab.agentStatus;
+   if(tab.type!=='terminal'||status?.agentType!=='claude'||typeof status.providerSession?.id!=='string'||typeof status.terminalHandle!=='string')continue;
+   const reference={projectRoot:input.projectRoot,conversationId:status.providerSession.id,terminalHandle:status.terminalHandle,contextId:caller.contextId};
+   const key=JSON.stringify(referenceKeys.map(field=>reference[field]));if(seen.has(key))continue;
+   try{await verify(reference);sessions.push({reference,label:typeof tab.title==='string'?tab.title:status.terminalHandle});seen.add(key);}catch{/* An unverifiable candidate is not a binding choice. */}
+  }
+  return sessions;
+ };
+ return Object.freeze({verify:input=>verify(input),verifyCaller:input=>verify(input,true),verifyBinding,listTargets});
 }

@@ -1,0 +1,31 @@
+▶ sqlite authenticated API
+  ✔ complete fresh team flow records worker outcome separately from head acceptance (267.3417ms)
+  ✔ self-asserted caller, approval, paths and raw mutations cannot become authority (59.3119ms)
+  ✔ separate controllers coexist and approval survives a freshly verified same-conversation resume (128.1844ms)
+  ✔ a stale native incarnation, member generation or binding generation is refused (170.9117ms)
+  ✔ another worker cannot pick up or report, and a worker cannot admit work to a peer (166.2776ms)
+  ✔ same-operation replay is idempotent; changed body and revoked roles do not replay (151.3083ms)
+  ✔ pickup expiry and explicit failed/rejected results are preserved (195.3961ms)
+  ✔ current authority is checked after waiting for the common database lock (193.9803ms)
+  ✔ verified caller self-binding retains controller and displayed-generation checks (129.5916ms)
+  ✔ workspace discovery exposes approved teams and only the current member task boundary (342.6216ms)
+  ✔ failed fresh-team creation rolls back all roster and approval-independent changes (97.4443ms)
+✔ sqlite authenticated API (1903.9331ms)
+﹣ postgres authenticated API (0.0303ms) # SKIP
+▶ native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+  ✔ refuses wrong-conversation native evidence for caller and target (4.4465ms)
+  ✔ refuses wrong-incarnation native evidence for caller and target (3.7857ms)
+  ✔ refuses duplicate native evidence for caller and target (3.9732ms)
+  ✔ refuses absent native evidence for caller and target (3.1518ms)
+  ✔ idle self is offered once and reverified while every other target keeps explicit provider proof (23.316ms)
+  ✔ idle caller requires its exact parent process creation fingerprint (11.2622ms)
+  ✔ idle caller cannot substitute another parent or inherited terminal context (7.4085ms)
+✔ native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent (76.5865ms)
+ℹ tests 19
+ℹ suites 2
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1985.056

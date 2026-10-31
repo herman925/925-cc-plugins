@@ -134,7 +134,8 @@ declare module 'claude-code' {
       /** the assumptions view is on here: the team's switch is on and Session Panel is on in this session (#89) */
       assumptionsOn: boolean
       sharedStoreStatus: string
-      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null}
+      sharedWorkspace: {scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;snapshot:any;page:string;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:{request:any;label:string}|null;retry:boolean}
+      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
       sharedStoreProof: { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
     }
   }
