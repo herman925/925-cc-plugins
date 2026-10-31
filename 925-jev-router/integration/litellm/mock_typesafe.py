@@ -3,6 +3,7 @@
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "127.0.0.1"
@@ -13,6 +14,7 @@ class State:
         self.lock = threading.Lock()
         self.mode = "choice"
         self.choice = "cheap-worker"
+        self.delay_s = 0.0
         self.calls = 0
         self.bodies = []
 
@@ -56,6 +58,7 @@ class Handler(BaseHTTPRequestHandler):
             with STATE.lock:
                 STATE.calls = 0
                 STATE.bodies = []
+                STATE.delay_s = 0.0
             self._json(200, {"ok": True})
             return
         if self.path == "/control":
@@ -65,9 +68,12 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.mode = body["mode"]
                 if "choice" in body:
                     STATE.choice = body["choice"]
+                if "delay_s" in body:
+                    STATE.delay_s = float(body["delay_s"])
                 mode = STATE.mode
                 choice = STATE.choice
-            self._json(200, {"ok": True, "mode": mode, "choice": choice})
+                delay_s = STATE.delay_s
+            self._json(200, {"ok": True, "mode": mode, "choice": choice, "delay_s": delay_s})
             return
         if self.path == "/v1/systemone":
             body = self._read()
@@ -76,6 +82,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.bodies.append(body)
                 mode = STATE.mode
                 choice = STATE.choice
+                delay_s = STATE.delay_s
+            if delay_s > 0:
+                time.sleep(delay_s)
+            if mode == "unauthorized":
+                self._json(401, {"error": "synthetic-unauthorized"})
+                return
             if mode == "transient":
                 self._json(503, {"error": "synthetic-transient"})
                 return

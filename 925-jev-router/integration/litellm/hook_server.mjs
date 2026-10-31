@@ -6,8 +6,10 @@
  * returns planned.data. It does not reimplement allowlist, fail-open, or
  * excerpt policy.
  *
- * M3 stickiness is not wired. This file does not import request-context.mjs
- * and does not read X-Jev-* headers.
+ * M5 stickiness is composed here. planPreCall does not parse headers.
+ * Native x-claude-code-* ids are the client bridge. Caller, project, and
+ * revision come from the Applied mock record. Custom X-Jev-* headers are
+ * not accepted as that bridge.
  *
  * The Applied policy is the example project fixture after the existing
  * in-process mock Apply / read-back. The selector transport posts to the
@@ -21,6 +23,12 @@ import { planPreCall } from '../../src/hook.mjs';
 import { PolicyError } from '../../src/errors.mjs';
 import { createMockControlPlane } from '../../src/mock-apply.mjs';
 import { policyHash } from '../../src/records.mjs';
+import {
+  createRequestContext,
+  headersAuthorizeApply,
+  normalizeHeaders,
+} from '../../src/request-context.mjs';
+import { SENTINEL_MODEL } from '../../src/schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const policyPath = process.env.JEV_POLICY_PATH
@@ -95,11 +103,89 @@ if (readBack.status !== 200) {
   process.stderr.write(`mock read-back failed: ${JSON.stringify(readBack.body)}\n`);
   process.exit(1);
 }
-const policy = readBack.body.policy;
+let appliedRecord = readBack.body;
+let policy = appliedRecord.policy;
+let inflightDeadlineMs = null;
+let eligibleOverride = null;
+let stores = makeStores();
+
+const NATIVE_FIELDS = Object.freeze([
+  'x-claude-code-session-id',
+  'x-claude-code-agent-id',
+  'x-claude-code-parent-agent-id',
+  'x-claude-code-prompt-id',
+]);
 
 let selectorCalls = 0;
 let hookRequests = 0;
 let last = null;
+let recent = [];
+
+function makeStores() {
+  const options = inflightDeadlineMs == null ? {} : { inflightDeadlineMs };
+  return {
+    session: createRequestContext({ promptMode: false, ...options }),
+    prompt: createRequestContext({ promptMode: true, ...options }),
+  };
+}
+
+function stickyMode(workerMode) {
+  if (workerMode === 'per-session') return 'session';
+  if (workerMode === 'per-turn') return 'prompt';
+  return 'routed';
+}
+
+function nativePresent(headers) {
+  return NATIVE_FIELDS.some(name => {
+    const value = headers[name];
+    if (Array.isArray(value)) return value.some(item => String(item ?? '').trim() !== '');
+    return String(value ?? '').trim() !== '';
+  });
+}
+
+export function trustedIdentityHeaders(clientHeaders, record) {
+  const normalized = normalizeHeaders(clientHeaders ?? {});
+  return {
+    'x-jev-caller': record.applied_by,
+    'x-jev-project': record.project_id,
+    'x-jev-revision': String(record.revision),
+    'x-jev-session': normalized['x-claude-code-session-id'] ?? '',
+    'x-jev-agent': normalized['x-claude-code-agent-id'] ?? '',
+    'x-jev-parent-agent': normalized['x-claude-code-parent-agent-id'] ?? '',
+    'x-jev-prompt': normalized['x-claude-code-prompt-id'] ?? '',
+  };
+}
+
+function restoreApplied() {
+  const result = plane.request({
+    method: 'POST',
+    path: `/jev/v1/projects/${draft.project_id}/apply`,
+    headers: { Authorization: `Bearer ${token}` },
+    body: { schema_version: 1, policy: draft, policy_hash: policyHash(draft) },
+  });
+  if (result.status !== 200) {
+    throw new PolicyError(result.body?.error ?? 'apply_failed', result.body?.message ?? 'reset apply failed');
+  }
+  appliedRecord = result.body;
+  policy = appliedRecord.policy;
+}
+
+function resetRuntime() {
+  restoreApplied();
+  inflightDeadlineMs = null;
+  eligibleOverride = null;
+  stores = makeStores();
+  selectorCalls = 0;
+  hookRequests = 0;
+  last = null;
+  recent = [];
+}
+
+function remember(entry) {
+  last = entry;
+  recent.push(entry);
+  if (recent.length > 32) recent.shift();
+}
 
 function snapshot(data) {
   const copy = (value) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
@@ -147,6 +233,101 @@ async function transport(body) {
   return parsed;
 }
 
+async function routePreCall(data) {
+  hookRequests += 1;
+  const before = selectorCalls;
+  const mode = stickyMode(policy.default_worker_mode);
+  const native = data?.native_headers;
+  let hasNative = false;
+  if (native != null) {
+    hasNative = nativePresent(normalizeHeaders(native));
+  }
+  if (data?.model !== SENTINEL_MODEL || mode === 'routed' || !hasNative) {
+    if (data?.model === SENTINEL_MODEL && mode !== 'routed' && !hasNative) {
+      const context = { ok: false, code: 'binding_incomplete', mode, selectorInvoked: false, shared: false, cached: false };
+      remember({
+        decision: null,
+        selectorCalls: 0,
+        inbound: snapshot(data),
+        outbound: null,
+        context,
+      });
+      throw new PolicyError('binding_incomplete', 'Request identity is missing or blank. Refusing to switch model per request.');
+    }
+    const planned = await planPreCall(data, { policy, transport });
+    remember({
+      decision: planned.decision,
+      selectorCalls: selectorCalls - before,
+      inbound: snapshot(data),
+      outbound: snapshot(planned.data),
+      context: null,
+    });
+    return planned;
+  }
+
+  const identityHeaders = trustedIdentityHeaders(native, appliedRecord);
+  const promptMode = mode === 'prompt';
+  const store = promptMode ? stores.prompt : stores.session;
+  const eligible = eligibleOverride ? [...eligibleOverride] : [...policy.candidates];
+  const policySnapshot = policy;
+  const agentId = String(identityHeaders['x-jev-agent'] ?? '').trim();
+  const resolved = await store.resolve({
+    headers: identityHeaders,
+    eligible,
+    select: async () => {
+      const planned = await planPreCall(data, {
+        policy: policySnapshot,
+        eligible,
+        agent: agentId || null,
+        transport,
+      });
+      return { model: planned.data.model, planned };
+    },
+  });
+  const context = {
+    ok: resolved.ok,
+    code: resolved.code ?? null,
+    mode,
+    agent: resolved.agent ?? null,
+    parentAgent: resolved.parentAgent ?? null,
+    selectorInvoked: Boolean(resolved.selectorInvoked),
+    shared: Boolean(resolved.shared),
+    cached: Boolean(resolved.cached),
+    binding: resolved.binding ?? null,
+  };
+  if (!resolved.ok) {
+    remember({
+      decision: null,
+      selectorCalls: selectorCalls - before,
+      inbound: snapshot(data),
+      outbound: null,
+      context,
+    });
+    throw new PolicyError(resolved.code, 'Request context refused the call.');
+  }
+  const planned = resolved.selectorInvoked && resolved.planned
+    ? resolved.planned
+    : {
+      data: { ...data, model: resolved.model },
+      decision: {
+        reason: 'context-pin',
+        model: resolved.model,
+        jev: true,
+        attempt: 0,
+        agent: resolved.agent ?? null,
+        parentAgent: resolved.parentAgent ?? null,
+      },
+    };
+  remember({
+    decision: planned.decision,
+    selectorCalls: selectorCalls - before,
+    inbound: snapshot(data),
+    outbound: snapshot(planned.data),
+    context,
+  });
+  return planned;
+}
+
 function send(res, status, payload) {
   const raw = Buffer.from(JSON.stringify(payload));
   res.writeHead(status, {
@@ -192,28 +373,86 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && req.url === '/stats') {
-      send(res, 200, { selectorCalls, hookRequests, last });
+      send(res, 200, {
+        selectorCalls,
+        hookRequests,
+        last,
+        recent,
+        headersAuthorizeApply: headersAuthorizeApply(),
+        policy: {
+          project_id: appliedRecord.project_id,
+          revision: appliedRecord.revision,
+          applied_by: appliedRecord.applied_by,
+          mode: policy.default_worker_mode,
+          candidates: policy.candidates,
+        },
+        pins: {
+          session: stores.session.size(),
+          prompt: stores.prompt.size(),
+        },
+      });
       return;
     }
     if (req.method === 'POST' && req.url === '/reset') {
-      selectorCalls = 0;
-      hookRequests = 0;
-      last = null;
-      send(res, 200, { ok: true });
+      resetRuntime();
+      send(res, 200, { ok: true, revision: appliedRecord.revision });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/control') {
+      const body = await readJson(req);
+      if (body.inflightDeadlineMs != null) {
+        const ms = body.inflightDeadlineMs;
+        if (!Number.isInteger(ms) || ms < 1 || ms > 15 * 60 * 1000) {
+          throw new PolicyError('binding_conflict', 'inflightDeadlineMs must be a positive integer up to the pin lifetime.');
+        }
+        inflightDeadlineMs = ms;
+        stores = makeStores();
+      }
+      if (Object.hasOwn(body, 'eligible')) {
+        if (body.eligible == null) {
+          eligibleOverride = null;
+        } else if (!Array.isArray(body.eligible) || body.eligible.some(alias => typeof alias !== 'string')) {
+          throw new PolicyError('no_eligible_model', 'Eligible override must be a list of alias strings.');
+        } else {
+          eligibleOverride = [...body.eligible];
+        }
+      }
+      send(res, 200, { ok: true, inflightDeadlineMs, eligible: eligibleOverride });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/apply') {
+      const body = await readJson(req);
+      if (!body.policy || typeof body.policy !== 'object' || Array.isArray(body.policy)) {
+        send(res, 400, { error: 'apply_shape', message: 'Apply body must include a policy object.' });
+        return;
+      }
+      const result = plane.request({
+        method: 'POST',
+        path: `/jev/v1/projects/${body.policy.project_id}/apply`,
+        headers: { authorization: req.headers.authorization ?? '' },
+        body: { schema_version: 1, policy: body.policy, policy_hash: policyHash(body.policy) },
+      });
+      if (result.status !== 200) {
+        send(res, result.status, result.body);
+        return;
+      }
+      appliedRecord = result.body;
+      policy = appliedRecord.policy;
+      send(res, 200, {
+        revision: appliedRecord.revision,
+        project_id: appliedRecord.project_id,
+        mode: policy.default_worker_mode,
+        candidates: policy.candidates,
+      });
       return;
     }
     if (req.method === 'POST' && req.url === '/pre-call') {
-      hookRequests += 1;
-      const data = await readJson(req);
-      const before = selectorCalls;
-      const planned = await planPreCall(data, { policy, transport });
-      last = {
-        decision: planned.decision,
-        selectorCalls: selectorCalls - before,
-        inbound: snapshot(data),
-        outbound: snapshot(planned.data),
-      };
-      send(res, 200, { data: planned.data, decision: planned.decision, selectorCalls });
+      const outcome = await routePreCall(await readJson(req));
+      send(res, 200, {
+        data: outcome.data,
+        decision: outcome.decision,
+        selectorCalls,
+      });
       return;
     }
     send(res, 404, { error: 'not_found' });

@@ -14,7 +14,7 @@ M4 command, from `925-jev-router/`, with `.venv-m4` already installed from `requ
 .venv-m4/bin/python integration/litellm/test_m4_proxy.py
 ```
 
-Result: 10 tests, 10 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. The Node suite above is unchanged.
+Result: 21 tests, 21 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. Ten are the M4 hardening cases. Eleven are the M5 stickiness cases. The Node suite above is unchanged.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -37,5 +37,10 @@ Result: 10 tests, 10 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only.
 | M4 sentinel inert | A second proxy loaded from `config.nocallback.yaml` returns `sentinel_inert` for `jev-router` on `/v1/chat/completions` and `/v1/messages`. The handler opens no socket. The mock upstream execution count does not change, and the Node hook receives no request. | Pass |
 | M4 no blind retry | After the mock emits one stream chunk and closes, the upstream execution count stays 1, the recorded call is not completed, and the client body has no `[DONE]` and no `message_stop`. | Pass |
 | M4 loopback URL | Parsed origins reject userinfo (`http://127.0.0.1:1234@example.invalid`), a non-loopback host, and redirects. The check does not open a socket. | Pass |
+| M5 native headers | Chat and messages requests carry `x-claude-code-session-id`, `x-claude-code-agent-id`, `x-claude-code-parent-agent-id`, and `x-claude-code-prompt-id`. Caller, project, and revision in the binding are the Applied mock record. `X-Jev-*` alone does not select. | Pass |
+| M5 session and prompt | `per-turn` selects again for a new prompt id. `per-session` reuses the pin across prompt ids. `routed` does not pin. | Pass |
+| M5 siblings, leader, fixed agent | Sibling agents that share a parent do not share a pin. `large-leader` writes no pin. Fixed `reviewer` stays on `strong-worker` with zero TypeSafe calls. The parent id does not take the child's override. | Pass |
+| M5 shared flight and policy | Two concurrent requests share one TypeSafe call. A waiter with a narrower eligible list is `selection_rejected`. A later Apply does not reuse the previous revision's pin. | Pass |
+| M5 deadline, rejection, tool continuation | A short flight deadline returns `admission_expired` and a late result does not pin. A non-transient TypeSafe failure leaves no pin. A tool-result continuation with the same native ids reuses the pin on chat and messages. | Pass |
 
-Not done, on purpose: live provider traffic, live `api.typesafe.ai`, Auth A/B choice, live header smoke (#167), wiring M3 stickiness through the proxy, new credentials, deploy. M4 does not claim `/anthropic/v1/messages`.
+Not done, on purpose: live provider traffic, live `api.typesafe.ai`, Auth A/B choice, live Claude header capture (#167), new credentials, deploy. M4 and M5 do not claim `/anthropic/v1/messages`. M5 does not claim a real Claude client sent these headers.

@@ -142,9 +142,17 @@ M4 runs pinned `litellm[proxy]==1.106.2` from PyPI inside a disposable project v
 
 `config.yaml` registers sentinel `jev-router` as custom provider `jev-inert`. That handler raises `sentinel_inert` and opens no socket. `cheap-worker`, `strong-worker`, and `large-leader` point at the mock upstream. `config.nocallback.yaml` is the same list without the callback. Router retries are 0. The callback and the Node adapter accept a loopback origin only after parsing it: userinfo is rejected, redirects are refused, and a non-loopback host fails closed.
 
-M3 stickiness is not on this path. `src/hook.mjs` does not read `X-Jev-*` headers, and the proxy bridge does not call `src/request-context.mjs`. Pins, shared flights, and prompt stickiness remain in-process only.
+`src/hook.mjs` still does not read headers. M5 composes `src/request-context.mjs` in `hook_server.mjs`. The procedure is [docs/m5-litellm-stickiness.md](docs/m5-litellm-stickiness.md).
 
 The suite calls `POST /v1/chat/completions` and `POST /v1/messages` (non-stream, stream, and tool-use plus tool-result). On LiteLLM 1.106.2, `/v1/messages` for an `openai/` deployment is translated to the OpenAI Responses API (`/v1/responses`) on the mock. `/anthropic/v1/messages` is not requested and is not claimed. This is not live smoke ([#160](https://github.com/herman925/925-cc-plugins/issues/160)).
+
+## M5 local proxy stickiness
+
+M5 keeps the M3 store. `hook_server.mjs` calls it around `planPreCall`. The client bridge is the native headers `x-claude-code-session-id`, `x-claude-code-agent-id`, `x-claude-code-parent-agent-id`, and optional `x-claude-code-prompt-id`. The adapter normalizes those once. Caller, project, and revision come from the Applied mock record (`applied_by`, `project_id`, `revision`). A client `X-Jev-*` header cannot choose them, and those custom headers are not the bridge.
+
+`per-turn` pins by prompt. `per-session` pins by session and ignores a later prompt id. `routed` does not pin, which is the example policy, so header-less M4 traffic still selects on every call. A sticky mode with no native identity fails closed and does not call TypeSafe. The child agent id stays the binding agent. The parent id is lineage only. A non-sentinel model and a fixed agent still bypass selection. Same-key concurrent requests share one flight, and the waiter uses the eligible list captured for that request. A new Apply bumps the revision, so the next call does not reuse the previous pin. A short flight deadline settles without another request, and a late selector result does not pin.
+
+These are synthetic headers on the local proxy. They are not a capture from a live Claude client. Auth A versus Auth B is unchanged. The details are [docs/m5-litellm-stickiness.md](docs/m5-litellm-stickiness.md).
 
 ## Non-goals
 
@@ -157,7 +165,7 @@ The suite calls `POST /v1/chat/completions` and `POST /v1/messages` (non-stream,
 
 ## Still open
 
-[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria (M4 is the local mock, not that smoke), [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live header smoke (offline binding is M3; the M4 proxy does not wire it), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
+[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria (M4 is the local mock, not that smoke), [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) live Claude header smoke (M3 is in-process; M5 uses synthetic native headers on the local proxy only), [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
 
 ## Smoke criteria
 

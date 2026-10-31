@@ -41,7 +41,7 @@ Auxiliary or compaction traffic before any live pin returns `auxiliary_unpinned`
 
 Claude Code prompt-id support used here is documented for 2.1.310, which is newer than the 2.1.283 minimum. A custom base URL is expected to need `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`. That is documented client behavior, not evidence from this repo.
 
-Real LiteLLM tests against 1.106.2 may use `/v1/messages`. Do not treat that as `/anthropic/v1/messages`. The in-process JavaScript harness is not a real LiteLLM test.
+Real LiteLLM tests against 1.106.2 may use `/v1/messages`. Do not treat that as `/anthropic/v1/messages`. The in-process JavaScript harness is not a LiteLLM test. The local proxy wiring is [m5-litellm-stickiness.md](m5-litellm-stickiness.md).
 
 ## Assertion map
 

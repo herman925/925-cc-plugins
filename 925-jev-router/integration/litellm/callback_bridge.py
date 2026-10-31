@@ -6,8 +6,9 @@ asyncPreCallHook delegates to) and returns the rewritten model. This module
 does not choose a model, does not read identity headers, and does not call
 api.typesafe.ai.
 
-M3 request-context stickiness is not on this path. src/hook.mjs does not
-consult src/request-context.mjs, and this callback does not call it either.
+Native correlation headers are copied from the proxy request. Custom
+X-Jev-* headers and the JSON body are not the identity bridge. Caller,
+project, and revision are applied by the Node adapter from the mock record.
 """
 
 import asyncio
@@ -26,6 +27,13 @@ if _loopback_spec is None or _loopback_spec.loader is None:
     raise RuntimeError("loopback URL parser is missing.")
 _loopback = importlib.util.module_from_spec(_loopback_spec)
 _loopback_spec.loader.exec_module(_loopback)
+
+_NATIVE_HEADERS = (
+    "x-claude-code-session-id",
+    "x-claude-code-agent-id",
+    "x-claude-code-parent-agent-id",
+    "x-claude-code-prompt-id",
+)
 
 _FORWARD_KEYS = (
     "model",
@@ -47,6 +55,38 @@ def _json_ready(value):
     return value
 
 
+def _header_value(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [item if isinstance(item, str) else str(item) for item in value]
+    return str(value)
+
+
+def _native_headers(data):
+    proxy_request = data.get("proxy_server_request")
+    if not isinstance(proxy_request, dict):
+        return {}
+    headers = proxy_request.get("headers")
+    if not isinstance(headers, dict):
+        return {}
+    found = {}
+    for key, value in headers.items():
+        name = str(key).lower()
+        if name not in _NATIVE_HEADERS:
+            continue
+        ready = _header_value(value)
+        previous = found.get(name)
+        if previous is None:
+            found[name] = ready
+            continue
+        values = previous if isinstance(previous, list) else [previous]
+        if ready not in values:
+            values.append(ready)
+        found[name] = values
+    return found
+
+
 def _call_hook(data):
     try:
         origin = _loopback.loopback_origin(os.environ.get("JEV_HOOK_URL", ""))
@@ -61,6 +101,9 @@ def _call_hook(data):
             payload[key] = ready
     if "model" not in payload:
         raise RuntimeError("jev hook was given a request with no JSON model.")
+    native = _native_headers(data)
+    if native:
+        payload["native_headers"] = native
     request = urllib.request.Request(
         origin + "/pre-call",
         data=json.dumps(payload).encode("utf-8"),

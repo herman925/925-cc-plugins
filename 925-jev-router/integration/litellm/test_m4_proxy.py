@@ -297,7 +297,11 @@ _REJECTED_URLS = (
 class M4ProxyTests(unittest.TestCase):
     def setUp(self):
         _post_control(SERVICES["typesafe_base"], "/reset", {})
-        _post_control(SERVICES["typesafe_base"], "/control", {"mode": "choice", "choice": "cheap-worker"})
+        _post_control(
+            SERVICES["typesafe_base"],
+            "/control",
+            {"mode": "choice", "choice": "cheap-worker", "delay_s": 0},
+        )
         _post_control(SERVICES["upstream_base"].rsplit("/v1", 1)[0], "/reset", {})
         _post_control(SERVICES["upstream_base"].rsplit("/v1", 1)[0], "/control", {"mode": "ok"})
         _post_control(SERVICES["hook_url"], "/reset", {})
@@ -311,23 +315,28 @@ class M4ProxyTests(unittest.TestCase):
     def _typesafe(self):
         return _stats(SERVICES["typesafe_base"])
 
-    def _chat(self, payload, stream=False):
+    def _chat(self, payload, headers=None):
+        merged = _auth()
+        if headers:
+            merged.update(headers)
         return _request(
             "POST",
             SERVICES["proxy_url"] + "/v1/chat/completions",
             payload,
-            _auth(),
+            merged,
             timeout=90,
         )
 
-    def _messages(self, payload):
-        headers = _auth()
-        headers["anthropic-version"] = "2023-06-01"
+    def _messages(self, payload, headers=None):
+        merged = _auth()
+        merged["anthropic-version"] = "2023-06-01"
+        if headers:
+            merged.update(headers)
         return _request(
             "POST",
             SERVICES["proxy_url"] + "/v1/messages",
             payload,
-            headers,
+            merged,
             timeout=90,
         )
 
@@ -617,6 +626,481 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
         self.assertNotIn("synthetic-ok", message_text)
         self.assertEqual(self._upstream()["executions"], before_upstream)
         self.assertEqual(self._hook()["hookRequests"], before_hook)
+
+    def _apply_policy(self, mode, candidates=None):
+        policy = {
+            "schema_version": 1,
+            "project_id": "orca-ade-example",
+            "candidates": candidates or ["cheap-worker", "strong-worker"],
+            "fallback": "strong-worker",
+            "default_worker_mode": mode,
+            "agents": {
+                "reviewer": {"mode": "fixed", "model": "strong-worker"},
+                "coder": {"mode": "per-turn"},
+            },
+        }
+        status, parsed, text, _headers = _json_request(
+            "POST",
+            SERVICES["hook_url"] + "/apply",
+            {"policy": policy},
+            {"authorization": "Bearer synthetic-jev-test-token"},
+        )
+        self.assertEqual(status, 200, text)
+        return parsed
+
+    def _choice(self, choice, delay_s=0):
+        _post_control(
+            SERVICES["typesafe_base"],
+            "/control",
+            {"mode": "choice", "choice": choice, "delay_s": delay_s},
+        )
+
+    def _hook_control(self, payload):
+        status, parsed, text, _headers = _json_request(
+            "POST",
+            SERVICES["hook_url"] + "/control",
+            payload,
+        )
+        self.assertEqual(status, 200, text)
+        return parsed
+
+    def _reset_upstream(self):
+        _post_control(SERVICES["upstream_base"].rsplit("/v1", 1)[0], "/reset", {})
+
+    def _alias_last(self, expected):
+        requests = self._upstream()["requests"]
+        self.assertTrue(requests, self._upstream())
+        _alias(requests[-1]["model"], expected)
+        return requests[-1]
+
+    def _turn(self, route, headers, content="Say hi."):
+        if route == "messages":
+            return self._messages(
+                {
+                    "model": "jev-router",
+                    "max_tokens": 32,
+                    "messages": [{"role": "user", "content": content}],
+                },
+                headers,
+            )
+        return self._chat(
+            {"model": "jev-router", "messages": [{"role": "user", "content": content}]},
+            headers,
+        )
+
+    def _native(self, session, agent, prompt="prompt-1", parent="parent-1", extra=None):
+        headers = {
+            "x-claude-code-session-id": session,
+            "x-claude-code-agent-id": agent,
+            "x-claude-code-prompt-id": prompt,
+            "x-claude-code-parent-agent-id": parent,
+        }
+        if extra:
+            headers.update(extra)
+        return headers
+
+    def _wait_typesafe(self, count):
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            if self._typesafe()["calls"] >= count:
+                return
+            time.sleep(0.02)
+        self.fail(f"typesafe calls did not reach {count}: {self._typesafe()}")
+
+    def _assert_refused(self, status, raw, code):
+        self.assertGreaterEqual(status, 400, raw)
+        self.assertIn(code, raw.decode("utf-8", "replace"))
+
+    def test_m5_routed_mode_does_not_pin(self):
+        self.assertEqual(self._hook()["policy"]["mode"], "routed")
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                before = self._typesafe()["calls"]
+                headers = self._native(f"routed-{route}", "coder")
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self._choice("strong-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 2)
+                self._alias_last("strong-worker")
+                self.assertIsNone(self._hook()["last"]["context"])
+
+    def test_m5_prompt_and_session_modes(self):
+        for route in ("chat", "messages"):
+            with self.subTest(route=route, mode="per-turn"):
+                self._apply_policy("per-turn")
+                before = self._typesafe()["calls"]
+                session = f"turn-{route}"
+                headers = self._native(session, "coder", "p1")
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self._alias_last("cheap-worker")
+                self._choice("strong-worker")
+                status, raw, _headers = self._turn(route, self._native(session, "coder", "p2"))
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 2)
+                self._alias_last("strong-worker")
+                self.assertFalse(self._hook()["last"]["context"]["cached"])
+            with self.subTest(route=route, mode="per-session"):
+                self._apply_policy("per-session")
+                before = self._typesafe()["calls"]
+                session = f"session-{route}"
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, self._native(session, "coder", "p1"))
+                self.assertEqual(status, 200, raw)
+                self._choice("strong-worker")
+                status, raw, _headers = self._turn(route, self._native(session, "coder", "p2"))
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self._alias_last("cheap-worker")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
+                self.assertTrue(self._hook()["last"]["context"]["cached"])
+
+    def test_m5_siblings_and_parent_lineage(self):
+        self._apply_policy("per-turn")
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                before = self._typesafe()["calls"]
+                session = f"sib-{route}"
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(
+                    route,
+                    self._native(session, "child-a", "same-prompt", "parent-1"),
+                )
+                self.assertEqual(status, 200, raw)
+                self._choice("strong-worker")
+                status, raw, _headers = self._turn(
+                    route,
+                    self._native(session, "child-b", "same-prompt", "parent-1"),
+                )
+                self.assertEqual(status, 200, raw)
+                self._alias_last("strong-worker")
+                self.assertEqual(self._hook()["last"]["context"]["agent"], "child-b")
+                self.assertEqual(self._hook()["last"]["context"]["parentAgent"], "parent-1")
+                self._choice("large-leader")
+                status, raw, _headers = self._turn(
+                    route,
+                    self._native(session, "child-a", "same-prompt", "parent-1"),
+                )
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 2)
+                self._alias_last("cheap-worker")
+                self.assertTrue(self._hook()["last"]["context"]["cached"])
+                self.assertEqual(self._hook()["last"]["context"]["agent"], "child-a")
+
+    def test_m5_leader_and_fixed_agent_bypass(self):
+        self._apply_policy("per-turn")
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                headers = self._native(f"bypass-{route}", "coder", "p1")
+                before = self._typesafe()["calls"]
+                pins = self._hook()["pins"]
+                payload = {"model": "large-leader", "messages": [{"role": "user", "content": "Lead."}]}
+                if route == "messages":
+                    payload["max_tokens"] = 16
+                    status, raw, _headers = self._messages(payload, headers)
+                else:
+                    status, raw, _headers = self._chat(payload, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before)
+                self.assertEqual(self._hook()["pins"], pins)
+                self._alias_last("large-leader")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "leader-bypass")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self._alias_last("cheap-worker")
+                reviewer = self._native(f"fixed-{route}", "reviewer", "p1", "parent-1")
+                before_fixed = self._typesafe()["calls"]
+                status, raw, _headers = self._turn(route, reviewer)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before_fixed)
+                self._alias_last("strong-worker")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "agent-fixed")
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, reviewer)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before_fixed)
+                self._alias_last("strong-worker")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
+                parent_headers = self._native(f"lineage-{route}", "coder", "p9", "reviewer")
+                before_parent = self._typesafe()["calls"]
+                status, raw, _headers = self._turn(route, parent_headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before_parent + 1)
+                self._alias_last("cheap-worker")
+                self.assertEqual(self._hook()["last"]["context"]["agent"], "coder")
+                self.assertEqual(self._hook()["last"]["context"]["parentAgent"], "reviewer")
+
+    def test_m5_shared_flight_revalidates_each_eligible_set(self):
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                self._apply_policy("per-turn")
+                self._hook_control({"eligible": None})
+                self._choice("cheap-worker", delay_s=0.8)
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"share-{route}", "coder", "p1")
+                results = []
+
+                def fire():
+                    results.append(self._turn(route, headers))
+
+                threads = [threading.Thread(target=fire), threading.Thread(target=fire)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(5)
+                self.assertEqual(len(results), 2, results)
+                for status, raw, _headers in results:
+                    self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before + 2)
+                shared = [item["context"]["shared"] for item in self._hook()["recent"][-2:]]
+                invoked = [item["context"]["selectorInvoked"] for item in self._hook()["recent"][-2:]]
+                self.assertEqual(sorted(shared), [False, True])
+                self.assertEqual(sorted(invoked), [False, True])
+
+                self._apply_policy("per-turn")
+                self._choice("cheap-worker", delay_s=1.2)
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"elig-{route}", "coder", "p1")
+                box = {}
+
+                def fire_initiator():
+                    box["initiator"] = self._turn(route, headers)
+
+                thread = threading.Thread(target=fire_initiator)
+                thread.start()
+                self._wait_typesafe(before + 1)
+                self._hook_control({"eligible": ["strong-worker"]})
+                waiter_status, waiter_raw, _headers = self._turn(route, headers)
+                thread.join(5)
+                initiator_status, initiator_raw, _headers = box["initiator"]
+                self.assertEqual(initiator_status, 200, initiator_raw)
+                self._assert_refused(waiter_status, waiter_raw, "selection_rejected")
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before + 1)
+                self._alias_last("cheap-worker")
+                self._hook_control({"eligible": None})
+
+    def test_m5_policy_change_does_not_reuse_the_old_pin(self):
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                self._apply_policy("per-turn")
+                self._choice("cheap-worker")
+                headers = self._native(f"policy-{route}", "coder", "p1")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self._alias_last("cheap-worker")
+                applied = self._apply_policy("per-turn", ["strong-worker"])
+                before = self._typesafe()["calls"]
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before)
+                self._alias_last("strong-worker")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "single-eligible")
+                self.assertFalse(self._hook()["last"]["context"]["cached"])
+                binding = json.loads(self._hook()["last"]["context"]["binding"])
+                self.assertEqual(binding[2], str(applied["revision"]))
+
+    def test_m5_deadline_drops_a_late_result(self):
+        self._apply_policy("per-turn")
+        self._hook_control({"inflightDeadlineMs": 200})
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                self._choice("cheap-worker", delay_s=1.0)
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"deadline-{route}", "coder", "p1")
+                status, raw, _headers = self._turn(route, headers)
+                self._assert_refused(status, raw, "admission_expired")
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before)
+                time.sleep(1.1)
+                self._choice("strong-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 2)
+                self._alias_last("strong-worker")
+
+    def test_m5_rejected_selection_leaves_no_pin(self):
+        self._apply_policy("per-turn")
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                _post_control(SERVICES["typesafe_base"], "/control", {"mode": "unauthorized", "delay_s": 0})
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"reject-{route}", "coder", "p1")
+                status, raw, _headers = self._turn(route, headers)
+                self._assert_refused(status, raw, "typesafe_non_transient")
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before)
+                self._choice("cheap-worker")
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 2)
+                self._alias_last("cheap-worker")
+
+    def test_m5_tool_result_continuation_reuses_the_pin(self):
+        self._apply_policy("per-turn")
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                session = f"tools-{route}"
+                headers = self._native(session, "coder", "p-tools")
+                self._choice("cheap-worker")
+                before = self._typesafe()["calls"]
+                status, raw, _headers = self._turn(route, headers, "Look up the fixture.")
+                self.assertEqual(status, 200, raw)
+                self._choice("strong-worker")
+                if route == "messages":
+                    status, raw, _headers = self._messages(
+                        {
+                            "model": "jev-router",
+                            "max_tokens": 64,
+                            "tools": [
+                                {
+                                    "name": "lookup",
+                                    "description": "Look up a synthetic fixture.",
+                                    "input_schema": {
+                                        "type": "object",
+                                        "properties": {"q": {"type": "string"}},
+                                        "required": ["q"],
+                                    },
+                                }
+                            ],
+                            "messages": [
+                                {"role": "user", "content": "Look up the fixture."},
+                                {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_use",
+                                            "id": "toolu_m4_lookup",
+                                            "name": "lookup",
+                                            "input": {"q": "fixture"},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": "toolu_m4_lookup",
+                                            "content": "synthetic tool result",
+                                        }
+                                    ],
+                                },
+                            ],
+                        },
+                        headers,
+                    )
+                else:
+                    status, raw, _headers = self._chat(
+                        {
+                            "model": "jev-router",
+                            "messages": [
+                                {"role": "user", "content": "Look up the fixture."},
+                                {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "id": "toolu_m4_lookup",
+                                            "type": "function",
+                                            "function": {"name": "lookup", "arguments": "{\"q\":\"fixture\"}"},
+                                        }
+                                    ],
+                                },
+                                {"role": "tool", "tool_call_id": "toolu_m4_lookup", "content": "synthetic tool result"},
+                            ],
+                        },
+                        headers,
+                    )
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self._alias_last("cheap-worker")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
+                encoded = json.dumps(self._alias_last("cheap-worker")["body"])
+                self.assertIn("toolu_m4_lookup", encoded)
+                self.assertIn("synthetic tool result", encoded)
+
+    def test_m5_headers_cannot_choose_caller_project_or_revision(self):
+        applied = self._apply_policy("per-turn")
+        self.assertFalse(self._hook()["headersAuthorizeApply"])
+        for route in ("chat", "messages"):
+            with self.subTest(route=route):
+                before = self._typesafe()["calls"]
+                headers = self._native(
+                    f"spoof-{route}",
+                    "coder",
+                    "p1",
+                    extra={
+                        "x-jev-caller": "attacker",
+                        "x-jev-project": "evil-project",
+                        "x-jev-revision": "99",
+                        "x-jev-session": "other-session",
+                        "x-jev-agent": "reviewer",
+                    },
+                )
+                status, raw, _headers = self._turn(route, headers)
+                self.assertEqual(status, 200, raw)
+                self._alias_last("cheap-worker")
+                binding = json.loads(self._hook()["last"]["context"]["binding"])
+                self.assertEqual(binding[0], "mock-verifier")
+                self.assertEqual(binding[1], "orca-ade-example")
+                self.assertEqual(binding[2], str(applied["revision"]))
+                self.assertEqual(binding[3], f"spoof-{route}")
+                self.assertEqual(binding[4], "coder")
+                state = json.dumps(self._typesafe()["bodies"][-1])
+                self.assertNotIn("evil-project", state)
+                self.assertNotIn("attacker", state)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                spoof_only = {
+                    "x-jev-caller": "attacker",
+                    "x-jev-project": "evil-project",
+                    "x-jev-revision": "99",
+                    "x-jev-session": f"spoof-{route}",
+                    "x-jev-agent": "coder",
+                    "x-jev-prompt": "p1",
+                }
+                calls = self._typesafe()["calls"]
+                upstream = self._upstream()["executions"]
+                status, raw, _headers = self._turn(route, spoof_only)
+                self._assert_refused(status, raw, "binding_incomplete")
+                self.assertEqual(self._typesafe()["calls"], calls)
+                self.assertEqual(self._upstream()["executions"], upstream)
+                incomplete = self._native(f"partial-{route}", "coder", prompt="")
+                del incomplete["x-claude-code-prompt-id"]
+                status, raw, _headers = self._turn(route, incomplete)
+                self._assert_refused(status, raw, "binding_incomplete")
+                self.assertEqual(self._typesafe()["calls"], calls)
+
+    def test_m5_conflicting_native_values_do_not_select(self):
+        self._apply_policy("per-turn")
+        before = self._typesafe()["calls"]
+        upstream = self._upstream()["executions"]
+        status, raw, _headers = _request(
+            "POST",
+            SERVICES["hook_url"] + "/pre-call",
+            {
+                "model": "jev-router",
+                "messages": [{"role": "user", "content": "Conflict."}],
+                "native_headers": {
+                    "x-claude-code-session-id": ["one", "two"],
+                    "x-claude-code-agent-id": "coder",
+                    "x-claude-code-prompt-id": "p1",
+                },
+            },
+        )
+        self._assert_refused(status, raw, "binding_conflict")
+        self.assertEqual(self._typesafe()["calls"], before)
+        self.assertEqual(self._upstream()["executions"], upstream)
 
 
 if __name__ == "__main__":
