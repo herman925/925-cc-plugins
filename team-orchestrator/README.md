@@ -1,6 +1,6 @@
 # team-orchestrator
 
-Shared-store preview in **0.5.46**: click **⚙ Settings** in the Team Orchestrator band and switch **Shared-store preview** On. Open **Shared store**, choose **Check access**, then **Approve controller** for the displayed project/conversation. No slash command is required. The panel now provides Create team, verified session binding, a visual roster, task assignment, worker reporting and separate head acceptance through the schema-5 typed API. The `shared_team` tool uses the same operations. It does not migrate the existing roster or launch sessions. Bind existing verified local Claude sessions; workers must read the role and brief returned by `verifyAssignment` before doing task work, report an explicit outcome, and leave acceptance to their admitting head. See [the control-panel guide](docs/shared-store-controls.md) and [the API permission matrix and acceptance limits](../shared/team-store/SCHEMA-5.md). Node 22.13+ is required; its executable and the Orca executable can be edited in the panel's Connection settings. The idle-caller approval path is currently verified on Windows; other hosts require explicit native conversation evidence.
+Shared workspace setup in **0.5.47**: click **＋ Create team** in a new project. Four native steps cover team details, members, options and Review. Review remembers shared mode for this project, asks for explicit conversation management permission, then offers a separate **Create team** action. After creation, **Team workspace** offers a team picker, Members and Tasks; connect existing verified local Claude sessions explicitly. Settings now groups Display, Connection and existing Classic teams. No slash command is required. See [the setup guide](docs/panel-navigation.md), [workspace controls](docs/shared-store-controls.md) and [the API permission matrix and acceptance limits](../shared/team-store/SCHEMA-5.md). Node 22.13+ is required. This increment does not migrate classic rosters, launch shared workers or deliver assignments automatically.
 
 Team Orchestrator runs a team of Claude Code sessions for you. Each member is its own Claude Code session in its own
 Orca tab. You build the team, watch it and change it from a panel above the prompt. The members message each other, start when they are first needed, and reopen when a message arrives. Automatic close and eviction are paused until native cleanup verification exists.
@@ -10,7 +10,7 @@ nobody starts subagents unless you allow it.
 
 The highest supervisor's generated role includes interactive question guidance independently of Session Panel or `/grill-me`: Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` or `request_user_input_async`, and Hermes Agent uses `clarify`, subject to actual availability and permissions. If names differ, use an exposed native/MCP equivalent that shows choices and returns the user's answer in the same conversation; use prose numbered choices only when no permitted interactive tool exists. An async accepted/pending result is not an answer: keep the turn open with the available wait/resume mechanism until the user answers, cancels or the tool closes, without sending a final reply or opening a duplicate card. Lower members still relay decisions through their boss. This guidance does not add another CLI's launch support or bypass existing approval checks.
 
-Version 0.5.46. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.47. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 
@@ -452,7 +452,7 @@ A band sits above the prompt in every session that has the mod. It starts with a
 `/team` also opens the panel. The panel header repeats the version: `◆ TEAM ORCHESTRATOR v<version>`. The version is
 read from the installed `plugin.json`, so it always shows what this session has loaded.
 
-The panel has three tabs: **Roster**, **New team** and **Settings**. Every setting is explained in
+The shared setup/workspace journey is described above. Existing classic teams retain their separate roster and creation controls; **Settings → Classic teams** contains their options. Every classic setting is explained in
 [Settings](#settings).
 
 #### New team
@@ -801,6 +801,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.47 | Create team is the front door: four-step native setup, project-remembered workspace mode, contextual conversation approval and separate creation. Confirmed creation opens Team workspace; native dropdowns, multiline roles, saved drafts and grouped Settings. Classic teams remain separate. |
 | 0.5.46 | Active tabs toggle the panel closed; one Settings entry at a time; hide older creation entries while shared preview is on; shared creation stays approval-gated; workspace precedes diagnostics. Dock close/reopen follows the same navigation. |
 | 0.5.45 | Shared-store team workspace: editable fresh-team form and reporting lines, native session choices, roster binding status, task assignment and worker reporting, separate head review with evidence and reason, and same-operation receipt recovery. No automatic delivery, worker launching or migration. |
 | 0.5.44 | Clickable Settings in the band, always-visible Shared store entry, live On/Off controls and editable Node/Orca connection fields. A status-card workspace replaces the raw-text approval screen; receipts and identifiers are under Details. Unknown approval results require readback before retry. Turning the preview off keeps shared member and store guards enforced. |

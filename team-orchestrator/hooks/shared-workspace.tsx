@@ -1,22 +1,26 @@
 import {atom,read,update} from 'claude-code'
 import {sharedCall} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
+import {USER_QUESTION_GUIDANCE} from './question-guidance'
 
-type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}
+export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}
 type Pending={request:any;label:string}
-export type Workspace={scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;snapshot:any;page:string;members:MemberDraft[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:Pending|null;retry:boolean}
-type Dependencies={enabled:boolean;node:string;orca:string;proof:Extract<SharedProof,{ok:true}>;controllerGeneration:number|null;revalidate:()=>Promise<SharedProof>}
+export type Workspace={scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:MemberDraft[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:Pending|null;retry:boolean}
+export type WorkspaceDependencies={enabled:boolean;node:string;orca:string;proof:Extract<SharedProof,{ok:true}>;controllerGeneration:number|null;revalidate:()=>Promise<SharedProof>;onNewTeam?:()=>Promise<void>}
+type Dependencies=WorkspaceDependencies
 const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')
-const initial=():Workspace=>({scope:'',busy:false,notice:'',error:false,caller:null,teams:[],teamId:'',snapshot:null,page:'home',members:[],name:'',purpose:'',pickup:'2',answer:'3',window:'',replay:'1000',capacity:'8',sessions:[],bindingMember:'',assignmentMember:'',instructions:'',expectedResult:'',selectedAssignment:'',reason:'',summary:'',evidence:'',verified:null,pending:null,retry:false})
+const initial=():Workspace=>({scope:'',busy:false,notice:'',error:false,caller:null,teams:[],teamId:'',createdTeamId:'',snapshot:null,page:'home',members:[],name:'',purpose:'',pickup:'2',answer:'3',window:'',replay:'1000',capacity:'8',sessions:[],sessionChoice:'0',bindingMember:'',assignmentMember:'',instructions:'',expectedResult:'',selectedAssignment:'',reason:'',summary:'',evidence:'',verified:null,pending:null,retry:false})
 const state=atom({plugin:'team-orchestrator',key:'sharedWorkspace'} as const,initial())
 const valueOf=(response:any)=>response?.result?.result
-const scopeOf=(proof:Extract<SharedProof,{ok:true}>)=>JSON.stringify([proof.root,proof.sessionId])
+const scopeOf=(proof:Extract<SharedProof,{ok:true}>)=>workspaceScope(proof.root,proof.sessionId)
+export function workspaceScope(root:string,sessionId:string){return JSON.stringify([root.replace(/\\/g,'/'),sessionId])}
 const referenceOf=(p:Extract<SharedProof,{ok:true}>)=>({projectRoot:p.root,conversationId:p.sessionId,terminalHandle:p.handle,contextId:p.contextId})
 const uncertain=(response:any)=>['API_BRIDGE_UNKNOWN','STORE_COMMIT_UNKNOWN','STORE_ROLLBACK_UNKNOWN'].includes(String(response?.error?.code))
 const failure=(r:any)=>`${r?.error?.message||'The operation was refused.'}${r?.error?.code?` (${r.error.code})`:''}`
 // Native Input values are single-line text. Control keys or pasted line breaks
 // must not poison a saved draft and cause the host to reject the entire panel.
 export function workspaceLine(value:string){return String(value).replace(/[\r\n\t]+/g,' ').replace(/[\u0000-\u001f\u007f-\u009f]/g,'')}
+export function workspaceText(value:string){return String(value).replace(/\r\n?/g,'\n').replace(/\t/g,' ').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g,'')}
 const fieldError=(message:string)=>{throw Error(message)}
 const numberField=(text:string,label:string,min=1)=>{text=workspaceLine(text);if(!/^\d+$/.test(text.trim())||!Number.isSafeInteger(Number(text))||Number(text)<min)fieldError(`${label} must be a whole number of at least ${min}.`);return Number(text)}
 async function set($:any,patch:Partial<Workspace>){await update($,state,old=>({...old,...patch}))}
@@ -39,7 +43,7 @@ async function load($:any,deps:Dependencies,preferred?:string){
  const teamId=[preferred,old.teamId,info?.member?.team_id,teams[0]?.team_id].find(id=>id&&teams.some((t:any)=>t.team_id===id))||''
  // Drop old authority immediately, including when the subsequent read fails.
  await set($,{caller:info,teams,teamId,snapshot:null,sessions:[],verified:null})
- if(teamId){const team=await request($,deps,{type:'inspectTeam',teamId});if(!team.ok)throw Error(failure(team));await set($,{snapshot:valueOf(team)})}
+ if(teamId){const team=await request($,deps,{type:'inspectTeam',teamId});if(!team.ok)throw Error(failure(team));const snapshot=valueOf(team);await set($,{snapshot,...(!old.caller&&!info?.controllerGeneration&&info?.member&&!snapshot?.members?.some((m:any)=>m.boss_member_id===info.member.member_id&&m.membership_state==='active')?{page:'tasks'}:{})})}
 }
 async function action($:any,work:()=>Promise<void>){
  if(!await lock($))return
@@ -49,7 +53,7 @@ async function action($:any,work:()=>Promise<void>){
 async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  const command=pending.request.command
  const patch:Partial<Workspace>={pending:null,retry:false,page:'home',notice:`${pending.label} confirmed.`,error:false}
- if(command.type==='createFreshTeam')patch.teamId=command.teamId
+ if(command.type==='createFreshTeam'){patch.teamId=command.teamId;patch.createdTeamId=command.teamId;patch.notice='Team created. Connect existing sessions to start using tasks.'}
  if(command.type==='admitAssignment')patch.selectedAssignment=command.assignmentId
  if(command.type==='verifyAssignment'){patch.selectedAssignment=command.assignmentId;patch.verified=result;patch.page='review'}
  if(command.type==='reportOutcome'||command.type==='acceptTask')patch.selectedAssignment=command.assignmentId
@@ -75,11 +79,11 @@ function authority(s:Workspace){
 }
 function freshMembers():MemberDraft[]{
  const head=uid()
- return [{memberId:head,name:'Head',bossMemberId:null,role:'Lead and review',officialText:'Lead this team, delegate work to direct reports and review their evidence before accepting outcomes. Use the available interactive question tool for user decisions (Claude AskUserQuestion, Codex request_user_input or request_user_input_async, Hermes clarify, or an exposed native/MCP equivalent). Wait for the actual answer before ending that decision.'},{memberId:uid(),name:'Worker',bossMemberId:head,role:'Implement and verify',officialText:'Read your official role and admitted task brief before working. Report an explicit outcome with evidence to your direct head. Your head decides acceptance.'}]
+ return [{memberId:head,name:'Head',bossMemberId:null,role:'Lead and review',officialText:`Lead this team, delegate work to direct reports and review their evidence before accepting outcomes.\n\n${USER_QUESTION_GUIDANCE}`},{memberId:uid(),name:'Worker',bossMemberId:head,role:'Implement and verify',officialText:'Read your official role and admitted task brief before working. Report an explicit outcome with evidence to your direct head. Your head decides acceptance.'}]
 }
 
 export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
- const {Box,Text,Button,Input}=ui
+ const {Box,Text,Button,Input,Select}=ui
  let s=await read($,state)
  const scope=scopeOf(deps.proof)
  if(s.scope!==scope){
@@ -111,7 +115,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   <Box flexWrap="wrap" columnGap={1}>
    <Text weight="bold" color="cyan">Team workspace</Text>
    {button('workspace-refresh',s.busy?'Working…':'↻ Refresh',refresh)}
-   {!!controller&&!pending&&button('workspace-new','＋ Create team',async()=>{await set($,{page:'new',members:freshMembers(),name:'',purpose:'',notice:''})},true)}
+   {!!controller&&!pending&&button('workspace-new',s.teams.length?'＋ New team':'＋ Create team',async()=>{if(deps.onNewTeam)await deps.onNewTeam();else await beginSharedDraft($)},true)}
   </Box>
   {pending&&<Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
    <Text weight="bold" color="yellow">● {pending.label}: awaiting receipt</Text>
@@ -120,52 +124,21 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   </Box>}
   {s.notice&&<Text color={s.error?'yellow':'green'}>{s.notice}</Text>}
   {!s.caller&&<Text dimColor>Refresh to load your teams. Nothing is created by refreshing.</Text>}
-  {s.page==='new'&&!pending?<Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-   <Text weight="bold">New shared team</Text>
-   <Text dimColor>Creates a fresh roster. Session binding is a separate step.</Text>
-   {input('workspace-team-name','Team name',s.name,v=>edit('name',v))}
-   {input('workspace-team-purpose','Purpose',s.purpose,v=>edit('purpose',v))}
-   {s.members.map((m,i)=><Box key={m.memberId} borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
-    <Text weight="bold">{i===0?'◆ Head':`└ Member ${i+1}`}</Text>
-    {input(`workspace-member-name-${i}`,'Name',m.name,v=>set($,{members:s.members.map((row,j)=>j===i?{...row,name:v}:row)}))}
-    {input(`workspace-member-role-${i}`,'Role',m.role,v=>set($,{members:s.members.map((row,j)=>j===i?{...row,role:v}:row)}))}
-    {input(`workspace-member-official-${i}`,'Official instructions',m.officialText,v=>set($,{members:s.members.map((row,j)=>j===i?{...row,officialText:v}:row)}))}
-    {i>0&&<Box flexWrap="wrap" columnGap={1}><Text dimColor>Reports to</Text>{s.members.slice(0,i).map((boss,j)=>button(`workspace-member-boss-${i}-${j}`,`${m.bossMemberId===boss.memberId?'●':'○'} ${boss.name}`,async()=>set($,{members:s.members.map((row,k)=>k===i?{...row,bossMemberId:boss.memberId}:row)})))}</Box>}
-    {i>0&&button(`workspace-member-remove-${i}`,'Remove',async()=>set($,{members:s.members.filter(row=>row.memberId!==m.memberId).map(row=>row.bossMemberId===m.memberId?{...row,bossMemberId:s.members[0].memberId}:row)}))}
-   </Box>)}
-   {s.members.length<30&&button('workspace-member-add','＋ Add member',async()=>set($,{members:[...s.members,{memberId:uid(),name:`Worker ${s.members.length}`,bossMemberId:s.members[0].memberId,role:'Implement and verify',officialText:'Read your role and brief before work. Report an explicit outcome and evidence to your direct head.'}]}))}
-   <Text weight="bold">Windows and capacity</Text>
-   {input('workspace-pickup','Pickup window · minutes',s.pickup,v=>edit('pickup',v))}
-   {input('workspace-answer','Answer window · minutes',s.answer,v=>edit('answer',v))}
-   {input('workspace-window','Task window · minutes, empty = off',s.window,v=>edit('window',v))}
-   {input('workspace-replay','Replay interval · milliseconds',s.replay,v=>edit('replay',v))}
-   {input('workspace-capacity','Capacity · 0 = unlimited',s.capacity,v=>edit('capacity',v))}
-   <Text dimColor>Automatic close off · demand launch · no scratch allocation. This preview does not launch sessions or run a scheduler.</Text>
-   <Box flexWrap="wrap" columnGap={1}>
-    {button('workspace-create','Create team',()=>action($,async()=>{
-     const current=await read($,state)
-     if(!workspaceLine(current.name).trim()||current.members.some(m=>!workspaceLine(m.name).trim()||!workspaceLine(m.role).trim()||!workspaceLine(m.officialText).trim()))fieldError('Give the team and every member a name, role and official instructions.')
-     if(new Set(current.members.map(m=>workspaceLine(m.name).trim().toLowerCase())).size!==current.members.length)fieldError('Member names must be unique.')
-     const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:numberField(current.capacity,'Capacity',0),launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.claude/scratch',pickupWindowMinutes:numberField(current.pickup,'Pickup window'),answerWindowMinutes:numberField(current.answer,'Answer window'),taskWindowMinutes:current.window.trim()?numberField(current.window,'Task window'):null,replayIntervalMs:numberField(current.replay,'Replay interval'),exemptMemberIds:[]}
-     await mutate($,deps,{type:'createFreshTeam',teamId:uid(),name:workspaceLine(current.name).trim(),functionText:workspaceLine(current.purpose).trim(),members:current.members.map(m=>({...m,name:workspaceLine(m.name).trim(),role:workspaceLine(m.role).trim(),officialText:workspaceLine(m.officialText).trim()})),settings,expectedControllerGeneration:controller},'Team creation')
-    }),true)}
-    {button('workspace-cancel','Cancel',async()=>edit('page','home'))}
-   </Box>
-  </Box>:<Box flexDirection="column">
-   {s.teams.length>0&&<Box flexWrap="wrap" columnGap={1}>{s.teams.map((team:any,i:number)=>button(`workspace-team-${i}`,`${s.teamId===team.team_id?'●':'○'} ${team.name}`,()=>action($,async()=>{await set($,{page:'home',selectedAssignment:'',reason:''});await load($,deps,team.team_id)})))}</Box>}
+  {s.page==='new'&&!pending?<Box flexDirection="column"><Text>A team draft is saved.</Text>{deps.onNewTeam&&button('workspace-resume-setup','Continue setup',deps.onNewTeam,true)}</Box>:<Box flexDirection="column">
+   {s.teams.length>0&&<Select key="workspace-team-select" label="Team " value={s.teamId} options={s.teams.map((team:any)=>({value:team.team_id,label:workspaceLine(team.name)}))} onSelect={async(value:string)=>action($,async()=>{await set($,{page:'home',selectedAssignment:'',reason:''});await load($,deps,value)})}/>}
    {s.caller&&!s.teams.length&&<Text dimColor>{controller?'No teams yet. Create your first shared team.':'No team binding for this conversation. Ask an approved controller to bind it.'}</Text>}
    {snapshot&&<Box flexDirection="column">
     <Text weight="bold">{snapshot.team.name} · {members.length} members · {work.length} recent visible tasks</Text>
     <Text dimColor>{snapshot.team.function_text}</Text>
-    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Roster':'Roster',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}</Box>
+    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}</Box>
     {s.page==='home'&&<Box flexDirection="column">{members.map((m:any,i:number)=>{
      const binding=bindings.find((b:any)=>b.member_id===m.member_id),boss=members.find((b:any)=>b.member_id===m.boss_member_id)
      return <Box key={m.member_id} borderStyle="single" borderColor={binding?'green':'gray'} paddingX={1} flexDirection="column">
-      <Box flexWrap="wrap" columnGap={1}><Text weight="bold">{m.boss_member_id?'└':'◆'} {m.name}{me?.member_id===m.member_id?' · You':''}</Text><Text color={binding?'green':'yellow'}>{binding?'● Bound':'○ Unbound'}</Text></Box>
+      <Box flexWrap="wrap" columnGap={1}><Text weight="bold">{m.boss_member_id?'└':'◆'} {m.name}{me?.member_id===m.member_id?' · You':''}</Text><Text color={binding?'green':'yellow'}>{binding?'● Session linked':'○ Not connected'}</Text></Box>
       <Text>{m.role}{boss?` · Reports to ${boss.name}`:''}</Text>
       <Box flexWrap="wrap" columnGap={1}>
-       {!!controller&&!pending&&button(`workspace-bind-${i}`,binding?'Change session':'Bind session',()=>action($,async()=>{
-        await set($,{bindingMember:m.member_id,sessions:[],page:'bind'})
+       {!!controller&&!pending&&button(`workspace-bind-${i}`,binding?'Change session':'Connect session',()=>action($,async()=>{
+        await set($,{bindingMember:m.member_id,sessions:[],sessionChoice:'0',page:'bind'})
         const response=await sharedCall($,await proofNow(deps),{},{...deps,mode:'listSessions'})
         if(!response.ok)throw Error(failure(response))
         await set($,{sessions:response.result?.sessions??[]})
@@ -176,12 +149,17 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
     })}</Box>}
     {s.page==='bind'&&!pending&&<Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
      <Text weight="bold">Bind {members.find((m:any)=>m.member_id===s.bindingMember)?.name}</Text>
-     <Text dimColor>Verified local Claude sessions in this project. Selecting one binds it; no session is launched or messaged.</Text>
+     <Text dimColor>Choose a verified local Claude session, then Connect selected session. No session is launched or messaged.</Text>
      {!s.sessions.length&&<Text color="yellow">No eligible sessions found. The session needs an explicit native Claude conversation association. Refresh the workspace and try again after it is available.</Text>}
-     {s.sessions.map((session:any,i:number)=><Box key={i} flexDirection="column"><Text dimColor>{session.reference.conversationId.slice(0,8)} · {session.reference.terminalHandle}</Text>{button(`workspace-session-${i}`,session.label||`Session ${i+1}`,()=>action($,async()=>{
-      const current=await read($,state),m=current.snapshot.members.find((m:any)=>m.member_id===current.bindingMember),b=current.snapshot.bindings.find((b:any)=>b.member_id===m.member_id)
-      await mutate($,deps,{type:'bindMember',teamId:current.teamId,memberId:m.member_id,expectedConfigVersion:current.snapshot.team.config_version,expectedMemberGeneration:m.generation,expectedBindingGeneration:b?.generation??0,expectedControllerGeneration:controller},'Session binding',session.reference)
-     }))}</Box>)}
+     {s.sessions.length>0&&<Box flexDirection="column">
+      <Select key="workspace-session-select" label="Session " value={s.sessionChoice||'0'} options={s.sessions.map((session:any,i:number)=>({value:String(i),label:workspaceLine(session.label||`Session ${i+1}`)}))} onSelect={async(value:string)=>set($,{sessionChoice:value})}/>
+      {button('workspace-session-0','Connect selected session',()=>action($,async()=>{
+       const current=await read($,state),index=Number(current.sessionChoice||'0'),session=current.sessions[index]
+       if(!Number.isSafeInteger(index)||!session)fieldError('Refresh session choices before connecting.')
+       const m=current.snapshot.members.find((m:any)=>m.member_id===current.bindingMember),b=current.snapshot.bindings.find((b:any)=>b.member_id===m.member_id)
+       await mutate($,deps,{type:'bindMember',teamId:current.teamId,memberId:m.member_id,expectedConfigVersion:current.snapshot.team.config_version,expectedMemberGeneration:m.generation,expectedBindingGeneration:b?.generation??0,expectedControllerGeneration:controller},'Session binding',session.reference)
+      }),true)}
+     </Box>}
      {button('workspace-bind-cancel','Back to roster',async()=>edit('page','home'))}
     </Box>}
     {s.page==='assign'&&!pending&&<Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
@@ -243,4 +221,49 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
    </Box>}
   </Box>}
  </Box>
+}
+
+export async function readSharedWorkspace($:any){return read($,state)}
+export async function patchSharedDraft($:any,patch:Partial<Workspace>){await set($,patch)}
+export async function editSharedMember($:any,id:string,patch:Partial<MemberDraft>){await update($,state,old=>({...old,members:old.members.map(m=>m.memberId===id?{...m,...patch}:m)}))}
+export async function addSharedMember($:any){await update($,state,old=>({...old,members:[...old.members,{memberId:uid(),name:`Worker ${old.members.length}`,bossMemberId:old.members[0].memberId,role:'Implement and verify',officialText:'Read your role and brief before work. Report an explicit outcome and evidence to your direct head.'}]}))}
+export async function removeSharedMember($:any,id:string){await update($,state,old=>({...old,members:old.members.filter(m=>m.memberId!==id).map(m=>m.bossMemberId===id?{...m,bossMemberId:old.members[0].memberId}:m)}))}
+export async function beginSharedDraft($:any,fresh=false){
+ const scope=workspaceScope(String(await $.session.root()),String(await $.session.id()))
+ const old=await read($,state)
+ if(old.pending)throw Error('Resolve the pending operation before starting a draft.')
+ if(!fresh&&old.scope===scope&&old.page==='new'&&old.members.length)return
+ await update($,state,()=>({...((old.scope===scope)?old:initial()),scope,page:'new',createdTeamId:'',members:freshMembers(),name:'',purpose:'',notice:'',error:false}))
+}
+export function sharedDraftSettings(current:Workspace){return {autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:numberField(current.capacity,'Capacity',0),launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.claude/scratch',pickupWindowMinutes:numberField(current.pickup,'Pickup window'),answerWindowMinutes:numberField(current.answer,'Answer window'),taskWindowMinutes:current.window.trim()?numberField(current.window,'Task window'):null,replayIntervalMs:numberField(current.replay,'Replay interval'),exemptMemberIds:[]}}
+export function sharedDraftProblem(current:Workspace,step:number):{message:string;field:string}|null{
+ if(step===0&&!workspaceLine(current.name).trim())return {message:'Give your team a name.',field:'workspace-team-name'}
+ if(step===1){
+  for(let i=0;i<current.members.length;i++){const m=current.members[i];if(!workspaceLine(m.name).trim()||!workspaceLine(m.role).trim()||!workspaceText(m.officialText).trim())return {message:'Every member needs a name, role and official instructions.',field:`workspace-member-name-${i}`}}
+  if(new Set(current.members.map(m=>workspaceLine(m.name).trim().toLowerCase())).size!==current.members.length)return {message:'Member names must be unique.',field:'workspace-member-name-1'}
+ }
+ if(step===2){try{sharedDraftSettings(current)}catch(error){return {message:error instanceof Error?error.message:String(error),field:!/^\d+$/.test(current.capacity)||Number(current.capacity)<0?'workspace-capacity':!/^\d+$/.test(current.pickup)||Number(current.pickup)<1?'workspace-pickup':!/^\d+$/.test(current.answer)||Number(current.answer)<1?'workspace-answer':current.window.trim()&&(!/^\d+$/.test(current.window)||Number(current.window)<1)?'workspace-window':'workspace-replay'}}}
+ return null
+}
+export async function submitSharedDraft($:any,deps:Dependencies){
+ await action($,async()=>{
+  const current=await read($,state)
+  for(const step of [0,1,2]){const problem=sharedDraftProblem(current,step);if(problem)fieldError(problem.message)}
+  await mutate($,deps,{type:'createFreshTeam',teamId:uid(),name:workspaceLine(current.name).trim(),functionText:workspaceText(current.purpose).trim(),members:current.members.map(m=>({...m,name:workspaceLine(m.name).trim(),role:workspaceLine(m.role).trim(),officialText:workspaceText(m.officialText).trim()})),settings:sharedDraftSettings(current),expectedControllerGeneration:deps.controllerGeneration},'Team creation')
+ })
+ return read($,state)
+}
+export async function reconcileSharedDraft($:any,deps:Dependencies,retry=false){
+ await action($,async()=>{
+  const current=await read($,state),p=current.pending;if(!p)return
+  const response=await sharedCall($,await proofNow(deps),p.request,{...deps,mode:retry?'execute':'reconcile'})
+  if(response.ok&&response.result?.status!=='unknown'){await committed($,deps,p,valueOf(response));return}
+  await set($,{retry:response.ok&&response.result?.status==='unknown',notice:response.ok?'No committed receipt found yet. Check again or retry the same operation.':failure(response),error:!response.ok})
+ })
+ return read($,state)
+}
+export async function refreshSharedWorkspace($:any,deps:Dependencies){
+ const old=await read($,state),scope=scopeOf(deps.proof)
+ if(old.scope!==scope){if(old.pending)return;await update($,state,()=>({...initial(),scope}))}
+ await action($,async()=>load($,deps))
 }

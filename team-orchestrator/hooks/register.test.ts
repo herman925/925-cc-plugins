@@ -13,21 +13,17 @@ const mountBand = ($: any) =>
     props: { hasSurvey: false },
   })
 
-test('with no team, the band button opens the welcome screen with the three shapes', async $ => {
-  const band = await mountBand($)
-  expect(await band.find({ key: 'main' })).toBeDefined()
-  expect(await band.find({ key: 'tab-new' })).toBeUndefined()
-  await band.press({ key: 'main' })
-  for (const key of ['tab-roster', 'tab-new', 'close', 'preset-Squad', 'preset-All-Purpose Team', 'preset-Tech Team', 'interview-empty']) {
-    expect(await band.find({ key })).toBeDefined()
-  }
-  // the form is one tab away, not on this screen
-  expect(await band.find({ key: 'go' })).toBeUndefined()
+test('the band opens a draft before shared management is configured',async($,on)=>{
+ world(on);const band=await mountBand($);await band.press({key:'main'})
+ expect(await band.find({key:'workspace-team-name'})).toBeDefined()
+ expect(await band.find({key:'workspace-create'})).toBeUndefined()
 })
 
-test('a shape on the welcome screen opens the form with that shape chosen', async $ => {
+test('a classic shape remains available through the explicit classic destination', async ($,on) => {
+  world(on)
   const band = await mountBand($)
   await band.press({ key: 'main' })
+  await band.input({key:'workspace-team-name',text:'Classic choice',kind:'change'});await band.press({key:'setup-next'});await band.press({key:'setup-next'});await band.press({key:'setup-advanced'});await band.press({key:'setup-classic'})
   await band.press({ key: 'preset-Tech Team' })
   for (const key of ['team', 'fn', 'groups', 'struct-1', 'fan-4', 'preset-Squad', 'preset-All-Purpose Team', 'preset-Tech Team', 'go', 'interview']) {
     expect(await band.find({ key })).toBeDefined()
@@ -35,9 +31,11 @@ test('a shape on the welcome screen opens the form with that shape chosen', asyn
   expect(await band.find({ key: 'interview-empty' })).toBeUndefined()
 })
 
-test('a model cell opens a list, and choosing from it closes the list', async $ => {
+test('a model cell opens a list, and choosing from it closes the list', async ($,on) => {
+  world(on)
   const band = await mountBand($)
   await band.press({ key: 'main' })
+  await band.input({key:'workspace-team-name',text:'Classic choice',kind:'change'});await band.press({key:'setup-next'});await band.press({key:'setup-next'});await band.press({key:'setup-advanced'});await band.press({key:'setup-classic'})
   await band.press({ key: 'preset-Squad' })
   expect(await band.find({ key: 'groups' })).toBeUndefined()
   expect(await band.find({ key: 'levels-2' })).toBeDefined()
