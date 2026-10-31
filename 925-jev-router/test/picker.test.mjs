@@ -66,4 +66,5 @@ test('picker html is draft-only and has no gateway token', () => {
   assert.doesNotMatch(`${html}\n${script}`, /type\s*=\s*["']password["']/);
   assert.doesNotMatch(html, /admin[_-]?key|master[_-]?key|LITELLM_MASTER|TYPESAFE_API_KEY|Bearer\s/i);
   assert.doesNotMatch(`${html}\n${script}`, /api\.typesafe\.ai|litellm/i);
+  assert.doesNotMatch(`${html}\n${script}`, /localStorage|sessionStorage/);
 });

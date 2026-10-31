@@ -26,5 +26,17 @@ export async function runSyntheticPreCall(fixture) {
     agent: fixture.agent,
     transport,
   });
-  return { ...planned, calls, ignoredModelList: fixture.modelList ?? null };
+  const reason = planned.decision.reason;
+  const hook = reason === 'leader-bypass' ? 'leader-bypass' : (reason === 'agent-fixed' ? 'fixed-agent' : 'sentinel');
+  return {
+    ...planned,
+    calls,
+    ignoredModelList: fixture.modelList ?? null,
+    wire: {
+      hook,
+      decision: planned.decision,
+      selectorCalls: calls.length,
+      execution: { model: planned.data.model },
+    },
+  };
 }

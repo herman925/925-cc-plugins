@@ -95,7 +95,7 @@ Applied record, produced only by the in-memory `applyDraft` helper in tests:
 
 `createMemoryGateway` stores that record in a `Map` and reads it back by `project_id`. `apply` and `read` each return a defensive copy. Mutating a returned record does not change the stored one. Unknown projects read as empty. This is the shape test. It is not an HTTP server.
 
-When [#168](https://github.com/herman925/925-cc-plugins/issues/168) is coded, Apply authentication is option A: the LiteLLM admin credential the gateway already has. M1 does not read that credential, does not create a new one, and does not put it in HTML. A new secret or permission stops the work and goes to Herman.
+Auth A versus Auth B is undecided ([#168](https://github.com/herman925/925-cc-plugins/issues/168)). Crabbie recommends a dedicated server-side control-plane credential later. M2 does not adopt either option. The offline handler uses a fake verifier and a synthetic token supplied by the test. It does not read a gateway admin credential, does not create a new one, and does not put one in HTML or browser storage. A new secret or permission stops the work and goes to Herman.
 
 ## M1 scaffold
 
@@ -111,6 +111,21 @@ When [#168](https://github.com/herman925/925-cc-plugins/issues/168) is coded, Ap
 
 The picker button is Local Save. It downloads `config.json`. There is no Apply button and no network call.
 
+## M2 offline control plane
+
+`createMockControlPlane` handles the gateway-agnostic routes in process. Nothing listens on a port.
+
+| Route | Result |
+| --- | --- |
+| `POST /jev/v1/projects/{project_id}/apply` | Re-validates the Draft, checks `policy_hash`, checks each candidate exists in the test's configured alias list, then stores the Applied record. |
+| `GET /jev/v1/projects/{project_id}/applied` | Returns that record, or 404. |
+
+The caller must present `Authorization: Bearer` plus the synthetic token passed into the fake verifier. A missing or wrong token is 401 and does not reveal whether a project exists. The token is not written into the Applied record, the picker, or browser storage. Alias existence is not approval: a name only on the configured list is not added to `candidates`.
+
+`runSyntheticPreCall` wires three stages on that read-back policy: the hook classifies leader versus sentinel, the decision adapter builds the System One body from the eligible set, and execution rewrites `data.model`. A non-sentinel leader does not call the selector. A sentinel request with no agent id stays on the sentinel path. This in-process mock is not a real LiteLLM or TypeSafe test.
+
+Request-context and header binding for [#167](https://github.com/herman925/925-cc-plugins/issues/167) are specified in [docs/m2-request-context.md](docs/m2-request-context.md). That behavior is not implemented in the hook.
+
 ## Non-goals
 
 - CiteReflex SaaS product brain.
@@ -122,7 +137,7 @@ The picker button is Local Save. It downloads `config.json`. There is no Apply b
 
 ## Still open
 
-[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria, [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) native-header smoke, [#168](https://github.com/herman925/925-cc-plugins/issues/168) Apply/read-back HTTP. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155).
+[#156](https://github.com/herman925/925-cc-plugins/issues/156) sentinel string, [#158](https://github.com/herman925/925-cc-plugins/issues/158) picker delivery beyond this Draft shell, [#159](https://github.com/herman925/925-cc-plugins/issues/159) project discovery, [#160](https://github.com/herman925/925-cc-plugins/issues/160) v1 smoke criteria, [#164](https://github.com/herman925/925-cc-plugins/issues/164) glossary and ADRs, [#167](https://github.com/herman925/925-cc-plugins/issues/167) native-header implementation and smoke, [#168](https://github.com/herman925/925-cc-plugins/issues/168) real Apply authentication. Map: [#155](https://github.com/herman925/925-cc-plugins/issues/155). The M2 routes are an offline stand-in for the #168 shape only.
 
 ## Smoke criteria
 
