@@ -5,10 +5,12 @@ export const EXCERPT_MAX_CHARS = 500;
 const SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?key|token|secret|password|authorization|[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))`;
 const QUOTED_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*$|'(?:\\.|[^'\\])*$|\S+)`;
 const ASSIGNMENT = new RegExp(
-  String.raw`(?<![A-Za-z0-9_])(?:"${SECRET_NAME}"|${SECRET_NAME})\s*[:=]\s*${QUOTED_VALUE}`,
+  String.raw`(?<![A-Za-z0-9_])(?:"${SECRET_NAME}"|'${SECRET_NAME}'|${SECRET_NAME})\s*[:=]\s*${QUOTED_VALUE}`,
   'gi',
 );
+const UNQUOTED_AUTHORIZATION = /(?<![A-Za-z0-9_])authorization\s*:\s*(?!["'])[^\r\n]*/gi;
 const REDACTORS = [
+  UNQUOTED_AUTHORIZATION,
   ASSIGNMENT,
   /[a-z][a-z0-9+.-]*:\/\/[^\s/]*:[^\s@/]+@[^\s]+/gi,
   /\bsk-[A-Za-z0-9_-]{8,}\b/g,

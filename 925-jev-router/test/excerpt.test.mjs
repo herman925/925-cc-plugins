@@ -62,6 +62,33 @@ test('excerpt redacts quoted, JSON, multiline, and outgoing-payload credentials'
   }
 });
 
+test('outgoing body drops unquoted Authorization and single-quoted password JSON', () => {
+  const bearer = 'demoSensitiveToken123';
+  const password = 'demoSensitiveValue';
+  const cases = [
+    {
+      name: 'unquoted-authorization',
+      text: `Ship the helper.\nAuthorization: Bearer ${bearer}\nThen stop.`,
+      secret: bearer,
+      keep: 'Then stop.',
+    },
+    {
+      name: 'single-quoted-password',
+      text: `{'password': '${password}', 'task': 'keep the note'}`,
+      secret: password,
+      keep: 'keep the note',
+    },
+  ];
+  for (const sample of cases) {
+    const excerpt = credentialFreeExcerpt(sample.text);
+    assert.equal(excerpt.includes(sample.secret), false, sample.name);
+    assert.equal(excerpt.includes(sample.keep), true, sample.name);
+    const outgoing = JSON.stringify(buildSystemOneBody({ policy, taskText: sample.text }).state.messages);
+    assert.equal(outgoing.includes(sample.secret), false, sample.name);
+    assert.equal(outgoing.includes(sample.keep), true, sample.name);
+  }
+});
+
 test('system one body uses candidate criteria and omits project identity', () => {
   const body = buildSystemOneBody({
     policy,
