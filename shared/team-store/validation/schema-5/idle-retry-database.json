@@ -1,0 +1,26 @@
+{
+  "metadata": [
+    {
+      "singleton": 1,
+      "format": "team-orchestrator-shared",
+      "schema_version": 5
+    }
+  ],
+  "controllers": [
+    {
+      "controller_id": "34f7e7bf97ba90a58b85f26d8086ff0ca9a1d8114a5b0d71296704ee483035a5",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "65199823-8eb0-4ae4-83e6-4d7728752d15",
+      "generation": 1,
+      "approved_at_ms": 1793446139561,
+      "revoked": 0
+    }
+  ],
+  "operations": [
+    {
+      "operation_id": "controller-9bb991428311e9a38109f7f5714ca46a",
+      "result": "{\"operationId\":\"controller-9bb991428311e9a38109f7f5714ca46a\",\"kind\":\"api\",\"result\":{\"controllerId\":\"34f7e7bf97ba90a58b85f26d8086ff0ca9a1d8114a5b0d71296704ee483035a5\",\"controllerGeneration\":1}}"
+    }
+  ]
+}

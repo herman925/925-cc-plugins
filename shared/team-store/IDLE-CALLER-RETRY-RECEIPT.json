@@ -1,0 +1,35 @@
+{
+  "id": "acebc132-a6d1-484f-8acb-7df854130473",
+  "ok": true,
+  "result": {
+    "message": {
+      "id": "msg_965898e83e38",
+      "run_id": "run_unbound",
+      "from_handle": "term_e1bd773e-211e-46fe-bf60-a44b7208a45c",
+      "to_handle": "term_59c2e656-534f-4758-b1d2-e8a66a371faf",
+      "subject": "Idle caller repair ready for actual approval retry",
+      "body": "# Idle caller approval retry — 2026-10-31\n\nFor the real approval refusal in msg_0f344e424809 / msg_0ca60e09ccd1. The exact idle Orca terminal projection has no providerSession. Native terminal.inspectProcess is read-only but exposes no PID fence on this host, so it is not used as substitute evidence.\n\nCopy ONE runtime file, byte-verify it against the authoritative repository, and preserve all other source-fixture files and the preview-only fixture manifest:\n\n- team-orchestrator/store/mod-native.mjs\n\nAuthoritative source is shared/team-store/mod-native.mjs, byte-identical to the packaged file. Associated test and documentation changes are shared/team-store/test/mod-native.test.mjs, SCHEMA-5.md and VALIDATION-SCHEMA-5.md. No schema, database API, UI hook, global configuration or installed plugin changed. The Node child reads this module per invocation; a global reload is unnecessary.\n\nThe verifier still requires one native Claude terminal tab with the exact terminal handle and incarnation, current local host/context/root, runtime profile/epoch and a unique live exact-conversation Claude registry row. Present provider IDs must agree. For the actual bridge caller only, absent providerSession may be replaced by direct OS parent identity: registry PID equals process.ppid, inherited Orca terminal/context agree, and registry procStart equals a fresh OS process creation FILETIME. Windows decimal FILETIME is the only currently verified fallback format; unsupported formats/hosts fail closed. No identity cache or terminal title is used. A requested target cannot use the caller fallback; bindMember still needs an explicit fresh native provider association. If idle target binding becomes the next blocker, report it rather than substituting copied IDs or weakening proof.\n\nLocal verification: seven native proof cases pass (including conflicting/missing/duplicate tabs, wrong incarnation, stale/missing process birth, wrong parent and inherited context). The full SQLite-only suite passes 119 tests, 0 failures, 6 PostgreSQL skips, 10.51 s. Sixteen packaged modules byte-match; syntax and diff checks pass. Earlier full two-engine results precede this verifier-only delta.\n\nRetry the actual Shared store approval button in the same disposable live project. Obtain a fresh scoped ticket through the real panel action; do not reuse the expired ticket or forge one. Simulated-user keyboard/button interaction in this scratch fixture is already authorized. Capture the starting store state and then verify the returned receipt and database state. A successful UI ticket or click alone is not approval success. If approval succeeds, continue the remaining schema-5 lifecycle acceptance and explicit outcome/head-acceptance checks under the original handoff. No existing user team migration, global install/reload, commit, push, release, terminal closure or fabricated lifecycle authority is authorized.\n\nPlease send the approval retry result promptly, including exact refusal and native/parent evidence if it fails. Preserve the retained sessions for inspection.\n",
+      "type": "handoff",
+      "priority": "normal",
+      "thread_id": "msg_94c6e213d788",
+      "payload": "{\"reportPath\":\"C:\\\\Users\\\\Herman\\\\Downloads\\\\925-cc-plugins\\\\shared\\\\team-store\\\\IDLE-CALLER-RETRY.md\"}",
+      "created_at": "2026-10-31T11:26:33Z",
+      "delivered_at": null,
+      "delivery_contract": "current_delivery"
+    },
+    "warnings": [
+      {
+        "code": "legacy_terminal_recipient",
+        "recipient": "term_59c2e656-534f-4758-b1d2-e8a66a371faf",
+        "message": "term_59c2e656-534f-4758-b1d2-e8a66a371faf is a live terminal-only mailbox. Delivery is not durable after that terminal closes; prefer run:<id> or dispatch:<id>."
+      }
+    ],
+    "mutation": {
+      "requestId": "0ce50447-4fad-4cce-be81-400b2ddd01bb",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "a0d8552c-bb57-44b6-95df-ccd13ecd3068"
+  }
+}

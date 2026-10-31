@@ -20,6 +20,7 @@ import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from './assumptions'
 import type { OpenAssumption } from './assumptions'
+import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, setSharedStoreProof } from './shared-store'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -44,6 +45,7 @@ async function putFile($: any, path: string, text: string): Promise<void> {
   }
 }
 const cfg = { orcaCommand: '', version: '', versionRead: false }
+const sharedConfig = { enabled:false, node:'node' }
 // the version shown in the panel, read once per load from this plugin's own manifest, so it always matches what is installed
 async function readVersion($: any) {
   if (cfg.versionRead) return
@@ -2116,6 +2118,27 @@ let turn: Grants = NO_GRANTS
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
   const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
   const command = shell ? String(e.command ?? '') : ''
+  if(sharedConfig.enabled){
+    const protectedState=sharedStoreProtection(tool,pathOf(e),command)
+    if(protectedState)return `Blocked ${tool}: ${protectedState}`
+    if(tool===AGENT_TOOL || (WRITE_TOOLS as readonly string[]).includes(tool) || (shell && createsManaged(command))){
+      const scope=await preflight($)
+      if(!scope.ok)return `Blocked ${tool}: shared caller verification failed: ${scope.reason}`
+      if(await $.fs.exists(`${scope.root}/.team-orchestrator/team.sqlite`)){
+        const reply=await sharedCall($,scope,{operationId:`guard-${uuid()}`,command:{type:'inspectCaller'}},{node:sharedConfig.node,orca:await orcaBin($)})
+        if(!reply.ok)return `Blocked ${tool}: ${reply.error?.code}: ${reply.error?.message}`
+        const current=reply.result.result
+        if(current.member){
+          const row=current.member
+          const me={name:row.name,boss:row.boss_member_id??'user',allowAgent:Number(row.allow_agent)===1,allowWrite:Number(row.allow_write)===1} as Member
+          const list=current.hasReports?[me,{name:'direct-report',boss:me.name} as Member]:[me]
+          const verdict=(shell?createsManaged(command):undefined) ?? judge({me,list,tool,path:pathOf(e),grants:turn,claudeDirs:await claudeDirs($),subagentType:String(e.subagent_type??'')})
+          if(verdict?.kind==='deny')return verdict.reason
+        }
+      }
+    }
+  }
+  if(tool==='Read')return undefined
   // judged before the team-file question: a creating command names no team file, and would otherwise return here
   const creation = shell ? createsManaged(command) : undefined
   if (shell && !creation && !namesTeamFile(command)) return undefined
@@ -2915,6 +2938,9 @@ const safely = async (fn: () => Promise<any>): Promise<any> => {
 
 export const register: Register = (on, options) => {
   cfg.orcaCommand = String((options as any)?.orcaCommand ?? '').trim()
+  sharedConfig.enabled = (options as any)?.sharedStorePreview === true
+  sharedConfig.node = String((options as any)?.sharedStoreNode ?? 'node').trim() || 'node'
+  on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>callSharedStore($,e,sharedConfig.enabled,{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false
   seenRoster.base = undefined
@@ -2923,6 +2949,7 @@ export const register: Register = (on, options) => {
   turnAsk.answered = false
   statusMigrated.clear()
   on('session.start', async ($, e, next) => {
+    await startSharedStore($,sharedConfig.enabled)
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
     await $.tool.register({
       name: 'team_launch',
@@ -3084,7 +3111,7 @@ export const register: Register = (on, options) => {
         const [m, v, n] = [await read($, members), await read($, view), await read($, note)]
         const busy = n.startsWith('⏳') || (await read($, spawn)).names.length > 0
         const quiet = Date.now() - typedAt > 1500
-        if ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet) || busy) await update($, frame, x => x + 1)
+        if (busy || (v !== 'shared' && ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet)))) await update($, frame, x => x + 1)
       })(),
     )
     // a member's own process starts: its idle clock starts now, whatever its last turn or clean said (guardrail #11)
@@ -3205,7 +3232,7 @@ export const register: Register = (on, options) => {
 
   // a roster member may not use subagents, and a member with reports may not write files itself, unless allowed;
   // only the team top changes the team files, by tool or by shell
-  for (const tool of [AGENT_TOOL, ...WRITE_TOOLS, ...SHELL_TOOLS])
+  for (const tool of [AGENT_TOOL, ...WRITE_TOOLS, ...SHELL_TOOLS, 'Read'])
     on('tool.call', { tool } as any, async ($, e, next) => {
       const deny = await guard($, e, tool)
       return deny !== undefined ? ({ deny } as any) : next(e)
@@ -3576,6 +3603,11 @@ async function docked($: any) {
 async function panel($: any, ui: any, v: View, cols: number) {
   const { Box, Text, Button } = ui
   const go = (to: View) => update($, view, () => to)
+  const openShared = async () => {
+    await setSharedStoreProof($,{ok:false,reason:'Verifying the current native project and conversation…'})
+    await go('shared')
+    await setSharedStoreProof($,await preflight($))
+  }
   await readVersion($)
   return (
     <Box flexDirection="column">
@@ -3588,12 +3620,13 @@ async function panel($: any, ui: any, v: View, cols: number) {
           <Button key="tab-roster" label="Roster" onPress={() => void go('roster')} />
           <Button key="tab-new" label="New team" onPress={() => void go('new')} />
           <Button key="tab-settings" label="Settings" onPress={() => void go('settings')} />
+          {sharedConfig.enabled?<Button key="tab-shared" label="Shared store" onPress={openShared} />:null}
         </Box>
         <Button key="close" label="x Close" role="dismiss" onPress={() => void go('closed')} />
       </Box>
       {(await read($, spawn)).names.length > 0
         ? await spawnView($, ui)
-        : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
+        : v === 'shared' ? await sharedStoreView($,ui,{enabled:sharedConfig.enabled,revalidate:()=>preflight($),node:sharedConfig.node,orca:await orcaBin($)}) : v === 'new' ? await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
     </Box>
   )
 }

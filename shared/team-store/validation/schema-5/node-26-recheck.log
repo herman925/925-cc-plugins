@@ -1,0 +1,156 @@
+npm notice run npx
+npm notice run node --test shared/team-store/test/*.test.mjs
+▶ sqlite authenticated API
+  ✔ complete fresh team flow records worker outcome separately from head acceptance (524.9508ms)
+  ✔ self-asserted caller, approval, paths and raw mutations cannot become authority (96.8358ms)
+  ✔ separate controllers coexist and approval survives a freshly verified same-conversation resume (245.0217ms)
+  ✔ a stale native incarnation, member generation or binding generation is refused (413.7197ms)
+  ✔ another worker cannot pick up or report, and a worker cannot admit work to a peer (355.9301ms)
+  ✔ same-operation replay is idempotent; changed body and revoked roles do not replay (321.545ms)
+  ✔ pickup expiry and explicit failed/rejected results are preserved (430.9183ms)
+  ✔ current authority is checked after waiting for the common database lock (363.6837ms)
+  ✔ failed fresh-team creation rolls back all roster and approval-independent changes (128.7221ms)
+✔ sqlite authenticated API (2882.8649ms)
+﹣ postgres authenticated API (0.0308ms) # SKIP
+✔ finite safe integers, nonempty UTF-8 identifiers, and overflow fail closed (1.0364ms)
+✔ local SQLite works from an isolated source tree with no node_modules (316.491ms)
+✔ PostgreSQL driver is requested only on the explicit hosted path and fails clearly if unavailable (0.5445ms)
+▶ sqlite runtime bootstrap
+  ✔ an empty store needs explicit creation; install uses the shared schema and can reopen data (107.6703ms)
+  ✔ a repeated explicit schema installation refuses and preserves data (57.3912ms)
+  ✔ unknown schema versions are refused before writes, without changing legacy files (290.573ms)
+  ✔ foreign or incomplete stores are never initialized over existing data (60.4852ms)
+  ✔ a wrong format is refused and is not rewritten (53.2988ms)
+  ✔ a supported metadata row cannot disguise missing contract tables (43.5383ms)
+  ✔ the engine supplies an integer UTC clock without the application wall clock (59.3165ms)
+  ✔ a failed installation transaction leaves no partial schema (16.2008ms)
+  ✔ a lost installation commit response is unknown and reopening does not repeat DDL (67.9713ms)
+✔ sqlite runtime bootstrap (757.5243ms)
+﹣ postgres runtime bootstrap (0.0348ms) # SKIP
+✔ SQLite enables foreign keys on runtime connections (51.3373ms)
+﹣ PostgreSQL empty-store inspection includes user routines, not just tables (0.1174ms) # SKIP
+✔ SQLite refuses a project storage directory redirected outside the project (2.3507ms)
+﹣ PostgreSQL refuses a database whose session default disables foreign-key enforcement (0.0783ms) # SKIP
+✔ one common table source renders explicit collations and equivalent immutability guards (0.9771ms)
+▶ sqlite shared contract
+  ✔ schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency (679.1742ms)
+  ✔ schema 3 admissions require real members and a future explicit pickup deadline (697.3841ms)
+  ✔ schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession (678.2844ms)
+  ✔ schema 3 gates keep resolution data consistent without implying a task transition (593.1612ms)
+  ✔ schema 3 membership, roles, exemptions and installed writer families have database constraints (447.3541ms)
+  ✔ metadata is explicit, singular, and never overwritten on a second install (566.04ms)
+  ✔ delivery states reject unknown spellings, NULL, and missing identifiers (348.8907ms)
+  ✔ identifier equality is case-sensitive, including foreign-key references (345.4053ms)
+  ✔ a gate must reference a real task, and a referenced task cannot disappear (357.486ms)
+  ✔ the second assignment for a task is refused (339.259ms)
+  ✔ independent connections racing for one assignment have one committed winner (354.9422ms)
+  ✔ a competing live lease is refused and the holder remains identifiable (326.307ms)
+  ✔ independent connections racing for an expired lease have one winner (376.819ms)
+  ✔ lease renewal preserves its generation and cannot revive an expired token (355.7374ms)
+  ✔ a mutation holds the lease lock through commit before another holder can acquire it (529.3155ms)
+  ✔ expired or stale lease holders cannot mutate a thread or admit an assignment (261.2848ms)
+  ✔ independent connections answering a thread have exactly one winner (270.4373ms)
+  ✔ a stale row generation cannot answer an open thread (248.6866ms)
+  ✔ a conditional write that RETURNING accepted is still undone by rollback (240.6875ms)
+  ✔ a failed second write rolls back the assignment and first gate together (248.6343ms)
+  ✔ acknowledgement is conditional, and both terminal delivery states stay closed (253.898ms)
+  ✔ rebind fences outstanding batches and refuses stale consumer actions (254.4448ms)
+  ✔ a lost rebind rolls back provisional fencing (563.3026ms)
+  ✔ operation ids refuse a different fingerprint and replay the original saved result (262.4013ms)
+  ✔ a rolled-back mutation leaves neither its effect nor an operation receipt (245.2331ms)
+  ✔ a committed operation receipt survives a later failed transaction unchanged (267.4194ms)
+✔ sqlite shared contract (10113.8366ms)
+﹣ postgres shared contract (0.0321ms) # SKIP
+✔ SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed (275.3859ms)
+﹣ PostgreSQL unique violations are domain conflicts rather than transient retries (0.5005ms) # SKIP
+﹣ PostgreSQL actual serializable update conflicts expose retryable 40001 (0.0676ms) # SKIP
+﹣ PostgreSQL actual deadlock exposes retryable 40P01 and releases the aborted writer (0.0658ms) # SKIP
+▶ sqlite schema 3 configuration
+  ✔ older binary freshly rereads newest config generation still refused (216.6195ms)
+  ✔ writer release fences are numeric and independent for Mod and plugin (280.3367ms)
+  ✔ missing known writer fences and raised protocol floors refuse explicitly (194.629ms)
+  ✔ configuration CAS, references and writer fence advance roll back atomically (177.4474ms)
+  ✔ pickup minutes are explicit positive integers and all settings round trip (94.8705ms)
+  ✔ global names, boss references and cycles refuse with member identities (262.093ms)
+  ✔ registered home is immutable and advisory notes cannot change official role or permissions (253.94ms)
+  ✔ new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize (260.0747ms)
+  ✔ schema 4 requires explicit answer, task-off and replay settings (81.5865ms)
+  ✔ schema 4 team-owned threads persist a complete immutable pair without delivery side effects (230.2709ms)
+  ✔ schema 4 snapshots optional task minutes without observing pickup or starting a deadline (196.5276ms)
+  ✔ schema 4 missing message immutability guards refuse before lease or data writes (138.704ms)
+✔ sqlite schema 3 configuration (2388.7074ms)
+﹣ postgres schema 3 configuration (0.0407ms) # SKIP
+▶ sqlite separate machine observations
+  ✔ own format, version, UUID directory and machine binding are checked before writing (116.714ms)
+  ✔ unknown schema is refused without a reset or binding replacement (110.9529ms)
+  ✔ unknown states preserve raw values; binding alone invents no liveness (100.6259ms)
+  ✔ old sessions, binding generations and row generations cannot write after rebind (113.7742ms)
+  ✔ older machine binary freshly rereads newest observation generation still refused (111.344ms)
+  ✔ machine fences are independent by family, missing known rows and old protocols refuse (177.1941ms)
+  ✔ failed batches roll back observations, receipts and the new writer high-water release (110.5795ms)
+  ✔ local receipt replay is idempotent, immutable and does not establish shared acknowledgement (345.4105ms)
+  ✔ policy is mandatory, synchronous and checked again on read, replay and retry (150.6944ms)
+  ✔ busy transactions retry within a bound and do not publish partial state (83.3413ms)
+  ✔ lost commit responses reconcile same request and absent receipts remain unknown (99.6108ms)
+  ✔ unsafe keys, non-UUID identities and junction directory aliases refuse (49.1351ms)
+✔ sqlite separate machine observations (1571.7028ms)
+▶ native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+  ✔ refuses wrong-conversation native evidence for caller and target (3.9985ms)
+  ✔ refuses wrong-incarnation native evidence for caller and target (4.8072ms)
+  ✔ refuses duplicate native evidence for caller and target (3.6641ms)
+  ✔ refuses absent native evidence for caller and target (3.4537ms)
+  ✔ idle caller requires its exact parent process creation fingerprint (12.8924ms)
+  ✔ idle caller cannot substitute another parent or inherited terminal context (3.586ms)
+✔ native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent (56.9735ms)
+▶ sqlite schema 4 lifecycle layout
+  ✔ deliveries is the sole batch-state table and messages have no delivery status (646.082ms)
+  ✔ a delivery and its sole message are mutually required at commit (701.3923ms)
+  ✔ membership cannot disagree, move between batches, or add a second message (662.4544ms)
+  ✔ message identity, content, routing and membership reject UPDATE DELETE and replacement (599.6549ms)
+  ✔ batch replay and acknowledgement and thread closure leave message bytes unchanged (507.677ms)
+  ✔ closed message kinds and canonical endpoint references apply in either direction (724.3514ms)
+  ✔ thread ownership requires a team, optionally a task in its Run and team (386.2845ms)
+  ✔ assignment retry history has one root and a same-task non-self predecessor without forks (384.1053ms)
+  ✔ NULL task windows mean off without admitting an enabled deadline before pickup (359.3284ms)
+  ✔ question deadlines bind delivery time independently of task pickup (351.1733ms)
+  ✔ window and replay settings have no invented required defaults (343.0405ms)
+  ✔ gate JSON remains opaque; client obligations and gate application are explicit (358.1691ms)
+  ✔ new numeric columns cannot store fractional windows, counters or timestamps (355.2984ms)
+  ✔ an immutability refusal rolls back a newly created message-delivery pair (360.0673ms)
+✔ sqlite schema 4 lifecycle layout (6740.9076ms)
+﹣ postgres schema 4 lifecycle layout (0.0378ms) # SKIP
+▶ sqlite production store
+  ✔ a fixed primitive batch commits and reopens through the public interface (183.8067ms)
+  ✔ canonical identity tolerates key order and changed submission metadata, never changed semantics (159.8592ms)
+  ✔ an in-flight same-operation retry on another holder rechecks the receipt after its lock wait (201.7101ms)
+  ✔ no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes (146.7832ms)
+  ✔ authorization is rechecked on every retry (109.8514ms)
+  ✔ authorization is required again for a replay and a read (134.784ms)
+  ✔ a live lease loudly refuses another machine and another token on the same machine (152.5853ms)
+  ✔ renewal keeps its generation and expiry is exclusive; reacquisition increments it (127.9835ms)
+  ✔ a failed prerequisite rolls back earlier mutations and leaves no receipt (112.4743ms)
+  ✔ bounded whole-transaction retry rolls back partial work and reads fresh lease generations (182.9118ms)
+  ✔ retry exhaustion is bounded and does not leave a partial operation (131.3628ms)
+  ✔ a retryable COMMIT failure rolls back and retries the entire operation (153.5297ms)
+  ✔ uniqueness is a domain refusal and is never automatically retried (137.9867ms)
+  ✔ a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect (122.288ms)
+  ✔ an absent receipt is unknown, not proof to resend automatically (156.5459ms)
+  ✔ the lease lock precedes the clock and an expired mutation leaves no effect (112.7488ms)
+  ✔ generation overflow is refused without wrapping or partially updating (204.15ms)
+  ✔ a backward database clock rolls back the transaction (79.7991ms)
+  ✔ a failed rollback quarantines the connection and never automatically retries (102.7868ms)
+  ✔ an expired rebind rolls back fencing and leaves the old consumer active (104.1142ms)
+  ✔ version one is refused rather than migrated implicitly to the receipt schema (84.4315ms)
+  ✔ an unsupported version is refused even by an already-open client and even on replay (111.856ms)
+✔ sqlite production store (3016.5437ms)
+﹣ postgres production store (0.0373ms) # SKIP
+✔ SQLite runtime retries a real competing writer lock without duplicating the operation (463.7752ms)
+﹣ PostgreSQL renewal samples its clock after a real row-lock wait and cannot revive an expired lease (0.0762ms) # SKIP
+ℹ tests 125
+ℹ suites 13
+ℹ pass 119
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 6
+ℹ todo 0
+ℹ duration_ms 10199.5054

@@ -1,0 +1,1404 @@
+TAP version 13
+# Subtest: sqlite authenticated API
+    # Subtest: complete fresh team flow records worker outcome separately from head acceptance
+    ok 1 - complete fresh team flow records worker outcome separately from head acceptance
+      ---
+      duration_ms: 247.7749
+      type: 'test'
+      ...
+    # Subtest: self-asserted caller, approval, paths and raw mutations cannot become authority
+    ok 2 - self-asserted caller, approval, paths and raw mutations cannot become authority
+      ---
+      duration_ms: 157.5157
+      type: 'test'
+      ...
+    # Subtest: separate controllers coexist and approval survives a freshly verified same-conversation resume
+    ok 3 - separate controllers coexist and approval survives a freshly verified same-conversation resume
+      ---
+      duration_ms: 317.4146
+      type: 'test'
+      ...
+    # Subtest: a stale native incarnation, member generation or binding generation is refused
+    ok 4 - a stale native incarnation, member generation or binding generation is refused
+      ---
+      duration_ms: 503.3165
+      type: 'test'
+      ...
+    # Subtest: another worker cannot pick up or report, and a worker cannot admit work to a peer
+    ok 5 - another worker cannot pick up or report, and a worker cannot admit work to a peer
+      ---
+      duration_ms: 445.1747
+      type: 'test'
+      ...
+    # Subtest: same-operation replay is idempotent; changed body and revoked roles do not replay
+    ok 6 - same-operation replay is idempotent; changed body and revoked roles do not replay
+      ---
+      duration_ms: 388.6852
+      type: 'test'
+      ...
+    # Subtest: pickup expiry and explicit failed/rejected results are preserved
+    ok 7 - pickup expiry and explicit failed/rejected results are preserved
+      ---
+      duration_ms: 512.4455
+      type: 'test'
+      ...
+    # Subtest: current authority is checked after waiting for the common database lock
+    ok 8 - current authority is checked after waiting for the common database lock
+      ---
+      duration_ms: 404.316
+      type: 'test'
+      ...
+    # Subtest: failed fresh-team creation rolls back all roster and approval-independent changes
+    ok 9 - failed fresh-team creation rolls back all roster and approval-independent changes
+      ---
+      duration_ms: 180.8999
+      type: 'test'
+      ...
+    1..9
+ok 1 - sqlite authenticated API
+  ---
+  duration_ms: 3159.2175
+  type: 'suite'
+  ...
+# Subtest: postgres authenticated API
+    # Subtest: complete fresh team flow records worker outcome separately from head acceptance
+    ok 1 - complete fresh team flow records worker outcome separately from head acceptance
+      ---
+      duration_ms: 1901.9577
+      type: 'test'
+      ...
+    # Subtest: self-asserted caller, approval, paths and raw mutations cannot become authority
+    ok 2 - self-asserted caller, approval, paths and raw mutations cannot become authority
+      ---
+      duration_ms: 1090.6482
+      type: 'test'
+      ...
+    # Subtest: separate controllers coexist and approval survives a freshly verified same-conversation resume
+    ok 3 - separate controllers coexist and approval survives a freshly verified same-conversation resume
+      ---
+      duration_ms: 1393.368
+      type: 'test'
+      ...
+    # Subtest: a stale native incarnation, member generation or binding generation is refused
+    ok 4 - a stale native incarnation, member generation or binding generation is refused
+      ---
+      duration_ms: 831.9524
+      type: 'test'
+      ...
+    # Subtest: another worker cannot pick up or report, and a worker cannot admit work to a peer
+    ok 5 - another worker cannot pick up or report, and a worker cannot admit work to a peer
+      ---
+      duration_ms: 1036.2839
+      type: 'test'
+      ...
+    # Subtest: same-operation replay is idempotent; changed body and revoked roles do not replay
+    ok 6 - same-operation replay is idempotent; changed body and revoked roles do not replay
+      ---
+      duration_ms: 1743.9372
+      type: 'test'
+      ...
+    # Subtest: pickup expiry and explicit failed/rejected results are preserved
+    ok 7 - pickup expiry and explicit failed/rejected results are preserved
+      ---
+      duration_ms: 2941.8747
+      type: 'test'
+      ...
+    # Subtest: current authority is checked after waiting for the common database lock
+    ok 8 - current authority is checked after waiting for the common database lock
+      ---
+      duration_ms: 1839.772
+      type: 'test'
+      ...
+    # Subtest: failed fresh-team creation rolls back all roster and approval-independent changes
+    ok 9 - failed fresh-team creation rolls back all roster and approval-independent changes
+      ---
+      duration_ms: 2101.1778
+      type: 'test'
+      ...
+    1..9
+ok 2 - postgres authenticated API
+  ---
+  duration_ms: 14881.699
+  type: 'suite'
+  ...
+# Subtest: finite safe integers, nonempty UTF-8 identifiers, and overflow fail closed
+ok 3 - finite safe integers, nonempty UTF-8 identifiers, and overflow fail closed
+  ---
+  duration_ms: 0.8123
+  type: 'test'
+  ...
+# Subtest: local SQLite works from an isolated source tree with no node_modules
+ok 4 - local SQLite works from an isolated source tree with no node_modules
+  ---
+  duration_ms: 533.5558
+  type: 'test'
+  ...
+# Subtest: PostgreSQL driver is requested only on the explicit hosted path and fails clearly if unavailable
+ok 5 - PostgreSQL driver is requested only on the explicit hosted path and fails clearly if unavailable
+  ---
+  duration_ms: 0.5359
+  type: 'test'
+  ...
+# Subtest: sqlite runtime bootstrap
+    # Subtest: an empty store needs explicit creation; install uses the shared schema and can reopen data
+    ok 1 - an empty store needs explicit creation; install uses the shared schema and can reopen data
+      ---
+      duration_ms: 116.719
+      type: 'test'
+      ...
+    # Subtest: a repeated explicit schema installation refuses and preserves data
+    ok 2 - a repeated explicit schema installation refuses and preserves data
+      ---
+      duration_ms: 68.0257
+      type: 'test'
+      ...
+    # Subtest: unknown schema versions are refused before writes, without changing legacy files
+    ok 3 - unknown schema versions are refused before writes, without changing legacy files
+      ---
+      duration_ms: 318.5077
+      type: 'test'
+      ...
+    # Subtest: foreign or incomplete stores are never initialized over existing data
+    ok 4 - foreign or incomplete stores are never initialized over existing data
+      ---
+      duration_ms: 80.6152
+      type: 'test'
+      ...
+    # Subtest: a wrong format is refused and is not rewritten
+    ok 5 - a wrong format is refused and is not rewritten
+      ---
+      duration_ms: 61.5805
+      type: 'test'
+      ...
+    # Subtest: a supported metadata row cannot disguise missing contract tables
+    ok 6 - a supported metadata row cannot disguise missing contract tables
+      ---
+      duration_ms: 52.9821
+      type: 'test'
+      ...
+    # Subtest: the engine supplies an integer UTC clock without the application wall clock
+    ok 7 - the engine supplies an integer UTC clock without the application wall clock
+      ---
+      duration_ms: 51.4158
+      type: 'test'
+      ...
+    # Subtest: a failed installation transaction leaves no partial schema
+    ok 8 - a failed installation transaction leaves no partial schema
+      ---
+      duration_ms: 25.122
+      type: 'test'
+      ...
+    # Subtest: a lost installation commit response is unknown and reopening does not repeat DDL
+    ok 9 - a lost installation commit response is unknown and reopening does not repeat DDL
+      ---
+      duration_ms: 79.2739
+      type: 'test'
+      ...
+    1..9
+ok 6 - sqlite runtime bootstrap
+  ---
+  duration_ms: 855.5961
+  type: 'suite'
+  ...
+# Subtest: postgres runtime bootstrap
+    # Subtest: an empty store needs explicit creation; install uses the shared schema and can reopen data
+    ok 1 - an empty store needs explicit creation; install uses the shared schema and can reopen data
+      ---
+      duration_ms: 1027.5345
+      type: 'test'
+      ...
+    # Subtest: a repeated explicit schema installation refuses and preserves data
+    ok 2 - a repeated explicit schema installation refuses and preserves data
+      ---
+      duration_ms: 1011.2035
+      type: 'test'
+      ...
+    # Subtest: unknown schema versions are refused before writes, without changing legacy files
+    ok 3 - unknown schema versions are refused before writes, without changing legacy files
+      ---
+      duration_ms: 1615.2673
+      type: 'test'
+      ...
+    # Subtest: foreign or incomplete stores are never initialized over existing data
+    ok 4 - foreign or incomplete stores are never initialized over existing data
+      ---
+      duration_ms: 1025.7792
+      type: 'test'
+      ...
+    # Subtest: a wrong format is refused and is not rewritten
+    ok 5 - a wrong format is refused and is not rewritten
+      ---
+      duration_ms: 1389.8898
+      type: 'test'
+      ...
+    # Subtest: a supported metadata row cannot disguise missing contract tables
+    ok 6 - a supported metadata row cannot disguise missing contract tables
+      ---
+      duration_ms: 832.4257
+      type: 'test'
+      ...
+    # Subtest: the engine supplies an integer UTC clock without the application wall clock
+    ok 7 - the engine supplies an integer UTC clock without the application wall clock
+      ---
+      duration_ms: 1011.173
+      type: 'test'
+      ...
+    # Subtest: a failed installation transaction leaves no partial schema
+    ok 8 - a failed installation transaction leaves no partial schema
+      ---
+      duration_ms: 1771.2379
+      type: 'test'
+      ...
+    # Subtest: a lost installation commit response is unknown and reopening does not repeat DDL
+    ok 9 - a lost installation commit response is unknown and reopening does not repeat DDL
+      ---
+      duration_ms: 2932.984
+      type: 'test'
+      ...
+    1..9
+ok 7 - postgres runtime bootstrap
+  ---
+  duration_ms: 12618.2889
+  type: 'suite'
+  ...
+# Subtest: SQLite enables foreign keys on runtime connections
+ok 8 - SQLite enables foreign keys on runtime connections
+  ---
+  duration_ms: 43.0032
+  type: 'test'
+  ...
+# Subtest: PostgreSQL empty-store inspection includes user routines, not just tables
+ok 9 - PostgreSQL empty-store inspection includes user routines, not just tables
+  ---
+  duration_ms: 1814.7304
+  type: 'test'
+  ...
+# Subtest: SQLite refuses a project storage directory redirected outside the project
+ok 10 - SQLite refuses a project storage directory redirected outside the project
+  ---
+  duration_ms: 4.7
+  type: 'test'
+  ...
+# Subtest: PostgreSQL refuses a database whose session default disables foreign-key enforcement
+ok 11 - PostgreSQL refuses a database whose session default disables foreign-key enforcement
+  ---
+  duration_ms: 2131.9314
+  type: 'test'
+  ...
+# Subtest: one common table source renders explicit collations and equivalent immutability guards
+ok 12 - one common table source renders explicit collations and equivalent immutability guards
+  ---
+  duration_ms: 0.9386
+  type: 'test'
+  ...
+# Subtest: sqlite shared contract
+    # Subtest: schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+    ok 1 - schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+      ---
+      duration_ms: 509.541
+      type: 'test'
+      ...
+    # Subtest: schema 3 admissions require real members and a future explicit pickup deadline
+    ok 2 - schema 3 admissions require real members and a future explicit pickup deadline
+      ---
+      duration_ms: 670.177
+      type: 'test'
+      ...
+    # Subtest: schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+    ok 3 - schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+      ---
+      duration_ms: 776.5681
+      type: 'test'
+      ...
+    # Subtest: schema 3 gates keep resolution data consistent without implying a task transition
+    ok 4 - schema 3 gates keep resolution data consistent without implying a task transition
+      ---
+      duration_ms: 696.6213
+      type: 'test'
+      ...
+    # Subtest: schema 3 membership, roles, exemptions and installed writer families have database constraints
+    ok 5 - schema 3 membership, roles, exemptions and installed writer families have database constraints
+      ---
+      duration_ms: 612.8059
+      type: 'test'
+      ...
+    # Subtest: metadata is explicit, singular, and never overwritten on a second install
+    ok 6 - metadata is explicit, singular, and never overwritten on a second install
+      ---
+      duration_ms: 369.561
+      type: 'test'
+      ...
+    # Subtest: delivery states reject unknown spellings, NULL, and missing identifiers
+    ok 7 - delivery states reject unknown spellings, NULL, and missing identifiers
+      ---
+      duration_ms: 589.2374
+      type: 'test'
+      ...
+    # Subtest: identifier equality is case-sensitive, including foreign-key references
+    ok 8 - identifier equality is case-sensitive, including foreign-key references
+      ---
+      duration_ms: 625.1494
+      type: 'test'
+      ...
+    # Subtest: a gate must reference a real task, and a referenced task cannot disappear
+    ok 9 - a gate must reference a real task, and a referenced task cannot disappear
+      ---
+      duration_ms: 451.3596
+      type: 'test'
+      ...
+    # Subtest: the second assignment for a task is refused
+    ok 10 - the second assignment for a task is refused
+      ---
+      duration_ms: 499.3857
+      type: 'test'
+      ...
+    # Subtest: independent connections racing for one assignment have one committed winner
+    ok 11 - independent connections racing for one assignment have one committed winner
+      ---
+      duration_ms: 474.1698
+      type: 'test'
+      ...
+    # Subtest: a competing live lease is refused and the holder remains identifiable
+    ok 12 - a competing live lease is refused and the holder remains identifiable
+      ---
+      duration_ms: 1275.2564
+      type: 'test'
+      ...
+    # Subtest: independent connections racing for an expired lease have one winner
+    ok 13 - independent connections racing for an expired lease have one winner
+      ---
+      duration_ms: 513.3553
+      type: 'test'
+      ...
+    # Subtest: lease renewal preserves its generation and cannot revive an expired token
+    ok 14 - lease renewal preserves its generation and cannot revive an expired token
+      ---
+      duration_ms: 417.8695
+      type: 'test'
+      ...
+    # Subtest: a mutation holds the lease lock through commit before another holder can acquire it
+    ok 15 - a mutation holds the lease lock through commit before another holder can acquire it
+      ---
+      duration_ms: 631.3092
+      type: 'test'
+      ...
+    # Subtest: expired or stale lease holders cannot mutate a thread or admit an assignment
+    ok 16 - expired or stale lease holders cannot mutate a thread or admit an assignment
+      ---
+      duration_ms: 315.6708
+      type: 'test'
+      ...
+    # Subtest: independent connections answering a thread have exactly one winner
+    ok 17 - independent connections answering a thread have exactly one winner
+      ---
+      duration_ms: 300.3116
+      type: 'test'
+      ...
+    # Subtest: a stale row generation cannot answer an open thread
+    ok 18 - a stale row generation cannot answer an open thread
+      ---
+      duration_ms: 429.9488
+      type: 'test'
+      ...
+    # Subtest: a conditional write that RETURNING accepted is still undone by rollback
+    ok 19 - a conditional write that RETURNING accepted is still undone by rollback
+      ---
+      duration_ms: 430.2984
+      type: 'test'
+      ...
+    # Subtest: a failed second write rolls back the assignment and first gate together
+    ok 20 - a failed second write rolls back the assignment and first gate together
+      ---
+      duration_ms: 394.7709
+      type: 'test'
+      ...
+    # Subtest: acknowledgement is conditional, and both terminal delivery states stay closed
+    ok 21 - acknowledgement is conditional, and both terminal delivery states stay closed
+      ---
+      duration_ms: 1094.423
+      type: 'test'
+      ...
+    # Subtest: rebind fences outstanding batches and refuses stale consumer actions
+    ok 22 - rebind fences outstanding batches and refuses stale consumer actions
+      ---
+      duration_ms: 575.2949
+      type: 'test'
+      ...
+    # Subtest: a lost rebind rolls back provisional fencing
+    ok 23 - a lost rebind rolls back provisional fencing
+      ---
+      duration_ms: 396.7014
+      type: 'test'
+      ...
+    # Subtest: operation ids refuse a different fingerprint and replay the original saved result
+    ok 24 - operation ids refuse a different fingerprint and replay the original saved result
+      ---
+      duration_ms: 459.3107
+      type: 'test'
+      ...
+    # Subtest: a rolled-back mutation leaves neither its effect nor an operation receipt
+    ok 25 - a rolled-back mutation leaves neither its effect nor an operation receipt
+      ---
+      duration_ms: 379.9051
+      type: 'test'
+      ...
+    # Subtest: a committed operation receipt survives a later failed transaction unchanged
+    ok 26 - a committed operation receipt survives a later failed transaction unchanged
+      ---
+      duration_ms: 294.8647
+      type: 'test'
+      ...
+    1..26
+ok 13 - sqlite shared contract
+  ---
+  duration_ms: 14186.688
+  type: 'suite'
+  ...
+# Subtest: postgres shared contract
+    # Subtest: schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+    ok 1 - schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency
+      ---
+      duration_ms: 484.3826
+      type: 'test'
+      ...
+    # Subtest: schema 3 admissions require real members and a future explicit pickup deadline
+    ok 2 - schema 3 admissions require real members and a future explicit pickup deadline
+      ---
+      duration_ms: 187.3753
+      type: 'test'
+      ...
+    # Subtest: schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+    ok 3 - schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession
+      ---
+      duration_ms: 193.9344
+      type: 'test'
+      ...
+    # Subtest: schema 3 gates keep resolution data consistent without implying a task transition
+    ok 4 - schema 3 gates keep resolution data consistent without implying a task transition
+      ---
+      duration_ms: 218.7267
+      type: 'test'
+      ...
+    # Subtest: schema 3 membership, roles, exemptions and installed writer families have database constraints
+    ok 5 - schema 3 membership, roles, exemptions and installed writer families have database constraints
+      ---
+      duration_ms: 218.935
+      type: 'test'
+      ...
+    # Subtest: metadata is explicit, singular, and never overwritten on a second install
+    ok 6 - metadata is explicit, singular, and never overwritten on a second install
+      ---
+      duration_ms: 612.8352
+      type: 'test'
+      ...
+    # Subtest: delivery states reject unknown spellings, NULL, and missing identifiers
+    ok 7 - delivery states reject unknown spellings, NULL, and missing identifiers
+      ---
+      duration_ms: 824.7831
+      type: 'test'
+      ...
+    # Subtest: identifier equality is case-sensitive, including foreign-key references
+    ok 8 - identifier equality is case-sensitive, including foreign-key references
+      ---
+      duration_ms: 286.1868
+      type: 'test'
+      ...
+    # Subtest: a gate must reference a real task, and a referenced task cannot disappear
+    ok 9 - a gate must reference a real task, and a referenced task cannot disappear
+      ---
+      duration_ms: 210.7906
+      type: 'test'
+      ...
+    # Subtest: the second assignment for a task is refused
+    ok 10 - the second assignment for a task is refused
+      ---
+      duration_ms: 229.0135
+      type: 'test'
+      ...
+    # Subtest: independent connections racing for one assignment have one committed winner
+    ok 11 - independent connections racing for one assignment have one committed winner
+      ---
+      duration_ms: 487.7426
+      type: 'test'
+      ...
+    # Subtest: a competing live lease is refused and the holder remains identifiable
+    ok 12 - a competing live lease is refused and the holder remains identifiable
+      ---
+      duration_ms: 201.2539
+      type: 'test'
+      ...
+    # Subtest: independent connections racing for an expired lease have one winner
+    ok 13 - independent connections racing for an expired lease have one winner
+      ---
+      duration_ms: 232.6429
+      type: 'test'
+      ...
+    # Subtest: lease renewal preserves its generation and cannot revive an expired token
+    ok 14 - lease renewal preserves its generation and cannot revive an expired token
+      ---
+      duration_ms: 240.4414
+      type: 'test'
+      ...
+    # Subtest: a mutation holds the lease lock through commit before another holder can acquire it
+    ok 15 - a mutation holds the lease lock through commit before another holder can acquire it
+      ---
+      duration_ms: 369.2036
+      type: 'test'
+      ...
+    # Subtest: expired or stale lease holders cannot mutate a thread or admit an assignment
+    ok 16 - expired or stale lease holders cannot mutate a thread or admit an assignment
+      ---
+      duration_ms: 304.0127
+      type: 'test'
+      ...
+    # Subtest: independent connections answering a thread have exactly one winner
+    ok 17 - independent connections answering a thread have exactly one winner
+      ---
+      duration_ms: 259.5736
+      type: 'test'
+      ...
+    # Subtest: a stale row generation cannot answer an open thread
+    ok 18 - a stale row generation cannot answer an open thread
+      ---
+      duration_ms: 195.5082
+      type: 'test'
+      ...
+    # Subtest: a conditional write that RETURNING accepted is still undone by rollback
+    ok 19 - a conditional write that RETURNING accepted is still undone by rollback
+      ---
+      duration_ms: 247.5
+      type: 'test'
+      ...
+    # Subtest: a failed second write rolls back the assignment and first gate together
+    ok 20 - a failed second write rolls back the assignment and first gate together
+      ---
+      duration_ms: 249.5052
+      type: 'test'
+      ...
+    # Subtest: acknowledgement is conditional, and both terminal delivery states stay closed
+    ok 21 - acknowledgement is conditional, and both terminal delivery states stay closed
+      ---
+      duration_ms: 371.3119
+      type: 'test'
+      ...
+    # Subtest: rebind fences outstanding batches and refuses stale consumer actions
+    ok 22 - rebind fences outstanding batches and refuses stale consumer actions
+      ---
+      duration_ms: 383.1344
+      type: 'test'
+      ...
+    # Subtest: a lost rebind rolls back provisional fencing
+    ok 23 - a lost rebind rolls back provisional fencing
+      ---
+      duration_ms: 266.3123
+      type: 'test'
+      ...
+    # Subtest: operation ids refuse a different fingerprint and replay the original saved result
+    ok 24 - operation ids refuse a different fingerprint and replay the original saved result
+      ---
+      duration_ms: 303.611
+      type: 'test'
+      ...
+    # Subtest: a rolled-back mutation leaves neither its effect nor an operation receipt
+    ok 25 - a rolled-back mutation leaves neither its effect nor an operation receipt
+      ---
+      duration_ms: 192.5624
+      type: 'test'
+      ...
+    # Subtest: a committed operation receipt survives a later failed transaction unchanged
+    ok 26 - a committed operation receipt survives a later failed transaction unchanged
+      ---
+      duration_ms: 223.5925
+      type: 'test'
+      ...
+    1..26
+ok 14 - postgres shared contract
+  ---
+  duration_ms: 7996.6978
+  type: 'suite'
+  ...
+# Subtest: SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed
+ok 15 - SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed
+  ---
+  duration_ms: 346.4036
+  type: 'test'
+  ...
+# Subtest: PostgreSQL unique violations are domain conflicts rather than transient retries
+ok 16 - PostgreSQL unique violations are domain conflicts rather than transient retries
+  ---
+  duration_ms: 1694.1022
+  type: 'test'
+  ...
+# Subtest: PostgreSQL actual serializable update conflicts expose retryable 40001
+ok 17 - PostgreSQL actual serializable update conflicts expose retryable 40001
+  ---
+  duration_ms: 978.836
+  type: 'test'
+  ...
+# Subtest: PostgreSQL actual deadlock exposes retryable 40P01 and releases the aborted writer
+ok 18 - PostgreSQL actual deadlock exposes retryable 40P01 and releases the aborted writer
+  ---
+  duration_ms: 1684.6882
+  type: 'test'
+  ...
+# Subtest: sqlite schema 3 configuration
+    # Subtest: older binary freshly rereads newest config generation still refused
+    ok 1 - older binary freshly rereads newest config generation still refused
+      ---
+      duration_ms: 227.1374
+      type: 'test'
+      ...
+    # Subtest: writer release fences are numeric and independent for Mod and plugin
+    ok 2 - writer release fences are numeric and independent for Mod and plugin
+      ---
+      duration_ms: 290.4777
+      type: 'test'
+      ...
+    # Subtest: missing known writer fences and raised protocol floors refuse explicitly
+    ok 3 - missing known writer fences and raised protocol floors refuse explicitly
+      ---
+      duration_ms: 213.4798
+      type: 'test'
+      ...
+    # Subtest: configuration CAS, references and writer fence advance roll back atomically
+    ok 4 - configuration CAS, references and writer fence advance roll back atomically
+      ---
+      duration_ms: 186.3828
+      type: 'test'
+      ...
+    # Subtest: pickup minutes are explicit positive integers and all settings round trip
+    ok 5 - pickup minutes are explicit positive integers and all settings round trip
+      ---
+      duration_ms: 105.926
+      type: 'test'
+      ...
+    # Subtest: global names, boss references and cycles refuse with member identities
+    ok 6 - global names, boss references and cycles refuse with member identities
+      ---
+      duration_ms: 310.3988
+      type: 'test'
+      ...
+    # Subtest: registered home is immutable and advisory notes cannot change official role or permissions
+    ok 7 - registered home is immutable and advisory notes cannot change official role or permissions
+      ---
+      duration_ms: 296.8722
+      type: 'test'
+      ...
+    # Subtest: new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+    ok 8 - new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+      ---
+      duration_ms: 303.8773
+      type: 'test'
+      ...
+    # Subtest: schema 4 requires explicit answer, task-off and replay settings
+    ok 9 - schema 4 requires explicit answer, task-off and replay settings
+      ---
+      duration_ms: 119.9552
+      type: 'test'
+      ...
+    # Subtest: schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+    ok 10 - schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+      ---
+      duration_ms: 363.0639
+      type: 'test'
+      ...
+    # Subtest: schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+    ok 11 - schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+      ---
+      duration_ms: 216.4318
+      type: 'test'
+      ...
+    # Subtest: schema 4 missing message immutability guards refuse before lease or data writes
+    ok 12 - schema 4 missing message immutability guards refuse before lease or data writes
+      ---
+      duration_ms: 170.3962
+      type: 'test'
+      ...
+    1..12
+ok 19 - sqlite schema 3 configuration
+  ---
+  duration_ms: 2806.3032
+  type: 'suite'
+  ...
+# Subtest: postgres schema 3 configuration
+    # Subtest: older binary freshly rereads newest config generation still refused
+    ok 1 - older binary freshly rereads newest config generation still refused
+      ---
+      duration_ms: 1806.9255
+      type: 'test'
+      ...
+    # Subtest: writer release fences are numeric and independent for Mod and plugin
+    ok 2 - writer release fences are numeric and independent for Mod and plugin
+      ---
+      duration_ms: 1179.0189
+      type: 'test'
+      ...
+    # Subtest: missing known writer fences and raised protocol floors refuse explicitly
+    ok 3 - missing known writer fences and raised protocol floors refuse explicitly
+      ---
+      duration_ms: 1393.6488
+      type: 'test'
+      ...
+    # Subtest: configuration CAS, references and writer fence advance roll back atomically
+    ok 4 - configuration CAS, references and writer fence advance roll back atomically
+      ---
+      duration_ms: 832.1285
+      type: 'test'
+      ...
+    # Subtest: pickup minutes are explicit positive integers and all settings round trip
+    ok 5 - pickup minutes are explicit positive integers and all settings round trip
+      ---
+      duration_ms: 1031.0173
+      type: 'test'
+      ...
+    # Subtest: global names, boss references and cycles refuse with member identities
+    ok 6 - global names, boss references and cycles refuse with member identities
+      ---
+      duration_ms: 1748.8833
+      type: 'test'
+      ...
+    # Subtest: registered home is immutable and advisory notes cannot change official role or permissions
+    ok 7 - registered home is immutable and advisory notes cannot change official role or permissions
+      ---
+      duration_ms: 2941.3495
+      type: 'test'
+      ...
+    # Subtest: new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+    ok 8 - new required references never fabricate defaults; admission snapshots pickup and endpoints canonicalize
+      ---
+      duration_ms: 1840.4
+      type: 'test'
+      ...
+    # Subtest: schema 4 requires explicit answer, task-off and replay settings
+    ok 9 - schema 4 requires explicit answer, task-off and replay settings
+      ---
+      duration_ms: 2100.0198
+      type: 'test'
+      ...
+    # Subtest: schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+    ok 10 - schema 4 team-owned threads persist a complete immutable pair without delivery side effects
+      ---
+      duration_ms: 1190.7002
+      type: 'test'
+      ...
+    # Subtest: schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+    ok 11 - schema 4 snapshots optional task minutes without observing pickup or starting a deadline
+      ---
+      duration_ms: 1031.454
+      type: 'test'
+      ...
+    # Subtest: schema 4 missing message immutability guards refuse before lease or data writes
+    ok 12 - schema 4 missing message immutability guards refuse before lease or data writes
+      ---
+      duration_ms: 1465.8261
+      type: 'test'
+      ...
+    1..12
+ok 20 - postgres schema 3 configuration
+  ---
+  duration_ms: 18562.3966
+  type: 'suite'
+  ...
+# Subtest: sqlite separate machine observations
+    # Subtest: own format, version, UUID directory and machine binding are checked before writing
+    ok 1 - own format, version, UUID directory and machine binding are checked before writing
+      ---
+      duration_ms: 165.4253
+      type: 'test'
+      ...
+    # Subtest: unknown schema is refused without a reset or binding replacement
+    ok 2 - unknown schema is refused without a reset or binding replacement
+      ---
+      duration_ms: 95.7107
+      type: 'test'
+      ...
+    # Subtest: unknown states preserve raw values; binding alone invents no liveness
+    ok 3 - unknown states preserve raw values; binding alone invents no liveness
+      ---
+      duration_ms: 113.717
+      type: 'test'
+      ...
+    # Subtest: old sessions, binding generations and row generations cannot write after rebind
+    ok 4 - old sessions, binding generations and row generations cannot write after rebind
+      ---
+      duration_ms: 147.8142
+      type: 'test'
+      ...
+    # Subtest: older machine binary freshly rereads newest observation generation still refused
+    ok 5 - older machine binary freshly rereads newest observation generation still refused
+      ---
+      duration_ms: 132.1497
+      type: 'test'
+      ...
+    # Subtest: machine fences are independent by family, missing known rows and old protocols refuse
+    ok 6 - machine fences are independent by family, missing known rows and old protocols refuse
+      ---
+      duration_ms: 240.4438
+      type: 'test'
+      ...
+    # Subtest: failed batches roll back observations, receipts and the new writer high-water release
+    ok 7 - failed batches roll back observations, receipts and the new writer high-water release
+      ---
+      duration_ms: 144.1787
+      type: 'test'
+      ...
+    # Subtest: local receipt replay is idempotent, immutable and does not establish shared acknowledgement
+    ok 8 - local receipt replay is idempotent, immutable and does not establish shared acknowledgement
+      ---
+      duration_ms: 361.8858
+      type: 'test'
+      ...
+    # Subtest: policy is mandatory, synchronous and checked again on read, replay and retry
+    ok 9 - policy is mandatory, synchronous and checked again on read, replay and retry
+      ---
+      duration_ms: 177.6851
+      type: 'test'
+      ...
+    # Subtest: busy transactions retry within a bound and do not publish partial state
+    ok 10 - busy transactions retry within a bound and do not publish partial state
+      ---
+      duration_ms: 65.7778
+      type: 'test'
+      ...
+    # Subtest: lost commit responses reconcile same request and absent receipts remain unknown
+    ok 11 - lost commit responses reconcile same request and absent receipts remain unknown
+      ---
+      duration_ms: 116.2948
+      type: 'test'
+      ...
+    # Subtest: unsafe keys, non-UUID identities and junction directory aliases refuse
+    ok 12 - unsafe keys, non-UUID identities and junction directory aliases refuse
+      ---
+      duration_ms: 55.2262
+      type: 'test'
+      ...
+    1..12
+ok 21 - sqlite separate machine observations
+  ---
+  duration_ms: 1818.1254
+  type: 'suite'
+  ...
+# Subtest: native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+    # Subtest: refuses wrong-conversation native evidence for caller and target
+    ok 1 - refuses wrong-conversation native evidence for caller and target
+      ---
+      duration_ms: 9.7453
+      type: 'test'
+      ...
+    # Subtest: refuses wrong-incarnation native evidence for caller and target
+    ok 2 - refuses wrong-incarnation native evidence for caller and target
+      ---
+      duration_ms: 6.9598
+      type: 'test'
+      ...
+    # Subtest: refuses duplicate native evidence for caller and target
+    ok 3 - refuses duplicate native evidence for caller and target
+      ---
+      duration_ms: 7.2522
+      type: 'test'
+      ...
+    # Subtest: refuses absent native evidence for caller and target
+    ok 4 - refuses absent native evidence for caller and target
+      ---
+      duration_ms: 4.037
+      type: 'test'
+      ...
+    # Subtest: idle caller requires its exact parent process creation fingerprint
+    ok 5 - idle caller requires its exact parent process creation fingerprint
+      ---
+      duration_ms: 12.8861
+      type: 'test'
+      ...
+    # Subtest: idle caller cannot substitute another parent or inherited terminal context
+    ok 6 - idle caller cannot substitute another parent or inherited terminal context
+      ---
+      duration_ms: 4.9616
+      type: 'test'
+      ...
+    1..6
+ok 22 - native proof uses exact conversation/incarnation, live registry and runtime epoch; bridge proof also requires its parent
+  ---
+  duration_ms: 87.7844
+  type: 'test'
+  ...
+# Subtest: sqlite schema 4 lifecycle layout
+    # Subtest: deliveries is the sole batch-state table and messages have no delivery status
+    ok 1 - deliveries is the sole batch-state table and messages have no delivery status
+      ---
+      duration_ms: 638.0091
+      type: 'test'
+      ...
+    # Subtest: a delivery and its sole message are mutually required at commit
+    ok 2 - a delivery and its sole message are mutually required at commit
+      ---
+      duration_ms: 751.0329
+      type: 'test'
+      ...
+    # Subtest: membership cannot disagree, move between batches, or add a second message
+    ok 3 - membership cannot disagree, move between batches, or add a second message
+      ---
+      duration_ms: 797.5441
+      type: 'test'
+      ...
+    # Subtest: message identity, content, routing and membership reject UPDATE DELETE and replacement
+    ok 4 - message identity, content, routing and membership reject UPDATE DELETE and replacement
+      ---
+      duration_ms: 609.8652
+      type: 'test'
+      ...
+    # Subtest: batch replay and acknowledgement and thread closure leave message bytes unchanged
+    ok 5 - batch replay and acknowledgement and thread closure leave message bytes unchanged
+      ---
+      duration_ms: 542.4481
+      type: 'test'
+      ...
+    # Subtest: closed message kinds and canonical endpoint references apply in either direction
+    ok 6 - closed message kinds and canonical endpoint references apply in either direction
+      ---
+      duration_ms: 648.6389
+      type: 'test'
+      ...
+    # Subtest: thread ownership requires a team, optionally a task in its Run and team
+    ok 7 - thread ownership requires a team, optionally a task in its Run and team
+      ---
+      duration_ms: 671.7218
+      type: 'test'
+      ...
+    # Subtest: assignment retry history has one root and a same-task non-self predecessor without forks
+    ok 8 - assignment retry history has one root and a same-task non-self predecessor without forks
+      ---
+      duration_ms: 493.7539
+      type: 'test'
+      ...
+    # Subtest: NULL task windows mean off without admitting an enabled deadline before pickup
+    ok 9 - NULL task windows mean off without admitting an enabled deadline before pickup
+      ---
+      duration_ms: 559.8294
+      type: 'test'
+      ...
+    # Subtest: question deadlines bind delivery time independently of task pickup
+    ok 10 - question deadlines bind delivery time independently of task pickup
+      ---
+      duration_ms: 1328.0277
+      type: 'test'
+      ...
+    # Subtest: window and replay settings have no invented required defaults
+    ok 11 - window and replay settings have no invented required defaults
+      ---
+      duration_ms: 435.826
+      type: 'test'
+      ...
+    # Subtest: gate JSON remains opaque; client obligations and gate application are explicit
+    ok 12 - gate JSON remains opaque; client obligations and gate application are explicit
+      ---
+      duration_ms: 514.9166
+      type: 'test'
+      ...
+    # Subtest: new numeric columns cannot store fractional windows, counters or timestamps
+    ok 13 - new numeric columns cannot store fractional windows, counters or timestamps
+      ---
+      duration_ms: 408.7549
+      type: 'test'
+      ...
+    # Subtest: an immutability refusal rolls back a newly created message-delivery pair
+    ok 14 - an immutability refusal rolls back a newly created message-delivery pair
+      ---
+      duration_ms: 482.3741
+      type: 'test'
+      ...
+    1..14
+ok 23 - sqlite schema 4 lifecycle layout
+  ---
+  duration_ms: 8884.847
+  type: 'suite'
+  ...
+# Subtest: postgres schema 4 lifecycle layout
+    # Subtest: deliveries is the sole batch-state table and messages have no delivery status
+    ok 1 - deliveries is the sole batch-state table and messages have no delivery status
+      ---
+      duration_ms: 650.2493
+      type: 'test'
+      ...
+    # Subtest: a delivery and its sole message are mutually required at commit
+    ok 2 - a delivery and its sole message are mutually required at commit
+      ---
+      duration_ms: 211.532
+      type: 'test'
+      ...
+    # Subtest: membership cannot disagree, move between batches, or add a second message
+    ok 3 - membership cannot disagree, move between batches, or add a second message
+      ---
+      duration_ms: 203.9554
+      type: 'test'
+      ...
+    # Subtest: message identity, content, routing and membership reject UPDATE DELETE and replacement
+    ok 4 - message identity, content, routing and membership reject UPDATE DELETE and replacement
+      ---
+      duration_ms: 347.9133
+      type: 'test'
+      ...
+    # Subtest: batch replay and acknowledgement and thread closure leave message bytes unchanged
+    ok 5 - batch replay and acknowledgement and thread closure leave message bytes unchanged
+      ---
+      duration_ms: 411.3786
+      type: 'test'
+      ...
+    # Subtest: closed message kinds and canonical endpoint references apply in either direction
+    ok 6 - closed message kinds and canonical endpoint references apply in either direction
+      ---
+      duration_ms: 507.7074
+      type: 'test'
+      ...
+    # Subtest: thread ownership requires a team, optionally a task in its Run and team
+    ok 7 - thread ownership requires a team, optionally a task in its Run and team
+      ---
+      duration_ms: 573.0068
+      type: 'test'
+      ...
+    # Subtest: assignment retry history has one root and a same-task non-self predecessor without forks
+    ok 8 - assignment retry history has one root and a same-task non-self predecessor without forks
+      ---
+      duration_ms: 287.7636
+      type: 'test'
+      ...
+    # Subtest: NULL task windows mean off without admitting an enabled deadline before pickup
+    ok 9 - NULL task windows mean off without admitting an enabled deadline before pickup
+      ---
+      duration_ms: 259.6122
+      type: 'test'
+      ...
+    # Subtest: question deadlines bind delivery time independently of task pickup
+    ok 10 - question deadlines bind delivery time independently of task pickup
+      ---
+      duration_ms: 434.9261
+      type: 'test'
+      ...
+    # Subtest: window and replay settings have no invented required defaults
+    ok 11 - window and replay settings have no invented required defaults
+      ---
+      duration_ms: 198.3566
+      type: 'test'
+      ...
+    # Subtest: gate JSON remains opaque; client obligations and gate application are explicit
+    ok 12 - gate JSON remains opaque; client obligations and gate application are explicit
+      ---
+      duration_ms: 196.0174
+      type: 'test'
+      ...
+    # Subtest: new numeric columns cannot store fractional windows, counters or timestamps
+    ok 13 - new numeric columns cannot store fractional windows, counters or timestamps
+      ---
+      duration_ms: 252.157
+      type: 'test'
+      ...
+    # Subtest: an immutability refusal rolls back a newly created message-delivery pair
+    ok 14 - an immutability refusal rolls back a newly created message-delivery pair
+      ---
+      duration_ms: 334.6546
+      type: 'test'
+      ...
+    1..14
+ok 24 - postgres schema 4 lifecycle layout
+  ---
+  duration_ms: 4870.2538
+  type: 'suite'
+  ...
+# Subtest: sqlite production store
+    # Subtest: a fixed primitive batch commits and reopens through the public interface
+    ok 1 - a fixed primitive batch commits and reopens through the public interface
+      ---
+      duration_ms: 208.3079
+      type: 'test'
+      ...
+    # Subtest: canonical identity tolerates key order and changed submission metadata, never changed semantics
+    ok 2 - canonical identity tolerates key order and changed submission metadata, never changed semantics
+      ---
+      duration_ms: 168.9169
+      type: 'test'
+      ...
+    # Subtest: an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+    ok 3 - an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+      ---
+      duration_ms: 227.6257
+      type: 'test'
+      ...
+    # Subtest: no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+    ok 4 - no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+      ---
+      duration_ms: 119.5876
+      type: 'test'
+      ...
+    # Subtest: authorization is rechecked on every retry
+    ok 5 - authorization is rechecked on every retry
+      ---
+      duration_ms: 129.8324
+      type: 'test'
+      ...
+    # Subtest: authorization is required again for a replay and a read
+    ok 6 - authorization is required again for a replay and a read
+      ---
+      duration_ms: 137.7083
+      type: 'test'
+      ...
+    # Subtest: a live lease loudly refuses another machine and another token on the same machine
+    ok 7 - a live lease loudly refuses another machine and another token on the same machine
+      ---
+      duration_ms: 193.3996
+      type: 'test'
+      ...
+    # Subtest: renewal keeps its generation and expiry is exclusive; reacquisition increments it
+    ok 8 - renewal keeps its generation and expiry is exclusive; reacquisition increments it
+      ---
+      duration_ms: 159.5429
+      type: 'test'
+      ...
+    # Subtest: a failed prerequisite rolls back earlier mutations and leaves no receipt
+    ok 9 - a failed prerequisite rolls back earlier mutations and leaves no receipt
+      ---
+      duration_ms: 144.7553
+      type: 'test'
+      ...
+    # Subtest: bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+    ok 10 - bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+      ---
+      duration_ms: 200.3283
+      type: 'test'
+      ...
+    # Subtest: retry exhaustion is bounded and does not leave a partial operation
+    ok 11 - retry exhaustion is bounded and does not leave a partial operation
+      ---
+      duration_ms: 159.5072
+      type: 'test'
+      ...
+    # Subtest: a retryable COMMIT failure rolls back and retries the entire operation
+    ok 12 - a retryable COMMIT failure rolls back and retries the entire operation
+      ---
+      duration_ms: 186.5407
+      type: 'test'
+      ...
+    # Subtest: uniqueness is a domain refusal and is never automatically retried
+    ok 13 - uniqueness is a domain refusal and is never automatically retried
+      ---
+      duration_ms: 203.0247
+      type: 'test'
+      ...
+    # Subtest: a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+    ok 14 - a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+      ---
+      duration_ms: 186.9826
+      type: 'test'
+      ...
+    # Subtest: an absent receipt is unknown, not proof to resend automatically
+    ok 15 - an absent receipt is unknown, not proof to resend automatically
+      ---
+      duration_ms: 173.3018
+      type: 'test'
+      ...
+    # Subtest: the lease lock precedes the clock and an expired mutation leaves no effect
+    ok 16 - the lease lock precedes the clock and an expired mutation leaves no effect
+      ---
+      duration_ms: 141.0355
+      type: 'test'
+      ...
+    # Subtest: generation overflow is refused without wrapping or partially updating
+    ok 17 - generation overflow is refused without wrapping or partially updating
+      ---
+      duration_ms: 220.3194
+      type: 'test'
+      ...
+    # Subtest: a backward database clock rolls back the transaction
+    ok 18 - a backward database clock rolls back the transaction
+      ---
+      duration_ms: 132.5687
+      type: 'test'
+      ...
+    # Subtest: a failed rollback quarantines the connection and never automatically retries
+    ok 19 - a failed rollback quarantines the connection and never automatically retries
+      ---
+      duration_ms: 153.0123
+      type: 'test'
+      ...
+    # Subtest: an expired rebind rolls back fencing and leaves the old consumer active
+    ok 20 - an expired rebind rolls back fencing and leaves the old consumer active
+      ---
+      duration_ms: 145.2781
+      type: 'test'
+      ...
+    # Subtest: version one is refused rather than migrated implicitly to the receipt schema
+    ok 21 - version one is refused rather than migrated implicitly to the receipt schema
+      ---
+      duration_ms: 131.4726
+      type: 'test'
+      ...
+    # Subtest: an unsupported version is refused even by an already-open client and even on replay
+    ok 22 - an unsupported version is refused even by an already-open client and even on replay
+      ---
+      duration_ms: 170.4117
+      type: 'test'
+      ...
+    1..22
+ok 25 - sqlite production store
+  ---
+  duration_ms: 3695.9806
+  type: 'suite'
+  ...
+# Subtest: postgres production store
+    # Subtest: a fixed primitive batch commits and reopens through the public interface
+    ok 1 - a fixed primitive batch commits and reopens through the public interface
+      ---
+      duration_ms: 962.2645
+      type: 'test'
+      ...
+    # Subtest: canonical identity tolerates key order and changed submission metadata, never changed semantics
+    ok 2 - canonical identity tolerates key order and changed submission metadata, never changed semantics
+      ---
+      duration_ms: 1096.3345
+      type: 'test'
+      ...
+    # Subtest: an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+    ok 3 - an in-flight same-operation retry on another holder rechecks the receipt after its lock wait
+      ---
+      duration_ms: 1388.1759
+      type: 'test'
+      ...
+    # Subtest: no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+    ok 4 - no policy, a negative policy, and an asynchronous policy fail before lease or mutation writes
+      ---
+      duration_ms: 834.5989
+      type: 'test'
+      ...
+    # Subtest: authorization is rechecked on every retry
+    ok 5 - authorization is rechecked on every retry
+      ---
+      duration_ms: 1035.9509
+      type: 'test'
+      ...
+    # Subtest: authorization is required again for a replay and a read
+    ok 6 - authorization is required again for a replay and a read
+      ---
+      duration_ms: 1745.5381
+      type: 'test'
+      ...
+    # Subtest: a live lease loudly refuses another machine and another token on the same machine
+    ok 7 - a live lease loudly refuses another machine and another token on the same machine
+      ---
+      duration_ms: 2940.9692
+      type: 'test'
+      ...
+    # Subtest: renewal keeps its generation and expiry is exclusive; reacquisition increments it
+    ok 8 - renewal keeps its generation and expiry is exclusive; reacquisition increments it
+      ---
+      duration_ms: 1840.5628
+      type: 'test'
+      ...
+    # Subtest: a failed prerequisite rolls back earlier mutations and leaves no receipt
+    ok 9 - a failed prerequisite rolls back earlier mutations and leaves no receipt
+      ---
+      duration_ms: 2099.9311
+      type: 'test'
+      ...
+    # Subtest: bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+    ok 10 - bounded whole-transaction retry rolls back partial work and reads fresh lease generations
+      ---
+      duration_ms: 848.8367
+      type: 'test'
+      ...
+    # Subtest: retry exhaustion is bounded and does not leave a partial operation
+    ok 11 - retry exhaustion is bounded and does not leave a partial operation
+      ---
+      duration_ms: 1323.0973
+      type: 'test'
+      ...
+    # Subtest: a retryable COMMIT failure rolls back and retries the entire operation
+    ok 12 - a retryable COMMIT failure rolls back and retries the entire operation
+      ---
+      duration_ms: 1462.1248
+      type: 'test'
+      ...
+    # Subtest: uniqueness is a domain refusal and is never automatically retried
+    ok 13 - uniqueness is a domain refusal and is never automatically retried
+      ---
+      duration_ms: 1050.0661
+      type: 'test'
+      ...
+    # Subtest: a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+    ok 14 - a lost successful commit is unknown, then reconciles and replays after reconnect without a repeated effect
+      ---
+      duration_ms: 1226.3283
+      type: 'test'
+      ...
+    # Subtest: an absent receipt is unknown, not proof to resend automatically
+    ok 15 - an absent receipt is unknown, not proof to resend automatically
+      ---
+      duration_ms: 851.6157
+      type: 'test'
+      ...
+    # Subtest: the lease lock precedes the clock and an expired mutation leaves no effect
+    ok 16 - the lease lock precedes the clock and an expired mutation leaves no effect
+      ---
+      duration_ms: 744.8206
+      type: 'test'
+      ...
+    # Subtest: generation overflow is refused without wrapping or partially updating
+    ok 17 - generation overflow is refused without wrapping or partially updating
+      ---
+      duration_ms: 431.6863
+      type: 'test'
+      ...
+    # Subtest: a backward database clock rolls back the transaction
+    ok 18 - a backward database clock rolls back the transaction
+      ---
+      duration_ms: 498.7491
+      type: 'test'
+      ...
+    # Subtest: a failed rollback quarantines the connection and never automatically retries
+    ok 19 - a failed rollback quarantines the connection and never automatically retries
+      ---
+      duration_ms: 409.6505
+      type: 'test'
+      ...
+    # Subtest: an expired rebind rolls back fencing and leaves the old consumer active
+    ok 20 - an expired rebind rolls back fencing and leaves the old consumer active
+      ---
+      duration_ms: 445.5324
+      type: 'test'
+      ...
+    # Subtest: version one is refused rather than migrated implicitly to the receipt schema
+    ok 21 - version one is refused rather than migrated implicitly to the receipt schema
+      ---
+      duration_ms: 639.4062
+      type: 'test'
+      ...
+    # Subtest: an unsupported version is refused even by an already-open client and even on replay
+    ok 22 - an unsupported version is refused even by an already-open client and even on replay
+      ---
+      duration_ms: 749.9467
+      type: 'test'
+      ...
+    1..22
+ok 26 - postgres production store
+  ---
+  duration_ms: 24628.0733
+  type: 'suite'
+  ...
+# Subtest: SQLite runtime retries a real competing writer lock without duplicating the operation
+ok 27 - SQLite runtime retries a real competing writer lock without duplicating the operation
+  ---
+  duration_ms: 286.5711
+  type: 'test'
+  ...
+# Subtest: PostgreSQL renewal samples its clock after a real row-lock wait and cannot revive an expired lease
+ok 28 - PostgreSQL renewal samples its clock after a real row-lock wait and cannot revive an expired lease
+  ---
+  duration_ms: 980.4321
+  type: 'test'
+  ...
+1..28
+# tests 217
+# suites 13
+# pass 217
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 30349.5701

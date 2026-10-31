@@ -1,0 +1,529 @@
+--- a/contract.mjs
++++ b/contract.mjs
+@@ -1,7 +1,7 @@
+ // Contract foundation for issue #154. Neither shipped client imports this yet.
+-// There is one DDL source. The only substitution is the engine's identity collation.
++// One shared table source; dialect fragments only implement equivalent constraints.
+ export const FORMAT = 'team-orchestrator-shared';
+-export const SCHEMA_VERSION = 3;
++export const SCHEMA_VERSION = 4;
+ export const WRITER_PROTOCOL_VERSION = 1;
+ export const KNOWN_WRITER_FAMILIES = Object.freeze(['team-orchestrator', 'team-orchestrator-orca']);
+ export const MACHINE_FORMAT = 'team-orchestrator-machine';
+@@ -9,6 +9,8 @@
+ export const PROJECT_DIRECTORY = '.team-orchestrator';
+ export const PROJECT_DATABASE = 'team.sqlite';
+ export const MACHINE_DATABASE = 'machine.sqlite';
++export const MESSAGE_KINDS = Object.freeze(['status', 'dispatch', 'worker_done', 'merge_ready', 'escalation', 'handoff', 'decision_gate', 'question', 'heartbeat']);
++export const MESSAGE_IMMUTABLE = 'STORE_MESSAGE_IMMUTABLE: Message content and membership are immutable; updates, replacement and deletion are refused.';
+ 
+ export const DDL = `
+ CREATE TABLE store_metadata (
+@@ -85,7 +87,10 @@
+   auto_scratch INTEGER NOT NULL CHECK (auto_scratch IN (0,1)),
+   assumptions INTEGER NOT NULL CHECK (assumptions IN (0,1)),
+   scratch_dir TEXT NOT NULL,
+-  pickup_window_minutes BIGINT NOT NULL CHECK (pickup_window_minutes >= 1 AND pickup_window_minutes <= 9007199254740991)
++  pickup_window_minutes BIGINT NOT NULL CHECK (pickup_window_minutes >= 1 AND pickup_window_minutes <= 9007199254740991),
++  answer_window_minutes BIGINT NOT NULL CHECK (answer_window_minutes >= 1 AND answer_window_minutes <= 9007199254740991 AND answer_window_minutes = CAST(answer_window_minutes AS BIGINT)),
++  task_window_minutes BIGINT CHECK (task_window_minutes IS NULL OR (task_window_minutes >= 1 AND task_window_minutes <= 9007199254740991 AND task_window_minutes = CAST(task_window_minutes AS BIGINT))),
++  replay_interval_ms BIGINT NOT NULL CHECK (replay_interval_ms >= 1 AND replay_interval_ms <= 9007199254740991 AND replay_interval_ms = CAST(replay_interval_ms AS BIGINT))
+ );
+ CREATE TABLE settings_exemptions (
+   team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES team_settings (team_id),
+@@ -105,7 +110,8 @@
+ CREATE TABLE runs (
+   run_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(run_id) > 0),
+   consumer_generation BIGINT NOT NULL CHECK (consumer_generation >= 1 AND consumer_generation <= 9007199254740991),
+-  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id)
++  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
++  UNIQUE (run_id, team_id)
+ );
+ CREATE TABLE tasks (
+   task_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(task_id) > 0),
+@@ -116,40 +122,95 @@
+   CHECK ((status IN ('open','blocked') AND outcome IS NULL) OR (status IN ('succeeded','failed') AND outcome IS NOT NULL AND outcome = status))
+ );
+ -- An admitted assignment is a durable record, not proof of worker understanding.
+--- Pickup, timeout, retry, and settlement states are deliberately not invented here.
++-- Each retry is a new historical assignment. Observers/transitions are a later slice.
+ CREATE TABLE assignments (
+   assignment_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(assignment_id) > 0),
+-  task_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE REFERENCES tasks (task_id),
++  task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
+   member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+   admitted_at_ms BIGINT NOT NULL CHECK (admitted_at_ms >= 0 AND admitted_at_ms <= 9007199254740991),
+   assigned_by_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+   pickup_deadline_ms BIGINT NOT NULL CHECK (pickup_deadline_ms > admitted_at_ms AND pickup_deadline_ms <= 9007199254740991),
+   pickup_observed_at_ms BIGINT CHECK (pickup_observed_at_ms IS NULL OR (pickup_observed_at_ms >= admitted_at_ms AND pickup_observed_at_ms <= 9007199254740991)),
+   pickup_expired_at_ms BIGINT CHECK (pickup_expired_at_ms IS NULL OR (pickup_expired_at_ms >= admitted_at_ms AND pickup_expired_at_ms <= 9007199254740991)),
+-  returned_to_member_id TEXT COLLATE {{identity_collation}} REFERENCES members (member_id)
+-);
++  returned_to_member_id TEXT COLLATE {{identity_collation}} REFERENCES members (member_id),
++  previous_assignment_id TEXT COLLATE {{identity_collation}},
++  task_window_minutes BIGINT CHECK (task_window_minutes IS NULL OR (task_window_minutes >= 1 AND task_window_minutes <= 9007199254740991 AND task_window_minutes = CAST(task_window_minutes AS BIGINT))),
++  task_deadline_ms BIGINT CHECK (task_deadline_ms IS NULL OR (task_deadline_ms >= 0 AND task_deadline_ms <= 9007199254740991 AND task_deadline_ms = CAST(task_deadline_ms AS BIGINT))),
++  UNIQUE (assignment_id, task_id),
++  FOREIGN KEY (previous_assignment_id, task_id) REFERENCES assignments (assignment_id, task_id),
++  CHECK (previous_assignment_id IS NULL OR previous_assignment_id <> assignment_id),
++  CHECK ((task_window_minutes IS NULL AND task_deadline_ms IS NULL)
++    OR (task_window_minutes IS NOT NULL AND
++      ((pickup_observed_at_ms IS NULL AND task_deadline_ms IS NULL)
++        OR (pickup_observed_at_ms IS NOT NULL AND task_deadline_ms IS NOT NULL AND task_deadline_ms >= pickup_observed_at_ms))))
++);
++CREATE UNIQUE INDEX one_initial_assignment_per_task ON assignments (task_id) WHERE previous_assignment_id IS NULL;
++CREATE UNIQUE INDEX one_successor_per_assignment ON assignments (previous_assignment_id) WHERE previous_assignment_id IS NOT NULL;
+ CREATE TABLE threads (
+   thread_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(thread_id) > 0),
+   run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
+   status TEXT COLLATE {{identity_collation}} NOT NULL CHECK (status IN ('open', 'answered', 'fenced', 'superseded')),
+   generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
+   answer TEXT,
+-  task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
++  task_id TEXT COLLATE {{identity_collation}},
+   endpoint_a_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+   endpoint_b_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+   superseded_by_thread_id TEXT COLLATE {{identity_collation}} REFERENCES threads (thread_id),
++  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
++  assignment_id TEXT COLLATE {{identity_collation}},
++  question_delivered_at_ms BIGINT CHECK (question_delivered_at_ms IS NULL OR (question_delivered_at_ms >= 0 AND question_delivered_at_ms <= 9007199254740991 AND question_delivered_at_ms = CAST(question_delivered_at_ms AS BIGINT))),
++  answer_deadline_ms BIGINT CHECK (answer_deadline_ms IS NULL OR (answer_deadline_ms >= 0 AND answer_deadline_ms <= 9007199254740991 AND answer_deadline_ms = CAST(answer_deadline_ms AS BIGINT))),
++  UNIQUE (thread_id, team_id),
++  UNIQUE (thread_id, team_id, endpoint_a_member_id, endpoint_b_member_id),
++  FOREIGN KEY (run_id, team_id) REFERENCES runs (run_id, team_id),
++  FOREIGN KEY (task_id, run_id) REFERENCES tasks (task_id, run_id),
++  FOREIGN KEY (assignment_id, task_id) REFERENCES assignments (assignment_id, task_id),
++  CHECK (assignment_id IS NULL OR task_id IS NOT NULL),
++  CHECK ((question_delivered_at_ms IS NULL AND answer_deadline_ms IS NULL)
++    OR (question_delivered_at_ms IS NOT NULL AND answer_deadline_ms IS NOT NULL AND answer_deadline_ms >= question_delivered_at_ms)),
+   CHECK (endpoint_a_member_id < endpoint_b_member_id),
+   CHECK ((status = 'answered' AND answer IS NOT NULL) OR (status IN ('open', 'fenced', 'superseded') AND answer IS NULL))
+ );
+ CREATE UNIQUE INDEX one_open_thread_per_task_endpoints
+-ON threads (task_id, endpoint_a_member_id, endpoint_b_member_id) WHERE status = 'open';
++ON threads (task_id, endpoint_a_member_id, endpoint_b_member_id) WHERE status = 'open' AND task_id IS NOT NULL;
++CREATE UNIQUE INDEX one_open_thread_per_team_endpoints
++ON threads (team_id, endpoint_a_member_id, endpoint_b_member_id) WHERE status = 'open' AND task_id IS NULL;
+ CREATE TABLE deliveries (
+   delivery_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(delivery_id) > 0),
+   run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
+   consumer_generation BIGINT NOT NULL CHECK (consumer_generation >= 1 AND consumer_generation <= 9007199254740991),
+   status TEXT COLLATE {{identity_collation}} NOT NULL CHECK (status IN ('outstanding', 'acknowledged', 'fenced')),
+-  generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991)
+-);
++  generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
++  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
++  message_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE CHECK (length(message_id) > 0),
++  replay_count BIGINT NOT NULL DEFAULT 0 CHECK (replay_count >= 0 AND replay_count <= 9007199254740991 AND replay_count = CAST(replay_count AS BIGINT)),
++  last_replayed_at_ms BIGINT CHECK (last_replayed_at_ms IS NULL OR (last_replayed_at_ms >= 0 AND last_replayed_at_ms <= 9007199254740991 AND last_replayed_at_ms = CAST(last_replayed_at_ms AS BIGINT))),
++  UNIQUE (delivery_id, message_id, team_id),
++  FOREIGN KEY (run_id, team_id) REFERENCES runs (run_id, team_id),
++  CHECK ((replay_count = 0 AND last_replayed_at_ms IS NULL) OR (replay_count > 0 AND last_replayed_at_ms IS NOT NULL))
++  {{delivery_message_fk}}
++);
++CREATE TABLE messages (
++  message_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(message_id) > 0),
++  delivery_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE CHECK (length(delivery_id) > 0),
++  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
++  thread_id TEXT COLLATE {{identity_collation}} NOT NULL,
++  sender_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
++  recipient_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
++  body TEXT NOT NULL,
++  kind TEXT NOT NULL CHECK (kind IN ('status','dispatch','worker_done','merge_ready','escalation','handoff','decision_gate','question','heartbeat')),
++  created_at_ms BIGINT NOT NULL CHECK (created_at_ms >= 0 AND created_at_ms <= 9007199254740991 AND created_at_ms = CAST(created_at_ms AS BIGINT)),
++  endpoint_a_member_id TEXT COLLATE {{identity_collation}} GENERATED ALWAYS AS
++    (CASE WHEN sender_member_id < recipient_member_id THEN sender_member_id ELSE recipient_member_id END) STORED,
++  endpoint_b_member_id TEXT COLLATE {{identity_collation}} GENERATED ALWAYS AS
++    (CASE WHEN sender_member_id < recipient_member_id THEN recipient_member_id ELSE sender_member_id END) STORED,
++  UNIQUE (message_id, delivery_id, team_id),
++  FOREIGN KEY (delivery_id, message_id, team_id) REFERENCES deliveries (delivery_id, message_id, team_id) DEFERRABLE INITIALLY DEFERRED,
++  FOREIGN KEY (thread_id, team_id, endpoint_a_member_id, endpoint_b_member_id)
++    REFERENCES threads (thread_id, team_id, endpoint_a_member_id, endpoint_b_member_id),
++  CHECK (sender_member_id <> recipient_member_id)
++);
++{{message_guards}}
+ CREATE TABLE decision_gates (
+   gate_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(gate_id) > 0),
+   task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
+@@ -168,7 +229,7 @@
+   result TEXT NOT NULL,
+   committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0 AND committed_at_ms <= 9007199254740991)
+ );
+-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 3);
++INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 4);
+ INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
+ VALUES (1, NULL, NULL, 0, 0);
+ `;
+@@ -235,10 +296,30 @@
+ INSERT INTO store_metadata VALUES (1, 'team-orchestrator-machine', 1);
+ `;
+ 
++const deliveryMessageForeignKey = 'FOREIGN KEY (message_id, delivery_id, team_id) REFERENCES messages (message_id, delivery_id, team_id) DEFERRABLE INITIALLY DEFERRED';
++export function messageGuardsFor(engine) {
++  if (engine === 'sqlite') return `
++CREATE TRIGGER messages_immutable_update BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, '${MESSAGE_IMMUTABLE}'); END;
++CREATE TRIGGER messages_immutable_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, '${MESSAGE_IMMUTABLE}'); END;
++CREATE TRIGGER messages_immutable_replace BEFORE INSERT ON messages
++WHEN EXISTS (SELECT 1 FROM messages WHERE message_id = NEW.message_id OR delivery_id = NEW.delivery_id)
++BEGIN SELECT RAISE(ABORT, '${MESSAGE_IMMUTABLE}'); END;`;
++  if (engine === 'postgres') return `
++ALTER TABLE deliveries ADD CONSTRAINT delivery_message_membership ${deliveryMessageForeignKey};
++CREATE FUNCTION reject_message_mutation() RETURNS trigger LANGUAGE plpgsql AS $guard$
++BEGIN RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = '${MESSAGE_IMMUTABLE}'; END;
++$guard$;
++CREATE TRIGGER messages_immutable_update BEFORE UPDATE OR DELETE ON messages FOR EACH ROW EXECUTE FUNCTION reject_message_mutation();
++CREATE TRIGGER messages_immutable_truncate BEFORE TRUNCATE ON messages FOR EACH STATEMENT EXECUTE FUNCTION reject_message_mutation();`;
++  throw new Error(`Unsupported team-store engine: ${engine}`);
++}
++
+ export function ddlFor(engine) {
+   if (engine !== 'sqlite' && engine !== 'postgres') throw new Error(`Unsupported team-store engine: ${engine}`);
+   const collation = engine === 'sqlite' ? 'BINARY' : '"C"';
+-  return DDL.replaceAll('{{identity_collation}}', collation);
++  return DDL.replaceAll('{{identity_collation}}', collation)
++    .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
++    .replace('{{message_guards}}', messageGuardsFor(engine));
+ }
+ 
+ // These are protocol statements, not a store API. Bind values; never interpolate them.
+@@ -275,8 +356,8 @@
+       AND generation = :lease_generation AND expires_at_ms > :now_ms
+       AND :expires_at_ms > expires_at_ms
+     RETURNING generation`,
+-  admitAssignment: `INSERT INTO assignments (assignment_id, task_id, member_id, admitted_at_ms, assigned_by_member_id, pickup_deadline_ms)
+-    SELECT :assignment_id, :task_id, :member_id, :now_ms, :assigned_by_member_id, :pickup_deadline_ms WHERE ${leaseGuard}
++  admitAssignment: `INSERT INTO assignments (assignment_id, task_id, member_id, admitted_at_ms, assigned_by_member_id, pickup_deadline_ms, task_window_minutes)
++    SELECT :assignment_id, :task_id, :member_id, :now_ms, :assigned_by_member_id, :pickup_deadline_ms, :task_window_minutes WHERE ${leaseGuard}
+     RETURNING assignment_id`,
+   answerThread: `UPDATE threads SET status = 'answered', answer = :answer, generation = generation + 1
+     WHERE thread_id = :thread_id AND run_id = :run_id AND status = 'open' AND generation = :expected_generation
+@@ -305,8 +386,12 @@
+   foreignKeys: 'Enable and verify SQLite foreign_keys on every connection before BEGIN. Refuse a connection if enforcement cannot be enabled. PostgreSQL constraints must remain enabled.',
+   lease: 'Acquire and renew with conditional writes. A live lease refuses every competing holder, including a different token on the same machine. Report the recorded machine and expiry. Every shared mutation transaction must lockLease first, before locking any entity row. Zero rows refuses the transaction. Sample the database clock after that potentially blocking lock, then check expiry within the mutation; a stale pre-lock timestamp is invalid. Expiry is exclusive. Hold the lease row lock through COMMIT so acquisition cannot interleave with the mutation. EXISTS alone is insufficient under PostgreSQL MVCC. Reacquisition increments its generation; renewal preserves it. Never hold a write transaction across non-database external effects: agent calls, HTTP requests to other services, filesystem writes outside the database, or message sends. Database protocol reads and writes are permitted.',
+   commit: 'Success means COMMIT succeeded. RETURNING rows are provisional until commit. Zero rows on a conditional write is a conflict, not success. Roll back the entire transaction on any failed prerequisite. Never launch, send, or acknowledge an external effect based on provisional rows.',
+-  assignment: 'The task has one stable admitted-assignment row. A uniqueness conflict is not permission to reassign or relaunch. Admission records system acceptance, not worker pickup or understanding. Attempt history and reassignment require the later lifecycle contract.',
+-  thread: 'Answer only an open thread at its expected row and consumer generations under the current lease. Only one committed writer wins. Answered and fenced threads cannot be reopened by protocol statements.',
++  assignment: 'Each task has one initial admitted assignment and a single successor per retry, linked by previous_assignment_id to the same task. Each retry has a new identity; never rewrite history or reopen its old thread. Admission records acceptance, not pickup or understanding. The later lifecycle transaction must check predecessor eligibility, preserve acyclic lineage and close the old attempt/thread before admitting a retry. No retry or pickup observer is implemented in this slice.',
++  thread: 'Every thread names a team and may optionally name a task in its Run/team. Team-owned coordination is valid; ownerless threads are not. Owner transfer is undecided and has no API. Endpoints are canonical. Answer only an open thread at its expected row and consumer generations under the current lease. Answered, fenced and superseded threads never reopen. Only one committed writer wins.',
++  messages: 'Messages are immutable content with stable identity and one delivery membership, one team/thread, sender, recipient, kind, body and creation time. Database guards reject updates, replacement and deletion. Create the message and its sole delivery together in one transaction; deferred mutual foreign keys require both at commit. Acknowledging or fencing a delivery and closing a thread do not mutate messages. Deliveries is the single batch-state table; there is no second delivery_batches state owner.',
++  windows: 'Require explicit positive pickup and answer minutes, explicit task minutes or NULL for off, and explicit positive replay interval milliseconds. A question answer window starts when that question is delivered, not when work is picked up. Pickup comes from a local status observation; the shared store records only its time. Task-window minutes are snapshotted at admission; NULL minutes and deadline mean off. When enabled, no deadline exists before pickup and the deadline cannot precede pickup. No observer, timeout, scheduling or gate-application behavior is implemented here.',
++  replay: 'Replay reuses the same delivery and immutable message. Replay count/time are delivery metadata, never message edits or a new message identity. Acknowledgement stops replay; an already-answered message must never be replayed. The future lifecycle enforces queue order, replay rate and delivery eligibility; these rules are not implemented by a timer or transport here.',
++  gates: 'The store preserves options_json and resolution_json as opaque nullable TEXT and enforces only open/resolved presence consistency. The client validates JSON syntax, at least two offered strings, and a resolution naming an offered option with an optional note. An unoffered answer requires a new gate. No common JSON parser or option interpretation is embedded in the shared schema. Gate application and automatic unblocking remain undecided.',
+   delivery: 'Acknowledged and fenced deliveries are terminal. Acknowledgement uses the expected row and consumer generations under the current lease. Fencing is not acknowledgement. Terminal historical rows remain intact.',
+   rebind: 'In one transaction, fence the old consumer generation\'s outstanding deliveries, then increment the Run consumer generation by compare-and-set. Roll back both if the rebind loses or the lease expires. New consumers cannot acknowledge old deliveries. Message replay and redelivery policy are not defined by this foundation.',
+   retry: 'SQLite busy/locked and PostgreSQL 40001/40P01 require a bounded whole-transaction retry after rollback, with the same operation identity and freshly read generations. A lost commit response is unknown: reconcile before retrying. A uniqueness violation is a domain conflict, not a transient retry. No retry may duplicate an external effect.',
+--- a/test/contract.test.mjs
++++ b/test/contract.test.mjs
+@@ -1,11 +1,11 @@
+ import { describe, test } from 'node:test';
+ import assert from 'node:assert/strict';
+-import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, SQL, RULES } from '../contract.mjs';
++import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, SQL, RULES } from '../contract.mjs';
+ import { fixture, postgresTestUrl } from './support/engines.mjs';
+-import { seedLayout } from './support/seed-layout.mjs';
++import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
+ 
+ const constraint = /constraint|duplicate|not.null|violat/i;
+-const holder = { machine_id: 'machine-A', holder_token: 'process-A', lease_generation: 1, now_ms: 1000, assigned_by_member_id: 'head', pickup_deadline_ms: 2000 };
++const holder = { machine_id: 'machine-A', holder_token: 'process-A', lease_generation: 1, now_ms: 1000, assigned_by_member_id: 'head', pickup_deadline_ms: 2000, task_window_minutes: null };
+ const authority = { ...holder, run_id: 'run', consumer_generation: 1, expected_generation: 1 };
+ const generation = rows => rows.map(row => Number(row.generation));
+ 
+@@ -13,21 +13,29 @@
+   const f = await fixture(t, engine);
+   await seedLayout(f.db);
+   await f.db.exec(`
++    BEGIN;
+     INSERT INTO runs (run_id,consumer_generation,team_id) VALUES ('run', 1, 'fixture-team');
+     INSERT INTO tasks (task_id,run_id) VALUES ('task', 'run');
+     INSERT INTO tasks (task_id,run_id) VALUES ('other-task', 'run');
+-    INSERT INTO threads (thread_id,run_id,status,generation,answer,task_id,endpoint_a_member_id,endpoint_b_member_id) VALUES ('thread', 'run', 'open', 1, NULL, 'task', 'head', 'worker');
+-    INSERT INTO deliveries VALUES ('delivery', 'run', 1, 'outstanding', 1);
++    INSERT INTO threads (thread_id,run_id,status,generation,answer,task_id,endpoint_a_member_id,endpoint_b_member_id,team_id) VALUES ('thread', 'run', 'open', 1, NULL, 'task', 'head', 'worker', 'fixture-team');
+   `);
++  await seedDelivery(f.db);
++  await f.db.exec('COMMIT');
+   assert.deepEqual(generation(await f.db.query(SQL.acquireLease, {
+     ...holder, expected_generation: 0, expires_at_ms: 2000,
+   })), [1]);
+   return f;
+ }
+ 
+-test('one DDL source varies only its explicit identifier collation', () => {
+-  assert.equal(ddlFor('sqlite'), DDL.replaceAll('{{identity_collation}}', 'BINARY'));
+-  assert.equal(ddlFor('postgres'), DDL.replaceAll('{{identity_collation}}', '"C"'));
++test('one common table source renders explicit collations and equivalent immutability guards', () => {
++  for (const [engine, collation] of [['sqlite', 'BINARY'], ['postgres', '"C"']]) {
++    const tables = ddlFor(engine);
++    assert.ok(tables.includes(messageGuardsFor(engine)));
++    assert.ok(tables.includes(`message_id TEXT COLLATE ${collation} NOT NULL PRIMARY KEY`));
++    assert.ok(!tables.includes('{{'));
++    const sharedBody = DDL.replaceAll('{{identity_collation}}', collation).split('{{message_guards}}')[0];
++    for (const part of sharedBody.split('{{delivery_message_fk}}')) assert.ok(tables.includes(part));
++  }
+   assert.throws(() => ddlFor('mysql'), /Unsupported/);
+   assert.throws(() => ddlFor('toString'), /Unsupported/);
+   for (const key of ['version', 'foreignKeys', 'lease', 'commit', 'assignment', 'thread', 'delivery', 'rebind', 'retry', 'authority']) {
+@@ -61,8 +69,8 @@
+     test('schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession', async t => {
+       const { db } = await seeded(t, engine);
+       const insert = (a, b, task = 'task') => db.query(`INSERT INTO threads
+-        (thread_id,run_id,status,generation,task_id,endpoint_a_member_id,endpoint_b_member_id)
+-        VALUES ('second','run','open',1,:task,:a,:b)`, { task, a, b });
++        (thread_id,run_id,status,generation,task_id,endpoint_a_member_id,endpoint_b_member_id,team_id)
++        VALUES ('second','run','open',1,:task,:a,:b,'fixture-team')`, { task, a, b });
+       await assert.rejects(insert('head', 'worker'), constraint);
+       await assert.rejects(insert('worker', 'head'), constraint);
+       await assert.rejects(insert('head', 'head'), constraint);
+@@ -116,8 +124,8 @@
+       for (const value of ["'delivered'", "'ACKNOWLEDGED'", 'NULL']) {
+         await assert.rejects(db.exec(`UPDATE deliveries SET status = ${value}`), constraint);
+       }
+-      await assert.rejects(db.exec("INSERT INTO deliveries VALUES (NULL, 'run', 1, 'outstanding', 1)"), constraint);
+-      await assert.rejects(db.exec("INSERT INTO deliveries VALUES ('', 'run', 1, 'outstanding', 1)"), constraint);
++      await assert.rejects(db.exec("INSERT INTO deliveries (delivery_id,run_id,consumer_generation,status,generation,team_id,message_id) VALUES (NULL,'run',1,'outstanding',1,'fixture-team','invalid-message')"), constraint);
++      await assert.rejects(db.exec("INSERT INTO deliveries (delivery_id,run_id,consumer_generation,status,generation,team_id,message_id) VALUES ('','run',1,'outstanding',1,'fixture-team','invalid-message')"), constraint);
+       for (const value of ['outstanding', 'acknowledged', 'fenced']) {
+         await db.query('UPDATE deliveries SET status = :status', { status: value });
+       }
+@@ -273,13 +281,13 @@
+       assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, expected_generation: 2, delivery_id: 'delivery' }), []);
+       assert.deepEqual(generation(await db.query(SQL.acknowledgeDelivery, { ...authority, delivery_id: 'delivery' })), [2]);
+       assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, expected_generation: 2, delivery_id: 'delivery' }), []);
+-      await db.exec("INSERT INTO deliveries VALUES ('fenced', 'run', 1, 'fenced', 1)");
++      await db.exec('BEGIN'); await seedDelivery(db, { id: 'fenced', status: 'fenced' }); await db.exec('COMMIT');
+       assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, delivery_id: 'fenced' }), []);
+     });
+ 
+     test('rebind fences outstanding batches and refuses stale consumer actions', async t => {
+       const { db } = await seeded(t, engine);
+-      await db.exec("INSERT INTO deliveries VALUES ('history', 'run', 1, 'acknowledged', 2)");
++      await db.exec('BEGIN'); await seedDelivery(db, { id: 'history', status: 'acknowledged', generation: 2 }); await db.exec('COMMIT');
+       await db.exec('BEGIN');
+       assert.equal((await db.query(SQL.fenceDeliveries, authority)).length, 1);
+       assert.equal(Number((await db.query(SQL.rebindConsumer, authority))[0].consumer_generation), 2);
+--- /dev/null
++++ b/test/schema4.test.mjs
+@@ -0,0 +1,222 @@
++import { describe, test } from 'node:test';
++import assert from 'node:assert/strict';
++import { fixture, postgresTestUrl } from './support/engines.mjs';
++import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
++import { MESSAGE_KINDS, MESSAGE_IMMUTABLE, RULES } from '../contract.mjs';
++
++const constraint = /constraint|duplicate|not.null|violat/i;
++const immutable = error => error.message.includes(MESSAGE_IMMUTABLE);
++async function transaction(db, action) {
++  await db.exec('BEGIN');
++  try { const value = await action(); await db.exec('COMMIT'); return value; }
++  catch (error) { await db.exec('ROLLBACK').catch(() => {}); throw error; }
++}
++async function setup(t, engine) {
++  const f = await fixture(t, engine), db = f.db;
++  await seedLayout(db);
++  await db.exec(`INSERT INTO runs (run_id,consumer_generation,team_id) VALUES ('run',1,'fixture-team');
++    INSERT INTO tasks (task_id,run_id) VALUES ('task','run'),('other-task','run');
++    INSERT INTO threads (thread_id,run_id,team_id,task_id,status,generation,endpoint_a_member_id,endpoint_b_member_id)
++    VALUES ('thread','run','fixture-team','task','open',1,'head','worker'),
++      ('team-thread','run','fixture-team',NULL,'open',1,'head','worker');`);
++  return f;
++}
++const message = (db, { id = 'm', delivery = 'd', team = 'fixture-team', thread = 'thread', sender = 'head', recipient = 'worker', kind = 'question', body = 'Question\r\n世界 🐋' } = {}) =>
++  db.query(`INSERT INTO messages (message_id,delivery_id,team_id,thread_id,sender_member_id,recipient_member_id,body,kind,created_at_ms)
++    VALUES (:id,:delivery,:team,:thread,:sender,:recipient,:body,:kind,1000)`, { id, delivery, team, thread, sender, recipient, body, kind });
++const delivery = (db, { id = 'd', message = 'm', team = 'fixture-team' } = {}) => db.query(`INSERT INTO deliveries
++  (delivery_id,run_id,consumer_generation,status,generation,team_id,message_id) VALUES (:id,'run',1,'outstanding',1,:team,:message)`, { id, message, team });
++const assignment = (db, { id = 'a', task = 'task', previous = null, minutes = null } = {}) => db.query(`INSERT INTO assignments
++  (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,previous_assignment_id,task_window_minutes)
++  VALUES (:id,:task,'worker',1000,'head',2000,:previous,:minutes)`, { id, task, previous, minutes });
++
++for (const engine of ['sqlite', 'postgres']) describe(`${engine} schema 4 lifecycle layout`, { skip: engine === 'postgres' && !postgresTestUrl() }, () => {
++  test('deliveries is the sole batch-state table and messages have no delivery status', async t => {
++    const { db } = await setup(t, engine);
++    const tables = engine === 'sqlite' ? await db.query("SELECT name FROM sqlite_schema WHERE type='table'")
++      : await db.query('SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema()');
++    assert.ok(tables.some(t => t.name === 'messages')); assert.ok(tables.some(t => t.name === 'deliveries'));
++    assert.ok(!tables.some(t => t.name === 'delivery_batches'));
++    const columns = engine === 'sqlite' ? await db.query('PRAGMA table_info(messages)')
++      : await db.query("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='messages'");
++    assert.ok(!columns.some(c => ['status', 'replay_count', 'last_replayed_at_ms'].includes(c.name)));
++  });
++
++  test('a delivery and its sole message are mutually required at commit', async t => {
++    const { db } = await setup(t, engine);
++    await assert.rejects(transaction(db, () => delivery(db)), constraint);
++    await assert.rejects(transaction(db, () => message(db)), constraint);
++    assert.deepEqual(await db.query('SELECT delivery_id FROM deliveries'), []);
++    assert.deepEqual(await db.query('SELECT message_id FROM messages'), []);
++    await transaction(db, async () => { await delivery(db); await message(db); });
++    assert.equal((await db.query('SELECT message_id FROM messages'))[0].message_id, 'm');
++  });
++
++  test('membership cannot disagree, move between batches, or add a second message', async t => {
++    const { db } = await setup(t, engine);
++    await assert.rejects(transaction(db, async () => { await delivery(db); await message(db, { id: 'wrong' }); }), constraint);
++    await transaction(db, async () => { await delivery(db); await message(db); });
++    await assert.rejects(message(db, { id: 'second' }), error => immutable(error) || constraint.test(error.message));
++    await assert.rejects(db.exec("UPDATE messages SET delivery_id='another'"), immutable);
++    await assert.rejects(transaction(db, () => delivery(db, { id: 'second', message: 'm' })), constraint);
++    assert.equal((await db.query('SELECT message_id FROM messages')).length, 1);
++  });
++
++  test('message identity, content, routing and membership reject UPDATE DELETE and replacement', async t => {
++    const { db } = await setup(t, engine);
++    await transaction(db, async () => { await delivery(db); await message(db); });
++    const before = await db.query('SELECT * FROM messages');
++    for (const change of ["message_id='changed'", "delivery_id='changed'", "team_id='changed'", "thread_id='changed'",
++      "sender_member_id='worker'", "recipient_member_id='head'", "body='changed'", "kind='status'", 'created_at_ms=1001']) {
++      await assert.rejects(db.exec(`UPDATE messages SET ${change}`), immutable);
++    }
++    await assert.rejects(db.exec('DELETE FROM messages'), immutable);
++    if (engine === 'sqlite') {
++      await assert.rejects(db.exec(`INSERT OR REPLACE INTO messages
++        (message_id,delivery_id,team_id,thread_id,sender_member_id,recipient_member_id,body,kind,created_at_ms)
++        VALUES ('m','d','fixture-team','thread','head','worker','replacement','question',1000)`), immutable);
++    } else {
++      await assert.rejects(db.exec(`INSERT INTO messages
++        (message_id,delivery_id,team_id,thread_id,sender_member_id,recipient_member_id,body,kind,created_at_ms)
++        VALUES ('m','d','fixture-team','thread','head','worker','replacement','question',1000)
++        ON CONFLICT (message_id) DO UPDATE SET body=EXCLUDED.body`), immutable);
++      await assert.rejects(db.exec('TRUNCATE messages CASCADE'), immutable);
++    }
++    assert.deepEqual(await db.query('SELECT * FROM messages'), before);
++  });
++
++  test('batch replay and acknowledgement and thread closure leave message bytes unchanged', async t => {
++    const { db } = await setup(t, engine);
++    await transaction(db, async () => { await delivery(db); await message(db); });
++    const before = JSON.stringify(await db.query('SELECT * FROM messages'));
++    await db.exec('UPDATE deliveries SET replay_count=1,last_replayed_at_ms=2000');
++    assert.equal(JSON.stringify(await db.query('SELECT * FROM messages')), before);
++    await db.exec("UPDATE deliveries SET status='acknowledged',generation=2");
++    await db.exec("UPDATE threads SET status='fenced' WHERE thread_id='thread'");
++    assert.equal(JSON.stringify(await db.query('SELECT * FROM messages')), before);
++    assert.equal((await db.query('SELECT delivery_id FROM deliveries'))[0].delivery_id, 'd');
++  });
++
++  test('closed message kinds and canonical endpoint references apply in either direction', async t => {
++    const { db } = await setup(t, engine);
++    for (const [i, kind] of MESSAGE_KINDS.entries()) await transaction(db, async () => {
++      await delivery(db, { id: `d${i}`, message: `m${i}` });
++      await message(db, { id: `m${i}`, delivery: `d${i}`, kind, sender: 'worker', recipient: 'head' });
++    });
++    for (const changes of [{ kind: 'DONE' }, { kind: null }, { sender: 'missing' }, { sender: 'worker-A' }, { sender: 'worker' }, { thread: 'missing' }]) {
++      await assert.rejects(transaction(db, async () => { await delivery(db); await message(db, changes); }), constraint);
++    }
++    assert.equal((await db.query('SELECT message_id FROM messages')).length, MESSAGE_KINDS.length);
++  });
++
++  test('thread ownership requires a team, optionally a task in its Run and team', async t => {
++    const { db } = await setup(t, engine);
++    const insert = (id, team, task, run = 'run') => db.query(`INSERT INTO threads
++      (thread_id,run_id,team_id,task_id,status,generation,endpoint_a_member_id,endpoint_b_member_id)
++      VALUES (:id,:run,:team,:task,'open',1,'head','worker')`, { id, team, task, run });
++    await assert.rejects(insert('duplicate-team', 'fixture-team', null), constraint);
++    await assert.rejects(insert('ownerless', null, null), constraint);
++    await assert.rejects(insert('missing-task', 'fixture-team', 'missing'), constraint);
++    await insert('another-task', 'fixture-team', 'other-task');
++    await db.exec(`INSERT INTO teams VALUES ('two','Two','',1,'team-orchestrator','0.0.0');
++      INSERT INTO runs VALUES ('two-run',1,'two'); INSERT INTO tasks (task_id,run_id) VALUES ('two-task','two-run');`);
++    await assert.rejects(insert('wrong-team', 'two', null), constraint);
++    await assert.rejects(insert('wrong-task-team', 'fixture-team', 'two-task'), constraint);
++    await insert('two-team-thread', 'two', null, 'two-run');
++    assert.equal((await db.query('SELECT thread_id FROM threads')).length, 4);
++  });
++
++  test('assignment retry history has one root and a same-task non-self predecessor without forks', async t => {
++    const { db } = await setup(t, engine);
++    await assignment(db);
++    await assignment(db, { id: 'retry', previous: 'a' });
++    await assignment(db, { id: 'retry-again', previous: 'retry' });
++    for (const changes of [{ id: 'second-root' }, { id: 'fork', previous: 'a' }, { id: 'self', previous: 'self' },
++      { id: 'missing', previous: 'absent' }, { id: 'cross-task', task: 'other-task', previous: 'retry-again' }]) await assert.rejects(assignment(db, changes), constraint);
++    await db.exec("UPDATE threads SET assignment_id='a' WHERE thread_id='thread'");
++    await assert.rejects(db.exec("UPDATE threads SET assignment_id='a' WHERE thread_id='team-thread'"), constraint);
++    assert.equal((await db.query('SELECT assignment_id FROM assignments')).length, 3);
++  });
++
++  test('NULL task windows mean off without admitting an enabled deadline before pickup', async t => {
++    const { db } = await setup(t, engine);
++    await assignment(db);
++    for (const sql of ['task_deadline_ms=1500', 'task_window_minutes=0', 'task_window_minutes=3,task_deadline_ms=1500',
++      'task_window_minutes=3,pickup_observed_at_ms=1500', 'task_window_minutes=3,pickup_observed_at_ms=1500,task_deadline_ms=1499']) {
++      await assert.rejects(db.exec(`UPDATE assignments SET ${sql}`), constraint);
++    }
++    await db.exec('UPDATE assignments SET task_window_minutes=3'); // enabled, not yet picked up
++    await db.exec('UPDATE assignments SET pickup_observed_at_ms=1500,task_deadline_ms=1600');
++    await db.exec('UPDATE assignments SET task_window_minutes=NULL,task_deadline_ms=NULL');
++    const [row] = await db.query('SELECT task_window_minutes,task_deadline_ms,pickup_observed_at_ms FROM assignments');
++    assert.equal(row.task_window_minutes, null); assert.equal(row.task_deadline_ms, null); assert.equal(Number(row.pickup_observed_at_ms), 1500);
++  });
++
++  test('question deadlines bind delivery time independently of task pickup', async t => {
++    const { db } = await setup(t, engine);
++    for (const sql of ['answer_deadline_ms=1500', 'question_delivered_at_ms=1200', 'question_delivered_at_ms=1200,answer_deadline_ms=1199']) {
++      await assert.rejects(db.exec(`UPDATE threads SET ${sql} WHERE thread_id='team-thread'`), constraint);
++    }
++    await db.exec("UPDATE threads SET question_delivered_at_ms=1200,answer_deadline_ms=1500 WHERE thread_id='team-thread'");
++    assert.deepEqual(await db.query('SELECT assignment_id FROM assignments'), []);
++    assert.equal(Number((await db.query("SELECT answer_deadline_ms FROM threads WHERE thread_id='team-thread'"))[0].answer_deadline_ms), 1500);
++  });
++
++  test('window and replay settings have no invented required defaults', async t => {
++    const { db } = await setup(t, engine);
++    for (const field of ['answer_window_minutes', 'replay_interval_ms']) {
++      await assert.rejects(db.exec(`UPDATE team_settings SET ${field}=NULL`), constraint);
++      await assert.rejects(db.exec(`UPDATE team_settings SET ${field}=0`), constraint);
++    }
++    await assert.rejects(db.exec('UPDATE team_settings SET task_window_minutes=0'), constraint);
++    await db.exec('UPDATE team_settings SET task_window_minutes=30');
++    await db.exec('UPDATE team_settings SET task_window_minutes=NULL');
++    await transaction(db, () => seedDelivery(db));
++    await assert.rejects(db.exec('UPDATE deliveries SET replay_count=1'), constraint);
++  });
++
++  test('gate JSON remains opaque; client obligations and gate application are explicit', async t => {
++    const { db } = await setup(t, engine);
++    await db.query('INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES (:id,:task,:question,:options)', { id: 'g', task: 'task', question: 'Choose', options: '{not parsed' });
++    await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='also opaque',resolved_at_ms=1000");
++    assert.equal((await db.query('SELECT options_json FROM decision_gates'))[0].options_json, '{not parsed');
++    assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'open');
++    assert.match(RULES.gates, /client validates JSON syntax, at least two offered strings/);
++    assert.match(RULES.gates, /resolution naming an offered option/);
++  });
++
++  test('new numeric columns cannot store fractional windows, counters or timestamps', async t => {
++    const { db } = await setup(t, engine);
++    await transaction(db, () => seedDelivery(db)); await assignment(db);
++    const changes = [['team_settings', 'answer_window_minutes=1.5'], ['team_settings', 'task_window_minutes=1.5'],
++      ['team_settings', 'replay_interval_ms=1.5'], ['assignments', 'task_window_minutes=1.5'],
++      ['assignments', 'task_window_minutes=1,pickup_observed_at_ms=1500,task_deadline_ms=1500.5'],
++      ['threads', 'question_delivered_at_ms=1200.5,answer_deadline_ms=1500'],
++      ['deliveries', 'replay_count=1.5,last_replayed_at_ms=2000'], ['deliveries', 'replay_count=1,last_replayed_at_ms=2000.5']];
++    if (engine === 'sqlite') {
++      for (const [table, fields] of changes) await assert.rejects(db.exec(`UPDATE ${table} SET ${fields}`), constraint);
++      await assert.rejects(transaction(db, async () => {
++        await delivery(db, { id: 'fractional', message: 'fractional' });
++        await db.exec(`INSERT INTO messages (message_id,delivery_id,team_id,thread_id,sender_member_id,recipient_member_id,body,kind,created_at_ms)
++          VALUES ('fractional','fractional','fixture-team','thread','head','worker','','status',1000.5)`);
++      }), constraint);
++    } else {
++      // PostgreSQL BIGINT storage coerces numeric SQL literals before CHECK.
++      // Public DTO validation rejects fractions before either engine is called.
++      await db.exec('UPDATE team_settings SET answer_window_minutes=1.5');
++      const [row] = await db.query('SELECT answer_window_minutes FROM team_settings');
++      assert.equal(Number(row.answer_window_minutes), 2);
++      const columns = await db.query(`SELECT data_type FROM information_schema.columns WHERE table_schema=current_schema()
++        AND table_name='messages' AND column_name='created_at_ms'`);
++      assert.equal(columns[0].data_type, 'bigint');
++    }
++  });
++
++  test('an immutability refusal rolls back a newly created message-delivery pair', async t => {
++    const { db } = await setup(t, engine);
++    await transaction(db, () => seedDelivery(db));
++    await assert.rejects(transaction(db, async () => { await seedDelivery(db, { id: 'uncommitted' }); await db.exec("UPDATE messages SET body='changed' WHERE message_id='message-delivery'"); }), immutable);
++    assert.equal((await db.query('SELECT message_id FROM messages')).length, 1);
++    assert.equal((await db.query('SELECT delivery_id FROM deliveries')).length, 1);
++  });
++});

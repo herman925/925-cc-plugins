@@ -1,0 +1,57 @@
+Validating plugin manifest: C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator\.claude-plugin\plugin.json
+
+‼ Found 1 warning:
+
+  > author: No author information provided. Consider adding author details for plugin attribution
+
+  > types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  > types ./types/index.d.ts declares state: team-orchestrator.form, team-orchestrator.members, team-orchestrator.note, team-orchestrator.bulk, team-orchestrator.view, team-orchestrator.teamName, team-orchestrator.frame, team-orchestrator.menu, team-orchestrator.settings, team-orchestrator.act, team-orchestrator.spawn, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.sharedStoreStatus
+
+Validating hooks: C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator\hooks\hooks.json
+
+  > ./register.tsx hooks: tool.call{tool=mcp__team-orchestrator__shared_team}, session.start, tool.call{tool=mcp__team-orchestrator__team_adopt}, tool.call{tool=mcp__team-orchestrator__team_remove}, tool.call{tool=mcp__team-orchestrator__member_remove}, tool.call{tool=mcp__team-orchestrator__member_move}, tool.call{tool=?}, tool.call{tool=SendMessage}, turn.complete, turn.start, tool.call, tool.describe{tool=SendMessage}, tool.describe{tool=mcp__team-orchestrator__team_message}, tool.call{tool=mcp__team-orchestrator__team_message}, tool.call{tool=mcp__team-orchestrator__team_take_top}, tool.describe{tool=mcp__team-orchestrator__team_take_top}, tool.call{tool=mcp__team-orchestrator__member_claim}, tool.describe{tool=mcp__team-orchestrator__member_claim}, tool.call{tool=mcp__team-orchestrator__team_launch}, tool.call{tool=mcp__team-orchestrator__member_add}, tool.describe{tool=mcp__team-orchestrator__member_add}, config.set{key="team-orchestrator.orcaCommand"}, command.run{command=team}, pro… [+116 chars]
+  > ./register.tsx answers its own command: command.run{command=team}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__shared_team}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_adopt}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_remove}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_remove}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_move}
+  > ./register.tsx gating hook without .catch: tool.call{tool=?}
+  > ./register.tsx gating hook without .catch: tool.call{tool=SendMessage}
+  > ./register.tsx gating hook without .catch: tool.call
+  > ./register.tsx gating hook with .catch: tool.call{tool=mcp__team-orchestrator__team_message}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_take_top}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_claim}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__team_launch}
+  > ./register.tsx gating hook without .catch: tool.call{tool=mcp__team-orchestrator__member_add}
+  > ./register.tsx gating hook without .catch: config.set{key="team-orchestrator.orcaCommand"}
+  > ./register.tsx gating hook without .catch: prompt.submit
+  > ./register.tsx gating hook without .catch: ui.close{id=team-dock}
+  > ./register.tsx calls: $.clock.every, $.clock.sleep (via launch), $.command.register, $.config.set (via orcaSetup), $.env.get, $.fs.exists (via checkGrants, effective, exclude, guard, migrate, moveFiles, readClaims, readJson, readSettingsFile, readStatus, writeRoles, writeRoster, writerRole), $.fs.list (via pendingChanges, readAssumptions, readQueue, readRegistry, transcripts), $.fs.read (via checkGrants, effective, exclude, migrate, moveFiles, readAssumptions, readClaims, readJson, readRegistry, readSettingsFile, readStatus, readVersion, writeRoles, writeRoster), $.fs.write (via putFile, sharedStoreView), $.process.run (via exclude, machineOf, orca, orcaProblem, processes, putFile, registers, sharedCall, tails), $.prompt.submit (via emptyState, formView), $.session.cwd (via readOnlyProjectScope), $.session.id, $.session.root (via exclude, readOnlyProjectScope, refresh, rootOf), $.session.send, $.session.usage, $.state.get, $.state.set, $.store.get (via readGrantRecord), $.store.set (vi… [+150 chars]
+  > ./register.tsx env writes: nothing
+  > ./register.tsx env reads: ANTHROPIC_DEFAULT_FABLE_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, CLAUDE_CONFIG_DIR, COMPUTERNAME, HOME, HOSTNAME, NO_COLOR, ORCA_TERMINAL_HANDLE, ORCA_WORKTREE_ID, OS, USERPROFILE
+  > ./register.tsx state writes: team-orchestrator.act, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.bulk, team-orchestrator.form, team-orchestrator.frame, team-orchestrator.members, team-orchestrator.menu, team-orchestrator.note, team-orchestrator.settings, team-orchestrator.sharedStoreStatus, team-orchestrator.spawn, team-orchestrator.view
+  > ./register.tsx state reads: team-orchestrator.act, team-orchestrator.assumptions, team-orchestrator.assumptionsOn, team-orchestrator.bulk, team-orchestrator.form, team-orchestrator.frame, team-orchestrator.members, team-orchestrator.menu, team-orchestrator.note, team-orchestrator.settings, team-orchestrator.sharedStoreStatus, team-orchestrator.spawn, team-orchestrator.teamName, team-orchestrator.view
+
+Plugin directory checks for C:\Users\Herman\Downloads\925-cc-plugins\team-orchestrator. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.
+
+× Found 1 problem the plugin directory refuses a submission for:
+
+  > LICENSE: License missing (LICENSE_MISSING). This plugin has no LICENSE file and plugin.json has no `license`. The directory requires one of them.
+    Fix: Add a LICENSE file to the plugin folder, or set `license` (an SPDX id) in plugin.json. A LICENSE at the repository root also counts for a plugin in a sub-folder.
+
+‼ Found 1 plugin directory warning:
+
+  > .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.
+    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.
+
+About these checks:
+
+  > The repository root was taken to be C:\Users\Herman\Downloads\925-cc-plugins, the nearest parent folder with a .git folder or file. No license file that counts (a regular file with one of the file names the plugin directory accepts) was found there either. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.
+  > hooks/hooks.json names a hooks module (a code file listed under `modules`). The plugin directory has rules of its own for such code, and these checks apply none of them, so passing here does not mean the directory accepts the plugin. The developer portal's own validation applies those rules.
+
+These plugin directory checks do not change the result below. To fail on problems the directory refuses a submission for, run this command with --profile directory.
+
+The directory also runs a safety scan and a policy review that this command does not.
+
+√ Validation passed with warnings

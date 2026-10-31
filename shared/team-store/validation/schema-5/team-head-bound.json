@@ -1,0 +1,34 @@
+{
+  "teams": [
+    {
+      "team_id": "s5-live",
+      "config_version": 5
+    }
+  ],
+  "members": [
+    {
+      "member_id": "s5-head",
+      "boss_member_id": null,
+      "generation": 1
+    },
+    {
+      "member_id": "s5-worker",
+      "boss_member_id": "s5-head",
+      "generation": 1
+    }
+  ],
+  "bindings": [
+    {
+      "member_id": "s5-head",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "65199823-8eb0-4ae4-83e6-4d7728752d15",
+      "execution_host_id": "local",
+      "context_id": "9343c4c5-1571-479e-83dd-ce36d9b40243::C:/Users/Herman/AppData/Local/Temp/schema5-ceo-acceptance-eokqi0/live-project",
+      "terminal_handle": "term_3a05373a-bade-4458-8a9a-0a6b1ade67f7",
+      "incarnation_id": "1b04addb-f40a-4537-a9ec-bdf9fa9ade32",
+      "generation": 1
+    }
+  ],
+  "tasks": []
+}

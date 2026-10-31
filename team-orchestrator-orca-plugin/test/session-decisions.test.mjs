@@ -6,7 +6,7 @@ import {createQuestionService} from '../src/local/questions.mjs';
 import {createStaffingService} from '../src/local/staffing.mjs';
 import {readNativeQuestionEvidence} from '../src/local/native-questions.mjs';
 import {readNativeDispatchEvidence} from '../src/local/native-dispatch.mjs';
-import {sessionDecisionKey} from '../src/local/session-decisions.mjs';
+import {sessionDecisionKey,sessionQuestionMethod,sessionDecisionInstructions} from '../src/local/session-decisions.mjs';
 import {authorizedHeadRebind} from './head-rebind-fixture.mjs';
 const service=(f,create)=>create({store:f.store,rpc:f.rpc,userData:f.profile,works:f.works,consent:async()=>{}});
 async function setup(t,options){const f=await questionFixture(t,options);await service(f,createDispatchService).check(f.work.id);return f;}
@@ -113,5 +113,25 @@ for(const headAgent of ['codex','claude'])for(const kind of ['terminal','structu
  await service(f,createQuestionService).check(f.work.id);
  const guide=JSON.parse(f.messages.find(m=>m.startsWith('TEAM_SESSION_DECISIONS\n')).split('\n')[1]);assert.deepEqual(guide.questionMethod,{agent:headAgent,preferredTool:expected});
  assert.match(guide.instructions,/empty result, cancellation, timeout, preselected option or no response is never consent/);
- assert.match(guide.instructions,/same conversation, end the turn and wait for an explicit user reply/);
+ assert.match(guide.instructions,/Only if no permitted interactive question tool is available/);
+ assert.match(guide.instructions,/Do not send a final response, end the turn, close the session or open a duplicate question while that interactive question is pending/);
+});
+
+test('question guidance supports actual Claude, Codex, Hermes and unfamiliar tool names without enabling new providers',()=>{
+ for(const [agent,preferredTool] of [['claude','AskUserQuestion'],['codex','request_user_input'],['hermes','clarify'],['other-cli',null]]){
+  const work={binding:{nativeRequest:{agent}}};
+  assert.deepEqual(sessionQuestionMethod(work),{agent,preferredTool});
+  const guide=sessionDecisionInstructions(work);
+  if(preferredTool)assert.ok(guide.includes(preferredTool));
+  else assert.match(guide,/Discover its actual user-question tools/);
+  assert.match(guide,/equivalent native or MCP interactive question tool/);
+  assert.match(guide,/actual advertised name and schema/);
+  assert.match(guide,/This rule applies without a grilling skill/);
+  assert.match(guide,/only means the question was opened, not answered/);
+  assert.match(guide,/available wait\/resume mechanism until the user answers, cancels or the tool explicitly closes/);
+  assert.match(guide,/Do not change modes, feature flags, permissions or global configuration/);
+  assert.match(guide,/no response is never consent/);
+ }
+ assert.match(sessionDecisionInstructions({binding:{nativeRequest:{agent:'codex'}}}),/request_user_input_async/);
+ assert.deepEqual(sessionQuestionMethod({}),{agent:'unknown',preferredTool:null});
 });

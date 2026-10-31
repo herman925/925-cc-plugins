@@ -116,7 +116,7 @@ test('model discovery retries automatically when the host catalog is still loadi
 });
 
 test('remote model catalog does not offer unverified local model names',async({page})=>{
- await page.goto('/');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Refresh models'})).toBeEnabled();
+ await page.goto('/?mode=remote-catalog');const ui=panel(page);await ui.getByRole('button',{name:'Add team',exact:true}).click();await expect(ui.getByRole('button',{name:'Refresh models'})).toBeEnabled();
  await expect(ui.getByLabel('Head model',{exact:true}).locator('option')).toHaveCount(1);await expect(ui.getByLabel('Head model',{exact:true})).toHaveValue('default');await expect(ui.getByLabel('Head effort',{exact:true})).toBeDisabled();await expect(ui.getByText('model list unavailable for this remote host',{exact:false})).toBeVisible();
 });
 

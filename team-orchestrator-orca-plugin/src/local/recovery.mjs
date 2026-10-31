@@ -24,7 +24,7 @@ export async function readSessionDeath(userData,sessionId,ownerFence,scope){
   return {kind:death.kind,ownerFence,observedAt:death.observedAt,...(record.provider?{provider:record.provider}:{})};
  }catch{return null;}finally{db?.close();}
 }
-export function createRecoveryService({store,rpc,userData,consent}){
+export function createRecoveryService({store,rpc,userData,consent,isOperationInFlight=()=>false}){
  const serialize=createKeyedSerializer();
  const serial=serialize;
  async function host(scope){
@@ -35,6 +35,10 @@ export function createRecoveryService({store,rpc,userData,consent}){
  }
  async function checkOperation(requestId){
   const operation=store.readOperation(requestId);if(!operation)return null;
+  // A live executor may still be validating a pre-submission intent. Reads must
+  // not advance its optimistic version while it awaits proof. Submitted effects
+  // remain observable, and a restarted executor still reconciles durable intent.
+  if(isOperationInFlight(requestId))return operation;
   let patch={},recovery={state:operation.status==='created'?'confirmed_effect':'unknown',liveness:'unknown',source:'saved-operation',observedAt:stamp(),detail:'Persisted intent retained. Missing evidence never authorizes a second launch.'};
   try{
    await consent();
@@ -77,6 +81,7 @@ export function createRecoveryService({store,rpc,userData,consent}){
     }
    }
   }catch(error){recovery={...recovery,state:(patch.status??operation.status)==='created'?'confirmed_effect':'unknown',liveness:'unknown',incomplete:true,detail:detail(error)};}
+  if(isOperationInFlight(requestId))return store.readOperation(requestId);
   patch.recovery=recovery;patch.public=publicOperation({...operation,...patch});
   try{return store.settleOperation(requestId,operation.nativeRequest.operationId,patch,operation.version??1);}catch{return store.readOperation(requestId);}
  }

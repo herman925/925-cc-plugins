@@ -66,7 +66,9 @@ export function createExecutor(host, cli, { store, openStore, internalKey, userD
   const hierarchy=createHierarchyService({store,userData,works});
   const stops = createStopService({store,rpc,userData,consent});
   const lifecycle = createLifecycleService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
-  const recovery = createRecoveryService({ store, rpc, userData, consent });
+  const launchPlans = new Map();
+  const recovery = createRecoveryService({ store, rpc, userData, consent,
+    isOperationInFlight:requestId=>store.readOperation(requestId)?.effectState==='intent' && [...launchPlans.values()].some(phase=>phase.requestId===requestId) });
   const wake = createWakeService({store,rpc,userData,consent,works,notify:params=>host.call('notifications.show',params)});
   let workTimer, polling = false, stopped = false, reconnecting = false;
   const reconcileExisting=async()=>{await recovery.reconcile();await stops.reconcile();};
@@ -88,7 +90,6 @@ export function createExecutor(host, cli, { store, openStore, internalKey, userD
   }
   const selections = new Map();
   const observations = new Map(), capabilities = new Map(), latestObservation = new Map();
-  const launchPlans = new Map();
   async function workspaceRecord(workspaceId) {
     if (typeof workspaceId !== 'string' || !workspaceId || workspaceId.length > 4096) throw new Error('No verified desktop workspace selection.');
     const selector = workspaceId.startsWith('folder:') ? workspaceId : `id:${workspaceId}`;

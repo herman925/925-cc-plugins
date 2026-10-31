@@ -27,13 +27,15 @@ For an obsolete question after a verified supervisor recovery: discuss it with t
 Wait for TEAM_SESSION_DECISION_RESULT. Rejected decisions change no roster or answer; explain the error and submit a corrected decision with a new ID after any necessary clarification. If native CLI delivery is unknown, use its original retry-request ID, never create a duplicate. The plugin never asks the user to confirm the same decision again in its panel.`;
 function sessionQuestionMethod(work) {
   const agent = work.binding?.nativeRequest?.agent;
-  const preferredTool = agent === "codex" ? "request_user_input" : agent === "claude" ? "AskUserQuestion" : null;
+  const preferredTool = agent === "codex" ? "request_user_input" : agent === "claude" ? "AskUserQuestion" : agent === "hermes" ? "clarify" : null;
   return { agent: agent ?? "unknown", preferredTool };
 }
 function sessionDecisionInstructions(work) {
   const { agent, preferredTool } = sessionQuestionMethod(work);
-  const method = preferredTool ? `This bound session uses ${agent === "claude" ? "Claude Code" : "Codex"}. Its user-question tool is ${preferredTool} (use the exact case and the actual exposed tool schema).` : "The bound CLI is unknown. Do not guess another provider\u2019s question tool.";
-  return `${method} Use that tool only if it is exposed and permitted in this session's current mode. Codex tool availability can depend on collaboration mode and feature settings; do not assume it is always available in Default mode. Do not change modes, feature flags, permissions or global configuration just to ask a question. If the tool is unavailable or disallowed for this decision, ask plainly in this same conversation, end the turn and wait for an explicit user reply. An empty result, cancellation, timeout, preselected option or no response is never consent: do not submit a decision or add a member on that basis. These are native agent tools, not shell commands.
+  const label = agent === "claude" ? "Claude Code" : agent === "codex" ? "Codex" : "Hermes Agent";
+  const method = preferredTool ? `This bound session uses ${label}. Its preferred user-question tool is ${preferredTool} (use the exact case and the actual exposed tool schema).` : "The bound CLI is unknown. Discover its actual user-question tools rather than guessing a provider-specific tool name.";
+  const alternate = agent === "codex" ? " Codex may instead expose request_user_input_async; use it when it is exposed and permitted, including when request_user_input is unavailable in the current mode." : "";
+  return `${method}${alternate} Use a tool only if it is exposed and permitted in this session's current mode. Do not change modes, feature flags, permissions or global configuration just to ask a question. If the named tool is unavailable, inspect the actual exposed tools for an equivalent native or MCP interactive question tool: it must show the question and multiple-choice options to this user and return their answer in this same conversation. Use its actual advertised name and schema; do not invent tools, install an MCP server, send the question elsewhere or treat these names as shell commands. Give a recommended option and ask one decision at a time. This rule applies without a grilling skill. A blocking question tool waits for its answer itself. If an asynchronous tool returns accepted, queued or pending, that only means the question was opened, not answered: keep the turn open using the available wait/resume mechanism until the user answers, cancels or the tool explicitly closes. Do not send a final response, end the turn, close the session or open a duplicate question while that interactive question is pending; ending the turn can dismiss the question card. Only if no permitted interactive question tool is available, explain that limitation and present numbered choices in this same conversation, then end the turn and wait for an explicit user reply. An empty result, cancellation, timeout, preselected option or no response is never consent: do not submit a decision or add a member on that basis.
 ${SESSION_DECISION_INSTRUCTIONS}`;
 }
 var sessionDecisionKey = (intent) => createHash("sha256").update(JSON.stringify([intent.spec.workId, intent.spec.appQuestionId])).digest("hex");
@@ -621,7 +623,7 @@ async function prepareStorage({ path, directory, DatabaseSync, backup }) {
     }
     if (verified.digest !== original.digest || storageDigest(source) !== original.digest) throw Error("Storage changed during backup; reopen to create a fresh backup before migration");
     await syncFile(destination);
-    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.24" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
+    const manifest = { id: id2, createdAt: (/* @__PURE__ */ new Date()).toISOString(), sourceSchema: original.schema, format: "orca-team-store", sourceRevision: original.revision, pluginBuild: true ? "0.1.25" : "unbundled-development", sha256: hash2(await readFile(destination)), verified: true };
     const mf = await open(join(partial, "manifest.json"), "wx", 384);
     try {
       await mf.writeFile(JSON.stringify(manifest, null, 2));
@@ -4066,7 +4068,7 @@ async function readSessionDeath(userData, sessionId, ownerFence, scope) {
     db?.close();
   }
 }
-function createRecoveryService({ store, rpc, userData, consent }) {
+function createRecoveryService({ store, rpc, userData, consent, isOperationInFlight = () => false }) {
   const serialize2 = createKeyedSerializer();
   const serial = serialize2;
   async function host(scope) {
@@ -4078,6 +4080,7 @@ function createRecoveryService({ store, rpc, userData, consent }) {
   async function checkOperation(requestId) {
     const operation = store.readOperation(requestId);
     if (!operation) return null;
+    if (isOperationInFlight(requestId)) return operation;
     let patch = {}, recovery = { state: operation.status === "created" ? "confirmed_effect" : "unknown", liveness: "unknown", source: "saved-operation", observedAt: stamp(), detail: "Persisted intent retained. Missing evidence never authorizes a second launch." };
     try {
       await consent();
@@ -4129,6 +4132,7 @@ function createRecoveryService({ store, rpc, userData, consent }) {
     } catch (error) {
       recovery = { ...recovery, state: (patch.status ?? operation.status) === "created" ? "confirmed_effect" : "unknown", liveness: "unknown", incomplete: true, detail: detail(error) };
     }
+    if (isOperationInFlight(requestId)) return store.readOperation(requestId);
     patch.recovery = recovery;
     patch.public = publicOperation({ ...operation, ...patch });
     try {
@@ -4764,7 +4768,14 @@ function createExecutor(host, cli, { store, openStore: openStore2, internalKey, 
   const hierarchy = createHierarchyService({ store, userData, works });
   const stops = createStopService({ store, rpc, userData, consent });
   const lifecycle = createLifecycleService({ store, rpc, userData, consent, works, notify: (params) => host.call("notifications.show", params) });
-  const recovery = createRecoveryService({ store, rpc, userData, consent });
+  const launchPlans = /* @__PURE__ */ new Map();
+  const recovery = createRecoveryService({
+    store,
+    rpc,
+    userData,
+    consent,
+    isOperationInFlight: (requestId) => store.readOperation(requestId)?.effectState === "intent" && [...launchPlans.values()].some((phase) => phase.requestId === requestId)
+  });
   const wake = createWakeService({ store, rpc, userData, consent, works, notify: (params) => host.call("notifications.show", params) });
   let workTimer, polling = false, stopped = false, reconnecting = false;
   const reconcileExisting = async () => {
@@ -4821,7 +4832,6 @@ function createExecutor(host, cli, { store, openStore: openStore2, internalKey, 
   }
   const selections = /* @__PURE__ */ new Map();
   const observations = /* @__PURE__ */ new Map(), capabilities = /* @__PURE__ */ new Map(), latestObservation = /* @__PURE__ */ new Map();
-  const launchPlans = /* @__PURE__ */ new Map();
   async function workspaceRecord(workspaceId) {
     if (typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 4096) throw new Error("No verified desktop workspace selection.");
     const selector = workspaceId.startsWith("folder:") ? workspaceId : `id:${workspaceId}`;
@@ -6946,7 +6956,7 @@ function activate(orca) {
     initialising = true;
     ready = Promise.resolve().then(async () => {
       await orca.host.call("storage.get", { key: "team-definitions-v1" });
-      const report = await bootstrap({ version: "0.1.24", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
+      const report = await bootstrap({ version: "0.1.25", internalKey, consent: () => orca.host.call("storage.get", { key: "team-work-consent-v1" }) });
       orca.log(report.detail);
       if (report.ready) void executorFor(report).then((executor) => executor.resumeWork()).catch(() => orca.log("Team storage or pending work is unavailable; inspect the panel recovery details."));
       return report;

@@ -8,6 +8,17 @@ const m = (name: string, boss: string, team: string, role = 'r'): Member => ({
 })
 const all = [m('CEO', 'user', 'Org'), m('A-Head', 'CEO', 'A'), m('A-W1', 'A-Head', 'A'), m('B-Head', 'CEO', 'B'), m('B-W1', 'B-Head', 'B')]
 
+test('the top gets interactive user-question guidance without requiring a grill skill; lower members still relay', () => {
+  const top = roleText(all[0]!, orgOf(all, 'Org'))
+  for (const name of ['AskUserQuestion', 'request_user_input', 'request_user_input_async', 'clarify']) expect(top).toContain(name)
+  expect(top).toContain('MCP or equivalent interactive question tool')
+  expect(top).toContain('Keep the turn open using the available wait/resume mechanism')
+  expect(top).toContain('Do not send a final response, end the turn, close the session or open a duplicate question')
+  expect(top).toContain('even without /grill-me')
+  expect(roleText(all[2]!, orgOf(all, 'A'))).not.toContain('## User decisions')
+  expect(roleText(all[1]!, orgOf(all, 'A'))).not.toContain('## User decisions')
+})
+
 test('a role file knows the member, its boss, its reports and the team, including a CEO\'s heads in other teams', () => {
   expect(orgOf(all, 'Org').map(x => x.name)).toEqual(['CEO', 'A-Head', 'B-Head'])
   expect(orgOf(all, 'A').map(x => x.name)).toEqual(['CEO', 'A-Head', 'A-W1'])

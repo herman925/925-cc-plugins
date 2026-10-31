@@ -1,0 +1,37 @@
+{
+  "assignments": [
+    {
+      "assignment_id": "s5-assignment-1",
+      "task_id": "s5-task-1",
+      "member_id": "s5-worker",
+      "admitted_at_ms": 1793446439167,
+      "assigned_by_member_id": "s5-head",
+      "pickup_deadline_ms": 1793446559167,
+      "pickup_observed_at_ms": 1793446498542,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": null,
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    }
+  ],
+  "attempts": [
+    {
+      "assignment_id": "s5-assignment-1",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "Read fixture.txt read-only for task s5-task-1. First line: 'Schema five source Mod acceptance fixture.' Whitespace-separated word count: 13.",
+      "evidence": "Read-only read of fixture.txt, no edit. Exact first line: 'Schema five source Mod acceptance fixture.' Whitespace-separated word count: 13. Cross-checks: 2 lines, 97 bytes, sha256 7575e60e54d54bbb9a59d1e873ba652bed9f0742135cd183d2330db58b0a3b71. No write performed.",
+      "reported_at_ms": 1793446566505
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "s5-task-1",
+      "run_id": "s5-run-1",
+      "status": "open",
+      "outcome": null
+    }
+  ],
+  "acceptances": []
+}

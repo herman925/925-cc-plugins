@@ -31,7 +31,7 @@ const source = async path => {
     await mkdir(dirname(path), { recursive: true }); await writeFile(path, stdout); return stdout;
   }
   const response = await fetch(`https://raw.githubusercontent.com/stablyai/orca/${revision}/${ref}`);
-  if (!response.ok) throw new Error(`Cannot fetch ${ref}: ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(`Cannot fetch ${ref}: ${response.status}`), {status:response.status});
   const text = await response.text();
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, text);
@@ -63,7 +63,6 @@ export { z } from 'zod';
       // the dispatcher receives explicit test methods; admission receives an inert transport base.
       // All real auth, caller scope, owner, receipts, schemas and consent code remains bundled.
       if (scopedHost) api.onResolve({ filter: /agent-launch-mode$/ }, () => ({ path: 'launch-mode', namespace: 'unexecuted-boundary' }));
-      api.onResolve({ filter: /^\.\/methods$/ }, args => args.importer.endsWith('/rpc/dispatcher.ts') ? { path: 'methods', namespace: 'unexecuted-boundary' } : undefined);
       api.onResolve({ filter: /runtime-rpc-binary-routing$/ }, () => ({ path: 'transport', namespace: 'unexecuted-boundary' }));
       api.onLoad({ filter: /.*/, namespace: 'unexecuted-boundary' }, args => ({ contents: args.path === 'account-parser' ? 'export const parse = () => { throw Error("Unexecuted account parser boundary reached"); };' : args.path === 'profile-lock' ? 'export const lock = () => { throw Error("Unexecuted profile lock boundary reached"); };' : args.path === 'transport'
         ? 'export class RuntimeRpcBinaryRouting {}'
@@ -75,12 +74,27 @@ export { z } from 'zod';
       api.onResolve({ filter: /safe-storage-availability$/ }, () => ({ path: 'safe-storage', namespace: 'contract-fake' }));
       api.onLoad({ filter: /.*/, namespace: 'contract-fake' }, () => ({ contents: 'export const guardedSafeStorage = { isEncryptionAvailable: () => false }; export const safeStorage = guardedSafeStorage;', loader: 'js' }));
       api.onResolve({ filter: /^zod$/ }, () => ({ path: fileURLToPath(import.meta.resolve('zod')) }));
-      api.onResolve({ filter: /^\./ }, args => {
+      api.onResolve({ filter: /^\./ }, async args => {
         if (!args.importer.startsWith(root)) return;
         const path = resolve(dirname(args.importer), args.path);
-        return { path: /\.[cm]?[jt]s$/.test(path) ? path : `${path}.ts` };
+        // The default aggregate registry is the same deliberately unexecuted
+        // boundary even when newer hosts move dispatcher.ts into a directory.
+        // Only this exact aggregate is replaced; using it still throws. Tests
+        // supply explicit methods and execute the real dispatcher/auth code.
+        const registry=join(root,'src/main/runtime/rpc/methods');
+        if(path===registry || path===join(registry,'index') || path===join(registry,'index.ts'))return {path:'methods',namespace:'unexecuted-boundary'};
+        if (/\.(?:[cm]?[jt]s|json)$/.test(path)) return {path};
+        // TypeScript resolves both sibling.ts and directory/index.ts. Newer
+        // pinned hosts turned rpc/methods into a directory; a .ts-only loader
+        // manufactured a 404 before the real authority code could be tested.
+        try { await source(`${path}.ts`); return {path:`${path}.ts`}; }
+        catch(error) {
+          if(error.status!==404 && !(process.env.ORCA_CONTRACT_REPO && /does not exist|exists on disk, but not in|not in the working tree/i.test(error.stderr??error.message))) throw error;
+          await source(join(path,'index.ts')); return {path:join(path,'index.ts')};
+        }
       });
       api.onLoad({ filter: /\.ts$/ }, async args => args.path.startsWith(root) ? { contents: await source(args.path), loader: 'ts' } : undefined);
+      api.onLoad({ filter: /\.json$/ }, async args => args.path.startsWith(root) ? { contents: await source(args.path), loader: 'json' } : undefined);
     }
   }] });
   return import(`file://${outfile}`);

@@ -1,0 +1,15 @@
+npm notice run team-orchestrator-orca-plugin@0.1.24 npx
+npm notice run playwright test test/browser/dispatch-depth.spec.mjs test/browser/panel.spec.mjs --grep member names and vertical|local multi-lead launch --workers=1 --output=test-results-race
+[WebServer] npm notice run team-orchestrator-orca-plugin@0.1.24 preview
+[WebServer] npm notice run node scripts/preview.mjs
+[WebServer] (node:49704) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 2 tests using 1 worker
+
+(node:34676) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok 1 test\browser\dispatch-depth.spec.mjs:4:1 › local multi-lead launch prepares dispatch depth before the first member and keeps the exact roster (46.5s)
+  ok 2 test\browser\panel.spec.mjs:55:1 › member names and vertical tree nodes open exact sessions through refresh and reload (42.6s)
+
+  2 passed (1.5m)

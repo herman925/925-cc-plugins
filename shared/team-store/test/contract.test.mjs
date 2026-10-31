@@ -1,0 +1,353 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, SQL, RULES } from '../contract.mjs';
+import { fixture, postgresTestUrl } from './support/engines.mjs';
+import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
+
+const constraint = /constraint|duplicate|not.null|violat/i;
+const holder = { machine_id: 'machine-A', holder_token: 'process-A', lease_generation: 1, now_ms: 1000, assigned_by_member_id: 'head', pickup_deadline_ms: 2000, task_window_minutes: null };
+const authority = { ...holder, run_id: 'run', consumer_generation: 1, expected_generation: 1 };
+const generation = rows => rows.map(row => Number(row.generation));
+
+async function seeded(t, engine) {
+  const f = await fixture(t, engine);
+  await seedLayout(f.db);
+  await f.db.exec(`
+    BEGIN;
+    INSERT INTO runs (run_id,consumer_generation,team_id) VALUES ('run', 1, 'fixture-team');
+    INSERT INTO tasks (task_id,run_id) VALUES ('task', 'run');
+    INSERT INTO tasks (task_id,run_id) VALUES ('other-task', 'run');
+    INSERT INTO threads (thread_id,run_id,status,generation,answer,task_id,endpoint_a_member_id,endpoint_b_member_id,team_id) VALUES ('thread', 'run', 'open', 1, NULL, 'task', 'head', 'worker', 'fixture-team');
+  `);
+  await seedDelivery(f.db);
+  await f.db.exec('COMMIT');
+  assert.deepEqual(generation(await f.db.query(SQL.acquireLease, {
+    ...holder, expected_generation: 0, expires_at_ms: 2000,
+  })), [1]);
+  return f;
+}
+
+test('one common table source renders explicit collations and equivalent immutability guards', () => {
+  for (const [engine, collation] of [['sqlite', 'BINARY'], ['postgres', '"C"']]) {
+    const tables = ddlFor(engine);
+    assert.ok(tables.includes(messageGuardsFor(engine)));
+    assert.ok(tables.includes(`message_id TEXT COLLATE ${collation} NOT NULL PRIMARY KEY`));
+    assert.ok(!tables.includes('{{'));
+    const sharedBody = DDL.replaceAll('{{identity_collation}}', collation).split('{{message_guards}}')[0];
+    for (const part of sharedBody.split('{{delivery_message_fk}}')) assert.ok(tables.includes(part));
+  }
+  assert.throws(() => ddlFor('mysql'), /Unsupported/);
+  assert.throws(() => ddlFor('toString'), /Unsupported/);
+  for (const key of ['version', 'foreignKeys', 'lease', 'commit', 'assignment', 'thread', 'delivery', 'rebind', 'retry', 'authority']) {
+    assert.ok(RULES[key], `Missing companion rule: ${key}`);
+  }
+});
+
+for (const engine of ['sqlite', 'postgres']) {
+  describe(`${engine} shared contract`, { skip: engine === 'postgres' && !postgresTestUrl() }, () => {
+    test('schema 3 task outcomes cannot use SQL NULL to bypass terminal consistency', async t => {
+      const { db } = await seeded(t, engine);
+      for (const sql of ["status='succeeded',outcome=NULL", "status='failed',outcome='succeeded'", "status='blocked',outcome='failed'"]) {
+        await assert.rejects(db.exec(`UPDATE tasks SET ${sql} WHERE task_id='task'`), constraint);
+      }
+      await db.exec("UPDATE tasks SET status='blocked' WHERE task_id='task'");
+      await db.exec("UPDATE tasks SET status='succeeded',outcome='succeeded' WHERE task_id='task'");
+      assert.equal((await db.query("SELECT outcome FROM tasks WHERE task_id='task'"))[0].outcome, 'succeeded');
+    });
+
+    test('schema 3 admissions require real members and a future explicit pickup deadline', async t => {
+      const { db } = await seeded(t, engine);
+      const input = { ...holder, assignment_id: 'a', task_id: 'task', member_id: 'worker' };
+      for (const change of [{ assigned_by_member_id: 'missing' }, { member_id: 'missing' }, { pickup_deadline_ms: null }, { pickup_deadline_ms: 1000 }]) {
+        await assert.rejects(db.query(SQL.admitAssignment, { ...input, ...change }), constraint);
+      }
+      assert.equal((await db.query(SQL.admitAssignment, input)).length, 1);
+      await assert.rejects(db.exec("UPDATE assignments SET returned_to_member_id='missing'"), constraint);
+      await assert.rejects(db.exec('UPDATE assignments SET pickup_observed_at_ms=999'), constraint);
+    });
+
+    test('schema 3 conversations enforce canonical endpoints, one open pair, and terminal supersession', async t => {
+      const { db } = await seeded(t, engine);
+      const insert = (a, b, task = 'task') => db.query(`INSERT INTO threads
+        (thread_id,run_id,status,generation,task_id,endpoint_a_member_id,endpoint_b_member_id,team_id)
+        VALUES ('second','run','open',1,:task,:a,:b,'fixture-team')`, { task, a, b });
+      await assert.rejects(insert('head', 'worker'), constraint);
+      await assert.rejects(insert('worker', 'head'), constraint);
+      await assert.rejects(insert('head', 'head'), constraint);
+      await assert.rejects(insert('head', 'missing'), constraint);
+      await assert.rejects(insert('head', 'worker', 'missing'), constraint);
+      await db.exec("UPDATE threads SET status='superseded' WHERE thread_id='thread'");
+      assert.deepEqual(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'late' }), []);
+      await insert('head', 'worker');
+      await db.exec("UPDATE threads SET superseded_by_thread_id='second' WHERE thread_id='thread'");
+      await assert.rejects(db.exec("UPDATE threads SET superseded_by_thread_id='missing' WHERE thread_id='thread'"), constraint);
+    });
+
+    test('schema 3 gates keep resolution data consistent without implying a task transition', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec("INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES ('g','task','Choose','[\"yes\",\"no\"]')");
+      for (const sql of ["status='resolved'", "resolution_json='{}'", "resolved_at_ms=1000", "status='resolved',resolution_json='{}',resolved_at_ms=-1"]) {
+        await assert.rejects(db.exec(`UPDATE decision_gates SET ${sql}`), constraint);
+      }
+      await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='{}',resolved_at_ms=1000");
+      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'open');
+    });
+
+    test('schema 3 membership, roles, exemptions and installed writer families have database constraints', async t => {
+      const { db } = await seeded(t, engine);
+      await assert.rejects(db.exec("UPDATE members SET membership_state='working' WHERE member_id='worker'"), constraint);
+      await assert.rejects(db.exec("UPDATE members SET boss_member_id='missing' WHERE member_id='worker'"), constraint);
+      await assert.rejects(db.exec("UPDATE members SET home_context_kind='folder' WHERE member_id='worker'"), constraint);
+      await assert.rejects(db.exec("UPDATE members SET name='head' WHERE member_id='worker'"), constraint);
+      await assert.rejects(db.exec("UPDATE team_settings SET pickup_window_minutes=0"), constraint);
+      await assert.rejects(db.exec("INSERT INTO settings_exemptions VALUES ('fixture-team','missing')"), constraint);
+      await assert.rejects(db.exec("INSERT INTO role_documents VALUES ('missing','','',1,1)"), constraint);
+      await assert.rejects(db.exec("INSERT INTO writer_fences VALUES ('arbitrary',0,0,0,'0.0.0',1,1)"), constraint);
+      await assert.rejects(db.exec("INSERT INTO runs (run_id,consumer_generation,team_id) VALUES ('bad',1,'missing')"), constraint);
+    });
+
+    test('metadata is explicit, singular, and never overwritten on a second install', async t => {
+      const { db } = await fixture(t, engine);
+      const rows = await db.query(SQL.readVersion);
+      assert.equal(rows[0].format, FORMAT);
+      assert.equal(Number(rows[0].schema_version), SCHEMA_VERSION);
+      await assert.rejects(db.exec("INSERT INTO store_metadata VALUES (2, 'team-orchestrator-shared', 1)"), constraint);
+      await assert.rejects(db.exec("INSERT INTO store_metadata VALUES (1, 'team-orchestrator-shared', 1)"), constraint);
+      await assert.rejects(db.exec("UPDATE store_metadata SET format = 'other-product'"), constraint);
+      await db.exec('UPDATE store_metadata SET schema_version = 99');
+      await assert.rejects(db.exec(ddlFor(engine)), /already exists/i);
+      assert.equal(Number((await db.query(SQL.readVersion))[0].schema_version), 99);
+    });
+
+    test('delivery states reject unknown spellings, NULL, and missing identifiers', async t => {
+      const { db } = await seeded(t, engine);
+      for (const value of ["'delivered'", "'ACKNOWLEDGED'", 'NULL']) {
+        await assert.rejects(db.exec(`UPDATE deliveries SET status = ${value}`), constraint);
+      }
+      await assert.rejects(db.exec("INSERT INTO deliveries (delivery_id,run_id,consumer_generation,status,generation,team_id,message_id) VALUES (NULL,'run',1,'outstanding',1,'fixture-team','invalid-message')"), constraint);
+      await assert.rejects(db.exec("INSERT INTO deliveries (delivery_id,run_id,consumer_generation,status,generation,team_id,message_id) VALUES ('','run',1,'outstanding',1,'fixture-team','invalid-message')"), constraint);
+      for (const value of ['outstanding', 'acknowledged', 'fenced']) {
+        await db.query('UPDATE deliveries SET status = :status', { status: value });
+      }
+    });
+
+    test('identifier equality is case-sensitive, including foreign-key references', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec("INSERT INTO runs (run_id,consumer_generation,team_id) VALUES ('Run', 1, 'fixture-team')");
+      assert.equal((await db.query('SELECT run_id FROM runs ORDER BY run_id')).length, 2);
+      await assert.rejects(db.exec("INSERT INTO tasks (task_id,run_id) VALUES ('case-task', 'RUN')"), constraint);
+      await db.exec("INSERT INTO tasks (task_id,run_id) VALUES ('Task', 'run')");
+      assert.equal((await db.query('SELECT task_id FROM tasks')).length, 3);
+    });
+
+    test('a gate must reference a real task, and a referenced task cannot disappear', async t => {
+      const { db } = await seeded(t, engine);
+      await assert.rejects(db.exec("INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('gate', 'missing', 'Approve?')"), constraint);
+      await assert.rejects(db.exec("INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('gate', NULL, 'Approve?')"), constraint);
+      await db.exec("INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('gate', 'task', 'Approve?')");
+      await assert.rejects(db.exec("DELETE FROM tasks WHERE task_id = 'task'"), constraint);
+    });
+
+    test('the second assignment for a task is refused', async t => {
+      const { db } = await seeded(t, engine);
+      const first = { ...holder, assignment_id: 'assignment', task_id: 'task', member_id: 'worker-A' };
+      assert.equal((await db.query(SQL.admitAssignment, first)).length, 1);
+      await assert.rejects(db.query(SQL.admitAssignment, { ...first, assignment_id: 'duplicate', member_id: 'worker-B' }), constraint);
+      assert.equal((await db.query('SELECT member_id FROM assignments'))[0].member_id, 'worker-A');
+    });
+
+    test('independent connections racing for one assignment have one committed winner', async t => {
+      const { db, connect } = await seeded(t, engine);
+      const other = await connect();
+      const results = await Promise.allSettled([db, other].map((connection, i) => connection.query(SQL.admitAssignment, {
+        ...holder, assignment_id: `assignment-${i}`, task_id: 'task', member_id: `worker-${i}`,
+      })));
+      assert.equal(results.filter(result => result.status === 'fulfilled' && result.value.length === 1).length, 1);
+      const loser = results.find(result => result.status === 'rejected');
+      assert.ok(loser);
+      assert.match(loser.reason.message, constraint);
+      assert.equal((await db.query('SELECT assignment_id FROM assignments')).length, 1);
+    });
+
+    test('a competing live lease is refused and the holder remains identifiable', async t => {
+      const { db } = await seeded(t, engine);
+      for (const contender of [
+        { machine_id: 'machine-B', holder_token: 'process-B' },
+        { machine_id: 'machine-A', holder_token: 'another-process-on-A' },
+      ]) {
+        assert.deepEqual(await db.query(SQL.acquireLease, { ...contender, expected_generation: 1, now_ms: 1500, expires_at_ms: 3000 }), []);
+      }
+      const [lease] = await db.query(SQL.readLease);
+      assert.equal(lease.holder_machine_id, 'machine-A');
+      assert.equal(lease.holder_token, 'process-A');
+      assert.equal(Number(lease.expires_at_ms), 2000);
+    });
+
+    test('independent connections racing for an expired lease have one winner', async t => {
+      const { db, connect } = await seeded(t, engine);
+      const other = await connect();
+      const results = await Promise.all([db, other].map((connection, i) => connection.query(SQL.acquireLease, {
+        machine_id: `machine-${i}`, holder_token: `process-${i}`, expected_generation: 1, now_ms: 2000, expires_at_ms: 3000,
+      })));
+      assert.deepEqual(results.map(rows => rows.length).sort(), [0, 1]);
+      assert.equal(Number((await db.query(SQL.readLease))[0].generation), 2);
+    });
+
+    test('lease renewal preserves its generation and cannot revive an expired token', async t => {
+      const { db } = await seeded(t, engine);
+      assert.deepEqual(generation(await db.query(SQL.renewLease, { ...holder, now_ms: 1500, expires_at_ms: 3000 })), [1]);
+      assert.deepEqual(await db.query(SQL.renewLease, { ...holder, now_ms: 1500, holder_token: 'other', expires_at_ms: 4000 }), []);
+      assert.deepEqual(await db.query(SQL.renewLease, { ...holder, now_ms: 3000, expires_at_ms: 4000 }), []);
+      assert.deepEqual(await db.query(SQL.renewLease, { ...holder, now_ms: 1600, expires_at_ms: 2500 }), []);
+    });
+
+    test('a mutation holds the lease lock through commit before another holder can acquire it', async t => {
+      const { db, connect } = await seeded(t, engine);
+      const other = await connect();
+      await other.exec(engine === 'sqlite' ? 'PRAGMA busy_timeout = 100' : "SET lock_timeout = '100ms'");
+      await db.exec('BEGIN');
+      try {
+        assert.equal((await db.query(SQL.lockLease, holder)).length, 1);
+        const next = { machine_id: 'machine-B', holder_token: 'process-B', expected_generation: 1, now_ms: 2000, expires_at_ms: 3000 };
+        await assert.rejects(other.query(SQL.acquireLease, next), /locked|lock timeout/i);
+        assert.deepEqual(generation(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'committed before handover' })), [2]);
+        await db.exec('COMMIT');
+        assert.deepEqual(generation(await other.query(SQL.acquireLease, next)), [2]);
+        assert.deepEqual(await db.query(SQL.lockLease, holder), []);
+      } catch (error) {
+        await db.exec('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
+
+    test('expired or stale lease holders cannot mutate a thread or admit an assignment', async t => {
+      const { db } = await seeded(t, engine);
+      assert.deepEqual(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'late', now_ms: 2000 }), []);
+      await db.query(SQL.acquireLease, { machine_id: 'machine-B', holder_token: 'process-B', expected_generation: 1, now_ms: 2000, expires_at_ms: 3000 });
+      const stale = { ...authority, now_ms: 2100 };
+      assert.deepEqual(await db.query(SQL.answerThread, { ...stale, thread_id: 'thread', answer: 'stale' }), []);
+      assert.deepEqual(await db.query(SQL.admitAssignment, { ...stale, assignment_id: 'stale', task_id: 'task', member_id: 'worker' }), []);
+      assert.deepEqual(generation(await db.query(SQL.answerThread, {
+        ...stale, machine_id: 'machine-B', holder_token: 'process-B', lease_generation: 2,
+        thread_id: 'thread', answer: 'current',
+      })), [2]);
+    });
+
+    test('independent connections answering a thread have exactly one winner', async t => {
+      const { db, connect } = await seeded(t, engine);
+      const other = await connect();
+      const results = await Promise.all([db, other].map((connection, i) => connection.query(SQL.answerThread, {
+        ...authority, thread_id: 'thread', answer: `answer-${i}`,
+      })));
+      assert.deepEqual(results.map(rows => rows.length).sort(), [0, 1]);
+      const [thread] = await db.query("SELECT status, generation, answer FROM threads WHERE thread_id = 'thread'");
+      assert.equal(thread.status, 'answered');
+      assert.equal(Number(thread.generation), 2);
+      assert.match(thread.answer, /^answer-[01]$/);
+      assert.deepEqual(await db.query(SQL.answerThread, { ...authority, expected_generation: 2, thread_id: 'thread', answer: 'again' }), []);
+    });
+
+    test('a stale row generation cannot answer an open thread', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec("UPDATE threads SET generation = 2 WHERE thread_id = 'thread'");
+      assert.deepEqual(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'stale' }), []);
+      assert.deepEqual(generation(await db.query(SQL.answerThread, { ...authority, expected_generation: 2, thread_id: 'thread', answer: 'fresh' })), [3]);
+    });
+
+    test('a conditional write that RETURNING accepted is still undone by rollback', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN');
+      assert.deepEqual(generation(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'provisional' })), [2]);
+      await db.exec('ROLLBACK');
+      const [thread] = await db.query("SELECT status, generation, answer FROM threads WHERE thread_id = 'thread'");
+      assert.equal(thread.status, 'open');
+      assert.equal(Number(thread.generation), 1);
+      assert.equal(thread.answer, null);
+    });
+
+    test('a failed second write rolls back the assignment and first gate together', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN');
+      await db.query(SQL.admitAssignment, { ...holder, assignment_id: 'assignment', task_id: 'task', member_id: 'worker' });
+      await db.exec("INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('gate', 'task', 'Approve?')");
+      await assert.rejects(db.exec("INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('broken', 'missing', 'Approve?')"), constraint);
+      await db.exec('ROLLBACK');
+      assert.deepEqual(await db.query('SELECT assignment_id FROM assignments'), []);
+      assert.deepEqual(await db.query('SELECT gate_id FROM decision_gates'), []);
+    });
+
+    test('acknowledgement is conditional, and both terminal delivery states stay closed', async t => {
+      const { db } = await seeded(t, engine);
+      assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, expected_generation: 2, delivery_id: 'delivery' }), []);
+      assert.deepEqual(generation(await db.query(SQL.acknowledgeDelivery, { ...authority, delivery_id: 'delivery' })), [2]);
+      assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, expected_generation: 2, delivery_id: 'delivery' }), []);
+      await db.exec('BEGIN'); await seedDelivery(db, { id: 'fenced', status: 'fenced' }); await db.exec('COMMIT');
+      assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, delivery_id: 'fenced' }), []);
+    });
+
+    test('rebind fences outstanding batches and refuses stale consumer actions', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN'); await seedDelivery(db, { id: 'history', status: 'acknowledged', generation: 2 }); await db.exec('COMMIT');
+      await db.exec('BEGIN');
+      assert.equal((await db.query(SQL.fenceDeliveries, authority)).length, 1);
+      assert.equal(Number((await db.query(SQL.rebindConsumer, authority))[0].consumer_generation), 2);
+      await db.exec('COMMIT');
+      assert.deepEqual(await db.query(SQL.acknowledgeDelivery, { ...authority, delivery_id: 'delivery' }), []);
+      assert.deepEqual(await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'stale consumer' }), []);
+      const rows = await db.query('SELECT delivery_id, status FROM deliveries ORDER BY delivery_id');
+      assert.deepEqual(rows.map(row => ({ ...row })), [
+        { delivery_id: 'delivery', status: 'fenced' }, { delivery_id: 'history', status: 'acknowledged' },
+      ]);
+      assert.deepEqual(generation(await db.query(SQL.answerThread, {
+        ...authority, consumer_generation: 2, thread_id: 'thread', answer: 'new consumer',
+      })), [2]);
+    });
+
+    test('a lost rebind rolls back provisional fencing', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN');
+      assert.equal((await db.query(SQL.fenceDeliveries, authority)).length, 1);
+      assert.deepEqual(await db.query(SQL.rebindConsumer, { ...authority, holder_token: 'lost-authority' }), []);
+      await db.exec('ROLLBACK');
+      const [delivery] = await db.query("SELECT status, generation FROM deliveries WHERE delivery_id = 'delivery'");
+      assert.equal(delivery.status, 'outstanding');
+      assert.equal(Number(delivery.generation), 1);
+      assert.equal(Number((await db.query("SELECT consumer_generation FROM runs WHERE run_id = 'run'"))[0].consumer_generation), 1);
+    });
+
+    test('operation ids refuse a different fingerprint and replay the original saved result', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec(`INSERT INTO operations VALUES ('operation', 'fingerprint-A', '{"answer":"saved"}', 1000)`);
+      await assert.rejects(db.exec(`INSERT INTO operations VALUES ('operation', 'fingerprint-B', '{"answer":"different"}', 1001)`), constraint);
+      const [receipt] = await db.query(SQL.readOperation, { operation_id: 'operation' });
+      assert.equal(receipt.request_fingerprint, 'fingerprint-A');
+      assert.deepEqual(JSON.parse(receipt.result), { answer: 'saved' });
+      assert.equal(Number(receipt.committed_at_ms), 1000);
+    });
+
+    test('a rolled-back mutation leaves neither its effect nor an operation receipt', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN');
+      await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'provisional' });
+      await db.exec(`INSERT INTO operations VALUES ('uncommitted', 'fingerprint', '{"answer":"provisional"}', 1000)`);
+      await db.exec('ROLLBACK');
+      assert.deepEqual(await db.query(SQL.readOperation, { operation_id: 'uncommitted' }), []);
+      assert.equal((await db.query("SELECT status FROM threads WHERE thread_id = 'thread'"))[0].status, 'open');
+    });
+
+    test('a committed operation receipt survives a later failed transaction unchanged', async t => {
+      const { db } = await seeded(t, engine);
+      await db.exec('BEGIN');
+      await db.query(SQL.answerThread, { ...authority, thread_id: 'thread', answer: 'committed' });
+      await db.exec(`INSERT INTO operations VALUES ('committed', 'fingerprint', '{"answer":"committed"}', 1000)`);
+      await db.exec('COMMIT');
+      await db.exec('BEGIN');
+      await assert.rejects(db.exec(`INSERT INTO operations VALUES ('committed', 'other', '{}', 1001)`), constraint);
+      await db.exec('ROLLBACK');
+      const [receipt] = await db.query(SQL.readOperation, { operation_id: 'committed' });
+      assert.equal(receipt.request_fingerprint, 'fingerprint');
+      assert.deepEqual(JSON.parse(receipt.result), { answer: 'committed' });
+      assert.equal((await db.query("SELECT answer FROM threads WHERE thread_id = 'thread'"))[0].answer, 'committed');
+    });
+  });
+}

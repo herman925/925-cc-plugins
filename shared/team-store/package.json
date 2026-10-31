@@ -1,0 +1,13 @@
+{
+  "name": "@herman925/team-store-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Unreleased shared Team Orchestrator database contract and engine conformance tests",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:postgres": "node test/run-postgres.mjs"
+  },
+  "devDependencies": { "pg": "8.23.1" }
+}

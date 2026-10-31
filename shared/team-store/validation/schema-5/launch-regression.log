@@ -1,0 +1,39 @@
+✔ passive load cannot invalidate a live launch while native workspace validation is pending (120.4083ms)
+✔ three-level launch raises native depth before reserving or opening the first member (137.2732ms)
+✔ a higher native depth is preserved when preparing a three-level roster (110.5513ms)
+✔ missing or unconfirmed native depth prevents reservations and provider launches (139.0195ms)
+✔ an already-prepared team can repair its depth without relaunching or changing its roster (42.9867ms)
+✔ invalid or stale team selections cannot authorize a settings mutation (40.9516ms)
+✔ saved supervisor launches through genuine native IPC after durable intent, inherits configuration and persists identity before followups (93.8496ms)
+✔ codex structured receipt preserves its actual session and opens only that saved session (86.5069ms)
+✔ claude structured receipt preserves its actual session and opens only that saved session (91.1551ms)
+✔ ambiguous effect survives restart and explicit recovery reads the original native receipt without effects (111.4079ms)
+✔ native mismatch stays unknown; forged fields and non-supervisor requests never reach effects (84.4132ms)
+✔ native intent preserves omitted versus explicit-null arguments and per-member requested options (0.377ms)
+✔ SQLite failure before intent prevents effects and rolls back the member reservation (111.1288ms)
+✔ receipt persistence failure keeps an unknown reservation and prevents naming until exact replay recovers (104.6036ms)
+✔ concurrent clicks reserve one member and native capability loss before effect cannot launch (40.369ms)
+✔ structured navigation refuses changed native scope before reveal (98.4818ms)
+✔ an unknown operation remains reserved after runtime identity changes instead of risking a fresh native ledger (70.6005ms)
+✔ missing runtime identity refuses launch before reserving a member (40.3011ms)
+✔ missing, pending, wrong-namespace and mismatched native rows never trigger a second launch even in the same runtime (138.4055ms)
+✔ checking an absent saved launch never creates a new operation or session (40.9329ms)
+✔ load, warm capability-confirm, save and launch plus reread fit the actual 30-call panel admission budget (105.4059ms)
+✔ load, cold capability-confirm, save and launch plus reread fit the actual 30-call panel admission budget (93.7022ms)
+✔ late conflicting structured settlement cannot replace the saved session identity (125.6602ms)
+✔ all-at-start prepares precisely four saved members and preserves independent launches after one unknown (226.6983ms)
+✔ queued goal launch uses actual panel broker and new native identity, never old preparation authority (248.6554ms)
+✔ four-member on-demand hierarchy prepares root and department manager, retaining workers for first assignment (148.2714ms)
+✔ approved full-roster staffing reuses genuine launch IPC and member reservation; failure and repeated panel confirmation retain one member (234.1778ms)
+✔ staffing validates explicit model against the fixed Work host before saving a member (97.8339ms)
+✔ public launch observation keeps private PTY process identity out of the panel projection (0.2031ms)
+✔ successful native launch clears an absent-ledger warning observed while its receipt was still in flight (108.4989ms)
+✔ matching launch settlement retains a current incomplete recovery warning instead of claiming liveness (108.0133ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3297.443

@@ -1,12 +1,16 @@
 # team-orchestrator
 
+Shared-store preview in **0.5.43**: after updating the plugin, enable **Shared store preview** in `/config`, open `/team` → **Shared store**, and approve this displayed project/conversation. The `shared_team` tool then manages a fresh scratch team through the schema-5 typed API. It does not migrate the existing roster or launch sessions. Bind existing verified local Claude sessions; workers must read the role and brief returned by `verifyAssignment` before doing task work, report an explicit outcome, and leave acceptance to their admitting head. See [the API permission matrix and acceptance limits](../shared/team-store/SCHEMA-5.md). Node 22.13+ is required; a full executable path can be set in **Shared store Node command**. The idle-caller approval path is currently verified on Windows; other hosts require explicit native conversation evidence.
+
 Team Orchestrator runs a team of Claude Code sessions for you. Each member is its own Claude Code session in its own
 Orca tab. You build the team, watch it and change it from a panel above the prompt. The members message each other, start when they are first needed, and reopen when a message arrives. Automatic close and eviction are paused until native cleanup verification exists.
 
 A guard keeps the members inside their roles: members with reports plan and delegate instead of writing files, and
 nobody starts subagents unless you allow it.
 
-Version 0.5.42. What changed in each version is in the [changelog](#changelog-05x).
+The highest supervisor's generated role includes interactive question guidance independently of Session Panel or `/grill-me`: Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` or `request_user_input_async`, and Hermes Agent uses `clarify`, subject to actual availability and permissions. If names differ, use an exposed native/MCP equivalent that shows choices and returns the user's answer in the same conversation; use prose numbered choices only when no permitted interactive tool exists. An async accepted/pending result is not an answer: keep the turn open with the available wait/resume mechanism until the user answers, cancels or the tool closes, without sending a final reply or opening a duplicate card. Lower members still relay decisions through their boss. This guidance does not add another CLI's launch support or bypass existing approval checks.
+
+Version 0.5.43. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 
@@ -797,6 +801,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.43 | Opt-in shared-store fresh-team preview: scoped controller approval, native member binding, assignment pickup, explicit worker outcome and separate head acceptance. Fixes Shared store navigation and idle Windows caller verification. Adds native question-tool guidance independently of interview skills. Existing roster remains the default; migration and automatic shared-store launches are not implemented. |
 | 0.5.42 | Native-home checks accept equivalent separator forms in Windows drive-letter paths. They remain case-sensitive and do not treat POSIX backslashes as separators. The live scratch launch that reported a home conflict still needs a retry; its session root was not measured. |
 | 0.5.41 | The team-file guard no longer refuses a folder whose name merely contains the team name. The Orca plugin's own folder, `team-orchestrator-orca-plugin`, was judged to name a team file, so the mod refused commands that only `cd` into it or glob a file inside it, and reported the wrong reason. A path now counts only when a segment is exactly the team folder: `.claude/team-orchestrator` and its `changes/`, `requests/`, `roster.json`, `meta.json` and `settings.json` stay protected, and a variable path such as `$D/team-orchestrator/a` is still refused. The refusal message now names the team-file guard and the command it checked, and gives the real scope reason beside it. ||
 | 0.5.40 | A permission guard for roster members. A member with reports (the top, heads and leads) plans and delegates instead of writing files, and no member may start a subagent, unless you allow it: **Allow writes** and **Allow subagents** in Settings, or the one-turn keyword `#allow-write` or `#allow-subagent` in your own message to that member. Claude Code's own helpers `statusline-setup` and `claude-code-guide` always pass, and a member's own memory folder is always writable. A member on hold gets the strictest guard. A shell command that writes the team files is refused by a command check. Also merges the 0.5.39 cleanup-safety mode with the registered-home evidence and dispatch-depth preparation from the Orca plugin. |

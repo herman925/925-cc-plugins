@@ -1,0 +1,11 @@
+{
+  "before": "bc150cf8a801ce8af24d6ac64414691eb23930f46e646468f3b47ac09d2ddd7f",
+  "after": "fab8a3daef4cc646211e2e91236998c8efd11bb6a20b500a9d544a1ec84ee12c",
+  "authoritativeSourceHash": "fab8a3daef4cc646211e2e91236998c8efd11bb6a20b500a9d544a1ec84ee12c",
+  "packagedHash": "fab8a3daef4cc646211e2e91236998c8efd11bb6a20b500a9d544a1ec84ee12c",
+  "copiedFiles": [
+    "store/mod-native.mjs"
+  ],
+  "storeExistedBefore": false,
+  "time": "2026-10-31T11:27:36.665Z"
+}

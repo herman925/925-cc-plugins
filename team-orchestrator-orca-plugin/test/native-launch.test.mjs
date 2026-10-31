@@ -15,7 +15,8 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  let store = await openTeamStore({ userData: profile });
  const extraDatabases = [];
  const calls = [], cliCalls = []; const internalKey = 'private-launch-key';
- const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); return { worktree: { id: 'folder:/saved', hostId: 'local', path: profile, displayName: 'Saved' } }; };
+ let beforeWorkspace;
+ const cli = async argv => { cliCalls.push(argv); assert.equal(argv[0], 'worktree'); await beforeWorkspace?.(); return { worktree: { id: 'folder:/saved', hostId: 'local', path: profile, displayName: 'Saved' } }; };
  let executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile });
  const selected = await executor.execute({ op: 'context', workspaceId: 'folder:/saved' });
  const state = (await executor.execute({ op: 'createTeam', params: { form: { ...DEFAULT_FORM, ...form, launchMode, agents: [agent, 'codex', 'codex'] }, selectionToken: selected.selectionToken, requestId: 'create', expectedRevision: 0 } })).value;
@@ -62,8 +63,27 @@ async function fixture(t, { kind = 'terminal', agent = 'codex', launchMode = 'on
  await installAdapter({ ipcMain: { _invokeHandlers: handlers, removeHandler: name => handlers.delete(name), handle: (name, fn) => handlers.set(name, fn) } }, { identity: profile, internalKey, version: 'test' });
  t.after(async () => { globalThis[Symbol.for('herman925.team-orchestrator.adapter')]?.restore(); executor.stopWork(); for(const db of extraDatabases)if(db.isOpen)db.close(); store.close(); await rmTemp(profile); });
  const send = (op, params = input) => handlers.get('plugins:panelAction')(event, { sessionToken: 'token', action: 'workspace.readContext', params: { teamWorker: { protocol: 1, nonce: 'nonce', commandId: 'team.control', args: { op, params } } } });
- return { closeWithFixture: db => extraDatabases.push(db), send, calls, notifications, cliCalls, input, team, profile, handlers, recordNative, settings:()=>({...depthSettings}), budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
+ return { beforeWorkspace:fn=>{beforeWorkspace=fn;}, closeWithFixture: db => extraDatabases.push(db), send, calls, notifications, cliCalls, input, team, profile, handlers, recordNative, settings:()=>({...depthSettings}), budget: value => { budget = value; gates = 0; }, gateCount: () => gates, executor: () => executor, store: () => store, effect: fn => { effect = fn; }, revoke: () => { enabled = false; }, restart: async () => { store.close(); store = await openTeamStore({ userData: profile }); executor = createExecutor({call:async()=>{}}, cli, { store, internalKey, userData: profile }); } };
 }
+
+test('passive load cannot invalidate a live launch while native workspace validation is pending',{timeout:10000},async t=>{
+ const f=await fixture(t);let enter,release,paused=false;
+ const entered=new Promise(resolve=>{enter=resolve;}),gate=new Promise(resolve=>{release=resolve;});
+ f.beforeWorkspace(async()=>{
+  if(!paused&&f.store().readOperation(f.input.requestId)?.effectState==='intent'){paused=true;enter();await gate;}
+ });
+ const launching=f.send('launchSupervisor');await entered;
+ let before,after;
+ try{
+  before=f.store().readOperation(f.input.requestId).version;
+  await f.executor().execute({op:'load'});
+  after=f.store().readOperation(f.input.requestId).version;
+ }finally{release();}
+ const result=await launching;
+ assert.equal(after,before,'passive recovery must leave an active phase version untouched');
+ assert.equal(result.ok,true,result.error);assert.equal(result.value.status,'created');
+ assert.equal(f.calls.filter(row=>row.method==='agent.launchReplay').length,1);
+});
 test('three-level launch raises native depth before reserving or opening the first member',async t=>{
  const f=await fixture(t,{launchMode:'all',form:{levels:3,leadCount:2,workersPerLead:4}});
  const original=f.handlers.get('settings:set');f.handlers.set('settings:set',(event,params)=>{assert.equal(f.store().listOperations().length,0);return original(event,params);});
