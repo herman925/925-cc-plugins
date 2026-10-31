@@ -135,6 +135,65 @@ function stickyMode(workerMode) {
   return 'routed';
 }
 
+function childOverride(agentId) {
+  if (!agentId) return null;
+  const agents = policy.agents;
+  if (!agents || typeof agents !== 'object' || !Object.hasOwn(agents, agentId)) return null;
+  return agents[agentId];
+}
+
+function effectiveMode(agentId) {
+  const declared = childOverride(agentId)?.mode;
+  const chosen = declared === 'fixed' || declared === 'routed' || declared === 'per-session' || declared === 'per-turn'
+    ? declared
+    : policy.default_worker_mode;
+  if (chosen === 'fixed') return 'fixed';
+  return stickyMode(chosen);
+}
+
+function appliedView() {
+  return { revision: appliedRecord.revision, policy };
+}
+
+function plannedModel(planned) {
+  const model = planned?.data?.model;
+  return typeof model === 'string' ? model : '';
+}
+
+function executable(planned, applied) {
+  const model = plannedModel(planned);
+  if (model === '' || model === SENTINEL_MODEL) return false;
+  if (planned?.decision?.reason === 'leader-bypass') return true;
+  return applied.policy.candidates.includes(model);
+}
+
+async function planWith(data, agentId, applied) {
+  return planPreCall(data, {
+    policy: applied.policy,
+    eligible: [...applied.policy.candidates],
+    agent: agentId || null,
+    transport,
+  });
+}
+
+async function planCurrent(data, agentId) {
+  let started = appliedView();
+  let planned = await planWith(data, agentId, started);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const now = appliedView();
+    if (now.revision === started.revision && now.policy === started.policy && executable(planned, now)) {
+      return planned;
+    }
+    started = now;
+    planned = await planWith(data, agentId, started);
+  }
+  const now = appliedView();
+  if (now.revision === started.revision && now.policy === started.policy && executable(planned, now)) {
+    return planned;
+  }
+  throw new PolicyError('selection_rejected', 'Applied policy changed before execution. Refusing the stale model.');
+}
+
 function nativePresent(headers) {
   return NATIVE_FIELDS.some(name => {
     const value = headers[name];
@@ -236,24 +295,7 @@ async function transport(body) {
 async function routePreCall(data) {
   hookRequests += 1;
   const before = selectorCalls;
-  const mode = stickyMode(policy.default_worker_mode);
-  const native = data?.native_headers;
-  let hasNative = false;
-  if (native != null) {
-    hasNative = nativePresent(normalizeHeaders(native));
-  }
-  if (data?.model !== SENTINEL_MODEL || mode === 'routed' || !hasNative) {
-    if (data?.model === SENTINEL_MODEL && mode !== 'routed' && !hasNative) {
-      const context = { ok: false, code: 'binding_incomplete', mode, selectorInvoked: false, shared: false, cached: false };
-      remember({
-        decision: null,
-        selectorCalls: 0,
-        inbound: snapshot(data),
-        outbound: null,
-        context,
-      });
-      throw new PolicyError('binding_incomplete', 'Request identity is missing or blank. Refusing to switch model per request.');
-    }
+  if (!data || typeof data !== 'object' || Array.isArray(data) || data.model !== SENTINEL_MODEL) {
     const planned = await planPreCall(data, { policy, transport });
     remember({
       decision: planned.decision,
@@ -265,22 +307,44 @@ async function routePreCall(data) {
     return planned;
   }
 
-  const identityHeaders = trustedIdentityHeaders(native, appliedRecord);
-  const promptMode = mode === 'prompt';
-  const store = promptMode ? stores.prompt : stores.session;
+  const native = data.native_headers;
+  const normalized = native == null ? null : normalizeHeaders(native);
+  const hasNative = normalized ? nativePresent(normalized) : false;
+  const identityHeaders = hasNative ? trustedIdentityHeaders(normalized, appliedRecord) : null;
+  const agentId = identityHeaders ? String(identityHeaders['x-jev-agent'] ?? '').trim() : '';
+  const mode = effectiveMode(agentId);
+
+  if (mode === 'fixed' || mode === 'routed') {
+    const planned = await planCurrent(data, agentId);
+    remember({
+      decision: planned.decision,
+      selectorCalls: selectorCalls - before,
+      inbound: snapshot(data),
+      outbound: snapshot(planned.data),
+      context: null,
+    });
+    return planned;
+  }
+
+  if (!hasNative) {
+    const context = { ok: false, code: 'binding_incomplete', mode, selectorInvoked: false, shared: false, cached: false };
+    remember({
+      decision: null,
+      selectorCalls: 0,
+      inbound: snapshot(data),
+      outbound: null,
+      context,
+    });
+    throw new PolicyError('binding_incomplete', 'Request identity is missing or blank. Refusing to switch model per request.');
+  }
+
+  const store = mode === 'prompt' ? stores.prompt : stores.session;
   const eligible = eligibleOverride ? [...eligibleOverride] : [...policy.candidates];
-  const policySnapshot = policy;
-  const agentId = String(identityHeaders['x-jev-agent'] ?? '').trim();
   const resolved = await store.resolve({
     headers: identityHeaders,
     eligible,
     select: async () => {
-      const planned = await planPreCall(data, {
-        policy: policySnapshot,
-        eligible,
-        agent: agentId || null,
-        transport,
-      });
+      const planned = await planCurrent(data, agentId);
       return { model: planned.data.model, planned };
     },
   });
@@ -305,7 +369,7 @@ async function routePreCall(data) {
     });
     throw new PolicyError(resolved.code, 'Request context refused the call.');
   }
-  const planned = resolved.selectorInvoked && resolved.planned
+  let planned = resolved.selectorInvoked && resolved.planned
     ? resolved.planned
     : {
       data: { ...data, model: resolved.model },
@@ -318,6 +382,11 @@ async function routePreCall(data) {
         parentAgent: resolved.parentAgent ?? null,
       },
     };
+  if (!executable(planned, appliedView())) {
+    planned = await planCurrent(data, agentId);
+    context.cached = false;
+    context.selectorInvoked = true;
+  }
   remember({
     decision: planned.decision,
     selectorCalls: selectorCalls - before,

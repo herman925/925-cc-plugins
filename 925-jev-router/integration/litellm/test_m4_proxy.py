@@ -627,14 +627,16 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
         self.assertEqual(self._upstream()["executions"], before_upstream)
         self.assertEqual(self._hook()["hookRequests"], before_hook)
 
-    def _apply_policy(self, mode, candidates=None):
+    def _apply_policy(self, mode, candidates=None, agents=None):
         policy = {
             "schema_version": 1,
             "project_id": "orca-ade-example",
             "candidates": candidates or ["cheap-worker", "strong-worker"],
             "fallback": "strong-worker",
             "default_worker_mode": mode,
-            "agents": {
+            "agents": agents
+            if agents is not None
+            else {
                 "reviewer": {"mode": "fixed", "model": "strong-worker"},
                 "coder": {"mode": "per-turn"},
             },
@@ -707,6 +709,20 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
             time.sleep(0.02)
         self.fail(f"typesafe calls did not reach {count}: {self._typesafe()}")
 
+    def _wait_hooks(self, count):
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            if self._hook()["hookRequests"] >= count:
+                return
+            time.sleep(0.02)
+        self.fail(f"hook requests did not reach {count}: {self._hook()}")
+
+    def _assert_upstream_since(self, start, expected, count):
+        fresh = self._upstream()["requests"][start:]
+        self.assertEqual(len(fresh), count, fresh)
+        for item in fresh:
+            _alias(item["model"], expected)
+
     def _assert_refused(self, status, raw, code):
         self.assertGreaterEqual(status, 400, raw)
         self.assertIn(code, raw.decode("utf-8", "replace"))
@@ -716,7 +732,7 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
         for route in ("chat", "messages"):
             with self.subTest(route=route):
                 before = self._typesafe()["calls"]
-                headers = self._native(f"routed-{route}", "coder")
+                headers = self._native(f"routed-{route}", "child-a")
                 self._choice("cheap-worker")
                 status, raw, _headers = self._turn(route, headers)
                 self.assertEqual(status, 200, raw)
@@ -733,13 +749,13 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
                 self._apply_policy("per-turn")
                 before = self._typesafe()["calls"]
                 session = f"turn-{route}"
-                headers = self._native(session, "coder", "p1")
+                headers = self._native(session, "child-a", "p1")
                 self._choice("cheap-worker")
                 status, raw, _headers = self._turn(route, headers)
                 self.assertEqual(status, 200, raw)
                 self._alias_last("cheap-worker")
                 self._choice("strong-worker")
-                status, raw, _headers = self._turn(route, self._native(session, "coder", "p2"))
+                status, raw, _headers = self._turn(route, self._native(session, "child-a", "p2"))
                 self.assertEqual(status, 200, raw)
                 self.assertEqual(self._typesafe()["calls"], before + 2)
                 self._alias_last("strong-worker")
@@ -749,15 +765,70 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
                 before = self._typesafe()["calls"]
                 session = f"session-{route}"
                 self._choice("cheap-worker")
-                status, raw, _headers = self._turn(route, self._native(session, "coder", "p1"))
+                status, raw, _headers = self._turn(route, self._native(session, "child-a", "p1"))
                 self.assertEqual(status, 200, raw)
                 self._choice("strong-worker")
-                status, raw, _headers = self._turn(route, self._native(session, "coder", "p2"))
+                status, raw, _headers = self._turn(route, self._native(session, "child-a", "p2"))
                 self.assertEqual(status, 200, raw)
                 self.assertEqual(self._typesafe()["calls"], before + 1)
                 self._alias_last("cheap-worker")
                 self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
                 self.assertTrue(self._hook()["last"]["context"]["cached"])
+
+    def test_m5_default_and_override_mode_matrix(self):
+        agents = {
+            "reviewer": {"mode": "fixed", "model": "strong-worker"},
+            "coder": {"mode": "per-turn"},
+            "router": {"mode": "routed"},
+            "sessioner": {"mode": "per-session"},
+        }
+        roles = {
+            "plain": "child-a",
+            "router": "router",
+            "sessioner": "sessioner",
+            "coder": "coder",
+            "reviewer": "reviewer",
+        }
+        for route in ("chat", "messages"):
+            for default in ("routed", "per-session", "per-turn"):
+                self._apply_policy(default, agents=agents)
+                for role, agent in roles.items():
+                    effective = agents.get(agent, {}).get("mode", default)
+                    with self.subTest(route=route, default=default, agent=role, effective=effective):
+                        before = self._typesafe()["calls"]
+                        session = f"mx-{route}-{default}-{role}"
+                        self._choice("cheap-worker")
+                        status, raw, _headers = self._turn(route, self._native(session, agent, "p1"))
+                        self.assertEqual(status, 200, raw)
+                        if effective == "fixed":
+                            self._alias_last("strong-worker")
+                            self.assertEqual(self._hook()["last"]["decision"]["reason"], "agent-fixed")
+                            self.assertIsNone(self._hook()["last"]["context"])
+                        else:
+                            self._alias_last("cheap-worker")
+                            if effective == "routed":
+                                self.assertIsNone(self._hook()["last"]["context"])
+                        self._choice("strong-worker")
+                        status, raw, _headers = self._turn(route, self._native(session, agent, "p2"))
+                        self.assertEqual(status, 200, raw)
+                        if effective == "fixed":
+                            self.assertEqual(self._typesafe()["calls"], before)
+                            self._alias_last("strong-worker")
+                            self.assertEqual(self._hook()["last"]["decision"]["reason"], "agent-fixed")
+                            self.assertIsNone(self._hook()["last"]["context"])
+                        elif effective == "routed":
+                            self.assertEqual(self._typesafe()["calls"], before + 2)
+                            self._alias_last("strong-worker")
+                            self.assertIsNone(self._hook()["last"]["context"])
+                        elif effective == "per-session":
+                            self.assertEqual(self._typesafe()["calls"], before + 1)
+                            self._alias_last("cheap-worker")
+                            self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
+                            self.assertTrue(self._hook()["last"]["context"]["cached"])
+                        else:
+                            self.assertEqual(self._typesafe()["calls"], before + 2)
+                            self._alias_last("strong-worker")
+                            self.assertFalse(self._hook()["last"]["context"]["cached"])
 
     def test_m5_siblings_and_parent_lineage(self):
         self._apply_policy("per-turn")
@@ -825,7 +896,8 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
                 self.assertEqual(status, 200, raw)
                 self.assertEqual(self._typesafe()["calls"], before_fixed)
                 self._alias_last("strong-worker")
-                self.assertEqual(self._hook()["last"]["decision"]["reason"], "context-pin")
+                self.assertEqual(self._hook()["last"]["decision"]["reason"], "agent-fixed")
+                self.assertIsNone(self._hook()["last"]["context"])
                 parent_headers = self._native(f"lineage-{route}", "coder", "p9", "reviewer")
                 before_parent = self._typesafe()["calls"]
                 status, raw, _headers = self._turn(route, parent_headers)
@@ -908,6 +980,59 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
                 self.assertFalse(self._hook()["last"]["context"]["cached"])
                 binding = json.loads(self._hook()["last"]["context"]["binding"])
                 self.assertEqual(binding[2], str(applied["revision"]))
+
+    def test_m5_apply_during_selection_does_not_execute_revoked_model(self):
+        for route in ("chat", "messages"):
+            with self.subTest(route=route, role="initiator"):
+                self._apply_policy("per-turn")
+                self._choice("cheap-worker", delay_s=1.0)
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"apply-init-{route}", "coder", "p1")
+                box = {}
+
+                def fire_initiator(box=box, headers=headers, route=route):
+                    box["result"] = self._turn(route, headers)
+
+                thread = threading.Thread(target=fire_initiator)
+                thread.start()
+                self._wait_typesafe(before + 1)
+                self._apply_policy("per-turn", ["strong-worker"])
+                thread.join(8)
+                status, raw, _headers = box["result"]
+                self.assertEqual(status, 200, raw)
+                self.assertGreaterEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before + 1)
+                self._assert_upstream_since(upstream_before, "strong-worker", 1)
+
+            with self.subTest(route=route, role="waiter"):
+                self._apply_policy("per-turn")
+                self._choice("cheap-worker", delay_s=1.2)
+                before = self._typesafe()["calls"]
+                hooks = self._hook()["hookRequests"]
+                upstream_before = self._upstream()["executions"]
+                headers = self._native(f"apply-wait-{route}", "coder", "p1")
+                results = []
+
+                def fire_shared(results=results, headers=headers, route=route):
+                    results.append(self._turn(route, headers))
+
+                threads = [threading.Thread(target=fire_shared), threading.Thread(target=fire_shared)]
+                for thread in threads:
+                    thread.start()
+                self._wait_hooks(hooks + 2)
+                self._wait_typesafe(before + 1)
+                self._apply_policy("per-turn", ["strong-worker"])
+                for thread in threads:
+                    thread.join(8)
+                self.assertEqual(len(results), 2, results)
+                for status, raw, _headers in results:
+                    self.assertEqual(status, 200, raw)
+                self.assertEqual(self._typesafe()["calls"], before + 1)
+                self.assertEqual(self._upstream()["executions"], upstream_before + 2)
+                self._assert_upstream_since(upstream_before, "strong-worker", 2)
+                shared = [item["context"]["shared"] for item in self._hook()["recent"][-2:]]
+                self.assertEqual(sorted(shared), [False, True])
 
     def test_m5_deadline_drops_a_late_result(self):
         self._apply_policy("per-turn")
