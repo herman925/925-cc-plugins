@@ -9,7 +9,7 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Reload through the normal plugin control and confirm **0.5.47**. Use a disposable project for a fresh-team trial.
+Restart/resume the Claude Code conversation after updating and confirm **0.5.47**. This loads the new manifest/configuration row; a hooks-only reload can leave the previous catalogue in memory. Use a disposable project for a fresh-team trial.
 
 1. Click **＋ Create team**. Give the team a name and purpose.
 2. In **Members**, select a member to edit its name, role and multiline official instructions. Reports to lists earlier members; add/remove workers as needed.

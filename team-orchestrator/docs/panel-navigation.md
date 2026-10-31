@@ -19,4 +19,4 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Reload through Claude Code's usual plugin reload control and confirm **0.5.47**. Updating never approves a controller, creates a team or connects a session.
+Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.47**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
