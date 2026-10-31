@@ -65,7 +65,7 @@ Recorded from `.venv-m4` after `pip install --index-url https://pypi.org/simple 
 
 ## Route assertions
 
-M4 cases in the table below: 10 tests. The same command also runs 13 M5 stickiness tests (23 total). See [m5-litellm-stickiness.md](m5-litellm-stickiness.md). The Node suite remains 63 pass, 0 fail.
+M4 cases in the table below: 10 tests. The same command also runs 15 M5 stickiness tests (25 total). See [m5-litellm-stickiness.md](m5-litellm-stickiness.md). The Node suite remains 63 pass, 0 fail.
 
 | Test | Client route | What it proved |
 | --- | --- | --- |

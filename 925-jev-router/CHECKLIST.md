@@ -14,7 +14,7 @@ M4 command, from `925-jev-router/`, with `.venv-m4` already installed from `requ
 .venv-m4/bin/python integration/litellm/test_m4_proxy.py
 ```
 
-Result: 23 tests, 23 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. Ten are the M4 hardening cases. Thirteen are the M5 stickiness cases. The Node suite above is unchanged.
+Result: 25 tests, 25 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. Ten are the M4 hardening cases. Fifteen are the M5 stickiness cases. The Node suite above is unchanged.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -43,6 +43,7 @@ Result: 23 tests, 23 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only.
 | M5 siblings, leader, fixed agent | Sibling agents that share a parent do not share a pin. `large-leader` writes no pin. Fixed `reviewer` stays on `strong-worker` with zero TypeSafe calls and does not pin. The parent id does not take the child's override. | Pass |
 | M5 shared flight and policy | Two concurrent requests share one TypeSafe call. A waiter with a narrower eligible list is `selection_rejected`. A later Apply does not reuse the previous revision's pin. | Pass |
 | M5 apply during selection | A delayed cheap decision, then Apply that leaves only `strong-worker`, does not execute `cheap-worker`. The initiator and a shared waiter both pass on chat and messages. The shared flight still makes one TypeSafe call. | Pass |
+| M5 fixture eligibility | A fresh request whose fixture allows only `strong-worker` executes that model with zero TypeSafe calls on chat and messages, for header-less routed, plain, routed, per-session, per-turn, and fixed. A one-model fixture does not fall open to the other candidate. A fixed model outside the fixture is `agent_model_ineligible`. A cached model outside the fixture is not executed. A replan intersects the captured fixture with the new candidates and does not offer `large-leader` when that alias was outside the captured fixture. | Pass |
 | M5 deadline, rejection, tool continuation | A short flight deadline returns `admission_expired` and a late result does not pin. A non-transient TypeSafe failure leaves no pin. A tool-result continuation with the same native ids reuses the pin on chat and messages. | Pass |
 
 Not done, on purpose: live provider traffic, live `api.typesafe.ai`, Auth A/B choice, live Claude header capture (#167), new credentials, deploy. M4 and M5 do not claim `/anthropic/v1/messages`. M5 does not claim a real Claude client sent these headers.

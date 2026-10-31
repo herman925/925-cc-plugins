@@ -627,12 +627,12 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
         self.assertEqual(self._upstream()["executions"], before_upstream)
         self.assertEqual(self._hook()["hookRequests"], before_hook)
 
-    def _apply_policy(self, mode, candidates=None, agents=None):
+    def _apply_policy(self, mode, candidates=None, agents=None, fallback="strong-worker"):
         policy = {
             "schema_version": 1,
             "project_id": "orca-ade-example",
             "candidates": candidates or ["cheap-worker", "strong-worker"],
-            "fallback": "strong-worker",
+            "fallback": fallback,
             "default_worker_mode": mode,
             "agents": agents
             if agents is not None
@@ -1033,6 +1033,133 @@ if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error(
                 self._assert_upstream_since(upstream_before, "strong-worker", 2)
                 shared = [item["context"]["shared"] for item in self._hook()["recent"][-2:]]
                 self.assertEqual(sorted(shared), [False, True])
+
+    def test_m5_fresh_request_respects_fixture_eligibility(self):
+        agents = {
+            "reviewer": {"mode": "fixed", "model": "strong-worker"},
+            "coder": {"mode": "per-turn"},
+            "router": {"mode": "routed"},
+            "sessioner": {"mode": "per-session"},
+        }
+        narrowed = [
+            ("routed", "header-less", None, "single-eligible"),
+            ("routed", "plain", "child-a", "single-eligible"),
+            ("routed", "router", "router", "single-eligible"),
+            ("per-session", "plain", "child-a", "single-eligible"),
+            ("per-session", "sessioner", "sessioner", "single-eligible"),
+            ("per-turn", "plain", "child-a", "single-eligible"),
+            ("per-turn", "coder", "coder", "single-eligible"),
+            ("routed", "reviewer", "reviewer", "agent-fixed"),
+            ("per-session", "reviewer", "reviewer", "agent-fixed"),
+            ("per-turn", "reviewer", "reviewer", "agent-fixed"),
+        ]
+        for route in ("chat", "messages"):
+            for default, role, agent, reason in narrowed:
+                with self.subTest(route=route, default=default, agent=role, contract="strong-only"):
+                    self._apply_policy(default, agents=agents)
+                    self._hook_control({"eligible": ["strong-worker"]})
+                    self._choice("cheap-worker")
+                    before = self._typesafe()["calls"]
+                    upstream_before = self._upstream()["executions"]
+                    headers = None if agent is None else self._native(f"elig-{route}-{default}-{role}", agent, "p1")
+                    status, raw, _headers = self._turn(route, headers)
+                    self.assertEqual(status, 200, raw)
+                    self.assertEqual(self._typesafe()["calls"], before)
+                    self.assertEqual(self._upstream()["executions"], upstream_before + 1)
+                    self._assert_upstream_since(upstream_before, "strong-worker", 1)
+                    last = self._hook()["last"]
+                    self.assertEqual(last["decision"]["reason"], reason)
+                    self.assertEqual(last["decision"]["model"], "strong-worker")
+                    self.assertEqual(last["outbound"]["model"], "strong-worker")
+                    if reason == "agent-fixed" or default == "routed":
+                        self.assertIsNone(last["context"])
+                    else:
+                        self.assertFalse(last["context"]["cached"])
+                        self.assertTrue(last["context"]["selectorInvoked"])
+            for default, role, agent in (
+                ("routed", "plain", "child-a"),
+                ("per-session", "plain", "child-a"),
+                ("per-turn", "plain", "child-a"),
+                ("routed", "router", "router"),
+                ("per-session", "sessioner", "sessioner"),
+                ("per-turn", "coder", "coder"),
+            ):
+                with self.subTest(route=route, default=default, agent=role, contract="fallback-stays-inside"):
+                    self._apply_policy(default, agents=agents)
+                    self._hook_control({"eligible": ["cheap-worker"]})
+                    _post_control(SERVICES["typesafe_base"], "/control", {"mode": "bad-choice", "delay_s": 0})
+                    before = self._typesafe()["calls"]
+                    upstream_before = self._upstream()["executions"]
+                    status, raw, _headers = self._turn(
+                        route,
+                        self._native(f"fall-{route}-{default}-{role}", agent, "p1"),
+                    )
+                    self.assertEqual(status, 200, raw)
+                    self.assertEqual(self._typesafe()["calls"], before)
+                    self._assert_upstream_since(upstream_before, "cheap-worker", 1)
+                    self.assertEqual(self._hook()["last"]["decision"]["reason"], "single-eligible")
+                    self.assertEqual(self._hook()["last"]["decision"]["model"], "cheap-worker")
+            with self.subTest(route=route, contract="fixed-outside-fixture"):
+                self._apply_policy("routed", agents=agents, fallback="cheap-worker")
+                self._hook_control({"eligible": ["cheap-worker"]})
+                self._choice("strong-worker")
+                before = self._typesafe()["calls"]
+                upstream_before = self._upstream()["executions"]
+                status, raw, _headers = self._turn(route, self._native(f"fixed-out-{route}", "reviewer", "p1"))
+                self._assert_refused(status, raw, "agent_model_ineligible")
+                self.assertEqual(self._typesafe()["calls"], before)
+                self.assertEqual(self._upstream()["executions"], upstream_before)
+            for default in ("per-session", "per-turn"):
+                with self.subTest(route=route, default=default, contract="cached-outside-fixture"):
+                    self._apply_policy(default, agents=agents)
+                    self._hook_control({"eligible": None})
+                    self._choice("cheap-worker")
+                    headers = self._native(f"cached-{route}-{default}", "child-a", "p1")
+                    status, raw, _headers = self._turn(route, headers)
+                    self.assertEqual(status, 200, raw)
+                    self._alias_last("cheap-worker")
+                    self._hook_control({"eligible": ["strong-worker"]})
+                    self._choice("cheap-worker")
+                    before = self._typesafe()["calls"]
+                    upstream_before = self._upstream()["executions"]
+                    status, raw, _headers = self._turn(route, headers)
+                    self.assertEqual(status, 200, raw)
+                    self.assertEqual(self._typesafe()["calls"], before)
+                    self._assert_upstream_since(upstream_before, "strong-worker", 1)
+                    self.assertEqual(self._hook()["last"]["decision"]["reason"], "single-eligible")
+                    self.assertEqual(self._hook()["last"]["decision"]["model"], "strong-worker")
+
+    def test_m5_replan_intersects_fixture_eligibility(self):
+        for route in ("chat", "messages"):
+            for default in ("routed", "per-session", "per-turn"):
+                with self.subTest(route=route, default=default):
+                    self._apply_policy(default)
+                    self._hook_control({"eligible": ["cheap-worker", "strong-worker"]})
+                    self._choice("cheap-worker", delay_s=1.0)
+                    before = self._typesafe()["calls"]
+                    upstream_before = self._upstream()["executions"]
+                    headers = self._native(f"replan-{route}-{default}", "child-a", "p1")
+                    box = {}
+
+                    def fire(box=box, headers=headers, route=route):
+                        box["result"] = self._turn(route, headers)
+
+                    thread = threading.Thread(target=fire)
+                    thread.start()
+                    try:
+                        self._wait_typesafe(before + 1)
+                        self._apply_policy(default, ["strong-worker", "large-leader"])
+                    finally:
+                        thread.join(8)
+                    status, raw, _headers = box["result"]
+                    self.assertEqual(status, 200, raw)
+                    self.assertEqual(self._typesafe()["calls"], before + 1)
+                    criteria = self._typesafe()["bodies"][-1]["questions"]["model"]["criteria"]
+                    self.assertEqual(set(criteria), {"cheap-worker", "strong-worker"})
+                    self.assertNotIn("large-leader", criteria)
+                    self._assert_upstream_since(upstream_before, "strong-worker", 1)
+                    self.assertEqual(self._hook()["last"]["decision"]["reason"], "single-eligible")
+                    self.assertEqual(self._hook()["last"]["decision"]["model"], "strong-worker")
 
     def test_m5_deadline_drops_a_late_result(self):
         self._apply_policy("per-turn")

@@ -160,35 +160,40 @@ function plannedModel(planned) {
   return typeof model === 'string' ? model : '';
 }
 
-function executable(planned, applied) {
+function intersectEligible(applied, requestEligible) {
+  const requested = Array.isArray(requestEligible) ? requestEligible : applied.policy.candidates;
+  return applied.policy.candidates.filter(alias => requested.includes(alias));
+}
+
+function executable(planned, applied, requestEligible) {
   const model = plannedModel(planned);
   if (model === '' || model === SENTINEL_MODEL) return false;
   if (planned?.decision?.reason === 'leader-bypass') return true;
-  return applied.policy.candidates.includes(model);
+  return intersectEligible(applied, requestEligible).includes(model);
 }
 
-async function planWith(data, agentId, applied) {
+async function planWith(data, agentId, applied, requestEligible) {
   return planPreCall(data, {
     policy: applied.policy,
-    eligible: [...applied.policy.candidates],
+    eligible: intersectEligible(applied, requestEligible),
     agent: agentId || null,
     transport,
   });
 }
 
-async function planCurrent(data, agentId) {
+async function planCurrent(data, agentId, requestEligible) {
   let started = appliedView();
-  let planned = await planWith(data, agentId, started);
+  let planned = await planWith(data, agentId, started, requestEligible);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const now = appliedView();
-    if (now.revision === started.revision && now.policy === started.policy && executable(planned, now)) {
+    if (now.revision === started.revision && now.policy === started.policy && executable(planned, now, requestEligible)) {
       return planned;
     }
     started = now;
-    planned = await planWith(data, agentId, started);
+    planned = await planWith(data, agentId, started, requestEligible);
   }
   const now = appliedView();
-  if (now.revision === started.revision && now.policy === started.policy && executable(planned, now)) {
+  if (now.revision === started.revision && now.policy === started.policy && executable(planned, now, requestEligible)) {
     return planned;
   }
   throw new PolicyError('selection_rejected', 'Applied policy changed before execution. Refusing the stale model.');
@@ -313,9 +318,10 @@ async function routePreCall(data) {
   const identityHeaders = hasNative ? trustedIdentityHeaders(normalized, appliedRecord) : null;
   const agentId = identityHeaders ? String(identityHeaders['x-jev-agent'] ?? '').trim() : '';
   const mode = effectiveMode(agentId);
+  const requestEligible = eligibleOverride ? [...eligibleOverride] : [...policy.candidates];
 
   if (mode === 'fixed' || mode === 'routed') {
-    const planned = await planCurrent(data, agentId);
+    const planned = await planCurrent(data, agentId, requestEligible);
     remember({
       decision: planned.decision,
       selectorCalls: selectorCalls - before,
@@ -339,12 +345,12 @@ async function routePreCall(data) {
   }
 
   const store = mode === 'prompt' ? stores.prompt : stores.session;
-  const eligible = eligibleOverride ? [...eligibleOverride] : [...policy.candidates];
+  const eligible = intersectEligible(appliedView(), requestEligible);
   const resolved = await store.resolve({
     headers: identityHeaders,
     eligible,
     select: async () => {
-      const planned = await planCurrent(data, agentId);
+      const planned = await planCurrent(data, agentId, requestEligible);
       return { model: planned.data.model, planned };
     },
   });
@@ -382,8 +388,8 @@ async function routePreCall(data) {
         parentAgent: resolved.parentAgent ?? null,
       },
     };
-  if (!executable(planned, appliedView())) {
-    planned = await planCurrent(data, agentId);
+  if (!executable(planned, appliedView(), requestEligible)) {
+    planned = await planCurrent(data, agentId, requestEligible);
     context.cached = false;
     context.selectorInvoked = true;
   }
