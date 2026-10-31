@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { mountBand } from './test-world'
+import { mountBand,world,sessionAs,ID1 } from './test-world'
 
 const manifest = (on: any) =>
   on('fs.read', async (_$: any, e: any) =>
@@ -8,16 +8,16 @@ const manifest = (on: any) =>
   )
 
 test('the band shows a filled title pill with the version, and the button beside it opens the panel', async ($, on) => {
-  manifest(on)
+  world(on,[],[],undefined,{version:'9.9.99'});sessionAs(on,ID1)
   const band = await mountBand($)
   const pill = (await band.findAll({ type: 'Text' })).find((t: any) => t.props.weight === 'bold' && t.props.backgroundColor === 'cyan')
   expect(pill?.text).toContain('Team Orchestrator v9.9.99')
   await band.press({ key: 'main' })
-  expect(await band.find({ key: 'tab-roster' })).toBeDefined()
+  expect(await band.find({ key: 'tab-team' })).toBeDefined()
 })
 
 test('the panel header shows the version too', async ($, on) => {
-  manifest(on)
+  world(on,[],[],undefined,{version:'9.9.99'});sessionAs(on,ID1)
   const band = await mountBand($)
   await band.press({ key: 'main' })
   expect(JSON.stringify(await band.drawn())).toContain('v9.9.99')

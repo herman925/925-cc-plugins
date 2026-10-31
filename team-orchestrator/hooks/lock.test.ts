@@ -294,7 +294,7 @@ test('a change the person makes through Settings is the mod\'s own and is not re
   await adopt($, ids(HUALONG))
   const band = await mountBand($)
   await band.press({ key: 'refresh' })
-  await band.press({ key: 'tab-settings' })
+  await band.press({ key: 'tab-settings' });await band.press({key:'settings-classic'})
   await band.press({ key: 'perm-write-Hualong|Hualong Worker 5' })
   await band.press({ key: 'tab-roster' })
   await band.press({ key: 'refresh' })

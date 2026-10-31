@@ -1,13 +1,19 @@
 {
   "name": "team-orchestrator",
-  "version": "0.5.46",
-  "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs.",
+  "version": "0.5.47",
+  "description": "Guided team setup and a native workspace for rosters, verified session connections, task assignment and outcome review. Existing classic Orca teams remain available separately.",
   "types": "./types/index.d.ts",
   "userConfig": {
+    "projectWorkspaceModes": {
+      "type": "string",
+      "title": "Saved project workspace choices",
+      "description": "Project-specific workspace choices, stored as JSON text and managed by Create team and Settings in this installation. Does not grant management permission or change defaults for other projects.",
+      "default": "[]"
+    },
     "sharedStorePreview": {
       "type": "boolean",
-      "title": "Shared store preview",
-      "description": "Opt in to creating fresh scratch teams in the shared store. Approve this conversation in the Shared store panel first. Existing teams are not migrated.",
+      "title": "Default shared workspace preview",
+      "description": "Fallback mode for projects without a saved workspace choice. Create team and Settings remember project choices separately. Management requires explicit conversation approval; classic teams are not migrated.",
       "default": false
     },
     "sharedStoreNode": {

@@ -20,8 +20,11 @@ import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from './assumptions'
 import type { OpenAssumption } from './assumptions'
-import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore } from './shared-store'
+import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
+import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
+import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,setupInline,useInlineSetup} from './team-setup'
+import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -46,19 +49,20 @@ async function putFile($: any, path: string, text: string): Promise<void> {
   }
 }
 const cfg = { orcaCommand: '', version: '', versionRead: false }
-const sharedConfig = { enabled:false, node:'node' }
+const sharedConfig = { enabled:false, node:'node', projectModes:[] as string[], projectModesError:'' }
 const SHARED_PREVIEW_KEY = 'team-orchestrator.sharedStorePreview'
 const SHARED_NODE_KEY = 'team-orchestrator.sharedStoreNode'
-async function applySharedEnabled($:any,value:boolean) {
-  sharedConfig.enabled=value
+async function sharedEnabled($:any) {
+  return !sharedConfig.projectModesError&&projectWorkspaceEnabled(sharedConfig.enabled,sharedConfig.projectModes,String(await $.session.root()))
 }
 async function savePluginOption($:any,key:string,value:string|boolean) {
   const result=await $.config.set({key,value})
   if(result?.deny)throw new Error(String(result.deny))
 }
 async function sharedControls($:any):Promise<SharedControls> {
-  return {enabled:sharedConfig.enabled,node:sharedConfig.node,orca:cfg.orcaCommand||await orcaBin($),
-    setEnabled:async(value:boolean)=>{await savePluginOption($,SHARED_PREVIEW_KEY,value);await applySharedEnabled($,value)},
+  const setEnabled=async(value:boolean)=>{if(sharedConfig.projectModesError)throw Error(sharedConfig.projectModesError);const modes=withProjectWorkspace(sharedConfig.projectModes,String(await $.session.root()),value);await savePluginOption($,'team-orchestrator.projectWorkspaceModes',JSON.stringify(modes));sharedConfig.projectModes=modes}
+  return {enabled:await sharedEnabled($),preferenceError:sharedConfig.projectModesError,node:sharedConfig.node,orca:cfg.orcaCommand||await orcaBin($),setEnabled,
+    rememberProject:async()=>{if(!projectWorkspaceEnabled(false,sharedConfig.projectModes,String(await $.session.root())))await setEnabled(true)},
     setNode:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');await savePluginOption($,SHARED_NODE_KEY,value);sharedConfig.node=value},
     setOrca:async(value:string)=>{if(/[\r\n\0]/.test(value)||value.length>1024)throw new Error('Invalid executable.');if(value){const problem=await orcaProblem($,value);if(problem)throw new Error(problem)}await savePluginOption($,ORCA_KEY,value);cfg.orcaCommand=value}}
 }
@@ -179,6 +183,7 @@ const assumptionsOn = atom({ plugin: 'team-orchestrator', key: 'assumptionsOn' }
 const readAct = async ($: any): Promise<Act> => ({ ...ACT0, ...(await read($, act)) })
 // the side pane the panel moves to under the dock layout (the panes of earlier versions had other ids)
 const DOCK = 'team-dock'
+const SETUP = 'team-setup'
 const SPAWN0: Spawn = { names: [], batch: 0, of: 0 }
 const spawn = atom({ plugin: 'team-orchestrator', key: 'spawn' } as const, SPAWN0)
 const bulk = atom({ plugin: 'team-orchestrator', key: 'bulk' } as const, {
@@ -2138,7 +2143,7 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
   if(protectedState)return `Blocked ${tool}: ${protectedState}`
   if(tool===AGENT_TOOL || (WRITE_TOOLS as readonly string[]).includes(tool) || (shell && createsManaged(command))){
     // Disabling the preview does not remove an existing member's authority rules.
-    if(sharedConfig.enabled || await $.fs.exists(`${await $.session.root()}/.team-orchestrator/team.sqlite`)){
+    if(await sharedEnabled($) || await $.fs.exists(`${await $.session.root()}/.team-orchestrator/team.sqlite`)){
       const scope=await preflight($)
       if(!scope.ok)return `Blocked ${tool}: shared caller verification failed: ${scope.reason}`
       if(await $.fs.exists(`${scope.root}/.team-orchestrator/team.sqlite`)){
@@ -2956,8 +2961,9 @@ const safely = async (fn: () => Promise<any>): Promise<any> => {
 export const register: Register = (on, options) => {
   cfg.orcaCommand = String((options as any)?.orcaCommand ?? '').trim()
   sharedConfig.enabled = (options as any)?.sharedStorePreview === true
+  try{sharedConfig.projectModes=parseProjectWorkspaceModes((options as any)?.projectWorkspaceModes);sharedConfig.projectModesError=''}catch{sharedConfig.projectModes=[];sharedConfig.projectModesError='Saved project workspace choices are invalid. Correct the JSON list in Saved project workspace choices in configuration before continuing. Existing preferences have not been overwritten.'}
   sharedConfig.node = String((options as any)?.sharedStoreNode ?? 'node').trim() || 'node'
-  on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>callSharedStore($,e,sharedConfig.enabled,{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})))
+  on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>{if(sharedConfig.projectModesError)return {deny:sharedConfig.projectModesError};return callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})}))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false
   seenRoster.base = undefined
@@ -2966,7 +2972,8 @@ export const register: Register = (on, options) => {
   turnAsk.answered = false
   statusMigrated.clear()
   on('session.start', async ($, e, next) => {
-    await startSharedStore($,sharedConfig.enabled)
+    await startSharedStore($,await sharedEnabled($))
+    await observeTeamPresence($).catch(()=>undefined)
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
     await $.tool.register({
       name: 'team_launch',
@@ -3108,7 +3115,8 @@ export const register: Register = (on, options) => {
     // the side panes of earlier versions: the UI now lives above the prompt
     for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
     // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
-    if ((await readSettings($)).layout === 'dock' && await read($,view)!=='closed') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
+    if(await read($,view)==='setup')await setPanelView($,'setup')
+    else if ((await readSettings($)).layout === 'dock' && await read($,view)!=='closed') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
@@ -3121,14 +3129,12 @@ export const register: Register = (on, options) => {
     // this session's own status: alive now, and a heartbeat every minute (a silent member shows offline after 5 min)
     void writeMine($, { state: 'idle' })
     $.clock.every(60000, () => void writeMine($, {}))
-    // ~3 frames a second, and only where something animates: the band or welcome screen with no team,
-    // the form and the roster's org chart once typing has paused, and the spinner while a launch runs.
+    // Timer redraws are reserved for actual launch progress, keeping form handles stable while a launch runs.
     $.clock.every(300, () =>
       void (async () => {
-        const [m, v, n] = [await read($, members), await read($, view), await read($, note)]
+        const [v, n] = [await read($, view), await read($, note)]
         const busy = n.startsWith('⏳') || (await read($, spawn)).names.length > 0
-        const quiet = Date.now() - typedAt > 1500
-        if (busy || (v !== 'shared' && v !== 'settings' && ((m.length === 0 && (v !== 'new' || quiet)) || ((v === 'new' || v === 'roster') && quiet)))) await update($, frame, x => x + 1)
+        if (busy && v!=='setup') await update($, frame, x => x + 1)
       })(),
     )
     // a member's own process starts: its idle clock starts now, whatever its last turn or clean said (guardrail #11)
@@ -3454,6 +3460,14 @@ export const register: Register = (on, options) => {
     if(!(result as any)?.deny)sharedConfig.enabled=value
     return result
   })
+  on('config.set',{key:'team-orchestrator.projectWorkspaceModes'} as any,async($,e,next)=>{
+    const value=(e as any).value
+    let modes:string[]
+    try{if(typeof value!=='string')throw Error();modes=parseProjectWorkspaceModes(value)}catch{return {deny:'Use a JSON list of project workspace choices.'} as any}
+    const result=await next(e)
+    if(!(result as any)?.deny){sharedConfig.projectModes=modes;sharedConfig.projectModesError=''}
+    return result
+  })
   on('config.set', {key:SHARED_NODE_KEY} as any,async($,e,next)=>{
     const value=String((e as any).value??'').trim()||'node'
     if(/[\r\n\0]/.test(value)||value.length>1024)return {deny:'Use a single executable name or path.'} as any
@@ -3474,7 +3488,7 @@ export const register: Register = (on, options) => {
       await share($)
       return { text: `Team ${from} is now ${to}. Address it with @${to}.` }
     }
-    await update($, view, () => 'roster') // with no team the roster tab is the welcome screen
+    await openTeamEntry($)
     return { text: 'Team Orchestrator opened above the prompt. Rename a team with /team name <old> <new>.' }
   })
 
@@ -3568,6 +3582,7 @@ export const register: Register = (on, options) => {
     const t: number = await read($, frame)
     const lit = t % 6 < 3 ? t % 6 : -1
     const go = (to: View) => setPanelView($,to)
+    const entry=await teamEntryState($)
     await readVersion($)
     // a filled title pill like Session Panel's (a Button takes no background), with the open/close button beside it
     const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
@@ -3578,7 +3593,9 @@ export const register: Register = (on, options) => {
             {` ◆ Team Orchestrator${cfg.version ? ` v${cfg.version}` : ''} `}
           </Text>
           <Text> </Text>
-          <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={() => void (async () => go(open ? 'closed' : 'roster'))()} />
+          <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={async()=>{if(open)await go('closed');else await openTeamEntry($)}} />
+          {!open&&<Button key="band-team" label={teamEntryLabel(entry,list.length>0)} onPress={async()=>openTeamEntry($)}/>}
+          {v==='setup'&&await panelPlaced($,v)&&<Button key="setup-inline" label="Edit inline" onPress={async()=>{await useInlineSetup($);await $.ui.close({id:SETUP})}}/>}
           {!open&&<Button key="band-settings" label="⚙ Settings" onPress={async()=>go('settings')}/>}
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
@@ -3590,7 +3607,7 @@ export const register: Register = (on, options) => {
                   {i === lit ? '●' : '○'}
                 </Text>
               ))}
-              <Text dimColor>{sharedConfig.enabled?' Shared teams · open Shared store':' no team yet · press t to spawn a head + workers as Orca tabs'}</Text>
+              <Text dimColor>{' Team tools · press t to open'}</Text>
             </Text>
           ) : (
             <Text>
@@ -3601,7 +3618,7 @@ export const register: Register = (on, options) => {
           )}
           {teams.length > 0 && <Text dimColor> │ {teams.map(t => '@' + t).join(' ')}</Text>}
         </Box>
-        {open && !(await docked($)) && (await panel($, ui, v, Number((e.props as any).bodyColumns) || 100))}
+        {open && !(await panelPlaced($,v)) && (await panel($, ui, v, Number((e.props as any).bodyColumns) || 100,e.requestId))}
         {rest}
       </Box>
     )
@@ -3615,9 +3632,18 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {e.props.placement === 'inline' && <Text dimColor>Docks beside the transcript only in the fullscreen layout, from 110 columns; here it sits above the prompt.</Text>}
-        {v!=='closed'&&await panel($, ui, v, e.props.bodyColumns || 100)}
+        {v!=='closed'&&v!=='setup'&&await panel($, ui, v, e.props.bodyColumns || 100,DOCK)}
       </Box>
     )
+  })
+
+  on('ui.render',{component:'Pane',requestId:SETUP},async($,e)=>{
+    if(await read($,view)!=='setup')return null
+    return panel($,$.ui.resolve(e),'setup',e.props.bodyColumns||66,SETUP)
+  })
+  on('ui.close',{id:SETUP},async($,e,next)=>{
+    if(e.origin.kind==='person'&&await read($,view)==='setup')await update($,view,()=> 'closed')
+    return next(e)
   })
 
   // the person closed the pane: the panel goes back above the prompt
@@ -3627,53 +3653,68 @@ export const register: Register = (on, options) => {
   })
 }
 
-// True while the dock pane is seated; otherwise (layout not dock, or the pane waits on a narrow terminal) the band draws.
-async function docked($: any) {
-  if ((await readSettings($)).layout !== 'dock') return false
-  const panes: any[] = await $.ui.panes().catch(() => [])
-  return panes.some(p => p.id === DOCK && p.isPlaced)
+// A native setup pane owns its body while placed; narrow hosts use the band fallback.
+async function panelPlaced($:any,v:View){
+ const panes:any[]=await $.ui.panes().catch(()=>[])
+ return panes.some(p=>p.id===(v==='setup'?SETUP:DOCK)&&p.isPlaced)&&(v==='setup'||(await readSettings($)).layout==='dock')
 }
-
-async function setPanelView($:any,to:View) {
-  await update($,view,()=>to)
-  if((await readSettings($)).layout==='dock') {
-    if(to==='closed')await $.ui.close({id:DOCK})
-    else await $.ui.open({id:DOCK,title:'Team Orchestrator'})
+async function setPanelView($:any,to:View){
+ await update($,view,()=>to)
+ if(to==='setup'){
+  await $.ui.close({id:DOCK}).catch(()=>undefined)
+  if(!await setupInline($))await $.ui.open({id:SETUP,title:'Create team',rows:19,columns:66,focus:true,closeOnEscape:true}).catch(()=>undefined)
+ }else{
+  await $.ui.close({id:SETUP}).catch(()=>undefined)
+  if((await readSettings($)).layout==='dock'){
+   if(to==='closed')await $.ui.close({id:DOCK})
+   else await $.ui.open({id:DOCK,title:'Team Orchestrator'})
   }
+ }
 }
-async function togglePanelView($:any,to:View) {
-  const next=await read($,view)===to?'closed':to
-  await setPanelView($,next)
-  return next
+async function togglePanelView($:any,to:View){
+ const next=await read($,view)===to?'closed':to
+ await setPanelView($,next);return next
 }
-async function toggleSharedPanel($:any) {
-  if(await togglePanelView($,'shared')==='shared')await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})
+async function beginTeamSetup($:any){await startTeamSetup($);await setPanelView($,'setup')}
+function teamEntryLabel(entry:{draft:boolean;knownTeam:boolean;storeHint:boolean|null},legacy=false){
+ return entry.draft?'Continue setup':entry.knownTeam?'Team workspace':entry.storeHint?'Open teams':legacy?'Classic teams':'＋ Create team'
 }
-
-async function panel($: any, ui: any, v: View, cols: number) {
-  const { Box, Text, Button } = ui
-  const go = (to: View) => togglePanelView($,to)
-  await readVersion($)
-  return (
-    <Box flexDirection="column">
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between" flexDirection={cols<110?'column':'row'}>
-        <Box flexWrap="wrap">
-          <Text weight="bold" color="cyan">
-            ◆ TEAM ORCHESTRATOR
-          </Text>
-          <Text dimColor>{cfg.version ? ` v${cfg.version}` : ''}{'  '}</Text>
-          <Button key="tab-roster" label="Roster" variant={v==='roster'?'primary':undefined} onPress={() => void go('roster')} />
-          {!sharedConfig.enabled&&<Button key="tab-new" label="New team" variant={v==='new'?'primary':undefined} onPress={() => void go('new')} />}
-          <Button key="tab-settings" label="Settings" variant={v==='settings'?'primary':undefined} onPress={() => void go('settings')} />
-          <Button key="tab-shared" label="Shared store" variant={v==='shared'?'primary':undefined} onPress={async()=>toggleSharedPanel($)} />
-        </Box>
-        <Button key="close" label="x Close" role="dismiss" onPress={async()=>setPanelView($,'closed')} />
-      </Box>
-      {(await read($, spawn)).names.length > 0
-        ? await spawnView($, ui)
-        : v === 'shared' ? await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)}) : v === 'new' ? sharedConfig.enabled ? <Box><Text>Open Shared store to create a shared team after controller approval.</Text></Box> : await formView($, ui) : v === 'settings' ? await settingsView($, ui) : await rosterView($, ui, cols)}
-    </Box>
-  )
+async function openSharedPanel($:any){
+ await setPanelView($,'shared')
+ await patchSharedDraft($,{page:'home'})
+ const deps={...await sharedControls($),revalidate:()=>preflight($)}
+ await refreshSharedStore($,deps)
+ const access=await sharedAccessState($)
+ if(access.proof.ok&&access.state.checked&&(access.state.approved||access.state.member))await refreshSharedWorkspace($,{...deps,proof:access.proof,controllerGeneration:access.state.approved})
+}
+async function toggleSharedPanel($:any){
+ if(await read($,view)==='shared')await setPanelView($,'closed');else await openSharedPanel($)
+}
+async function openTeamEntry($:any){
+ await observeTeamPresence($)
+ const entry=await teamEntryState($)
+ if(entry.draft)return beginTeamSetup($)
+ if(entry.knownTeam||entry.storeHint)return openSharedPanel($)
+ if((await readMembers($)).length)return setPanelView($,'roster')
+ return beginTeamSetup($)
+}
+async function panel($:any,ui:any,v:View,cols:number,requestId:string=DOCK){
+ const {Box,Text,Button}=ui
+ const entry=await teamEntryState($),legacy=(await readMembers($)).length>0
+ await readVersion($)
+ const primaryActive=v==='setup'||v==='shared'||v==='roster'
+ return <Box flexDirection="column">
+  <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection={cols<110?'column':'row'} justifyContent="space-between">
+   <Box flexWrap="wrap">
+    <Text weight="bold" color="cyan">◆ TEAM ORCHESTRATOR</Text><Text dimColor>{cfg.version?` v${cfg.version}  `:''}</Text>
+    <Button key="tab-team" label={teamEntryLabel(entry,legacy)} variant={primaryActive?'primary':undefined} onPress={async()=>{if(primaryActive)await setPanelView($,'closed');else await openTeamEntry($)}}/>
+    <Button key="tab-settings" label="Settings" variant={v==='settings'?'primary':undefined} onPress={async()=>togglePanelView($,'settings')}/>
+   </Box>
+   <Button key="close" label="x Close" role="dismiss" onPress={async()=>setPanelView($,'closed')}/>
+  </Box>
+  {(await read($,spawn)).names.length?await spawnView($,ui):v==='setup'?await teamSetupView($,ui,{...await sharedControls($),requestId,revalidate:()=>preflight($),onCreated:()=>setPanelView($,'shared'),onClose:()=>setPanelView($,'closed'),onOpenTeams:()=>openSharedPanel($),onClassic:()=>setPanelView($,'new')}):v==='shared'?await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)},()=>beginTeamSetup($)):v==='new'?await formView($,ui):v==='settings'?await settingsView($,ui):await rosterView($,ui,cols)}
+  {legacy&&v!=='setup'&&<Box flexWrap="wrap" columnGap={1}><Text dimColor>Classic teams</Text><Button key="tab-roster" label="Classic roster" onPress={async()=>togglePanelView($,'roster')}/><Button key="tab-new" label="New classic team" onPress={async()=>togglePanelView($,'new')}/><Button key="tab-shared" label="Open shared teams" onPress={async()=>toggleSharedPanel($)}/></Box>}
+ </Box>
 }
 
 // While Create starts sessions, this takes the panel: each member being started and where it is, batch by batch.
@@ -3716,6 +3757,7 @@ async function settingsView($: any, ui: any) {
   const { Box, Text, Button, Input } = ui
   const s = await readSettings($)
   const list: Member[] = await readMembers($)
+  const section=s.section==='classic'&&!list.length?'display':s.section||'display'
   // a standing permission of one member, kept in the roster file like the rest of its structure
   const flip = async (key: string, field: 'allowAgent' | 'allowWrite') => {
     await pull($)
@@ -3751,8 +3793,11 @@ async function settingsView($: any, ui: any) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
       <Text color="cyan">┤ SETTINGS ├</Text>
-      {await sharedStoreOptionsView($,ui,await sharedControls($),true)}
-      <Button key="settings-shared-open" label="Open shared workspace →" onPress={async()=>{await update($,view,()=> 'shared');await refreshSharedStore($,{enabled:sharedConfig.enabled,node:sharedConfig.node,orca:await orcaBin($),revalidate:()=>preflight($)})}}/>
+      <Box flexWrap="wrap" columnGap={1}>
+        {['display','connection',...(list.length?['classic']:[])].map(value=><Button key={`settings-${value}`} label={value==='display'?'Display':value==='connection'?'Connection':'Classic teams'} variant={section===value?'primary':undefined} onPress={async()=>{await set({section:value})}}/>)}
+      </Box>
+      {section==='connection'&&<Box flexDirection="column">{await sharedStoreOptionsView($,ui,await sharedControls($),true)}<Button key="settings-shared-open" label="Open shared workspace →" onPress={async()=>openSharedPanel($)}/></Box>}
+      {section==='display'&&<Box flexDirection="column">
       <Box>
         <Text weight="bold">{'Layout'.padEnd(13)}</Text>
         {Seg(ui, 'layout', [['stacked', 'Stacked'], ['columns', 'Side by side'], ['dock', 'Dock right']], s.layout, v => void layout(v))}
@@ -3776,6 +3821,8 @@ async function settingsView($: any, ui: any) {
         </Box>
       </Box>
       <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
+      </Box>}
+      {section==='classic'&&<Box flexDirection="column"><Text weight="bold">Classic team options</Text><Text dimColor>These options apply to the existing classic roster, separately from shared teams.</Text>
       <Text weight="bold">Workers</Text>
       <Text dimColor>
         Shared by the whole team (.claude/team-orchestrator/settings.json). Cleanup reports are self-reported, not verified. Automatic close and eviction stay paused until the native verifier exists; at the cap, messages queue.
@@ -3857,11 +3904,12 @@ async function settingsView($: any, ui: any) {
           ))}
         </Box>
       )}
+      </Box>}
     </Box>
   )
 }
 
-// Always-visible, clickable choices: a Select pops a list that cannot be clicked or collapsed here.
+// Legacy form choices retain their existing compact segmented controls.
 function Choice(ui: any, id: string, options: string[], value: string, pick: (v: string) => void) {
   const { Box, Button } = ui
   return (
@@ -3884,11 +3932,6 @@ function Choice(ui: any, id: string, options: string[], value: string, pick: (v:
 // moves the form and the view; nothing launches.
 function emptyState($: any, ui: any, t: number) {
   const { Box, Text, Button } = ui
-  if(sharedConfig.enabled)return <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-    <Text weight="bold">Shared team setup</Text>
-    <Text>Open Shared store to check access. Team creation appears after controller approval.</Text>
-    <Button key="empty-open-shared" label="Open shared workspace" onPress={async()=>toggleSharedPanel($)}/>
-  </Box>
   const pick = (p: (typeof PRESETS)[number]) =>
     void (async () => {
       await update($, form, old => ({ ...old, ...p.form }))

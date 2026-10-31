@@ -77,10 +77,11 @@ test('the band opens clickable preview options while off, without a slash comman
  const files=world(on,[],[],e=>{if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined;calls.push(JSON.parse(e.init.stdin));return JSON.stringify({ok:true,result:{result:{controllerGeneration:null,member:null}}})})
  sessionAs(on,ID1)
  const band=await mountBand($)
- await band.press({key:'band-settings'})
+ await band.press({key:'band-settings'});await band.press({key:'settings-connection'})
  expect(await band.find({key:'shared-preview-on'})).toBeDefined()
  await band.press({key:'shared-preview-on'})
- expect(sets.some(e=>e.key==='team-orchestrator.sharedStorePreview'&&e.value===true)).toBe(true)
+ expect(sets.some(e=>e.key==='team-orchestrator.projectWorkspaceModes'&&JSON.parse(e.value).includes('shared|c:/proj'))).toBe(true)
+ expect(sets.some(e=>e.key==='team-orchestrator.sharedStorePreview')).toBe(false)
  expect(calls.length).toBe(0)
  expect([...files.keys()].some(k=>k.includes('controller-actions'))).toBe(false)
  const activated:any=await $.tool.call({tool:'mcp__team-orchestrator__shared_team',operationId:'inspect-after-on',command:{type:'inspectCaller'}} as any)
@@ -93,7 +94,7 @@ test('the band opens clickable preview options while off, without a slash comman
 
 test('a refused option save leaves the preview off and reports a useful failure',async($,on)=>{
  world(on);on('config.set',async()=>({deny:'settings read-only'}) as any)
- const band=await mountBand($);await band.press({key:'band-settings'});await band.press({key:'shared-preview-on'})
+ const band=await mountBand($);await band.press({key:'band-settings'});await band.press({key:'settings-connection'});await band.press({key:'shared-preview-on'})
  expect(JSON.stringify(await band.drawn())).toContain('could not be saved')
  const result:any=await $.tool.call({tool:'mcp__team-orchestrator__shared_team',operationId:'disabled',command:{type:'inspectCaller'}} as any)
  expect(result.deny).toContain('disabled')
@@ -101,7 +102,7 @@ test('a refused option save leaves the preview off and reports a useful failure'
 
 test('Node executable is edited with a field and saved once, without running the draft',async($,on)=>{
  const sets:any[]=[];on('config.set',async(_$:any,e:any)=>(sets.push(e),{value:e.value}) as any)
- const files=world(on);const band=await mountBand($);await band.press({key:'band-settings'})
+ const files=world(on);const band=await mountBand($);await band.press({key:'band-settings'});await band.press({key:'settings-connection'})
  await band.input({key:'shared-node-input',text:'C:/Program Files/nodejs/node.exe',kind:'change'})
  expect(sets.length).toBe(0)
  await band.press({key:'shared-node-save'})
@@ -112,7 +113,7 @@ test('Node executable is edited with a field and saved once, without running the
 
 test('the Orca connection field validates before saving even when the host skips own config hooks',async($,on)=>{
  const sets:any[]=[];on('config.set',async(_$:any,e:any)=>(sets.push(e),{value:e.value}) as any)
- world(on);const band=await mountBand($);await band.press({key:'band-settings'})
+ world(on);const band=await mountBand($);await band.press({key:'band-settings'});await band.press({key:'settings-connection'})
  await band.input({key:'shared-orca-input',text:'missing-orca',kind:'change'});await band.press({key:'shared-orca-save'})
  expect(sets.some(e=>e.key==='team-orchestrator.orcaCommand')).toBe(false)
  expect(JSON.stringify(await band.drawn())).toContain('could not be saved')
