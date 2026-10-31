@@ -134,6 +134,7 @@ declare module 'claude-code' {
       /** the assumptions view is on here: the team's switch is on and Session Panel is on in this session (#89) */
       assumptionsOn: boolean
       sharedStoreStatus: string
+      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null}
       sharedStoreProof: { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
     }
   }

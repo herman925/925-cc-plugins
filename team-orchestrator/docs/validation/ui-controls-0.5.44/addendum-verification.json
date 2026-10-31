@@ -1,0 +1,51 @@
+{
+  "checks": [
+    {
+      "file": "addendum-connection-focused.json",
+      "label": "Connection ▾",
+      "visible": true,
+      "columns": 60
+    },
+    {
+      "file": "addendum-connection-open.json",
+      "label": "Connection ▴",
+      "visible": true,
+      "columns": 60
+    },
+    {
+      "file": "addendum-details-focused.json",
+      "label": "Details ▾",
+      "visible": true,
+      "columns": 60
+    },
+    {
+      "file": "addendum-details-open.json",
+      "label": "Details ▴",
+      "visible": true,
+      "columns": 60
+    }
+  ],
+  "globalHashesUnchanged": true,
+  "window": {
+    "index": 0,
+    "app": {
+      "name": "Orca",
+      "bundleId": "Orca",
+      "pid": 56964
+    },
+    "id": 792174,
+    "title": "Orca",
+    "x": -5173,
+    "y": 545,
+    "width": 3462,
+    "height": 1402,
+    "isMinimized": false,
+    "isOffscreen": false,
+    "screenIndex": null,
+    "platform": {
+      "backend": "uia",
+      "nativeWindowHandle": 792174
+    }
+  },
+  "topmost": false
+}

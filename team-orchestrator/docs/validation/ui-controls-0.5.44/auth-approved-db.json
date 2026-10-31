@@ -1,0 +1,20 @@
+{
+  "controllers": [
+    {
+      "controller_id": "8dbf67716f670fd2baaae48be433f87e8d3814c1a7b5b988622ffcf2f1df25bd",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "390edd9a-8548-42bc-b1b1-3bff597351a6",
+      "generation": 1,
+      "approved_at_ms": 1793454543243,
+      "revoked": 0
+    }
+  ],
+  "operations": [
+    {
+      "operation_id": "controller-6c01226f883ccf29be45a28d1e4f276b",
+      "result": "{\"operationId\":\"controller-6c01226f883ccf29be45a28d1e4f276b\",\"kind\":\"api\",\"result\":{\"controllerId\":\"8dbf67716f670fd2baaae48be433f87e8d3814c1a7b5b988622ffcf2f1df25bd\",\"controllerGeneration\":1}}"
+    }
+  ],
+  "teams": []
+}
