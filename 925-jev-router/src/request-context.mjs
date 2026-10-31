@@ -3,7 +3,7 @@ import { SENTINEL_MODEL } from './schema.mjs';
 
 /** Pin lifetime from commit. A read does not extend it. */
 export const PIN_TTL_MS = 15 * 60 * 1000;
-/** Cap for committed pins and for in-flight selections. */
+/** Separate cap for committed pins. Tracked flights use the same number as their own cap. */
 export const CACHE_LIMIT = 64;
 
 const CONTROL = /[\u0000-\u001F\u007F]/;
@@ -163,12 +163,40 @@ export function createRequestContext({
     return eligibleHit(record.model, eligible);
   }
 
+  function overdue(flight, clock) {
+    return clock - flight.startedAt > inflightDeadlineMs;
+  }
+
+  function releaseSlot(flight, key) {
+    if (inflight.get(key) === flight) inflight.delete(key);
+  }
+
+  function expireFlight(flight, key) {
+    if (flight.settled) return;
+    flight.expired = true;
+    flight.settled = true;
+    if (flight.timer) clearTimeout(flight.timer);
+    releaseSlot(flight, key);
+    flight.publish(failure('admission_expired', flight.identity, key));
+    flight.notifyExpired?.();
+  }
+
+  function arm(flight, key) {
+    const delay = Math.max(1, inflightDeadlineMs - (now() - flight.startedAt));
+    flight.timer = setTimeout(() => {
+      if (flight.settled) return;
+      if (!overdue(flight, now())) {
+        arm(flight, key);
+        return;
+      }
+      expireFlight(flight, key);
+    }, delay);
+  }
+
   function sweep(clock) {
     for (const [flightKey, flight] of inflight) {
-      if (clock - flight.startedAt <= inflightDeadlineMs) continue;
-      flight.expired = true;
-      inflight.delete(flightKey);
-      flight.publish(failure('admission_expired', flight.identity, flightKey));
+      if (!overdue(flight, clock)) continue;
+      expireFlight(flight, flightKey);
     }
   }
 
@@ -247,17 +275,58 @@ export function createRequestContext({
     const promise = new Promise(resolveFlight => {
       publish = resolveFlight;
     });
-    const flight = { promise, publish, startedAt: clock, expired: false, identity };
+    let notifyExpired;
+    const expiredNotice = new Promise(resolveNotice => {
+      notifyExpired = resolveNotice;
+    });
+    const flight = {
+      promise,
+      publish,
+      notifyExpired,
+      startedAt: clock,
+      expired: false,
+      settled: false,
+      timer: null,
+      identity,
+    };
     inflight.set(key, flight);
+    arm(flight, key);
+
+    const expiredResult = () => {
+      if (!flight.settled) expireFlight(flight, key);
+      return lineage({ ...failure('admission_expired', identity, key), selectorInvoked: true }, identity);
+    };
+
+    let selectionPromise;
+    try {
+      selectionPromise = Promise.resolve(select());
+    } catch (error) {
+      selectionPromise = Promise.reject(error);
+    }
+    const selection = selectionPromise.then(
+      value => ({ status: 'selected', value }),
+      error => ({ status: 'rejected', error }),
+    );
 
     try {
-      const selected = await select();
-      if (flight.expired) {
-        return lineage({ ...failure('admission_expired', identity, key), selectorInvoked: true }, identity);
+      const outcome = await Promise.race([selection, expiredNotice.then(() => ({ status: 'expired' }))]);
+      if (flight.expired || overdue(flight, now()) || outcome.status === 'expired') {
+        return expiredResult();
       }
-      const model = selected?.model;
+      if (outcome.status === 'rejected') {
+        flight.settled = true;
+        if (flight.timer) clearTimeout(flight.timer);
+        releaseSlot(flight, key);
+        flight.publish(failure(outcome.error?.code || 'selection_failed', identity, key));
+        throw outcome.error;
+      }
+      if (flight.settled || overdue(flight, now())) return expiredResult();
+      flight.settled = true;
+      if (flight.timer) clearTimeout(flight.timer);
+      const model = outcome.value?.model;
       if (typeof model !== 'string' || model.length === 0 || model === SENTINEL_MODEL || (eligible != null && !eligibleHit(model, eligible))) {
         const rejected = failure('selection_rejected', identity, key);
+        releaseSlot(flight, key);
         publish(rejected);
         return { ...rejected, selectorInvoked: true };
       }
@@ -284,16 +353,12 @@ export function createRequestContext({
         selectorInvoked: true,
         shared: false,
         binding: key,
-        planned: selected.planned ?? null,
-        calls: selected.calls ?? null,
+        planned: outcome.value.planned ?? null,
+        calls: outcome.value.calls ?? null,
       };
-    } catch (error) {
-      if (!flight.expired) {
-        flight.publish(failure(error?.code || 'selection_failed', identity, key));
-      }
-      throw error;
     } finally {
-      if (inflight.get(key) === flight) inflight.delete(key);
+      if (flight.timer) clearTimeout(flight.timer);
+      releaseSlot(flight, key);
     }
   }
 

@@ -6,7 +6,7 @@ Command, from `925-jev-router/`:
 node --test test/*.test.mjs
 ```
 
-Result: 61 tests, 61 pass, 0 fail (Node v22.23.4). No network. The previous 40 M2 tests remain in this run. `test/request-context.test.mjs` is 21.
+Result: 63 tests, 63 pass, 0 fail (Node v22.23.4). No network. The previous 40 M2 tests remain in this run. `test/request-context.test.mjs` is 23.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -21,6 +21,6 @@ Result: 61 tests, 61 pass, 0 fail (Node v22.23.4). No network. The previous 40 M
 | M2 mock Apply / read-back | `test/mock-apply.test.mjs` posts and reads `/jev/v1/projects/{id}/...` in process. Missing and wrong bearer values are 401. The stored record survives a bad hash, an unknown alias, and a path/policy mismatch. The response copy can be mutated without changing the next read. The synthetic token is not in the record. String `"null"`, a scalar, and an array return 400 `apply_shape` and leave the stored revision unchanged. An alias that only exists on the configured list is not added to `candidates`. | Pass |
 | M2 hook wire | `test/wire.test.mjs` applies, reads back, then runs hook → decision → execution rewrite. `large-leader` stays pinned with selector call count 0. A sentinel choice rewrites the model and records one selector call. No agent id still selects. A second apply that drops `cheap-worker` makes the next execution use `strong-worker`. | Pass |
 | #167 interface | [docs/m2-request-context.md](docs/m2-request-context.md) records the binding rules. [docs/m3-request-context.md](docs/m3-request-context.md) maps each Planned row to an offline test. | Implemented offline |
-| M3 request context | `test/request-context.test.mjs` covers case-insensitive headers, binding isolation, prompt stickiness, child agent id with parent lineage, missing/blank/conflict errors, control-character rejection, a conservative pin, shared in-flight selection with per-waiter eligibility, auxiliary traffic, failed-flight cleanup, policy intersection, applied project/revision match, fixed-agent identity, cached-model revocation, a 64-pin cap, bounded in-flight admission, and harness `execution.model` plus `selectorCalls`. Identity headers do not grant Apply. | Pass |
+| M3 request context | `test/request-context.test.mjs` covers case-insensitive headers, binding isolation, prompt stickiness, child agent id with parent lineage, missing/blank/conflict errors, control-character rejection, a conservative pin, shared in-flight selection with per-waiter eligibility, auxiliary traffic, failed-flight cleanup, policy intersection, applied project/revision match, fixed-agent identity, cached-model revocation, separate 64-pin and 64-flight caps, a flight timer that settles with no other request, late results that cannot commit, replacement survival, and harness `execution.model` plus `selectorCalls`. Identity headers do not grant Apply. | Pass |
 
 Not done, on purpose: live LiteLLM registration, live TypeSafe HTTP, Auth A/B choice, live header smoke (#167), new credentials, deploy.

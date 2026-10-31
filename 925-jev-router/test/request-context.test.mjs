@@ -747,3 +747,174 @@ test('in-flight admission is bounded and expired flights do not commit', async (
   assert.equal(retry.model, 'strong-worker');
   assert.notEqual(retry.model, 'cheap-worker');
 });
+
+test('an overdue selector expires without another request', async () => {
+  let clock = 0;
+  const store = createRequestContext({ inflightDeadlineMs: 10, now: () => clock });
+  let releaseSuccess;
+  const successGate = new Promise(resolve => {
+    releaseSuccess = resolve;
+  });
+  const lateSuccess = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-late-success' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await successGate;
+      return { model: 'cheap-worker' };
+    },
+  });
+  clock = 11;
+  releaseSuccess();
+  const successResult = await lateSuccess;
+  assert.equal(successResult.ok, false);
+  assert.equal(successResult.code, 'admission_expired');
+  assert.equal(successResult.model, null);
+  assert.equal(store.size(), 0);
+  assert.equal(store.inflightSize(), 0);
+
+  let releaseFailure;
+  const failureGate = new Promise(resolve => {
+    releaseFailure = resolve;
+  });
+  const lateFailure = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-late-failure' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await failureGate;
+      throw new Error('selector failed after the deadline');
+    },
+  });
+  clock = 30;
+  releaseFailure();
+  const failureResult = await lateFailure;
+  assert.equal(failureResult.ok, false);
+  assert.equal(failureResult.code, 'admission_expired');
+  assert.equal(failureResult.model, null);
+  assert.equal(store.size(), 0);
+
+  let releaseShared;
+  const sharedGate = new Promise(resolve => {
+    releaseShared = resolve;
+  });
+  const initiator = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-shared-deadline' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await sharedGate;
+      return { model: 'cheap-worker' };
+    },
+  });
+  const waiter = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-shared-deadline' }),
+    eligible: ELIGIBLE,
+    select: async () => ({ model: 'strong-worker' }),
+  });
+  clock = 50;
+  releaseShared();
+  const [owner, shared] = await Promise.all([initiator, waiter]);
+  assert.equal(owner.code, 'admission_expired');
+  assert.equal(owner.model, null);
+  assert.equal(shared.ok, false);
+  assert.equal(shared.code, 'admission_expired');
+  assert.equal(shared.model, null);
+  assert.equal(shared.shared, true);
+  assert.equal(shared.selectorInvoked, false);
+  assert.equal(store.size(), 0);
+  assert.equal(store.inflightSize(), 0);
+});
+
+test('a deadline timer settles the flight and a replacement survives', async () => {
+  const store = createRequestContext({ inflightDeadlineMs: 20 });
+  let releaseLate;
+  let lateFinished = false;
+  const lateGate = new Promise(resolve => {
+    releaseLate = resolve;
+  });
+  const pending = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-timer' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await lateGate;
+      lateFinished = true;
+      return { model: 'cheap-worker' };
+    },
+  });
+  const waiter = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-timer' }),
+    eligible: ELIGIBLE,
+    select: async () => ({ model: 'strong-worker' }),
+  });
+  let watchdog;
+  const [owner, shared] = await Promise.race([
+    Promise.all([pending, waiter]),
+    new Promise((_, reject) => {
+      watchdog = setTimeout(() => reject(new Error('deadline did not settle')), 500);
+    }),
+  ]);
+  clearTimeout(watchdog);
+  assert.equal(lateFinished, false);
+  assert.equal(owner.ok, false);
+  assert.equal(owner.code, 'admission_expired');
+  assert.equal(owner.model, null);
+  assert.equal(shared.ok, false);
+  assert.equal(shared.code, 'admission_expired');
+  assert.equal(shared.shared, true);
+  assert.equal(shared.selectorInvoked, false);
+  assert.equal(store.inflightSize(), 0);
+  assert.equal(store.size(), 0);
+
+  let releaseReplacement;
+  const replacementGate = new Promise(resolve => {
+    releaseReplacement = resolve;
+  });
+  const replacement = store.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-timer' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await replacementGate;
+      return { model: 'mid-worker' };
+    },
+  });
+  await Promise.resolve();
+  assert.equal(store.inflightSize(), 1);
+  releaseLate();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(lateFinished, true);
+  assert.equal(store.inflightSize(), 1);
+  assert.equal(store.size(), 0);
+  releaseReplacement();
+  const replaced = await replacement;
+  assert.equal(replaced.ok, true);
+  assert.equal(replaced.model, 'mid-worker');
+  assert.equal(store.size(), 1);
+  assert.equal(store.inflightSize(), 0);
+
+  const other = createRequestContext({ inflightDeadlineMs: 20 });
+  let releaseReject;
+  const rejectGate = new Promise(resolve => {
+    releaseReject = resolve;
+  });
+  const rejectedFlight = other.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-reject' }),
+    eligible: ELIGIBLE,
+    select: async () => {
+      await rejectGate;
+      throw new Error('late selector rejection');
+    },
+  });
+  const rejected = await rejectedFlight;
+  assert.equal(rejected.code, 'admission_expired');
+  assert.equal(other.size(), 0);
+  assert.equal(other.inflightSize(), 0);
+  const survivor = await other.resolve({
+    headers: headers({ 'X-Jev-Prompt': 'prompt-reject' }),
+    eligible: ELIGIBLE,
+    select: async () => ({ model: 'strong-worker' }),
+  });
+  releaseReject();
+  await Promise.resolve();
+  assert.equal(survivor.model, 'strong-worker');
+  assert.equal(other.size(), 1);
+  assert.notEqual(survivor.model, 'cheap-worker');
+});
