@@ -140,7 +140,7 @@ M4 runs pinned `litellm[proxy]==1.106.2` from PyPI inside a disposable project v
 
 `callback_bridge.py` implements `CustomLogger.async_pre_call_hook`. It posts the JSON-safe request to `hook_server.mjs`. That adapter calls `planPreCall` in `src/hook.mjs`, which is the function `asyncPreCallHook` delegates to, and the callback copies the returned model onto the proxy request. Allowlist, excerpt, and fail-open stay in the Node modules. The adapter loads `examples/project-a/.925-jev-router/config.json`, applies it with the existing in-process mock Apply, and passes the read-back policy as `context.policy`.
 
-`config.yaml` registers sentinel `jev-router` with `api_base` `http://127.0.0.1:9/v1`, a closed port. `cheap-worker`, `strong-worker`, and `large-leader` point at the mock upstream. `config.nocallback.yaml` is the same list without the callback. Router retries are 0.
+`config.yaml` registers sentinel `jev-router` as custom provider `jev-inert`. That handler raises `sentinel_inert` and opens no socket. `cheap-worker`, `strong-worker`, and `large-leader` point at the mock upstream. `config.nocallback.yaml` is the same list without the callback. Router retries are 0. The callback and the Node adapter accept a loopback origin only after parsing it: userinfo is rejected, redirects are refused, and a non-loopback host fails closed.
 
 M3 stickiness is not on this path. `src/hook.mjs` does not read `X-Jev-*` headers, and the proxy bridge does not call `src/request-context.mjs`. Pins, shared flights, and prompt stickiness remain in-process only.
 

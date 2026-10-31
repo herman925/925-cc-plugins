@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from loopback_url import LoopbackURLError, RefuseRedirect, loopback_origin
+
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 VENV_PYTHON = ROOT / ".venv-m4" / "bin" / "python"
@@ -282,6 +284,16 @@ def _alias(model, expected):
     raise AssertionError(f"expected execute alias {expected}, upstream saw {model!r}")
 
 
+_REJECTED_URLS = (
+    "http://127.0.0.1:1234@example.invalid",
+    "http://example.invalid:9",
+    "https://127.0.0.1:9",
+    "http://127.0.0.1:9/v1",
+    "http://localhost:9",
+    "http://127.0.0.1:9@127.0.0.1:8/",
+)
+
+
 class M4ProxyTests(unittest.TestCase):
     def setUp(self):
         _post_control(SERVICES["typesafe_base"], "/reset", {})
@@ -326,6 +338,43 @@ class M4ProxyTests(unittest.TestCase):
         _alias(recorded["model"], alias)
         self.assertEqual(recorded["stream"], stream)
         return recorded
+
+    def test_00_loopback_url_rejects_userinfo_and_redirects(self):
+        for value in _REJECTED_URLS:
+            with self.subTest(value=value):
+                with self.assertRaises(LoopbackURLError):
+                    loopback_origin(value)
+        self.assertEqual(loopback_origin("http://127.0.0.1:9"), "http://127.0.0.1:9")
+        self.assertEqual(loopback_origin("http://[::1]:9/"), "http://[::1]:9")
+        with self.assertRaises(LoopbackURLError):
+            RefuseRedirect().redirect_request(None, None, 302, "Found", {}, "http://example.invalid/")
+        script = """
+import { assertLoopbackBase, LOOPBACK_REDIRECT } from './hook_server.mjs';
+const reject = %s;
+if (LOOPBACK_REDIRECT !== 'manual') throw new Error('redirect mode ' + LOOPBACK_REDIRECT);
+for (const value of reject) {
+  let threw = false;
+  try { assertLoopbackBase(value); } catch { threw = true; }
+  if (!threw) throw new Error('accepted ' + value);
+}
+if (assertLoopbackBase('http://127.0.0.1:9') !== 'http://127.0.0.1:9') throw new Error('v4 origin');
+if (assertLoopbackBase('http://[::1]:9/') !== 'http://[::1]:9') throw new Error('v6 origin');
+""" % json.dumps(list(_REJECTED_URLS))
+        env = _clean_env({})
+        env.pop("JEV_TYPESAFE_BASE", None)
+        env.pop("JEV_HOOK_URL", None)
+        completed = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=HERE,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        self.assertEqual(self._upstream()["executions"], 0)
+        self.assertEqual(self._hook()["hookRequests"], 0)
 
     def test_01_chat_completions_rewrites_choice(self):
         status, raw, _headers = self._chat(
@@ -402,64 +451,103 @@ class M4ProxyTests(unittest.TestCase):
         )
         self.assertEqual(status, 200, raw)
         text = raw.decode("utf-8", "replace")
-        self.assertTrue("event:" in text or "data:" in text, text[:500])
+        content_at = text.find("synthetic-ok")
+        stop_at = text.find("event: message_stop")
+        self.assertGreater(content_at, -1, text[:800])
+        self.assertGreater(stop_at, content_at, text[:800])
         recorded = self._assert_one_upstream("cheap-worker", True)
         self.assertGreater(recorded["bytes_sent"], 0)
+        self.assertTrue(recorded["completed"], recorded)
         self.assertEqual(self._hook()["selectorCalls"], 1)
 
     def test_06_messages_tools_preserved(self):
+        tools = [
+            {
+                "name": "lookup",
+                "description": "Look up a synthetic fixture.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                },
+            }
+        ]
+        messages = [
+            {"role": "user", "content": "Look up the fixture."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_m4_lookup",
+                        "name": "lookup",
+                        "input": {"q": "fixture"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_m4_lookup",
+                        "content": "synthetic tool result",
+                    }
+                ],
+            },
+        ]
         status, raw, _headers = self._messages(
             {
                 "model": "jev-router",
                 "max_tokens": 64,
-                "tools": [
-                    {
-                        "name": "lookup",
-                        "description": "Look up a synthetic fixture.",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {"q": {"type": "string"}},
-                            "required": ["q"],
-                        },
-                    }
-                ],
-                "messages": [
-                    {"role": "user", "content": "Look up the fixture."},
-                    {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "toolu_m4_lookup",
-                                "name": "lookup",
-                                "input": {"q": "fixture"},
-                            }
-                        ],
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_m4_lookup",
-                                "content": "synthetic tool result",
-                            }
-                        ],
-                    },
-                ],
+                "tools": tools,
+                "messages": messages,
             }
         )
         self.assertEqual(status, 200, raw)
         recorded = self._assert_one_upstream("cheap-worker", False)
+        self.assertTrue(recorded["completed"], recorded)
         hook = self._hook()
-        self.assertTrue(hook["last"]["inbound"]["mentionsLookup"])
-        self.assertTrue(hook["last"]["inbound"]["mentionsToolResult"])
-        self.assertTrue(hook["last"]["outbound"]["mentionsLookup"])
-        self.assertTrue(hook["last"]["outbound"]["mentionsToolResult"])
+        self.assertEqual(hook["last"]["inbound"]["model"], "jev-router")
+        self.assertEqual(hook["last"]["inbound"]["tools"], tools)
+        self.assertEqual(hook["last"]["inbound"]["messages"], messages)
         self.assertEqual(hook["last"]["outbound"]["model"], "cheap-worker")
-        encoded = json.dumps(recorded["body"])
-        self.assertIn("lookup", encoded)
-        self.assertIn("synthetic tool result", encoded)
+        self.assertEqual(hook["last"]["outbound"]["tools"], tools)
+        self.assertEqual(hook["last"]["outbound"]["messages"], messages)
+        body = recorded["body"]
+        upstream_tools = body.get("tools")
+        self.assertEqual(
+            upstream_tools,
+            [
+                {
+                    "type": "function",
+                    "name": "lookup",
+                    "strict": False,
+                    "description": "Look up a synthetic fixture.",
+                    "parameters": tools[0]["input_schema"],
+                }
+            ],
+            upstream_tools,
+        )
+        items = body.get("input")
+        self.assertIsInstance(items, list, body)
+        calls = [item for item in items if item.get("type") == "function_call"]
+        outputs = [item for item in items if item.get("type") == "function_call_output"]
+        self.assertEqual(len(calls), 1, items)
+        self.assertEqual(calls[0]["call_id"], "toolu_m4_lookup")
+        self.assertEqual(calls[0]["name"], "lookup")
+        self.assertEqual(json.loads(calls[0]["arguments"]), {"q": "fixture"})
+        self.assertEqual(len(outputs), 1, items)
+        self.assertEqual(outputs[0]["call_id"], "toolu_m4_lookup")
+        self.assertEqual(outputs[0]["output"], "synthetic tool result")
+        client = json.loads(raw.decode("utf-8"))
+        content = client.get("content")
+        self.assertIsInstance(content, list, client)
+        self.assertTrue(content, client)
+        self.assertTrue(all(block.get("type") == "text" for block in content), content)
+        self.assertTrue(all(block.get("type") != "tool_use" for block in content), content)
+        self.assertEqual(client.get("stop_reason"), "end_turn", client)
+        self.assertIn("synthetic-ok", json.dumps(client))
 
     def test_07_no_blind_retry_after_stream_starts(self):
         _post_control(SERVICES["upstream_base"].rsplit("/v1", 1)[0], "/control", {"mode": "mid-stream-fail"})
@@ -479,7 +567,9 @@ class M4ProxyTests(unittest.TestCase):
         _alias(recorded["model"], "cheap-worker")
         self.assertTrue(recorded["stream"])
         self.assertGreater(recorded["bytes_sent"], 0)
+        self.assertFalse(recorded["completed"], recorded)
         self.assertNotIn(b"[DONE]", raw)
+        self.assertNotIn(b"message_stop", raw)
         self.assertEqual(self._hook()["selectorCalls"], 1)
 
     def test_08_callback_disabled_makes_zero_upstream_calls(self):
@@ -501,16 +591,30 @@ class M4ProxyTests(unittest.TestCase):
                 _auth(),
                 timeout=60,
             )
+            message_headers = _auth()
+            message_headers["anthropic-version"] = "2023-06-01"
+            message_status, message_raw, _message_headers = _request(
+                "POST",
+                f"http://127.0.0.1:{port}/v1/messages",
+                {
+                    "model": "jev-router",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "This must not execute."}],
+                },
+                message_headers,
+                timeout=60,
+            )
         finally:
             proc.stop()
             SERVICES["nocallback"] = None
         self.assertGreaterEqual(status, 400, raw)
-        text = raw.decode("utf-8", "replace").lower()
-        self.assertTrue(
-            any(token in text for token in ("connection", "connect", "unreachable", "api connection", "error")),
-            raw,
-        )
+        text = raw.decode("utf-8", "replace")
+        self.assertIn("sentinel_inert", text)
         self.assertNotIn("synthetic-ok", text)
+        self.assertGreaterEqual(message_status, 400, message_raw)
+        message_text = message_raw.decode("utf-8", "replace")
+        self.assertIn("sentinel_inert", message_text)
+        self.assertNotIn("synthetic-ok", message_text)
         self.assertEqual(self._upstream()["executions"], before_upstream)
         self.assertEqual(self._hook()["hookRequests"], before_hook)
 

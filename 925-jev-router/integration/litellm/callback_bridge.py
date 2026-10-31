@@ -11,12 +11,21 @@ consult src/request-context.mjs, and this callback does not call it either.
 """
 
 import asyncio
+import importlib.util
 import json
 import os
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
+
+_loopback_path = Path(__file__).resolve().with_name("loopback_url.py")
+_loopback_spec = importlib.util.spec_from_file_location("jev_m4_loopback_url", _loopback_path)
+if _loopback_spec is None or _loopback_spec.loader is None:
+    raise RuntimeError("loopback URL parser is missing.")
+_loopback = importlib.util.module_from_spec(_loopback_spec)
+_loopback_spec.loader.exec_module(_loopback)
 
 _FORWARD_KEYS = (
     "model",
@@ -39,9 +48,10 @@ def _json_ready(value):
 
 
 def _call_hook(data):
-    hook_url = os.environ.get("JEV_HOOK_URL", "").rstrip("/")
-    if not hook_url.startswith("http://127.0.0.1:"):
-        raise RuntimeError("JEV_HOOK_URL must be the loopback Node adapter.")
+    try:
+        origin = _loopback.loopback_origin(os.environ.get("JEV_HOOK_URL", ""))
+    except _loopback.LoopbackURLError as error:
+        raise RuntimeError(str(error)) from error
     payload = {}
     for key in _FORWARD_KEYS:
         if key not in data:
@@ -52,14 +62,16 @@ def _call_hook(data):
     if "model" not in payload:
         raise RuntimeError("jev hook was given a request with no JSON model.")
     request = urllib.request.Request(
-        hook_url + "/pre-call",
+        origin + "/pre-call",
         data=json.dumps(payload).encode("utf-8"),
         headers={"content-type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with _loopback.open_loopback(request, timeout=20) as response:
             parsed = json.loads(response.read().decode("utf-8"))
+    except _loopback.LoopbackURLError as error:
+        raise RuntimeError(str(error)) from error
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", "replace")
         raise RuntimeError(f"jev hook rejected the request: {detail}") from error

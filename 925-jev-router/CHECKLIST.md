@@ -14,7 +14,7 @@ M4 command, from `925-jev-router/`, with `.venv-m4` already installed from `requ
 .venv-m4/bin/python integration/litellm/test_m4_proxy.py
 ```
 
-Result: 9 tests, 9 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. The Node suite above is unchanged.
+Result: 10 tests, 10 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. The Node suite above is unchanged.
 
 | Criterion | What was checked | Result |
 | --- | --- | --- |
@@ -33,8 +33,9 @@ Result: 9 tests, 9 pass, 0 fail (Python 3.12, LiteLLM 1.106.2). Loopback only. T
 | M4 chat rewrite | `integration/litellm/test_m4_proxy.py` posts `/v1/chat/completions` with `jev-router`. The mock upstream records one execution of `cheap-worker`. The TypeSafe stub is called once. Criteria keys are exactly `cheap-worker` and `strong-worker`. | Pass |
 | M4 leader | The same suite posts `large-leader`. Selector calls and TypeSafe calls stay 0. One upstream execution uses `large-leader`. | Pass |
 | M4 fail-open | Two stub 503s rewrite to `strong-worker` with two selector calls and one upstream execution. An ineligible choice uses the same eligible fallback, not `cheap-worker`. | Pass |
-| M4 `/v1/messages` | Non-stream, stream, and a tool-use plus tool-result history all rewrite to `cheap-worker`. The hook return still carries `lookup` and `tool_result`. The mock body does too. LiteLLM 1.106.2 delivers those executions to the mock `/v1/responses` path. `/anthropic/v1/messages` was not called. | Pass |
-| M4 sentinel inert | A second proxy loaded from `config.nocallback.yaml` returns an error for `jev-router`. The mock upstream execution count does not change, and the Node hook receives no request. | Pass |
-| M4 no blind retry | After the mock emits one stream chunk and closes, the upstream execution count stays 1 and the client body has no `[DONE]`. | Pass |
+| M4 `/v1/messages` | Non-stream, a stream that reaches `event: message_stop` after `synthetic-ok`, and a forwarded tool history all rewrite to `cheap-worker`. The hook inbound and outbound `tools` and `messages` equal the request. The mock body has tool `lookup` with that `input_schema`, one `function_call` id `toolu_m4_lookup` whose arguments are `{"q":"fixture"}`, and one `function_call_output` with that id. The client completion is text `synthetic-ok` with `stop_reason` `end_turn`, not a new tool round-trip. LiteLLM 1.106.2 delivers those executions to the mock `/v1/responses` path. `/anthropic/v1/messages` was not called. | Pass |
+| M4 sentinel inert | A second proxy loaded from `config.nocallback.yaml` returns `sentinel_inert` for `jev-router` on `/v1/chat/completions` and `/v1/messages`. The handler opens no socket. The mock upstream execution count does not change, and the Node hook receives no request. | Pass |
+| M4 no blind retry | After the mock emits one stream chunk and closes, the upstream execution count stays 1, the recorded call is not completed, and the client body has no `[DONE]` and no `message_stop`. | Pass |
+| M4 loopback URL | Parsed origins reject userinfo (`http://127.0.0.1:1234@example.invalid`), a non-loopback host, and redirects. The check does not open a socket. | Pass |
 
 Not done, on purpose: live provider traffic, live `api.typesafe.ai`, Auth A/B choice, live header smoke (#167), wiring M3 stickiness through the proxy, new credentials, deploy. M4 does not claim `/anthropic/v1/messages`.

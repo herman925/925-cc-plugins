@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { planPreCall } from '../../src/hook.mjs';
 import { PolicyError } from '../../src/errors.mjs';
 import { createMockControlPlane } from '../../src/mock-apply.mjs';
@@ -25,10 +25,48 @@ import { policyHash } from '../../src/records.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const policyPath = process.env.JEV_POLICY_PATH
   ?? path.join(here, '../../examples/project-a/.925-jev-router/config.json');
-const typesafeBase = process.env.JEV_TYPESAFE_BASE ?? '';
-if (!typesafeBase.startsWith('http://127.0.0.1:')) {
-  process.stderr.write('JEV_TYPESAFE_BASE must be the loopback TypeSafe stub.\n');
-  process.exit(1);
+
+export const LOOPBACK_REDIRECT = 'manual';
+
+export function assertLoopbackBase(value) {
+  if (typeof value !== 'string' || value === '' || value.trim() !== value) {
+    throw new Error('loopback URL must be a non-empty string.');
+  }
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('loopback URL is not absolute.');
+  }
+  if (url.username || url.password) {
+    throw new Error('loopback URL rejects userinfo.');
+  }
+  if (url.protocol !== 'http:') {
+    throw new Error('loopback URL must be http.');
+  }
+  const hostOk = url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === '[::1]';
+  if (!hostOk) {
+    throw new Error('loopback URL host is not loopback.');
+  }
+  const port = Number(url.port);
+  if (!url.port || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('loopback URL requires an explicit port.');
+  }
+  if (url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) {
+    throw new Error('loopback URL rejects a path, query, or fragment.');
+  }
+  const host = url.hostname === '::1' || url.hostname === '[::1]' ? '[::1]' : url.hostname;
+  return `http://${host}:${port}`;
+}
+
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(path.resolve(entry)).href;
+  } catch {
+    return false;
+  }
 }
 
 const token = 'synthetic-jev-test-token';
@@ -64,22 +102,36 @@ let hookRequests = 0;
 let last = null;
 
 function snapshot(data) {
-  const encoded = JSON.stringify({ tools: data?.tools ?? null, messages: data?.messages ?? null });
+  const copy = (value) => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
   return {
     model: typeof data?.model === 'string' ? data.model : null,
-    hasTools: Array.isArray(data?.tools) && data.tools.length > 0,
-    mentionsLookup: encoded.includes('lookup'),
-    mentionsToolResult: encoded.includes('tool_result') || encoded.includes('"role":"tool"'),
+    tools: copy(data?.tools ?? null),
+    messages: copy(data?.messages ?? null),
   };
 }
 
+let typesafeOrigin = '';
+
 async function transport(body) {
+  if (!typesafeOrigin) {
+    const error = new Error('loopback URL host is not loopback.');
+    error.status = 400;
+    error.transient = false;
+    throw error;
+  }
   selectorCalls += 1;
-  const response = await fetch(`${typesafeBase}/v1/systemone`, {
+  const response = await fetch(`${typesafeOrigin}/v1/systemone`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    redirect: LOOPBACK_REDIRECT,
   });
+  if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+    const error = new Error('typesafe stub refused a redirect.');
+    error.status = 400;
+    error.transient = false;
+    throw error;
+  }
   const text = await response.text();
   let parsed = null;
   try {
@@ -172,8 +224,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const port = Number(process.env.JEV_HOOK_PORT || 0);
-server.listen(port, '127.0.0.1', () => {
-  const address = server.address();
-  process.stdout.write(`hook 127.0.0.1:${address.port}\n`);
-});
+if (isDirectRun()) {
+  try {
+    typesafeOrigin = assertLoopbackBase(process.env.JEV_TYPESAFE_BASE ?? '');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'loopback URL rejected.';
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  }
+  const port = Number(process.env.JEV_HOOK_PORT || 0);
+  server.listen(port, '127.0.0.1', () => {
+    const address = server.address();
+    process.stdout.write(`hook 127.0.0.1:${address.port}\n`);
+  });
+}

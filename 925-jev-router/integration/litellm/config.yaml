@@ -1,11 +1,9 @@
-# Local M4 proxy. Sentinel jev-router is registered so the callback can run,
-# and its api_base is a closed loopback port. With no callback the request
-# cannot reach the mock upstream.
+# Local M4 proxy. Sentinel jev-router is a custom provider that raises
+# before any socket. The callback rewrites the model before that handler runs.
 model_list:
   - model_name: jev-router
     litellm_params:
-      model: openai/jev-router
-      api_base: http://127.0.0.1:9/v1
+      model: jev-inert/jev-router
       api_key: synthetic-inert-not-a-real-key
   - model_name: cheap-worker
     litellm_params:
@@ -26,6 +24,9 @@ model_list:
 litellm_settings:
   callbacks:
     - callback_bridge.proxy_handler_instance
+  custom_provider_map:
+    - provider: jev-inert
+      custom_handler: inert_sentinel.proxy_handler_instance
   num_retries: 0
   drop_params: true
 

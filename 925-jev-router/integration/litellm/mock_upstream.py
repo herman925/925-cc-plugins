@@ -164,6 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             "stream": stream,
             "body": body,
             "bytes_sent": 0,
+            "completed": False,
         }
         with STATE.lock:
             STATE.executions += 1
@@ -197,11 +198,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             self._start_stream(recorded, payload)
             self._end_chunked()
+            recorded["completed"] = True
             return
         if responses:
             payload = _responses_body(model)
             raw = json.dumps(payload).encode("utf-8")
             recorded["bytes_sent"] = len(raw)
+            recorded["completed"] = True
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(raw)))
@@ -224,6 +227,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         raw = json.dumps(payload).encode("utf-8")
         recorded["bytes_sent"] = len(raw)
+        recorded["completed"] = True
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(raw)))
