@@ -2,7 +2,14 @@ import { PolicyError } from './errors.mjs';
 
 export const EXCERPT_MAX_CHARS = 500;
 
+const SECRET_NAME = String.raw`(?:api[_-]?key|access[_-]?key|token|secret|password|authorization|[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL))`;
+const QUOTED_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*$|'(?:\\.|[^'\\])*$|\S+)`;
+const ASSIGNMENT = new RegExp(
+  String.raw`(?<![A-Za-z0-9_])(?:"${SECRET_NAME}"|${SECRET_NAME})\s*[:=]\s*${QUOTED_VALUE}`,
+  'gi',
+);
 const REDACTORS = [
+  ASSIGNMENT,
   /[a-z][a-z0-9+.-]*:\/\/[^\s/]*:[^\s@/]+@[^\s]+/gi,
   /\bsk-[A-Za-z0-9_-]{8,}\b/g,
   /\bsk-ant-[A-Za-z0-9_-]{8,}\b/g,
@@ -10,9 +17,7 @@ const REDACTORS = [
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  /\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/gi,
-  /\b(?:api[_-]?key|access[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*\S+/gi,
-  /(^|\n)\s*[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*\S+/g,
+  /\bBearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z0-9._\-+/=]{8,})/gi,
 ];
 
 export function credentialFreeExcerpt(text, max = EXCERPT_MAX_CHARS) {
@@ -21,7 +26,10 @@ export function credentialFreeExcerpt(text, max = EXCERPT_MAX_CHARS) {
     throw new PolicyError('excerpt_type', 'Task excerpt must be a string.');
   }
   let cleaned = text;
-  for (const pattern of REDACTORS) cleaned = cleaned.replace(pattern, '[redacted]');
+  for (const pattern of REDACTORS) {
+    pattern.lastIndex = 0;
+    cleaned = cleaned.replace(pattern, '[redacted]');
+  }
   const chars = Array.from(cleaned);
   if (chars.length <= max) return cleaned;
   return chars.slice(0, max).join('');

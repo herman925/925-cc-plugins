@@ -41,6 +41,44 @@ test('Draft becomes an Applied record with a stable hash and monotonic revision'
   }
 });
 
+test('apply and read return snapshots that cannot corrupt the store', () => {
+  const gateway = createMemoryGateway();
+  const draft = createDraft({
+    ...policy,
+    agents: { coder: { mode: 'per-turn' } },
+  });
+  const applied = gateway.apply(draft, {
+    appliedBy: 'synthetic-gateway',
+    appliedAt: '2026-10-31T01:00:00.000Z',
+  });
+  applied.revision = 99;
+  applied.project_id = 'mutated';
+  applied.policy.candidates.push('extra-worker');
+  applied.policy.agents.coder.mode = 'fixed';
+  const afterApply = gateway.read(policy.project_id);
+  assert.equal(afterApply.revision, 1);
+  assert.equal(afterApply.project_id, 'orca-ade-example');
+  assert.deepEqual(afterApply.policy.candidates, ['cheap-worker', 'strong-worker']);
+  assert.equal(afterApply.policy.agents.coder.mode, 'per-turn');
+  assert.notEqual(afterApply, applied);
+  assert.notEqual(afterApply.policy, applied.policy);
+
+  afterApply.policy.candidates.push('from-read');
+  afterApply.policy.fallback = 'strong-worker';
+  afterApply.applied_by = 'changed';
+  const afterRead = gateway.read(policy.project_id);
+  assert.deepEqual(afterRead.policy.candidates, ['cheap-worker', 'strong-worker']);
+  assert.equal(afterRead.policy.fallback, 'cheap-worker');
+  assert.equal(afterRead.applied_by, 'synthetic-gateway');
+  assert.notEqual(afterRead, afterApply);
+
+  const second = gateway.apply(draft, {
+    appliedBy: 'synthetic-gateway',
+    appliedAt: '2026-10-31T02:00:00.000Z',
+  });
+  assert.equal(second.revision, 2);
+});
+
 test('Apply rejects an invalid draft and any credential-shaped label', () => {
   assert.throws(() => applyDraft({ status: 'draft', project_id: 'x', policy: { schema_version: 1 } }, {
     appliedBy: 'synthetic-gateway',

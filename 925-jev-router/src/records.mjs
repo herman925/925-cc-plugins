@@ -70,16 +70,26 @@ export function applyDraft(draft, { appliedBy, appliedAt, previous = null } = {}
   };
 }
 
+function snapshot(record) {
+  return structuredClone(record);
+}
+
 export function createMemoryGateway() {
   const records = new Map();
   return {
     apply(draft, meta) {
-      const applied = applyDraft(draft, { ...meta, previous: records.get(draft.project_id) ?? null });
-      records.set(applied.project_id, applied);
-      return applied;
+      const storedPrevious = records.get(draft.project_id) ?? null;
+      const applied = applyDraft(draft, {
+        ...meta,
+        previous: storedPrevious ? snapshot(storedPrevious) : null,
+      });
+      const stored = snapshot(applied);
+      records.set(stored.project_id, stored);
+      return snapshot(stored);
     },
     read(projectId) {
-      return records.get(projectId) ?? null;
+      const stored = records.get(projectId);
+      return stored ? snapshot(stored) : null;
     },
   };
 }

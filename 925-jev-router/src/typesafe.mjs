@@ -1,4 +1,5 @@
 import { credentialFreeExcerpt } from './excerpt.mjs';
+import { eligibleModels } from './fail-open.mjs';
 
 export const SYSTEM_ONE_PATH = '/v1/systemone';
 export const JEV_DECIDE_MODEL = 'jev-latest';
@@ -15,10 +16,11 @@ export function classifyTransportFailure(error) {
   return { transient, status };
 }
 
-export function buildSystemOneBody({ policy, taskText }) {
+export function buildSystemOneBody({ policy, taskText, eligible }) {
   const excerpt = credentialFreeExcerpt(taskText);
+  const aliases = eligibleModels(policy, eligible);
   const criteria = {};
-  for (const alias of policy.candidates) criteria[alias] = alias;
+  for (const alias of aliases) criteria[alias] = alias;
   const state = { messages: [] };
   if (excerpt.trim()) state.messages.push({ role: 'user', text: excerpt });
   return {

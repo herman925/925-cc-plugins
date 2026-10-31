@@ -75,6 +75,33 @@ test('sentinel routing that cannot select a model errors instead of keeping the 
   await assert.rejects(() => planPreCall(request('jev-router'), { projectRoot: exampleRoot }), error => error.code === 'transport_missing');
 });
 
+test('decision criteria are exactly the validated eligible models', async () => {
+  const policy = {
+    schema_version: 1,
+    project_id: 'orca-ade-example',
+    candidates: ['cheap-worker', 'mid-worker', 'strong-worker'],
+    fallback: 'strong-worker',
+    default_worker_mode: 'routed',
+  };
+  const data = request('jev-router', 'Pick a model for the edit.');
+  data.model_list = ['model-list-only'];
+  const planned = await planPreCall(data, {
+    policy,
+    eligible: ['mid-worker', 'cheap-worker'],
+    transport: async body => {
+      assert.deepEqual(body.questions.model.criteria, {
+        'mid-worker': 'mid-worker',
+        'cheap-worker': 'cheap-worker',
+      });
+      assert.deepEqual(Object.keys(body.questions.model.criteria), ['mid-worker', 'cheap-worker']);
+      return { answers: { model: { choice: 'mid-worker' } } };
+    },
+  });
+  assert.equal(planned.data.model, 'mid-worker');
+  assert.equal(JSON.stringify(planned.requestBody).includes('strong-worker'), false);
+  assert.equal(JSON.stringify(planned.requestBody).includes('model-list-only'), false);
+});
+
 test('a single eligible candidate does not call TypeSafe', async () => {
   let called = false;
   const planned = await planPreCall(request('jev-router'), {

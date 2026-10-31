@@ -89,7 +89,11 @@ export async function planPreCall(data, context = {}) {
     throw new PolicyError('transport_missing', 'No TypeSafe transport is configured. M1 does not call api.typesafe.ai.');
   }
 
-  const body = buildSystemOneBody({ policy, taskText: taskTextFromRequest(data) });
+  const body = buildSystemOneBody({
+    policy,
+    taskText: taskTextFromRequest(data),
+    eligible,
+  });
   let attempt = 0;
   let choice = null;
   let transportError = null;

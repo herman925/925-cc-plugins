@@ -62,11 +62,11 @@ Request body the adapter builds:
 
 - `model`: `jev-latest` (the Jev id, not an execute alias).
 - `state.messages`: at most one user text, the credential-free excerpt. No `project_id` field and no session id field.
-- `questions.model`: `type: "choice"`. `criteria` keys are the project `candidates` (each key ≤ 255 characters). There is no top-level allowlist field.
+- `questions.model`: `type: "choice"`. `criteria` keys are the validated eligible subset only (each key ≤ 255 characters), not the wider `candidates` list and not LiteLLM `model_list`. There is no top-level allowlist field.
 
 Chosen execute id: `answers.model.choice`. Confidence is recorded when present and is not treated as a quality proof.
 
-Excerpt rule: at most 500 Unicode characters of user-visible task text, after credential redaction (keys, tokens, passwords, `.env`-style assignments, URLs with userinfo, `Bearer` values). Full prompts and repo dumps are out. The adapter reads the latest user message only. It does not copy request headers into `state`.
+Excerpt rule: at most 500 Unicode characters of user-visible task text, after credential redaction (keys, tokens, passwords, `.env`-style assignments including quoted and multiline values, JSON fields, outgoing payload fields, URLs with userinfo, `Bearer` values). Full prompts and repo dumps are out. The adapter reads the latest user message only. It does not copy request headers into `state`.
 
 ### Hook ([#163](https://github.com/herman925/925-cc-plugins/issues/163))
 
@@ -93,7 +93,7 @@ Applied record, produced only by the in-memory `applyDraft` helper in tests:
 | `applied_by` | Short label. Not a token |
 | `policy` | Re-validated policy |
 
-`createMemoryGateway` stores that record in a `Map` and reads it back by `project_id`. Unknown projects read as empty. This is the shape test. It is not an HTTP server.
+`createMemoryGateway` stores that record in a `Map` and reads it back by `project_id`. `apply` and `read` each return a defensive copy. Mutating a returned record does not change the stored one. Unknown projects read as empty. This is the shape test. It is not an HTTP server.
 
 When [#168](https://github.com/herman925/925-cc-plugins/issues/168) is coded, Apply authentication is option A: the LiteLLM admin credential the gateway already has. M1 does not read that credential, does not create a new one, and does not put it in HTML. A new secret or permission stops the work and goes to Herman.
 
