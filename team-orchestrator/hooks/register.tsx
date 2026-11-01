@@ -23,7 +23,9 @@ import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
-import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView} from './team-setup'
+import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview,readTeamInterview} from './team-setup'
+import {TEAM_TEMPLATES as PRESETS} from './team-templates'
+import {registerDraftTool} from './creation-draft'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
 import {PANEL_SETTINGS0,panelSettings,rightPanelHint} from './panel-layout'
 
@@ -101,20 +103,6 @@ const INTERVIEW =
 
 // The quick starts. Each fills the form, which stays editable, and Launch then briefs every session.
 // `sketch` uses the glyphs of the roster and the preview: ■ CEO, ● head, ◇ lead, ○ worker.
-const PRESETS = [
-  {
-    label: 'Squad', sketch: '●┬○○○', hint: 'head + 3 workers',
-    form: { team: 'Squad', ceo: '0', levels: '2', fan: '3', groups: '' },
-  },
-  {
-    label: 'All-Purpose Team', sketch: '■┬●●', hint: 'CEO + 2 heads, 4 workers each',
-    form: { team: 'All-Purpose-Team', ceo: '1', levels: '3', fan: '4', groups: 'Team 1, Team 2' },
-  },
-  {
-    label: 'Tech Team', sketch: '■┬●●●●', hint: 'CEO + 4 heads, 4 workers each',
-    form: { team: 'Tech-Team', ceo: '1', levels: '3', fan: '4', groups: 'Dev Team, UI Team, Test Team, Security Team' },
-  },
-]
 const sameShape = (f: Form, p: (typeof PRESETS)[number]) =>
   f.ceo === p.form.ceo && f.fan === p.form.fan && (f.ceo === '1' ? f.groups === p.form.groups : f.levels === p.form.levels)
 
@@ -2964,6 +2952,16 @@ export const register: Register = (on, options) => {
   sharedConfig.enabled = (options as any)?.sharedStorePreview === true
   try{sharedConfig.projectModes=parseProjectWorkspaceModes((options as any)?.projectWorkspaceModes);sharedConfig.projectModesError=''}catch{sharedConfig.projectModes=[];sharedConfig.projectModesError='Saved project workspace choices are invalid. Correct the JSON list in Saved project workspace choices in configuration before continuing. Existing preferences have not been overwritten.'}
   sharedConfig.node = String((options as any)?.sharedStoreNode ?? 'node').trim() || 'node'
+  on('tool.call',{tool:'mcp__team-orchestrator__team_draft_read'} as any,async($)=>{
+    try{return {result:JSON.stringify(await readTeamInterview($))}}
+    catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}
+  })
+  on('tool.call',{tool:'mcp__team-orchestrator__team_draft'} as any,async($,e)=>{
+    try{
+      await applyTeamInterview($,e);await setPanelView($,'setup')
+      return {result:JSON.stringify({ok:true,status:'draft_only',message:'Proposal ready in Review & permission. No team created, permission granted or session connected.'})}
+    }catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}
+  })
   on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>{if(sharedConfig.projectModesError)return {deny:sharedConfig.projectModesError};return callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})}))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false
@@ -2976,6 +2974,7 @@ export const register: Register = (on, options) => {
     await startSharedStore($,await sharedEnabled($))
     await observeTeamPresence($).catch(()=>undefined)
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
+    await registerDraftTool($)
     await $.tool.register({
       name: 'team_launch',
       description:
@@ -3639,7 +3638,7 @@ export const register: Register = (on, options) => {
   // An old setup pane can survive a hooks reload; it never owns a second body.
   on('ui.render',{component:'Pane',requestId:SETUP},async($,e)=>{const {Box}=$.ui.resolve(e);return <Box/>})
   on('ui.close',{id:DOCK},async($,e,next)=>{
-    if(e.origin.kind==='person')await update($,view,()=> 'closed')
+    if(e.origin.kind==='person'){await closeSetupMenus($);await update($,view,()=> 'closed')}
     return next(e)
   })
 }
@@ -3650,6 +3649,7 @@ async function panelPlaced($:any){
  return panes.some(p=>p.id===DOCK&&p.isPlaced)
 }
 async function setPanelView($:any,to:View){
+ if(to!=='setup')await closeSetupMenus($)
  await update($,view,()=>to)
  await $.ui.close({id:SETUP}).catch(()=>undefined)
  if(to==='closed'||(await readSettings($)).placement==='inline')await $.ui.close({id:DOCK}).catch(()=>undefined)

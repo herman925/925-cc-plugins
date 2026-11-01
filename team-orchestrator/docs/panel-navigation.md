@@ -1,4 +1,4 @@
-# Panel navigation — 0.5.49
+# Panel navigation — 0.5.50
 
 A new project starts with **＋ Create team** and **Settings** in the band. The arrow or `t` opens the same team entry. Create team opens a draft before workspace mode or management permission is enabled.
 
@@ -27,10 +27,18 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.49**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
+Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.50**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
 
 ## Sidebar hierarchy
 
 The shared workspace uses compact Team/Settings navigation. A project/status row expands Access controls only when needed; an unready workspace keeps those controls visible. Choose a team, then Members or Tasks. Each native selector shows one subject with its details and explicit actions. Changing a selector does not connect a session, pick up work or accept a task. Missing selected subjects require another explicit choice.
 
 Team info expands the full purpose. Open task retains full instructions, expected result, worker outcome, evidence and the separate head decision. Pending-operation recovery and critical access notices remain visible. Setup uses labelled single-line inputs and separate multiline instructions. Task and review forms use visible native labelled inputs; a new assignment selects its own task and clears the previous task's unsent review fields. Display settings keep placement help behind an expander and show classic card controls only when a classic roster exists.
+
+## Creation choices
+
+The first Create team step exposes the original **Squad** (head + 3 workers), **All-Purpose Team** (CEO + 2 heads, 4 workers each) and **Tech Team** (CEO + 4 heads, 4 workers each). Click a template to preview, then **Use template** to replace the draft name and members. Purpose and options stay. CEO templates use named reporting branches within one shared roster; they do not create several independent shared teams. Every member remains editable.
+
+**Interview me** starts interactive questions in the conversation. The agent uses the available multiple-choice question tool and returns its proposal to **Review & permission** through `team_draft`. The visible request stays short; a read-only helper supplies the complete current draft and question guidance to the agent. Create stays unavailable until the proposal finishes or is cancelled. It fills a draft only. You still review members and options, explicitly enable the project mode, allow management and Create separately. Editing the draft during an interview makes that proposal stale; Cancel proposal and restart Interview me to include your edits. Cancelling invalidates the proposal, without silently stopping the model turn.
+
+In Members, **Edit member** opens and closes its list. Choosing the same or a different member closes it; **Close member picker** is also available. Buttons use native click or Tab/Enter. Escape follows the host's setup-pane close behavior; reopening retains draft/selection with the picker closed. Inline Escape follows host focus behavior and is not a separate custom picker key handler.

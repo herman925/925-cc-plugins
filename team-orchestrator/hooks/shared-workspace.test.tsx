@@ -127,8 +127,9 @@ test('invalid windows and unverifiable session discovery do not create writes or
 test('control-key text and multiline pastes keep the form usable and preserve readable role instructions',options,async($:any,on:any)=>{
  const f=fixture(on,'controller'),band=await open($)
  await band.press({key:'workspace-new'});await band.input({key:'workspace-team-name',text:'Safe draft',kind:'change'});await band.press({key:'setup-next'})
- const members=(await band.find({key:'setup-member-select'})).props.options
- await band.select({key:'setup-member-select',value:members[1].value})
+ await band.press({key:'setup-member-select'})
+ const members=(await band.findAll({type:'Button'})).filter((b:any)=>b.key?.startsWith('setup-member-option-'))
+ await band.press({key:members[1].key})
  await band.input({key:'workspace-member-official-1',text:'Read role\u0001\u000b\u001b.\r\nVerify 你好\tand evidence.',kind:'change'})
  expect(await band.find({key:'setup-next'})).toBeDefined()
  expect((await band.find({key:'workspace-member-official-1'})).props.value).toBe('Read role.\nVerify 你好 and evidence.')
@@ -141,13 +142,15 @@ test('control-key text and multiline pastes keep the form usable and preserve re
 test('Back and close retain member identities, hierarchy, multiline role and draft step',options,async($:any,on:any)=>{
  fixture(on,'controller');const band=await open($);await band.press({key:'workspace-new'})
  await band.input({key:'workspace-team-name',text:'Keep me',kind:'change'});await band.press({key:'setup-next'})
- const before=(await band.find({key:'setup-member-select'})).props.options
- await band.select({key:'setup-member-select',value:before[1].value})
+ await band.press({key:'setup-member-select'})
+ const before=(await band.findAll({type:'Button'})).filter((b:any)=>b.key?.startsWith('setup-member-option-'))
+ await band.press({key:before[1].key})
  await band.input({key:'workspace-member-official-1',text:'First line.\nSecond line.',kind:'change'})
  await band.press({key:'setup-back'});await band.press({key:'setup-next'});await band.press({key:'workspace-cancel'})
  await band.press({key:'band-team'})
- const after=(await band.find({key:'setup-member-select'})).props.options
- expect(after.map((m:any)=>m.value)).toEqual(before.map((m:any)=>m.value))
+ await band.press({key:'setup-member-select'})
+ const after=(await band.findAll({type:'Button'})).filter((b:any)=>b.key?.startsWith('setup-member-option-'))
+ expect(after.map((m:any)=>m.key)).toEqual(before.map((m:any)=>m.key))
  expect((await band.find({key:'workspace-member-official-1'})).props.value).toBe('First line.\nSecond line.')
  expect(await band.find({key:'workspace-team-name'})).toBeUndefined()
 })
@@ -266,4 +269,14 @@ test('new assignment selects its own preview and cannot inherit another tasks un
  await band.press({key:'workspace-refresh'});await band.press({key:'workspace-tasks-tab'});await band.press({key:`workspace-task-${admitted.assignmentId}`})
  expect((await band.find({key:'workspace-reason'})).props.value).toBe('')
  expect(f.calls.some(c=>c.request?.command?.type==='acceptTask')).toBe(false)
+})
+
+
+test('an approved controller must finish or cancel an active interview before Create is available',options,async($:any,on:any)=>{
+ const f=fixture(on,'controller');on('prompt.submit',async(_$:any,e:any)=>({text:e.text}));on('tool.register',async(_$:any,e:any)=>({value:{tool:`mcp__team-orchestrator__${e.name}`}}))
+ const band=await open($);await band.press({key:'workspace-new'});await band.input({key:'workspace-team-name',text:'Review guard',kind:'change'})
+ await band.press({key:'setup-interview'});for(let i=0;i<3;i++)await band.press({key:'setup-next'})
+ expect(await band.find({key:'setup-interview-cancel'})).toBeDefined();expect(await band.find({key:'workspace-create'})).toBeUndefined()
+ await band.press({key:'setup-interview-cancel'});expect(await band.find({key:'workspace-create'})).toBeDefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='createFreshTeam')).toBe(false)
 })
