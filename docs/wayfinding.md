@@ -2,9 +2,9 @@
 
 Canonical map: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2). This guide records tracker operations; the linked GitHub issue is the canonical map, not this file.
 
-Status checked on 2026-10-27: the canonical map has 41 native child issues: 31 open and 10 closed. The six shared-system decision children remain open. Query GitHub for current assignments and blocking relationships; these counts are a dated snapshot.
+Status checked on 2026-11-02: the canonical map has 51 native child issues: 41 open and 10 closed. See the [roadmap reconciliation](roadmap-2026-11-02.md) for implemented foundations, bounded acceptance evidence and the restored feature backlog. Query GitHub for current assignments and blocking relationships; these counts are a dated snapshot. Open decision tickets can contain implemented subsets and still have unresolved scope.
 
-Latest continuation: [published status update](https://github.com/herman925/925-cc-plugins/issues/2#issuecomment-6440724412) and [local handoff](handoff-2026-10-27.md). The older map handoff's current-status and frontier claims are historical. No decision ticket was resolved by this documentation update.
+Latest continuation: the canonical map and [2026-11-02 reconciliation](roadmap-2026-11-02.md). The [2026-10-27 published update](https://github.com/herman925/925-cc-plugins/issues/2#issuecomment-6440724412) and [handoff](handoff-2026-10-27.md) remain historical evidence; their worktree, blocker, frontier and implementation-status claims are not current instructions. No decision ticket was resolved by the reconciliation.
 
 ## Issue structure
 
