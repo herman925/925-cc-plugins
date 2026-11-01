@@ -3,7 +3,7 @@ import {refreshSharedStore,sharedAccessState,sharedPermissionView} from './share
 import type {SharedControls} from './shared-store'
 import type {SharedProof} from './shared-bridge'
 import {TEAM_TEMPLATES,templateMembers} from './team-templates'
-import {draftId,draftMembers,draftFingerprint,interviewPrompt,interviewDraft} from './creation-draft'
+import {draftId,draftMembers,draftFingerprint,interviewPrompt,interviewDraft,registerDraftTool,INTERVIEW_REQUEST} from './creation-draft'
 import {beginSharedDraft,readSharedWorkspace,patchSharedDraft,editSharedMember,addSharedMember,removeSharedMember,sharedDraftProblem,submitSharedDraft,reconcileSharedDraft,workspaceLine,workspaceText,workspaceScope} from './shared-workspace'
 
 type Setup={scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null;memberOpen:boolean;template:string;interviewId:string;interviewSnapshot:string}
@@ -28,6 +28,7 @@ export async function startTeamSetup($:any){
  await update($,setup,()=>({...initial(),scope,active:true,storeHint:old.scope===scope?old.storeHint:null}))
 }
 export async function closeSetupMenus($:any){await set($,{memberOpen:false,template:''})}
+export async function cancelTeamInterview($:any){await set($,{interviewId:'',interviewSnapshot:''});await registerDraftTool($).catch(()=>undefined)}
 export async function applyTeamInterview($:any,input:any){
  const scope=await scopeNow($);let acquired=false
  await update($,setup,old=>{if(old.busy)return old;acquired=true;return {...old,busy:true}})
@@ -40,11 +41,12 @@ export async function applyTeamInterview($:any,input:any){
   const patch=interviewDraft(input)
   await patchSharedDraft($,{...patch,page:'new',notice:'Interview proposal ready. Review it before allowing management or creating.',error:false})
   await set($,{step:3,member:0,memberOpen:false,template:'',interviewId:'',interviewSnapshot:'',error:''})
+  await registerDraftTool($).catch(()=>undefined)
  }finally{await set($,{busy:false})}
 }
 async function finish($:any,deps:SetupDependencies){
  const w=await readSharedWorkspace($)
- if(w.createdTeamId){await set($,{active:false,error:''});await deps.onCreated();return true}
+ if(w.createdTeamId){await cancelTeamInterview($);await set($,{active:false,error:''});await deps.onCreated();return true}
  return false
 }
 async function act($:any,work:()=>Promise<void>){
@@ -91,13 +93,13 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   const current=await readSharedWorkspace($),currentSetup=await read($,setup),selection=TEAM_TEMPLATES.find(t=>t.label===currentSetup.template)
   if(!selection||current.pending)throw Error('Choose a template after the pending operation settles.')
   await patchSharedDraft($,{name:selection.form.team,members:draftMembers(templateMembers(selection,current.purpose)),notice:'Template applied. Names, roles and reporting lines remain editable.',error:false})
-  await set($,{template:'',member:0,memberOpen:false,interviewId:'',interviewSnapshot:''})
+  await set($,{template:'',member:0,memberOpen:false,interviewId:'',interviewSnapshot:''});await registerDraftTool($).catch(()=>undefined)
  })}
  async function interview(){await act($,async()=>{
   const current=await readSharedWorkspace($),currentSetup=await read($,setup)
   if(current.pending||current.busy||currentSetup.interviewId)throw Error('Finish or cancel the current proposal before starting another interview.')
   const id=draftId();await set($,{interviewId:id,interviewSnapshot:draftFingerprint(current),template:'',memberOpen:false})
-  try{const submitted=await $.prompt.submit({text:interviewPrompt(id,current)});if(submitted?.drop)throw Error(`Interview did not start: ${submitted.drop}`)}catch(error){await set($,{interviewId:'',interviewSnapshot:''});throw error}
+  try{await registerDraftTool($,interviewPrompt(id,current));const submitted=await $.prompt.submit({text:INTERVIEW_REQUEST});if(submitted?.drop)throw Error(`Interview did not start: ${submitted.drop}`)}catch(error){await cancelTeamInterview($);throw error}
  })}
 
  return <Box flexDirection="column">
@@ -109,7 +111,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   </Box>
   {s.error&&<Text color="yellow">{s.error}</Text>}
   {w.notice&&<Text color={w.error?'yellow':'green'}>{w.notice}</Text>}
-  {s.interviewId&&<Box flexDirection="column"><Text dimColor>Interview in this conversation. Its proposal returns here for review; editing this draft will require restarting the interview.</Text><Button key="setup-interview-cancel" label="Cancel proposal" onPress={async()=>{if(!busy)await set($,{interviewId:'',interviewSnapshot:''})}}/></Box>}
+  {s.interviewId&&<Box flexDirection="column"><Text dimColor>Interview in this conversation. Its proposal returns here for review; editing this draft will require restarting the interview.</Text><Button key="setup-interview-cancel" label="Cancel proposal" onPress={async()=>{if(!busy)await cancelTeamInterview($)}}/></Box>}
   {pending?<Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
    <Text weight="bold">Creation is awaiting confirmation.</Text><Text>The original request is kept. Check its receipt before making another change.</Text>
    <Box flexWrap="wrap" columnGap={1}><Button key="workspace-reconcile" label="Check receipt" onPress={async()=>reconcile()}/>{w.retry&&<Button key="workspace-retry" label="Retry same operation" onPress={async()=>reconcile(true)}/>}</Box>
@@ -170,7 +172,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
     <Button key="tab-shared" label="Open teams" onPress={async()=>{if(!busy)await deps.onOpenTeams()}}/>
     <Button key="setup-discard" label="Discard draft…" onPress={async()=>{if(!busy)await set($,{discard:true})}}/>
    </Box>
-   {s.discard&&<Box flexWrap="wrap" columnGap={1}><Text>Discard this unsaved draft?</Text><Button key="setup-keep-draft" label="Keep draft" onPress={async()=>set($,{discard:false})}/><Button key="setup-confirm-discard" label="Discard" onPress={async()=>{if(!busy){await patchSharedDraft($,{page:'home',members:[],name:'',purpose:''});await set($,{active:false,step:0,discard:false,memberOpen:false,template:'',interviewId:'',interviewSnapshot:''});await deps.onClose()}}}/></Box>}
+   {s.discard&&<Box flexWrap="wrap" columnGap={1}><Text>Discard this unsaved draft?</Text><Button key="setup-keep-draft" label="Keep draft" onPress={async()=>set($,{discard:false})}/><Button key="setup-confirm-discard" label="Discard" onPress={async()=>{if(!busy){await patchSharedDraft($,{page:'home',members:[],name:'',purpose:''});await set($,{active:false,step:0,discard:false,memberOpen:false,template:'',interviewId:'',interviewSnapshot:''});await registerDraftTool($).catch(()=>undefined);await deps.onClose()}}}/></Box>}
   </Box>}
  </Box>
 }

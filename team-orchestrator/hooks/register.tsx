@@ -25,7 +25,7 @@ import type { SharedControls } from './shared-store'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
 import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview} from './team-setup'
 import {TEAM_TEMPLATES as PRESETS} from './team-templates'
-import {INTERVIEW_SCHEMA} from './creation-draft'
+import {registerDraftTool} from './creation-draft'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
 import {PANEL_SETTINGS0,panelSettings,rightPanelHint} from './panel-layout'
 
@@ -2965,7 +2965,7 @@ export const register: Register = (on, options) => {
     await startSharedStore($,await sharedEnabled($))
     await observeTeamPresence($).catch(()=>undefined)
     await $.command.register({ name: 'team', description: 'Open the Team Orchestrator form' })
-    await $.tool.register({name:'team_draft',description:'Return a shared team proposal from the user-started Interview me flow to its editable Review & permission panel. Requires its live interviewId and unchanged draft. Does not create teams, grant permission or connect/launch sessions.',inputSchema:INTERVIEW_SCHEMA as any})
+    await registerDraftTool($)
     await $.tool.register({
       name: 'team_launch',
       description:

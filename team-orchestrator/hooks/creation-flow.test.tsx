@@ -3,7 +3,7 @@ import {world,mountBand,ID1,ID2} from './test-world'
 import {TEAM_TEMPLATES,templateMembers} from './team-templates'
 import {interviewDraft} from './creation-draft'
 
-async function open($:any,on:any,sid=()=>ID1){const files=world(on);on('session.id',async()=>({value:sid()}));const band=await mountBand($,66);await band.press({key:'main'});return {files,band}}
+async function open($:any,on:any,sid=()=>ID1){const files=world(on),registrations:any[]=[];on('session.id',async()=>({value:sid()}));on('tool.register',async(_$,e)=>{registrations.push(e);return {value:{tool:e.name.startsWith('mcp__')?e.name:`mcp__team-orchestrator__${e.name}`}}});const band=await mountBand($,66);await band.press({key:'main'});return {files,band,registrations,protocols:()=>registrations.filter(e=>e.description?.includes('with interviewId')).map(e=>e.description as string)}}
 const proposal=(id:string)=>({tool:'mcp__team-orchestrator__team_draft',interviewId:id,name:'Interviewed team',purpose:'Verify the proposal',members:[{name:'Lead',role:'Review',boss:null,officialText:'Delegate and review.'},{name:'Worker',role:'Verify',boss:'Lead',officialText:'Read the brief.\nReturn evidence.'}]})
 const token=(prompt:string)=>prompt.match(/with interviewId ([a-f0-9]+)/)![1]
 
@@ -46,14 +46,15 @@ test('member picker toggles closed, selecting the same member closes, and close/
 })
 
 test('Interview me submits interactive guidance once and proposal opens Review without creation or permission',async($,on)=>{
- const prompts:string[]=[];on('prompt.submit',async(_$,e)=>{prompts.push(e.text);return {text:e.text}})
- const {files,band}=await open($,on)
- await band.press({key:'setup-interview'})
- expect(prompts.length).toBe(1);expect(await band.find({key:'setup-interview'})).toBeUndefined()
+ const visible:string[]=[];on('prompt.submit',async(_$,e)=>{visible.push(e.text);return {text:e.text}})
+ const {files,band,registrations,protocols}=await open($,on)
+ await band.press({key:'setup-interview'});const prompts=protocols();expect(registrations[registrations.length-1].isDeferred).toBe(false)
+ expect(prompts.length).toBe(1);expect(visible[0]).not.toContain('interviewId');expect(visible[0]).not.toContain('officialText');expect(visible[0]).not.toContain('mcp__');expect(await band.find({key:'setup-interview'})).toBeUndefined()
  for(const text of ['AskUserQuestion','request_user_input_async','clarify','Keep the turn open','Do not call team_launch'])expect(prompts[0]).toContain(text)
  const response:any=await $.tool.call(proposal(token(prompts[0])) as any)
  expect(typeof response.result).toBe('string');expect(JSON.parse(response.result).status).toBe('draft_only')
  expect(JSON.stringify(await band.drawn())).toContain('Interviewed team')
+ expect(registrations[registrations.length-1].isDeferred).toBe(true);expect(registrations[registrations.length-1].description).not.toContain('with interviewId')
  expect(await band.find({key:'setup-review-members'})).toBeDefined()
  expect(await band.find({key:'workspace-create'})).toBeUndefined()
  expect(await band.find({key:'setup-interview-cancel'})).toBeUndefined()
@@ -66,14 +67,14 @@ test('Interview me submits interactive guidance once and proposal opens Review w
 })
 
 test('stale, cancelled and wrong-conversation interview proposals preserve the current draft',async($,on)=>{
- const prompts:string[]=[];let sid:string=ID1;on('prompt.submit',async(_$,e)=>{prompts.push(e.text);return {text:e.text}})
- const {band}=await open($,on,()=>sid)
+ let sid:string=ID1;on('prompt.submit',async(_$,e)=>({text:e.text}))
+ const {band,protocols,registrations}=await open($,on,()=>sid)
  await band.press({key:'setup-interview'});await band.input({key:'workspace-team-name',text:'Manual edit',kind:'change'})
- const stale:any=await $.tool.call(proposal(token(prompts[0])) as any);expect(JSON.stringify(stale)).toContain('draft changed')
+ const stale:any=await $.tool.call(proposal(token(protocols()[0])) as any);expect(JSON.stringify(stale)).toContain('draft changed')
  expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Manual edit')
- await band.press({key:'setup-interview-cancel'});const cancelled:any=await $.tool.call(proposal(token(prompts[0])) as any);expect(JSON.stringify(cancelled)).toContain('DRAFT_REFUSED')
+ await band.press({key:'setup-interview-cancel'});expect(registrations[registrations.length-1].isDeferred).toBe(true);const cancelled:any=await $.tool.call(proposal(token(protocols()[0])) as any);expect(JSON.stringify(cancelled)).toContain('DRAFT_REFUSED')
  await band.press({key:'setup-interview'});sid=ID2
- const moved:any=await $.tool.call(proposal(token(prompts[1])) as any);expect(JSON.stringify(moved)).toContain('DRAFT_REFUSED')
+ const moved:any=await $.tool.call(proposal(token(protocols()[1])) as any);expect(JSON.stringify(moved)).toContain('DRAFT_REFUSED')
  sid=ID1;expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Manual edit')
 })
 
