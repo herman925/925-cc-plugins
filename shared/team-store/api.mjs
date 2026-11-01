@@ -48,6 +48,7 @@ export async function createTeamApi(options) {
     // Only the client UI calls this method; it is deliberately absent from the
     // public execute command catalogue.
     approveController:async input=>{const {db,value}=await request({...input,command:{type:'approveController'}},true); return db.execute(value);},
+    launch:async input=>{const {db,value}=await request(input,true);if(!['reserveLaunch','claimLaunch','attachLaunch'].includes(value.command.type))throw refusal('API_OPERATION_DENIED','Not a launch operation.');return db.execute(value);},
     close:async()=>{if(store) await store.close();},
   });
 }

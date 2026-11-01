@@ -1,0 +1,115 @@
+{
+  "mainStoreUsed": false,
+  "bindings": [
+    {
+      "member_id": "head",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "8ccf74c0-16b2-4706-8707-e6574e31671d",
+      "execution_host_id": "local",
+      "context_id": "fdd7a68b-1c4b-477f-882e-abff200f619f::C:/Users/Herman/AppData/Local/Temp/team-questions-native-def4b2e085ed4e7fb52fcc861b3cbb87/project",
+      "terminal_handle": "term_fd7f3270-2868-4f76-b5f7-77f201bd0a38",
+      "incarnation_id": "fe492fb3-3523-4bbc-87eb-5f70b5fcf1e8",
+      "generation": 1
+    },
+    {
+      "member_id": "worker2",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "f8c9da67-5b2b-49b6-9ced-a6c95ca6b536",
+      "execution_host_id": "local",
+      "context_id": "fdd7a68b-1c4b-477f-882e-abff200f619f::C:/Users/Herman/AppData/Local/Temp/team-questions-native-def4b2e085ed4e7fb52fcc861b3cbb87/project",
+      "terminal_handle": "term_d970f3ed-a712-46a4-9537-c68d291c3b00",
+      "incarnation_id": "e876205c-90de-4203-82ff-da6f37e23bf2",
+      "generation": 1
+    }
+  ],
+  "terminalCountAfterRepeat": 2,
+  "scope": "Disposable native launch smoke test; no full autonomous task lifecycle or fresh approval UI acceptance claimed",
+  "bound": true,
+  "initialFinding": "First launch rejected inline --settings JSON on Windows. That claim was retained; a separate fresh member verified the settings-file repair.",
+  "fixtureRoot": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-questions-native-def4b2e085ed4e7fb52fcc861b3cbb87",
+  "fixtureApproval": "Seeded through the trusted test factory; no new approval-button acceptance claimed",
+  "workerScreen": [
+    "▎",
+    "▎● Membership verified. No work to claim.",
+    "▎",
+    "▎  ┌──────────────────┬────────────────────────────────────┐",
+    "▎  │       Item       │               Value                │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Member           │ worker2                            │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Team             │ team2 — \"Disposable launch retest\" │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Role             │ Wait for assigned work             │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Boss             │ head2                              │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Level            │ 2 (no agent, no write)             │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Membership state │ active                             │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Binding          │ ready, generation 1                │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Config version   │ 5                                  │",
+    "▎  ├──────────────────┼────────────────────────────────────┤",
+    "▎  │ Team function    │ \"No product work delegated\"        │",
+    "▎  └──────────────────┴────────────────────────────────────┘",
+    "▎",
+    "▎  Inbox: empty. 0 messages, no notices. No assignment admitted.",
+    "▎",
+    "▎  Status: waiting. Nothing to do until head2 admits an assignment. Tell me when to re-check inbox.",
+    "✻ Sautéed for 42s · done 2:42 AM",
+    " ◆ Team Orchestrator v0.5.52  [ ▸ ][ Open teams ][ ⚙ Settings ] │ ●┬●○○ Team tools · press t to open                                                                                                [-]",
+    "╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    "│  Session Panel  v0.3.65                                                                                                                                                        [ ⚙ Settings ▾ ] │",
+    "│ [ Enhance ][ Undo ][ Send ]                                                                                                                                                                     │",
+    "│ ● Check team membership and inbox                         ✓ 35s   ▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒▓▒ 100% [ × ]   │",
+    "╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    "───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Native launch retest ─",
+    "❯",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Model: Opus 5.5 v2.1.316 | Session ID: f8c9da67-5b2b-49b6-9ced-a6c95ca6b536 | Thinking: medium | Cached: 136.8k | In: 55.1k | Out: 1.2k",
+    "  Context: [█░░░░░░░░░░░░░░░] 39k/1.0M (4%) | Skill: none | [No credentials] | [No credentials] | Reset: 2hr 17m",
+    "  ⎇ main ✗ (+0,-0) | S:0 | M:0 | no remote | 3cf4d78",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+  ],
+  "repeatedLaunchResponse": {
+    "ok": true,
+    "result": {
+      "launch": {
+        "launch_id": "native-worker2",
+        "member_id": "worker2",
+        "controller_id": "b42b972b4efd2451b9a013d6a44c4b1ea733e56e2572a55f01daf39cd04b02f1",
+        "machine_id": "Herman-5090",
+        "conversation_id": "f8c9da67-5b2b-49b6-9ced-a6c95ca6b536",
+        "status": "bound",
+        "generation": 3,
+        "created_at_ms": 1793558480793
+      },
+      "queued": false
+    }
+  },
+  "launches": [
+    {
+      "launch_id": "native-worker",
+      "member_id": "worker",
+      "controller_id": "b42b972b4efd2451b9a013d6a44c4b1ea733e56e2572a55f01daf39cd04b02f1",
+      "machine_id": "Herman-5090",
+      "conversation_id": "8fde9257-8d1c-4416-bc08-950248f29a57",
+      "status": "claimed",
+      "generation": 2,
+      "created_at_ms": 1793558364674
+    },
+    {
+      "launch_id": "native-worker2",
+      "member_id": "worker2",
+      "controller_id": "b42b972b4efd2451b9a013d6a44c4b1ea733e56e2572a55f01daf39cd04b02f1",
+      "machine_id": "Herman-5090",
+      "conversation_id": "f8c9da67-5b2b-49b6-9ced-a6c95ca6b536",
+      "status": "bound",
+      "generation": 3,
+      "created_at_ms": 1793558480793
+    }
+  ]
+}

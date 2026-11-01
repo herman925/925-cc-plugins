@@ -1,5 +1,7 @@
 # Shared team-store contract and adapter
 
+**Schema 7 / Mod 0.5.52:** [bounded questions, deadline notices and fresh member launch](SCHEMA-7-QUESTIONS-LAUNCH.md). Historical schema-6 validation below remains a checkpoint, not full acceptance of the newer runtime.
+
 **Mod 0.5.51 runtime preview:** see [the schema-6 runtime](SCHEMA-6-RUNTIME.md) for durable inbox, retry history, explicit update, gates and deadline behavior. The schema-5 and earlier descriptions below describe their historical foundation; they do not establish acceptance of the newer runtime.
 
 This is the **unreleased** contract foundation and store-adapter increment of [Shared team store: one schema, one lifecycle contract, two engines](https://github.com/herman925/925-cc-plugins/issues/154).

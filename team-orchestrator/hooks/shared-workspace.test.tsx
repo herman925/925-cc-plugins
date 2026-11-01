@@ -15,6 +15,7 @@ function fixture(on:any,who='head'){
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
   const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
   const ok=(value:any)=>JSON.stringify({ok:true,result:value})
+  if(envelope.mode==='launchMember')return ok({launch:{status:'queued'},queued:true})
   if(envelope.mode==='inboxPoll')return ok({message:null})
   if(envelope.mode==='inboxAttached')return ok({confirmed:true})
   if(envelope.mode==='listSessions')return control.discoveryFailure?JSON.stringify({ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:'No proof'}}):ok({sessions:[{label:'Verified worker',reference:{projectRoot:'C:/proj',conversationId:ID2,terminalHandle:'term_w',contextId:'r1::C:/proj'}}]})
@@ -344,3 +345,17 @@ test('an approved controller must finish or cancel an active interview before Cr
  await band.press({key:'setup-interview-cancel'});expect(await band.find({key:'workspace-create'})).toBeDefined()
  expect(f.calls.some(c=>c.request?.command?.type==='createFreshTeam')).toBe(false)
 })
+
+
+test('shared member launch is a native action with generation checks and visible capacity queue',options,async($:any,on:any)=>{
+ const f=fixture(on);f.model.bindings=f.model.bindings.filter((b:any)=>b.member_id==='head');
+ const band=await open($);await band.press({key:'workspace-launch-worker'});
+ const call=f.calls.find(c=>c.mode==='launchMember');expect(call.request.command.type).toBe('reserveLaunch');expect(call.request.command.memberId).toBe('worker');expect(call.request.command.expectedMemberGeneration).toBe(1);expect(call.request.command.expectedControllerGeneration).toBe(1);
+ expect(JSON.stringify(await band.drawn())).toContain('Waiting for capacity');
+});
+test('inbox question form sends a typed question without acknowledging or changing a task',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-inbox-tab'});await band.press({key:'question-new'});
+ await band.input({key:'question-text',text:'Which approach should I use?',kind:'change'});await band.press({key:'question-send'});
+ const q=f.calls.find(c=>c.request?.command?.type==='askQuestion').request.command;expect(q.recipientMemberId).toBe('worker');expect(q.assignmentId).toBe(null);expect(q.question).toBe('Which approach should I use?');expect(q.expectedConfigVersion).toBe(5);
+ expect(f.calls.some(c=>c.request?.command?.type==='readInbox')).toBe(false);
+});

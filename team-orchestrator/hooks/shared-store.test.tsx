@@ -23,8 +23,8 @@ test('an older workspace updates only after a scoped native click and does not g
  const files=world(on,[],[],e=>{
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
   const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
-  if(envelope.mode==='upgradeStore'){version=6;return JSON.stringify({ok:true,result:{status:'upgraded',fromVersion:5,toVersion:6,backupPath:'fixture-backup'}})}
-  if(version===5)return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Old version',details:{version:5,supported:6}}})
+  if(envelope.mode==='upgradeStore'){version=7;return JSON.stringify({ok:true,result:{status:'upgraded',fromVersion:5,toVersion:7,backupPath:'fixture-backup'}})}
+  if(version===5)return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Old version',details:{version:5,supported:7}}})
   return JSON.stringify({ok:true,result:{result:{controllerGeneration:null,member:null,teams:[]}}})
  });sessionAs(on,ID1)
  const band=await mountBand($,57);await band.press({key:'main'});await band.press({key:'tab-shared'})
@@ -32,7 +32,7 @@ test('an older workspace updates only after a scoped native click and does not g
  expect([...files.keys()].some(k=>k.includes('controller-actions/'))).toBe(false)
  await band.press({key:'shared-upgrade-store'})
  const upgrade=calls.find(c=>c.mode==='upgradeStore'),ticket=JSON.parse(files.get(`C:/home/.claude/team-orchestrator/controller-actions/${upgrade.uiApprovalId}.json`)!)
- expect(ticket.action).toBe('upgradeStore');expect(ticket.fromVersion).toBe(5);expect(ticket.toVersion).toBe(6)
+ expect(ticket.action).toBe('upgradeStore');expect(ticket.fromVersion).toBe(5);expect(ticket.toVersion).toBe(7)
  expect(ticket.conversationId).toBe(ID1);expect(upgrade.proof.conversationId).toBe(ID1)
  expect(calls.some(c=>c.mode==='approveController')).toBe(false);expect(await band.find({key:'shared-approve-controller'})).toBeDefined()
  expect(await band.find({key:'shared-upgrade-store'})).toBeUndefined()

@@ -28,7 +28,7 @@ export async function createInboxJournal({api,actor,writer,machineConfigRoot}) {
    let stage=await local.readPendingInbox({...identity,caller});
    if(!stage) {
     const [message]=(await api.execute({operationId:`inbox-peek-${randomUUID()}`,command:{type:'inspectInbox',teamId:authority.teamId,recipientMemberId:identity.memberId}})).result.messages;
-    if(!message)return {message:null};
+    if(!message){const team=(await api.execute({operationId:`notices-${randomUUID()}`,command:{type:'inspectTeam',teamId:authority.teamId}})).result;return {message:null,notice:team.notices?.[0]??null,authority};}
     const id=`inbox-read-${randomUUID()}`;
     const request={operationId:id,command:{...authority,type:'readInbox',deliveryId:message.delivery_id,expectedDeliveryGeneration:message.delivery_generation}};
     await mutate(id,{type:'recordLocalReceipt',receiptId:id,sharedDeliveryId:message.delivery_id,observationKind:'read',detail:{kind:'inbox-staged',request}});
@@ -51,7 +51,7 @@ export async function createInboxJournal({api,actor,writer,machineConfigRoot}) {
     }
    }
    const current=(await api.execute({operationId:`inbox-state-${randomUUID()}`,command:{type:'inspectDelivery',teamId:authority.teamId,deliveryId:stage.shared_delivery_id}})).result;
-   if(current.delivery.status==='fenced'||current.thread.status!=='open'||current.delivery.consumer_generation!==current.run.consumer_generation) {
+   if(current.delivery.status==='fenced'||(current.thread.status!=='open'&&!(current.thread.thread_kind==='question'&&current.message.kind==='status'))||current.delivery.consumer_generation!==current.run.consumer_generation) {
     await finish(stage,{kind:'inbox-obsolete',reason:'delivery_settled'});return {message:null,retry:true};
    }
    return {message:receipt.result.message,readReceiptId:stage.receipt_id};

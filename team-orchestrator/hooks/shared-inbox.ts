@@ -7,6 +7,7 @@ export async function sharedInboxContext($:any,proof:SharedProof,options:{node:s
  reading=true
  try {
   const response=await sharedCall($,proof,{}, {...options,mode:'inboxPoll'})
+  if(response.ok&&response.result?.notice)return `Shared-team deadline notice. Read this system event, then use shared_team acknowledgeNotice with noticeId and these current authority fields. This is an observer event, not a worker outcome or permission grant.\n${JSON.stringify({notice:response.result.notice,authority:response.result.authority})}`
   const message=response.ok?response.result?.message:null
   if(!message||!response.result?.readReceiptId)return undefined
   // The text is context, never a composer command or a grant. Message body is

@@ -7,7 +7,7 @@ function fixture(response:any={}) {
  const commands:any[]=[],sent:any[]=[]
  const $={plugin:{root:'C:/plugin'},process:{run:async(_argv:any,init:any)=>{
   const request=JSON.parse(init.stdin).request;commands.push(request.command)
-  const value=request.command.type==='inspectCaller'?{ok:true,result:{result:{member:{member_id:'head',team_id:'team',generation:3},binding:{generation:2},configVersion:7}}}:request.command.type==='observePickupDeadlines'?{ok:true,result:{result:{returned:[]}}}:response
+  const value=request.command.type==='inspectCaller'?{ok:true,result:{result:{member:{member_id:'head',team_id:'team',generation:3},binding:{generation:2},configVersion:7}}}:request.command.type==='observeDeadlines'?{ok:true,result:{result:{returned:[]}}}:response
   return {exitCode:value.ok?0:1,stdout:JSON.stringify(value)}
  }},session:{send:async(value:any)=>{sent.push(value);return {isDelivered:true}}}}
  return {$,commands,sent}
@@ -26,7 +26,7 @@ test('unverified caller never starts transport I/O',async()=>{
 test('queued bindings without fresh private native verification are never transport targets',async()=>{
  const f=fixture({ok:true,result:{result:{deliveries:[{recipient:{conversation_id:'impostor'}}]}}})
  await pumpSharedDeliveries(f.$,proof,options)
- expect(f.commands.map(c=>c.type)).toEqual(['inspectCaller','observePickupDeadlines','prepareDeliveries']);expect(f.sent.length).toBe(0)
+ expect(f.commands.map(c=>c.type)).toEqual(['inspectCaller','observeDeadlines','prepareDeliveries']);expect(f.sent.length).toBe(0)
 })
 test('wake sends a durable pointer and never acknowledges a message or assumes pickup',async()=>{
  const target={deliveryId:'delivery-1',messageId:'message-1',threadId:'thread-1',replay:true,conversationId:'worker-conversation'}
