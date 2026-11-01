@@ -89,7 +89,7 @@ test('inline setup fallback closes the native pane without losing the draft',asy
  expect(await band.find({key:'workspace-team-name'})).toBeUndefined()
  await band.press({key:'panel-inline-shortcut'})
  expect(placed).toBe(false)
- expect((await band.find({key:'workspace-team-name'})).props.label).toBe('Team name: ')
+ expect((await band.find({key:'workspace-team-name'})).props.label).toBe('Team name')
  await band.input({key:'workspace-team-name',text:'Accessible inline',kind:'change'})
  await band.press({key:'close'});await band.press({key:'band-team'})
  expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Accessible inline')
