@@ -1,0 +1,657 @@
+{
+  "sourceCommit": "e3366b565bfa7511b99b23637674df48c16bbc02",
+  "comparison": "Tracked hooks, store, API types and manifest; LF normalized. SDK-generated typings excluded.",
+  "allMatch": true,
+  "files": [
+    {
+      "path": ".claude-plugin/plugin.json",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f84f465917877f12179963e9c6893b4a8edbf6ba83c6de0b4984f07022410ae7"
+    },
+    {
+      "path": "hooks/adding.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a48c4b815ca983b94ec7d1ee9601b6fd6a8568566ea166ca68531bef4dde2443"
+    },
+    {
+      "path": "hooks/adding.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c21380f146abcd4a0395e78430a06a6ab49bd22f677d07f71e57cd7c26c33096"
+    },
+    {
+      "path": "hooks/assumptions.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "18e6760bd7684a7471bc4169e87a0c17962e6089967bda35499221363eb5101d"
+    },
+    {
+      "path": "hooks/assumptions.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "3d0f9bc2500aae40ed1e3b951cd294e124bb97b91dc2e79d5ec38fdd35ab491a"
+    },
+    {
+      "path": "hooks/changes.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c88c35b301c960f4a6dd52a6001228768e59aba180aa890daddf999093b4e7f3"
+    },
+    {
+      "path": "hooks/cleanup-cycle.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c6468f3b8363be652220d605a1fbb1c79b777544fd50cf128cbd98f60505f425"
+    },
+    {
+      "path": "hooks/copies.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "88f9fc2d16e6f2d3f7c58e273738c3fbbe7915ef2e11d6e2f00a8265360aaa7f"
+    },
+    {
+      "path": "hooks/crash.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "afdf8d8dd4ffd16a3176e48cc58734b2a506275f23ee41f6ee97b17deb58dcf7"
+    },
+    {
+      "path": "hooks/creation-draft.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "92999fd953fc44a8cd96d1c750318c1f3be895194af6ff9a233baf2a35e9be63"
+    },
+    {
+      "path": "hooks/creation-flow.test.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "57a0002f50871911af2227f809584909a126f1ea880b01d56053db41feb21167"
+    },
+    {
+      "path": "hooks/crypto.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "89a6f68977d59cb0c72fb5cbfb3d8326ccb7020c51f58b0c3cc0df341ebe265b"
+    },
+    {
+      "path": "hooks/crypto.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "93b89c614e02d4f3c6646e823625e3500dd87a8d24aa61a3dd3c7769b1046d97"
+    },
+    {
+      "path": "hooks/guard.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "6d7d8c958088f2ea1d7c2f05cdb2e71aea1e2f5a12f9f6b07dd38753bf8628ea"
+    },
+    {
+      "path": "hooks/guard.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8e1739220ebb457f1bdcbc85cfbbb7274ecb8fc528777fc3d75d732494b522c6"
+    },
+    {
+      "path": "hooks/heal.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "cde261fc1d1fbf2b7d769f92fbb54be913ac2f03779d8256ee1ccfa546fc618e"
+    },
+    {
+      "path": "hooks/hooks.json",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d842d789476d67282d0f04b7e5fdc68a3d981ccec65dd79cfa2d11eed13fb828"
+    },
+    {
+      "path": "hooks/housekeeping.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "27a51fbed951920d40dba4f6427b9f41f39c5ceb3192b8bbe203de3ff870eb63"
+    },
+    {
+      "path": "hooks/housekeeping.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9bd03136654cf88b6b131d1c90e81c4db09a30015f45ba9b73d50b6164da5722"
+    },
+    {
+      "path": "hooks/identity.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9471f48986ee3de67835abb0b9e3fa7f562604f185c0173577f27dff1cf34432"
+    },
+    {
+      "path": "hooks/identity.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c5352a8e261698be0f4fa7f6db4b8a9cbd25e4d9e111727f29cdb611bb076198"
+    },
+    {
+      "path": "hooks/jump.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "b8c0a600cb5ce8fd5ec510c4af3501efe9647244889d8c732439a61633b2ee12"
+    },
+    {
+      "path": "hooks/launch.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "6dc8573bb26085b99ad4849a26ed7734d224e0596e98cb203c848acbe58c1142"
+    },
+    {
+      "path": "hooks/layout.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8d1994fbafdbd7c9e8e6fa97b76911cf11e033ff268dddf1f871860ff6b909dc"
+    },
+    {
+      "path": "hooks/layout.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "bd94bf866b5b002962282eed58a5bc081f7c161e3e253bb08fd95c1d910ed856"
+    },
+    {
+      "path": "hooks/lifecycle.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "50f42d660f6afc1aba52580165d6f431725c7a5967ec6d672093f5d024ee35ce"
+    },
+    {
+      "path": "hooks/linux.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "64ea8433605fb66cf288fa6b3ad0efa756b5d386c3d7f13c55c24e2d3512c897"
+    },
+    {
+      "path": "hooks/lock.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "25c36351973bdfa524de9e35c03daa30227851d1f8292b695db02268d4bd866b"
+    },
+    {
+      "path": "hooks/mend.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9fa2acef8fc526078e8ae1b136c440302e7093bc26e0dfe063c7bbc03db7e5cf"
+    },
+    {
+      "path": "hooks/mention.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f62c7760ce9fc5ecaf9fb4f5860f3dd07dbb0cb475a75ac8d0a5ab214f167786"
+    },
+    {
+      "path": "hooks/models.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9a9407d84020df215729c9ddde32b00c1b9a87202208b2758362440ca949be32"
+    },
+    {
+      "path": "hooks/naming.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c4e2a0144a5f12816509129d30841047a1411e105d43990acd88cb02fa59e16e"
+    },
+    {
+      "path": "hooks/navigation.test.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "2e4bd2f065757ac94240af108f0932d52b28db8587e74247a62f6642d3b53ead"
+    },
+    {
+      "path": "hooks/panel-layout.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e8c4478714153c3a32805c38f7f1c0b6594079fadbb1db9184610c5fa6d475a3"
+    },
+    {
+      "path": "hooks/panel-layout.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "c7117fff73ba8e1bb48767b9a0db6f8fa7a076219267e91ac45e11f2da2475bc"
+    },
+    {
+      "path": "hooks/platform.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "6e64aae75da5c48b459b6561a94ae95d19ed6b9e2e86e6612e130096eb70dbe9"
+    },
+    {
+      "path": "hooks/platform.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "31b28f958b8d5f6594ec128c26b9c565764fbbd9691a3bc7664a7cb5d7a18ac5"
+    },
+    {
+      "path": "hooks/project-workspace.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "2a688ae9833966ecaf7029309816d76979530a1013b25de0ea360b358d2015b1"
+    },
+    {
+      "path": "hooks/project-workspace.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "3c0441d73633099d911cbac5e98c19ef79870e4f59e0cdb3b94e5b5434965241"
+    },
+    {
+      "path": "hooks/question-guidance.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "fa5ad36718a98872d433103e8784db55b2ed4687fa9640155c4d59e5074a42a1"
+    },
+    {
+      "path": "hooks/readiness.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a665fca4b7412332eafaf0a4e30992aa08257a8b02af7eaa86b75f549aa9a32c"
+    },
+    {
+      "path": "hooks/register.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e8365e58ff0c4a685e1160697e178f71b87e8febff199066cf9f29749193844d"
+    },
+    {
+      "path": "hooks/register.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8afba12aad39836cf7762dbc2243a1edf603fc8bdad4f22a3b6a6b35352380a9"
+    },
+    {
+      "path": "hooks/reopen-id.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d96aeaace340635efcee2de5edad92c86db6d9c07062028a6158bb0974d05efc"
+    },
+    {
+      "path": "hooks/reopen.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a593e8fc4ec60c9efe08e8be4b065a4d9e5c22d81a02c63ed62ba6dc04bab446"
+    },
+    {
+      "path": "hooks/requeue.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d83163322e36edab4f661a71af2b14fc2dd3480badf635abe04dca5097f18dd9"
+    },
+    {
+      "path": "hooks/reset.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "5ba8dc983573bb533968d5e879c2f3e3902da1fc08917319d8dc158455537d29"
+    },
+    {
+      "path": "hooks/roles.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "cba30a8cb230034e0ac4da62e8f7ccfe570fc308d48ed12d0f9be85f33f290e1"
+    },
+    {
+      "path": "hooks/roles.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8413017decdd8c1e0caa305dc83de37d8b2db5ad833f62482597e11facf0af90"
+    },
+    {
+      "path": "hooks/route.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "86209d2a19d2ccf2288930a5b8e89e0b0889dfa1ed52ed7a38e27d25ddc33267"
+    },
+    {
+      "path": "hooks/scratch.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d4304cad7e0be6faeb97571075404356179dd20ecc6db506899e280b38370c8f"
+    },
+    {
+      "path": "hooks/seg.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e1207a8857d605449a5e17675efe19d13dbad1cb777cf67e35a25df6f3f786fb"
+    },
+    {
+      "path": "hooks/send.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "23b6631d26a3f2f5df548b3ddf5225ef6da32c936ee038cc4dfad214a7494b86"
+    },
+    {
+      "path": "hooks/shared-bridge.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "955ecb4d2e8582fbc801fb5407a8b0ab21c483e36228170f5884b9c4abadc092"
+    },
+    {
+      "path": "hooks/shared-inbox.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "7155e2d0882f7956422ca46d33dd241523b13fb0a40ef5907f474c0f7d48b9c5"
+    },
+    {
+      "path": "hooks/shared-inbox.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4b6447963df5e90a638000585091c5ced3b27d21d69ae2c6b5f08de12374df91"
+    },
+    {
+      "path": "hooks/shared-mail.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "b7a84360404fc7b8e4a8d5bdaa40321c83ffe83e98e887ef64421d1f751a1675"
+    },
+    {
+      "path": "hooks/shared-questions.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d25b10df3050b1b8d9e09d4a4c029d40ee8e5f034ea40a710e8847588570e7f7"
+    },
+    {
+      "path": "hooks/shared-store.test.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "2dec6daa14d5dd358520e1d3c8d84a0a9bfee2e04f5b2e74fd23dac0f198fd40"
+    },
+    {
+      "path": "hooks/shared-store.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "162a807a8696011764bb994a3287c4965b6d6365794b971e6ea6c9a89dabb907"
+    },
+    {
+      "path": "hooks/shared-transport.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "88921efb044d03bc1e99d92182629da1de66e41cd7c6b61c524fb5dbeb8b66e8"
+    },
+    {
+      "path": "hooks/shared-transport.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "70a79cde5ec903552806e7ed7826dfb0281836f8553b499dd89979c17f124437"
+    },
+    {
+      "path": "hooks/shared-workspace.test.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d04ab199b0bcba3c9f4928d825ec7a5abc47db5a879da2284b09382eb682e6dd"
+    },
+    {
+      "path": "hooks/shared-workspace.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "d5f7be41a58421193a9cb5f58e05c51144d316be52ca85d2b040fe92331eb1b7"
+    },
+    {
+      "path": "hooks/short.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "2d2719ccf6238b416bf1a6c2df09eb4175a01fec7e2bb40b1deb9df52d5f52d0"
+    },
+    {
+      "path": "hooks/status.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4b43d09ce4b2f7a3fa3c00b7351c70137aefe142e8cd0bb416baed6b8cafdea8"
+    },
+    {
+      "path": "hooks/status.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "851c32a314e51c0fe89c0f61f302ce271ddb725d90a278cf06470ae5c35937fd"
+    },
+    {
+      "path": "hooks/team-setup.tsx",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "76bcd32905b341217909879ac4f0d23d6fac623aeaae3eb4e99806bfdf6bd66c"
+    },
+    {
+      "path": "hooks/team-templates.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "3fcbf052839f50c998266725f8a66bde66474d856afe37847eee65fb39029680"
+    },
+    {
+      "path": "hooks/test-world.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "655026f06f982619b9b593b7c15c0e405fbebb08f32d87e172adea7c658829ed"
+    },
+    {
+      "path": "hooks/vault.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "13aa8819397ab8d0a6d1a984176e59c5d2062ce32401fdf3fa1a36843d5d9822"
+    },
+    {
+      "path": "hooks/vault.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "374f5a5832b576630f44f70c2d3b11dd659bc1304030aa31c98af93409e5ef9b"
+    },
+    {
+      "path": "hooks/vendor/README.md",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f19947254cfb9fd783490759b9ae6e6d702a4b7147523f9088087e1e01a4b0f6"
+    },
+    {
+      "path": "hooks/vendor/noble-ciphers/LICENSE",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f36671a5487c9c5050efacb58011c37c24c55a889803cb036cf9d9a6347c1e2d"
+    },
+    {
+      "path": "hooks/vendor/noble-ciphers/_arx.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "ead142ba410404c0698bb80e0d6f77780799bb77a9e3b098cf0f9fca1c486e37"
+    },
+    {
+      "path": "hooks/vendor/noble-ciphers/_poly1305.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "5d2afd73b40dbafb7b6740c6e6388e7123c79a4e57306861b28c5734925fa84d"
+    },
+    {
+      "path": "hooks/vendor/noble-ciphers/chacha.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "5f1c00575e227b75163f4bac50b79442dec50ee3047c46c18887808ba8af0a69"
+    },
+    {
+      "path": "hooks/vendor/noble-ciphers/utils.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a443ec1f60d1aaa25d1b7d8c102d33c0e8e6d683ada1ad17be9c32e69170ff95"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/LICENSE",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/curve.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "dbaeee3b41ff47efb76b78e14170fe4dda7c7ecdc387c402f16c5118e0bac356"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/edwards.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f24a9c221a549a8fff259eb8f245ab0dc17679b13c532c3970d91acc4df9fffd"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/fft.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a4b2ff7ca33f4acc85d61f0e83ec3303c3f6b38ecc19b20d0f6462d820e518cf"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/frost.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8defa97225915ae6abc53a6b930a43c69941aac07fa08f92eb135cd7dbe7e9d9"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/hash-to-curve.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e3c97e7d0827b728b14e3311ed11d8e386d8a70d8fc77e0b9fd2a3090f19d955"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/modular.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9ced3aa10598277a735e54f7b61d88e929d565da884ba5385f9006ebb3b6aab2"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/montgomery.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "cdafa8816dad5a24475ec51952c5f71fdd5d1b46880ab982694c4f8ff605fc46"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/abstract/oprf.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "2ca36b3e4930092db1f91559410e86975816c036e248067bc65a8055aa1c504c"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/ed25519.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f287770bc7c729964eaa8b29f68b3e3abff23db922d4f6284c95e20586e09de2"
+    },
+    {
+      "path": "hooks/vendor/noble-curves/utils.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "6a66bcce57ddabddd68776ea5211be52c226984723c440cd79d795ccecb0f0d1"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/LICENSE",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/_blake.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "cabbff61d1f373bac45594ad758df7c42e176464ddbb94b44f5533fa977a4f56"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/_md.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "60cf3010fda89e3e4d3f0e7ff1ce249e9c467f34b4fd41b6fd6101d9f69be763"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/_u64.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "b09da8c07fe8187c07649494cdb7cd0bcf13df90b506a9473d19e4d5f8c2e102"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/argon2.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f39753324bdf2f484150731d24b1d71236f26bf10bedd594f7d190fcdfdefdc9"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/blake2.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "03f00237bcc0b4d822a80f7c0ac22e42632c48e246c3b6da584e6452186e32f0"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/hkdf.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "ccb942a8008f974018965eeb1e33b8f4739bf767c6f95f2ceb06f5873a302f67"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/hmac.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "fec9f8f3aeda785ea2de91cc4c059d54ef98196261c026c43f48341007ae52c9"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/pbkdf2.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "62b75b5465a89af052a80bdebe7e0383ba01648b12f64877ce285a2e9896c713"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/scrypt.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a38a020620776fa5c57c00f151bdc1033c192827c9d841996daaf29122ea82c1"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/sha2.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "471746bba6ec4c6238ca41358d1d3b40b6ff31cf3363f0b4d550c649c1a8e83b"
+    },
+    {
+      "path": "hooks/vendor/noble-hashes/utils.js",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "037ad49adb78168b6b699598fd33f85f7877456b1d28b4d032e2a1a16807947c"
+    },
+    {
+      "path": "hooks/version.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4428fad8b846fe02a231b39544ec8522011a815e45d350b8e7ea73c9760a278c"
+    },
+    {
+      "path": "hooks/writers.test.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "48877eaedd9a5216071dc6b7412d00e6ba91d51dd4572e7a8a3c77651850e3ee"
+    },
+    {
+      "path": "store/api.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e53a4b9afdf0187a23a36ae7cb3a8e3f14c34ac62b4277a167b2d82b52a9350a"
+    },
+    {
+      "path": "store/contract.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "07dcc2ec94695c830aad98ad365244fb0653428b3898dcbbc3301f2c2f8441a7"
+    },
+    {
+      "path": "store/index.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e817a8b67361783b07805da8b920712a2f8f423b2cdce6c34f231151d5bbf113"
+    },
+    {
+      "path": "store/mod-bridge.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "e615f525e9ae2044e0d56edd3a9936bc2a1c1fc21548ed989844d963e9c51255"
+    },
+    {
+      "path": "store/mod-native.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "43b377624ff433871213a9e2ed35607b4d4f3d7749f5f37b411e181d30543092"
+    },
+    {
+      "path": "store/src/api-domain.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "8351ef99cda8face3ff7fee7f8b68d282fba2e3c905e71cf374881174001766e"
+    },
+    {
+      "path": "store/src/authority.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "ae3e95163c2f2b072e7d9f19afd78fdee406ebed44c48b86a6c94322fefbf02f"
+    },
+    {
+      "path": "store/src/bootstrap.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "062a1f47486a1e9e2a281cd9fc3bc6d7287b78cb21127c4b18616fdafa32be12"
+    },
+    {
+      "path": "store/src/configuration.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "1c826534d8cad4608622e1da1d4b1776353ee5aa97099ed1bef63a544f16d8ff"
+    },
+    {
+      "path": "store/src/engines.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "7cc2795bbb2ae66e95ed015585350d6661ccefb3918962a4878b5d182c03b486"
+    },
+    {
+      "path": "store/src/errors.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "157dce24c8780d87b631406bf4ea48b9e6d1b37cb106d203d41b66b50cbc7b7d"
+    },
+    {
+      "path": "store/src/gates.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "867ab6c6aca64d04db6b71d48c2a31bd43522ae39d6f1eadba0458a655064d71"
+    },
+    {
+      "path": "store/src/guard-reader.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "b921c7356973dce1c9302fe7196b2d9bc1780c64d00a07b3ae9dcb719584fa2e"
+    },
+    {
+      "path": "store/src/inbox-journal.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "9cb99c1b234341790c201400cbde2ab1ff962ff25422aeb806d3f14732ba8c15"
+    },
+    {
+      "path": "store/src/launches.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "434f73621605015e74cd8e4e6bb429d2141be74bb115d103edef88465eef1bca"
+    },
+    {
+      "path": "store/src/machine-store.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "23d138e47ba7a27ca96b9504e9585df6d44bde2d9c27a7b5be67baffd8783adf"
+    },
+    {
+      "path": "store/src/mailbox.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "f554c4f9c2cb952880b3d7566dc02cdb25804c14bb188aaca806f12fa7b616ee"
+    },
+    {
+      "path": "store/src/mod-launch.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "721501b871b759ce231ea1f82a235c64de7bd2b29e5420cec8be6a07c9cb42c8"
+    },
+    {
+      "path": "store/src/questions.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4f13b56bc6b2f173f1fdf2d1f01eed5b36cee62fbd854bf70a3ba04ba16b57c7"
+    },
+    {
+      "path": "store/src/schema5-contract.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a52d2697449f8add8ef5bf3093ae2d4248bdd29468e29b7a925aa68f32e56399"
+    },
+    {
+      "path": "store/src/schema6-contract.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "3b2faf1d22240a14c2d14cae3869433e45c0b8cf4b8d51f6f61260de6e6ce90c"
+    },
+    {
+      "path": "store/src/sqlite-worker.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "28638b802016080350074bf74e45602581299fe5a66bdeae19d57126cf1c7a7c"
+    },
+    {
+      "path": "store/src/store.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "a99aded74e0b6399190f44f37b6ebab6d63f9be98943c0081063d29ff7babf1b"
+    },
+    {
+      "path": "store/src/upgrade.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "7382c8851a623b1d57c10c8dd627eec0685df1d714c04c88c9bf5b4d3037f625"
+    },
+    {
+      "path": "store/src/validation.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "21b19e5d27dd5d81427f81f4b33d479304331cef6afe9b41815e4add951ac01a"
+    },
+    {
+      "path": "store/src/writers.mjs",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "6a540fd6070ff1c28bb3700fd870f87c165dff0c530dde1795b99f7b0c7f432c"
+    },
+    {
+      "path": "types/index.d.ts",
+      "matchesIgnoringWindowsNewlines": true,
+      "normalizedSha256": "4c4cbe634d69037d6163f049351540f7e2b16ff4448bd781aa24bc1399ad125f"
+    }
+  ]
+}

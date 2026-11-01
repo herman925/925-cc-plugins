@@ -1,5 +1,7 @@
 # Bounded questions and fresh worker launch — 0.5.52
 
+Follow-up: [Mod 0.5.53 native lifecycle checkpoint](VALIDATION-NATIVE-LIFECYCLE-0.5.53.md) establishes real-model automatic dispatch, pickup, outcome and return delivery. Final acceptance used an authenticated native test driver after provider credit exhaustion; a real-model final decision remains untested.
+
 | Check | Result |
 | --- | --- |
 | Node 22.13.0, SQLite and real PostgreSQL 18.6 | **289 passed, 0 failed, 0 skipped** |

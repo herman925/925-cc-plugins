@@ -1,0 +1,22 @@
+# Native lifecycle checkpoint — Mod 0.5.53
+
+On 2026-11-02 (Malaysia time), a fresh disposable Windows project ran the source Mod from `e3366b565bfa7511b99b23637674df48c16bbc02`, schema 7. Claude independently performed setup and the measured automatic delivery chain. Codex crosschecked native transcripts and read-only database receipts, then completed acceptance with an explicitly identified native test driver after the provider exhausted its daily credits. This is **partial real-model acceptance**, not a full autonomous model lifecycle pass.
+
+| Step | Evidence and result |
+| --- | --- |
+| Conversation management permission and fresh team | Independent tester used native Review/allow and Create team; Squad contains four members. |
+| Native identity | Head connected through the panel; Worker1 bound through the typed API using verified native target proof. Both binding generations are 1. |
+| Measured admission | Head admitted `task-lifecycle-001` as `assign-lifecycle-002` after both sessions settled idle. No task prompt was manually sent to the worker. |
+| Automatic worker delivery | Worker called inbox read and seen, inspected the assignment, then verified pickup with its official role and original brief before reporting the outcome. |
+| Worker result | Explicit `succeeded` outcome at attempt generation 3. Summary exactly equals the original instruction line. Evidence is that line with the prefix `Verbatim instruction line from brief: `. |
+| Automatic return delivery | Head called inbox read and seen for the result without a manual read prompt. Both dispatch and worker_done are acknowledged. Each delivery has replay_count 1, representing the initial wake, not a tested retry. |
+| Separate acceptance | Before acceptance the task was open and task_acceptances empty. After the authenticated native head command, a separate acceptance row records the head's accepted decision and the task is succeeded. The worker outcome remains generation 3. |
+| Real-model final decision | **Not completed.** Head had been instructed by the tester to stop after admission. A later explicit review prompt failed with provider HTTP 402 daily quota exhaustion before a model acceptance. |
+
+Setup initially supplied invalid bind/admit field combinations; the strict API refused them before corrected requests succeeded. During the measured worker chain, incomplete verify/report calls were similarly refused before the model supplied the required generations. These corrections happened within the model conversation without a manually supplied worker task prompt. They do not establish error-free first-call usability. The sequence is retained in the evidence.
+
+Codex's fixture-only observer command used `$.tool.call` to invoke the normal shared_team API from the already bound head conversation. It checked the exact project and conversation, inspected current authority and assignment, compared the summary exactly to the brief and the evidence exactly to the fixed explanatory prefix plus the brief, and submitted acceptTask with current generations. It did not write SQL or modify the product. The first driver precheck incorrectly required evidence to have no explanatory prefix; it refused without accepting anything. After inspecting the actual evidence, the explicit comparison was corrected. An initial two-module observer configuration also failed validation; a single combined entrypoint fixed the fixture. Neither fixture failure is attributed to the product.
+
+Evidence: [native-lifecycle-0.5.53](validation/native-lifecycle-0.5.53). Before/after snapshots were read-only transactions against the disposable database. The native driver result labels realModelAcceptance false. All 130 tracked runtime hooks, store files, API types and manifest match the released source after normalizing Windows line endings; SDK-generated typings are excluded. Original product files were unchanged. The disposable fixture, private transcripts and full debug logs remain local; the evidence contains selected domain data only. No global configuration or real workspace store was changed.
+
+Still not established by this run: a model deciding final acceptance, replay after a failed delivery, whole-Orca restart, model-driven gate/question recovery, Docker, hosted Mod configuration, Linux/macOS launch or classic migration. Session Panel was disabled fixture-locally to isolate its separate width issue; its 0.3.66 repair has 319 official-runner tests and is not a native visual acceptance claim here.

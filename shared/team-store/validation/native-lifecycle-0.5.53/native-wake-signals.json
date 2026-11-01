@@ -1,0 +1,14 @@
+[
+  {
+    "sender": "head",
+    "timestamp": "2026-11-01T20:00:20.099Z",
+    "kind": "plugin-native-session-send",
+    "message": "Shared team inbox has pending mail"
+  },
+  {
+    "sender": "worker",
+    "timestamp": "2026-11-01T20:01:30.441Z",
+    "kind": "plugin-native-session-send",
+    "message": "Shared team inbox has pending mail"
+  }
+]
