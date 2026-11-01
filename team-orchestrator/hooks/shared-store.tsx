@@ -23,8 +23,8 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
 
 const status = atom({plugin:'team-orchestrator',key:'sharedStoreStatus'} as const,'')
 const displayedProof = atom({plugin:'team-orchestrator',key:'sharedStoreProof'} as const,{ok:false,reason:'Open Team workspace to verify this conversation.'} as SharedProof)
-type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
-const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false} as SharedUi)
+type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
+const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,access:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false} as SharedUi)
 export type SharedControls = {enabled:boolean;preferenceError?:string;node:string;orca:string;setEnabled:(enabled:boolean)=>Promise<void>;rememberProject?:()=>Promise<void>;setNode:(value:string)=>Promise<void>;setOrca:(value:string)=>Promise<void>}
 export type SharedAccess = {enabled:boolean;node:string;orca:string;revalidate:()=>Promise<SharedProof>}
 export async function setSharedStoreProof($:any,proof:SharedProof) { await update($,displayedProof,()=>proof) }
@@ -164,16 +164,25 @@ export async function sharedStoreView($:any,ui:any,dependencies:SharedAccess & S
    <Button key="shared-details" label={state.details?'Details ▴':'Details ▾'} onPress={async()=>{await update($,uiState,old=>({...old,details:!old.details}))}}/>
   </Box>
  </Box>
+ const authorized=!!(approved||ready&&state.member)
+ const expanded=!authorized||state.access===true
+ const project=proof.ok?proof.root.replaceAll('\\','/').split('/').filter(Boolean).slice(-1)[0]||proof.root:'Project access'
  return <Box flexDirection="column">
-  <Box borderStyle="round" borderColor={color} paddingX={1} flexDirection="column">
-   <Box flexWrap="wrap" columnGap={1}><Text weight="bold" color="cyan">Shared workspace</Text><Text color={color} weight="bold">● {label}</Text></Box>
-   <Text dimColor>{proof.ok?`Project: ${proof.root.replaceAll('\\','/').split('/').filter(Boolean).slice(-1)[0]||proof.root}`:'Project not verified · use Check access when On'}</Text>
-   {await sharedStoreOptionsView($,ui,dependencies,false,true,actions)}
-   {state.notice?<Text color={state.tone}>{state.notice}</Text>:<Text dimColor>{approved?'Controller approved for this conversation':ready&&state.member?'Member access verified · controller approval is optional':ready?'Approval grants project team management':state.busy==='verify'?'Checking project, conversation and saved approval…':'Project preference · management permission is separate'}</Text>}
+  <Box flexWrap="wrap" columnGap={1} justifyContent="space-between">
+   <Text dimColor>{Array.from(project).length>16?`${Array.from(project).slice(0,16).join('')}…`:project}</Text>
+   {authorized?<Button key="shared-access" label={`${label}${expanded?' · Hide access':' · Access'}`} onPress={async()=>update($,uiState,old=>({...old,access:!expanded}))}/>:<Text color={color}>{label}</Text>}
   </Box>
-  {onNewTeam&&!(approved||state.member)&&!(await readSharedWorkspace($)).pending&&<Button key="workspace-start-setup" label="＋ Create team" onPress={onNewTeam}/>}
-  {ready&&proof.ok&&(approved||state.member)&&await sharedWorkspaceView($,ui,{...dependencies,proof,controllerGeneration:approved,onNewTeam})}
-  {state.details&&<Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
+  {expanded&&<Box borderStyle="single" borderColor={color} paddingX={1} flexDirection="column">
+   {proof.ok&&<Text dimColor>{proof.root}</Text>}
+   {!authorized&&<Text>{!dependencies.enabled?'Enable shared workspace for this project, or start a team draft.':ready?'Allow management for this conversation to manage shared teams.':'Check this project and conversation before continuing.'}</Text>}
+   {await sharedStoreOptionsView($,ui,dependencies,false,true,actions)}
+   {state.notice&&<Text color={state.tone}>{state.notice}</Text>}
+   {ready&&state.member&&!approved&&<Text dimColor>Member access verified · management approval is optional.</Text>}
+  </Box>}
+  {!expanded&&state.notice&&['red','yellow'].includes(state.tone)&&<Text color={state.tone}>{state.notice}</Text>}
+  {onNewTeam&&!authorized&&!(await readSharedWorkspace($)).pending&&<Button key="workspace-start-setup" label="Create team" variant="primary" onPress={onNewTeam}/>}
+  {ready&&proof.ok&&authorized&&await sharedWorkspaceView($,ui,{...dependencies,proof,controllerGeneration:approved,onNewTeam})}
+  {expanded&&state.details&&<Box flexDirection="column">
    <Text weight="bold">Connection details</Text>
    <Text>{proof.ok?`Project: ${proof.root}\nConversation: ${proof.sessionId}\nTerminal: ${proof.handle}`:proof.reason}</Text>
    {message&&<Text dimColor>{message.includes('"code":"STORE_NOT_FOUND"')?'No shared store yet. Allow team management to set up this project.':message}</Text>}
