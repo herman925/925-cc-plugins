@@ -1,4 +1,4 @@
-# Panel navigation — 0.5.47
+# Panel navigation — 0.5.48
 
 A new project starts with **＋ Create team** and **Settings** in the band. The arrow or `t` opens the same team entry. Create team opens a draft before workspace mode or management permission is enabled.
 
@@ -10,7 +10,15 @@ After confirmed creation the main entry becomes **Team workspace**. It provides 
 
 Click the active Team/Settings entry again to close it; clicking the other switches views. There is one Settings entry at a time. Settings contains **Display** and **Connection**, plus **Classic teams** when an older roster exists. Classic roster data and creation remain a separate explicit destination; nothing is migrated.
 
-Setup uses a sized native pane with keyboard/click controls and Escape-to-close. Hosts without a placed pane use the inline band fallback, never two copies of the form. **Edit inline** in the band switches an open setup pane to that same inline form while retaining its draft. Dropdowns select members and reporting lines; official instructions and purpose use multiline fields. Decorative timer redraws do not refresh the form. Narrow panes can still require Tab navigation and scrolling.
+The entire Mod now requests **one right panel** by default: setup, workspace, classic teams and Settings all use the same native pane. Existing stacked/side-by-side card choices remain card arrangements and do not override placement. Closing the native frame closes the panel without resetting its right preference. Changing views or completing Create keeps that pane.
+
+**Settings → Display → Panel** chooses **Right panel** or **Inline**. The compact band also offers **Edit inline** or **Dock right** while open; the choice applies across views and retains the current draft/workspace. Card arrangement is a separate control. There is only one full body, never both the band and pane.
+
+Actual right docking belongs to the host: Claude Code must use its **fullscreen renderer** with at least **110 terminal columns**. Classic mode seats a requested pane above the prompt; narrow fullscreen windows also use inline placement. The panel explains the actual condition using the host viewport. Closing it does not convert the saved preference to Inline. If the host has not placed a requested pane at all, the band provides the controls and **Retry right panel**; an explicit retry can place a pane that was deferred on background startup.
+
+The host's normal **/tui** command changes its user-wide renderer preference and requires a restart. The Mod does not run it or change global host settings automatically. Its SDK has no live placement/renderer setter. **Right panel** therefore requests docking where supported; it cannot force a classic/narrow host to dock.
+
+Native Tab/Enter/Escape and widget scrolling still apply. Dropdowns select members and reporting lines; official instructions and purpose use multiline fields.
 
 Update the marketplace and Mod:
 
@@ -19,4 +27,4 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.47**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
+Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.48**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.

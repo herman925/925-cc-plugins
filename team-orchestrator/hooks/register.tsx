@@ -23,8 +23,9 @@ import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
-import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,setupInline,useInlineSetup} from './team-setup'
+import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView} from './team-setup'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
+import {PANEL_SETTINGS0,panelSettings,rightPanelHint} from './panel-layout'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -163,9 +164,9 @@ const frame = atom({ plugin: 'team-orchestrator', key: 'frame' } as const, 0)
 // which model/effort dropdown is open in the form ('' none, 'm2' = level 2's model, 'e1' = level 1's effort)
 const menu = atom({ plugin: 'team-orchestrator', key: 'menu' } as const, '')
 // The roster's look. Plugin state: it outlives a reload and a refresh, not a new session. Defaults are the old look.
-const SETTINGS0: Settings = { layout: 'stacked', chart: true, hide: [] }
-const settings = atom({ plugin: 'team-orchestrator', key: 'settings' } as const, SETTINGS0)
-const readSettings = async ($: any): Promise<Settings> => ({ ...SETTINGS0, ...(await read($, settings)) })
+const SETTINGS0=PANEL_SETTINGS0
+const settings = atom({plugin:'team-orchestrator',key:'settings'} as const,SETTINGS0)
+const readSettings = async ($:any):Promise<Settings> => panelSettings(await read($,settings))
 const COLS = ['STATUS', 'CONTEXT', 'MODEL', 'EFFORT', 'BRIEF'] as const
 // a card's border and padding, around the cells columnPlan lays out
 const FRAME = 4
@@ -3113,10 +3114,9 @@ export const register: Register = (on, options) => {
       },
     })
     // the side panes of earlier versions: the UI now lives above the prompt
-    for (const id of ['team-form', 'team-roster']) await $.ui.close({ id })
+    for (const id of ['team-form', 'team-roster',SETUP]) await $.ui.close({ id })
     // the dock layout reopens its pane; unasked, the engine seats it only on a wide terminal, else the band draws
-    if(await read($,view)==='setup')await setPanelView($,'setup')
-    else if ((await readSettings($)).layout === 'dock' && await read($,view)!=='closed') void $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
+    if(await read($,view)!=='closed')await setPanelView($,await read($,view))
     await pull($)
     const kept = await readMembers($)
     if (kept.length > 0) await update($, members, () => kept)
@@ -3214,7 +3214,7 @@ export const register: Register = (on, options) => {
     }))
     // keep what is already known about a session that is adopted again (briefing, model, effort, id)
     await replaceTeam($, team, adopted.map(a => ({ ...(known.find(k => k.name === a.name) ?? {}), ...a, model: known.find(k => k.name === a.name)?.model ?? a.model, effort: known.find(k => k.name === a.name)?.effort ?? a.effort, briefed: known.find(k => k.name === a.name)?.briefed ?? false, noted: known.find(k => k.name === a.name)?.noted ?? false, sessionId: known.find(k => k.name === a.name)?.sessionId ?? a.sessionId })))
-    await update($, view, () => 'roster')
+    await setPanelView($,'roster')
     // refresh finds an empty or dead handle by tab title and an empty session id by transcript title
     await refresh($)
     const notes = (await readMembers($)).filter(m => m.team === team && m.note !== '').map(m => `${m.name}: ${m.note}`)
@@ -3426,7 +3426,7 @@ export const register: Register = (on, options) => {
     const held = await onHold($, 'team_launch')
     if (held) return held
     const input = e as unknown as { team: string; members: Spec[]; ifExists?: 'add' | 'merge' }
-    await update($, view, () => 'roster')
+    await setPanelView($,'roster')
     return { result: await launch($, input.team, input.members, input.ifExists) } as any
   }))
 
@@ -3489,7 +3489,7 @@ export const register: Register = (on, options) => {
       return { text: `Team ${from} is now ${to}. Address it with @${to}.` }
     }
     await openTeamEntry($)
-    return { text: 'Team Orchestrator opened above the prompt. Rename a team with /team name <old> <new>.' }
+    return { text: 'Team Orchestrator opened. Rename a team with /team name <old> <new>.' }
   })
 
   // "@<team> message": hand the message to the team's head and keep this session out of it.
@@ -3583,6 +3583,8 @@ export const register: Register = (on, options) => {
     const lit = t % 6 < 3 ? t % 6 : -1
     const go = (to: View) => setPanelView($,to)
     const entry=await teamEntryState($)
+    const right=(await readSettings($)).placement!=='inline'
+    const placed=open&&await panelPlaced($)
     await readVersion($)
     // a filled title pill like Session Panel's (a Button takes no background), with the open/close button beside it
     const plainLook = String((await $.env.get('NO_COLOR').catch(() => undefined)) ?? '') !== ''
@@ -3595,7 +3597,7 @@ export const register: Register = (on, options) => {
           <Text> </Text>
           <Button key="main" label={open ? '▾' : '▸'} hotkey="t" variant="primary" onPress={async()=>{if(open)await go('closed');else await openTeamEntry($)}} />
           {!open&&<Button key="band-team" label={teamEntryLabel(entry,list.length>0)} onPress={async()=>openTeamEntry($)}/>}
-          {v==='setup'&&await panelPlaced($,v)&&<Button key="setup-inline" label="Edit inline" onPress={async()=>{await useInlineSetup($);await $.ui.close({id:SETUP})}}/>}
+          {open&&<Button key={right?'panel-inline-shortcut':'panel-right-shortcut'} label={right?'Edit inline':'Dock right'} onPress={async()=>setPanelPlacement($,right?'inline':'right')}/>}
           {!open&&<Button key="band-settings" label="⚙ Settings" onPress={async()=>go('settings')}/>}
           <Text dimColor> │ </Text>
           {list.length === 0 ? (
@@ -3618,58 +3620,44 @@ export const register: Register = (on, options) => {
           )}
           {teams.length > 0 && <Text dimColor> │ {teams.map(t => '@' + t).join(' ')}</Text>}
         </Box>
-        {open && !(await panelPlaced($,v)) && (await panel($, ui, v, Number((e.props as any).bodyColumns) || 100,e.requestId))}
+        {open&&!placed&&<Box flexDirection="column">{right&&<Box flexDirection="column"><Text dimColor>{rightPanelHint(e.viewport,true)}</Text><Button key="panel-retry-right" label="Retry right panel" onPress={async()=>setPanelView($,v)}/></Box>}{await panel($,ui,v,Number((e.props as any).bodyColumns)||100,e.requestId)}</Box>}
         {rest}
       </Box>
     )
   })
 
-  // the dock layout: the same panel in a pane, which the fullscreen layout seats beside the transcript
-  on('ui.render', { component: 'Pane', requestId: DOCK }, async ($, e) => {
-    const ui = $.ui.resolve(e)
-    const { Box, Text } = ui
-    const v = await read($, view)
-    return (
-      <Box flexDirection="column">
-        {e.props.placement === 'inline' && <Text dimColor>Docks beside the transcript only in the fullscreen layout, from 110 columns; here it sits above the prompt.</Text>}
-        {v!=='closed'&&v!=='setup'&&await panel($, ui, v, e.props.bodyColumns || 100,DOCK)}
-      </Box>
-    )
+  // Every view uses one pane. The host chooses dock/inline; its placement is not a Mod option.
+  on('ui.render',{component:'Pane',requestId:DOCK},async($,e)=>{
+    const ui=$.ui.resolve(e),{Box,Text}=ui
+    const v=await read($,view)
+    if(v==='closed'||(await readSettings($)).placement==='inline')return <Box/>
+    return <Box flexDirection="column">
+      {e.props.placement==='inline'&&<Text dimColor>{rightPanelHint(e.viewport)}</Text>}
+      {await panel($,ui,v,e.props.bodyColumns||66,DOCK)}
+    </Box>
   })
-
-  on('ui.render',{component:'Pane',requestId:SETUP},async($,e)=>{
-    if(await read($,view)!=='setup')return null
-    return panel($,$.ui.resolve(e),'setup',e.props.bodyColumns||66,SETUP)
-  })
-  on('ui.close',{id:SETUP},async($,e,next)=>{
-    if(e.origin.kind==='person'&&await read($,view)==='setup')await update($,view,()=> 'closed')
-    return next(e)
-  })
-
-  // the person closed the pane: the panel goes back above the prompt
-  on('ui.close', { id: DOCK }, async ($, e, next) => {
-    if (e.origin.kind === 'person') await update($, settings, s => ({ ...SETTINGS0, ...s, layout: 'stacked' }))
+  // An old setup pane can survive a hooks reload; it never owns a second body.
+  on('ui.render',{component:'Pane',requestId:SETUP},async($,e)=>{const {Box}=$.ui.resolve(e);return <Box/>})
+  on('ui.close',{id:DOCK},async($,e,next)=>{
+    if(e.origin.kind==='person')await update($,view,()=> 'closed')
     return next(e)
   })
 }
 
-// A native setup pane owns its body while placed; narrow hosts use the band fallback.
-async function panelPlaced($:any,v:View){
+async function panelPlaced($:any){
+ if((await readSettings($)).placement==='inline')return false
  const panes:any[]=await $.ui.panes().catch(()=>[])
- return panes.some(p=>p.id===(v==='setup'?SETUP:DOCK)&&p.isPlaced)&&(v==='setup'||(await readSettings($)).layout==='dock')
+ return panes.some(p=>p.id===DOCK&&p.isPlaced)
 }
 async function setPanelView($:any,to:View){
  await update($,view,()=>to)
- if(to==='setup'){
-  await $.ui.close({id:DOCK}).catch(()=>undefined)
-  if(!await setupInline($))await $.ui.open({id:SETUP,title:'Create team',rows:19,columns:66,focus:true,closeOnEscape:true}).catch(()=>undefined)
- }else{
-  await $.ui.close({id:SETUP}).catch(()=>undefined)
-  if((await readSettings($)).layout==='dock'){
-   if(to==='closed')await $.ui.close({id:DOCK})
-   else await $.ui.open({id:DOCK,title:'Team Orchestrator'})
-  }
- }
+ await $.ui.close({id:SETUP}).catch(()=>undefined)
+ if(to==='closed'||(await readSettings($)).placement==='inline')await $.ui.close({id:DOCK}).catch(()=>undefined)
+ else await $.ui.open({id:DOCK,title:'Team Orchestrator',rows:24,columns:66,...(to==='setup'?{focus:true,closeOnEscape:true}:{})}).catch(()=>undefined)
+}
+async function setPanelPlacement($:any,placement:'right'|'inline'){
+ await update($,settings,old=>({...SETTINGS0,...old,placement}))
+ await setPanelView($,await read($,view))
 }
 async function togglePanelView($:any,to:View){
  const next=await read($,view)===to?'closed':to
@@ -3785,11 +3773,7 @@ async function settingsView($: any, ui: any) {
         : 'Team Orchestrator: the assumptions view needs Session Panel. Session Panel is not on in this session, so the view stays inactive until Session Panel is installed and enabled.',
     )
   }
-  const layout = async (to: string) => {
-    await set({ layout: to as Settings['layout'] })
-    if (to === 'dock') await $.ui.open({ id: DOCK, title: 'Team Orchestrator' })
-    else await $.ui.close({ id: DOCK })
-  }
+  const layout = async (to:string)=>set({layout:to as Settings['layout']})
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
       <Text color="cyan">┤ SETTINGS ├</Text>
@@ -3798,11 +3782,10 @@ async function settingsView($: any, ui: any) {
       </Box>
       {section==='connection'&&<Box flexDirection="column">{await sharedStoreOptionsView($,ui,await sharedControls($),true)}<Button key="settings-shared-open" label="Open shared workspace →" onPress={async()=>openSharedPanel($)}/></Box>}
       {section==='display'&&<Box flexDirection="column">
-      <Box>
-        <Text weight="bold">{'Layout'.padEnd(13)}</Text>
-        {Seg(ui, 'layout', [['stacked', 'Stacked'], ['columns', 'Side by side'], ['dock', 'Dock right']], s.layout, v => void layout(v))}
-      </Box>
-      <Text dimColor>{' '.repeat(13)}Side by side: team cards in columns where two fit. Dock right: a pane beside the transcript in the fullscreen layout (from 110 columns); on the main screen the pane sits above the prompt.</Text>
+      <Box flexWrap="wrap"><Text weight="bold">{'Panel'.padEnd(13)}</Text>{Seg(ui,'panel',[['right','Right panel'],['inline','Inline']],s.placement||'right',v=>void setPanelPlacement($,v as 'right'|'inline'))}</Box>
+      <Text dimColor>Right panel is the default for every view. The host docks in fullscreen from 110 terminal columns; otherwise it seats the pane inline. Closing keeps your choice.</Text>
+      <Box flexWrap="wrap"><Text weight="bold">{'Team cards'.padEnd(13)}</Text>{Seg(ui,'layout',[['stacked','Stacked'],['columns','Side by side']],s.layout,v=>void layout(v))}</Box>
+      <Text dimColor>Classic team cards stack or share columns where they fit. This does not change panel placement.</Text>
       <Box>
         <Text weight="bold">{'Org chart'.padEnd(13)}</Text>
         {Seg(ui, 'chart', [['1', 'Show'], ['0', 'Hide']], s.chart ? '1' : '0', v => void set({ chart: v === '1' }))}
@@ -3935,7 +3918,7 @@ function emptyState($: any, ui: any, t: number) {
   const pick = (p: (typeof PRESETS)[number]) =>
     void (async () => {
       await update($, form, old => ({ ...old, ...p.form }))
-      await update($, view, () => 'new')
+      await setPanelView($,'new')
     })()
   const f = t % 6
   const lit = f >= 2 && f <= 4 ? f - 2 : -1
@@ -4232,7 +4215,7 @@ async function formView($: any, ui: any) {
   const go = (ifExists?: 'add' | 'merge') =>
     void (async () => {
       await update($, note, () => '⏳ Launching...')
-      await update($, view, () => 'roster')
+      await setPanelView($,'roster')
       const msg = await launch($, f.team, plan(f), ifExists)
       await update($, note, () => `✔ ${msg}`)
     })()
