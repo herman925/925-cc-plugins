@@ -5,6 +5,7 @@ import { text, integer, databaseInteger, nextInteger, snapshot } from './validat
 import { refusal } from './errors.mjs';
 import { normalizeConfigurationMutation, applyConfigurationMutation } from './configuration.mjs';
 import { checkWriter, reference } from './writers.mjs';
+import {openAssignmentThread,enqueueMessage,settleAssignmentThread,assignmentThreadId,inspectInbox,readOwnInbox,prepareDeliveries,expirePickups} from './mailbox.mjs';
 
 const fail = (code, message) => { throw refusal(`API_${code}`, message); };
 export function exact(input, fields) {
@@ -15,7 +16,7 @@ const gen = (v, field) => databaseInteger(v, field, { min: 1 });
 export function apiResult(value) {
   if (Array.isArray(value)) return value.map(apiResult);
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,item!==null && /^(?:generation|config_version|level|.*_generation|.*_at_ms|.*_deadline_ms|task_window_minutes)$/.test(key) ? databaseInteger(item,key) : apiResult(item)]));
+  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,item!==null && /^(?:generation|config_version|level|replay_count|.*_generation|.*_at_ms|.*_deadline_ms|task_window_minutes)$/.test(key) ? databaseInteger(item,key) : apiResult(item)]));
 }
 const expected = (value, actual, field) => { if (value !== gen(actual, field)) fail('STALE_AUTHORITY', `${field} changed; inspect the current state before a new operation.`); };
 const fields = {
@@ -25,6 +26,11 @@ const fields = {
   inspectTeam: ['teamId'],
   inspectCaller: [],
   inspectAssignment: ['teamId','assignmentId'],
+  inspectInbox: ['teamId','recipientMemberId'],
+  readInbox: ['teamId','deliveryId','expectedDeliveryGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
+  prepareDeliveries: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
+  observePickupDeadlines: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
+  retryAssignment: ['teamId','assignmentId','newAssignmentId','memberId','expectedAttemptGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   admitAssignment: ['teamId', 'runId', 'taskId', 'assignmentId', 'memberId', 'instructions', 'expectedResult', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedTargetGeneration', 'expectedTargetBindingGeneration'],
   verifyAssignment: ['teamId', 'assignmentId', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedAttemptGeneration'],
   reportOutcome: ['teamId', 'assignmentId', 'outcome', 'summary', 'evidence', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedAttemptGeneration'],
@@ -183,6 +189,13 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const [acceptance] = await db.query('SELECT * FROM task_acceptances WHERE task_id=:id',{id:task.task_id});
     return {assignment,task,brief:await reference(db,'task_briefs','task_id',task.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',command.assignmentId),acceptance:acceptance??null};
   }
+  if(type==='inspectInbox') {
+    const {member}=await memberActor(db,actor,command,false);
+    if(command.recipientMemberId!==member.member_id && member.boss_member_id!==null)fail('HEAD_REQUIRED','Only the top head may inspect another member inbox.');
+    const recipient=await reference(db,'members','member_id',command.recipientMemberId);
+    if(recipient.team_id!==command.teamId)fail('MEMBER_SCOPE','The recipient belongs to another team.');
+    return {messages:await inspectInbox(db,command.teamId,command.recipientMemberId)};
+  }
   await teamVersion(db,command);
   if (type === 'bindMember') {
     const m = await reference(db,'members','member_id',command.memberId);
@@ -198,6 +211,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     return { memberId:m.member_id,bindingGeneration:generation };
   }
   const {member} = await memberActor(db,actor,command);
+  if(type==='readInbox')return readOwnInbox(db,{teamId:command.teamId,memberId:member.member_id,deliveryId:command.deliveryId,expectedDeliveryGeneration:command.expectedDeliveryGeneration});
+  if(type==='prepareDeliveries')return prepareDeliveries(db,{teamId:command.teamId,member,now});
+  if(type==='observePickupDeadlines')return expirePickups(db,command.teamId,now);
   if (type === 'admitAssignment') {
     const report = await reference(db,'members','member_id',command.memberId);
     if (report.team_id !== command.teamId || report.membership_state !== 'active' || report.boss_member_id !== member.member_id) fail('DIRECT_REPORT_REQUIRED','Only a current direct report may receive this assignment.');
@@ -215,7 +231,10 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     await db.query(`INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,task_window_minutes)
       VALUES (:id,:task,:member,:now,:head,:deadline,:window)`,{id:command.assignmentId,task:command.taskId,member:report.member_id,now,head:member.member_id,deadline:pickupDeadlineMs,window:settings.task_window_minutes});
     await db.query('INSERT INTO assignment_attempts (assignment_id,generation) VALUES (:id,1)',{id:command.assignmentId});
-    return { assignmentId:command.assignmentId,taskId:command.taskId,attemptGeneration:1,pickupDeadlineMs };
+    const threadId=await openAssignmentThread(db,{...command,headId:member.member_id});
+    const delivery=await enqueueMessage(db,{eventId:`dispatch:${command.assignmentId}`,runId:command.runId,teamId:command.teamId,threadId,senderId:member.member_id,recipientId:report.member_id,
+      body:JSON.stringify({assignmentId:command.assignmentId,taskId:command.taskId,instructions:command.instructions,expectedResult:command.expectedResult}),kind:'dispatch',now});
+    return { assignmentId:command.assignmentId,taskId:command.taskId,attemptGeneration:1,pickupDeadlineMs,delivery };
   }
   const assignment = await reference(db,'assignments','assignment_id',command.assignmentId);
   const task = await reference(db,'tasks','task_id',assignment.task_id);
@@ -226,6 +245,28 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   const [settled] = await db.query('SELECT task_id FROM task_acceptances WHERE task_id=:id',{id:task.task_id});
   if (settled || task.status !== 'open') fail('ATTEMPT_SETTLED','This task has already been decided or is not open.');
   const next = nextInteger(gen(attempt.generation,'attempt generation'),'attempt generation');
+  if(type==='retryAssignment') {
+    if(assignment.assigned_by_member_id!==member.member_id || assignment.returned_to_member_id!==member.member_id || assignment.pickup_expired_at_ms===null)fail('RETURN_REQUIRED','Only the current admitting head may retry a returned, unpicked assignment.');
+    const [successor]=await db.query('SELECT assignment_id FROM assignments WHERE previous_assignment_id=:id',{id:command.assignmentId});
+    if(successor)fail('RETRY_EXISTS','This attempt already has a successor. Inspect that assignment.');
+    const recipient=await reference(db,'members','member_id',command.memberId);
+    if(recipient.team_id!==command.teamId||recipient.boss_member_id!==member.member_id||recipient.membership_state!=='active')fail('DIRECT_REPORT_REQUIRED','A retry must go to an active direct report.');
+    expected(command.expectedTargetGeneration,recipient.generation,'target member generation');
+    const [binding]=await db.query('SELECT generation FROM member_bindings WHERE member_id=:id',{id:command.memberId});
+    if(!binding)fail('BINDING_REQUIRED','Bind the retry recipient before admitting work.');
+    expected(command.expectedTargetBindingGeneration,binding.generation,'target binding generation');
+    const settings=await reference(db,'team_settings','team_id',command.teamId);
+    const pickupDeadlineMs=integer(now+gen(settings.pickup_window_minutes,'pickup window')*60000,'pickup deadline');
+    await db.query(`INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,task_window_minutes,previous_assignment_id)
+      VALUES (:id,:task,:member,:now,:head,:deadline,:window,:previous)`,{id:command.newAssignmentId,task:task.task_id,member:command.memberId,now,head:member.member_id,deadline:pickupDeadlineMs,window:settings.task_window_minutes,previous:command.assignmentId});
+    await db.query('INSERT INTO assignment_attempts (assignment_id,generation) VALUES (:id,1)',{id:command.newAssignmentId});
+    await db.query('UPDATE assignment_attempts SET generation=:next WHERE assignment_id=:id AND generation=:expected',{next,id:command.assignmentId,expected:command.expectedAttemptGeneration});
+    const threadId=await openAssignmentThread(db,{assignmentId:command.newAssignmentId,taskId:task.task_id,runId:run.run_id,teamId:command.teamId,headId:member.member_id,memberId:command.memberId});
+    const brief=await reference(db,'task_briefs','task_id',task.task_id);
+    const delivery=await enqueueMessage(db,{eventId:`dispatch:${command.newAssignmentId}`,runId:run.run_id,teamId:command.teamId,threadId,senderId:member.member_id,recipientId:command.memberId,
+      body:JSON.stringify({assignmentId:command.newAssignmentId,taskId:task.task_id,instructions:brief.instructions,expectedResult:brief.expected_result}),kind:'dispatch',now});
+    return {assignmentId:command.newAssignmentId,previousAssignmentId:command.assignmentId,taskId:task.task_id,attemptGeneration:1,pickupDeadlineMs,delivery};
+  }
   if (type === 'verifyAssignment' || type === 'reportOutcome') {
     if (assignment.member_id !== member.member_id) fail('ASSIGNEE_REQUIRED','Only the admitted assignee can verify or report this attempt.');
     if (attempt.outcome !== null) fail('ATTEMPT_SETTLED','An explicit outcome was already recorded.');
@@ -239,7 +280,12 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     }
     if (assignment.pickup_observed_at_ms === null) fail('PICKUP_REQUIRED','Verify the assignment and read its role/brief before reporting.');
     await db.query('UPDATE assignment_attempts SET generation=:next,outcome=:outcome,summary=:summary,evidence=:evidence,reported_at_ms=:now WHERE assignment_id=:id AND generation=:expected',{next,outcome:command.outcome,summary:command.summary,evidence:command.evidence,now,id:command.assignmentId,expected:command.expectedAttemptGeneration});
-    return {assignmentId:command.assignmentId,attemptGeneration:next,outcome:command.outcome,acceptance:'pending'};
+    let threadId=assignmentThreadId(command.assignmentId);
+    const [thread]=await db.query('SELECT thread_id FROM threads WHERE thread_id=:id',{id:threadId});
+    if(!thread)threadId=await openAssignmentThread(db,{assignmentId:command.assignmentId,taskId:task.task_id,runId:run.run_id,teamId:command.teamId,headId:assignment.assigned_by_member_id,memberId:member.member_id});
+    const delivery=await enqueueMessage(db,{eventId:`outcome:${command.assignmentId}`,runId:run.run_id,teamId:command.teamId,threadId,senderId:member.member_id,recipientId:assignment.assigned_by_member_id,
+      body:JSON.stringify({assignmentId:command.assignmentId,taskId:task.task_id,outcome:command.outcome,summary:command.summary,evidence:command.evidence}),kind:'worker_done',now});
+    return {assignmentId:command.assignmentId,attemptGeneration:next,outcome:command.outcome,acceptance:'pending',delivery};
   }
   if (type === 'acceptTask') {
     const report = await reference(db,'members','member_id',assignment.member_id);
@@ -247,6 +293,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if (attempt.outcome === null) fail('OUTCOME_REQUIRED','The worker must report an explicit outcome first.');
     await db.query('INSERT INTO task_acceptances (task_id,assignment_id,accepted_by_member_id,decision,reason,decided_at_ms) VALUES (:task,:assignment,:head,:decision,:reason,:now)',{task:task.task_id,assignment:command.assignmentId,head:member.member_id,decision:command.decision,reason:command.reason,now});
     await db.query('UPDATE tasks SET status=:status,outcome=:outcome WHERE task_id=:id AND status=\'open\'',{status:command.decision==='accepted'?attempt.outcome:'blocked',outcome:command.decision==='accepted'?attempt.outcome:null,id:task.task_id});
+    await settleAssignmentThread(db,command.assignmentId,command.decision,command.reason);
     return {taskId:task.task_id,decision:command.decision,workerOutcome:attempt.outcome,summary:attempt.summary,evidence:attempt.evidence};
   }
   fail('OPERATION_DENIED','Unsupported API operation.');

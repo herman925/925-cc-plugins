@@ -1,0 +1,62 @@
+{
+  "baseCommit": "b6b7da6bbf52c962e21afce81fcef0f8d7d754c5",
+  "branch": "feat/shared-team-runtime",
+  "files": [
+    {
+      "path": "shared/team-store/api.d.mts",
+      "sha256": "159453b7e31236609b69e4f0f0f0442f16389007ad3522c8bac8b475a03b4b47"
+    },
+    {
+      "path": "shared/team-store/mod-bridge.mjs",
+      "sha256": "59fcf44cd1bcffe7fa4e1a9e8c0247cd56c2036aeb0fbdc181361d02a66be76d"
+    },
+    {
+      "path": "shared/team-store/src/api-domain.mjs",
+      "sha256": "fe42edd4584c68399a75dc9514c3678ab6d85f1c48cc3a7948aa842e168ba8f3"
+    },
+    {
+      "path": "shared/team-store/src/mailbox.mjs",
+      "sha256": "3d84bfeabdb869cf69f1e03653985395cf2fcad5545ff8d04e0fc5f99e642353"
+    },
+    {
+      "path": "shared/team-store/test/api.test.mjs",
+      "sha256": "b25a27df5ffac8ccb7e9dbde90361d34719536cfbe7129e8482412a26fcfc093"
+    },
+    {
+      "path": "team-orchestrator/hooks/register.tsx",
+      "sha256": "050d1fa017062e637285cb80334084cf2f98a5accb2be551baa74fc983b73e16"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-store.tsx",
+      "sha256": "b9ec09ef54db6e18606a5bcc409ddd568f127da8b68354ba1255bbfc8804b611"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-workspace.tsx",
+      "sha256": "6abe6def5b048cb0c249e2dcc8bd84254b0928e40fcf8ecc0608f88f94b8c5e9"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-workspace.test.tsx",
+      "sha256": "d1ea000b99f4bb420f9febea6d13b30f2e9fe9696fb73cf61a8ea64fcc8bd536"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-transport.ts",
+      "sha256": "c243dcc9c0d730d9e0494938e1a747d4c455c23d252ed42495dc24967730de63"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-transport.test.ts",
+      "sha256": "c2f9acbd36f174acfec94a864dd4878e581b95195916d66ab230ee4ddfb24202"
+    },
+    {
+      "path": "team-orchestrator/store/mod-bridge.mjs",
+      "sha256": "59fcf44cd1bcffe7fa4e1a9e8c0247cd56c2036aeb0fbdc181361d02a66be76d"
+    },
+    {
+      "path": "team-orchestrator/store/src/api-domain.mjs",
+      "sha256": "fe42edd4584c68399a75dc9514c3678ab6d85f1c48cc3a7948aa842e168ba8f3"
+    },
+    {
+      "path": "team-orchestrator/store/src/mailbox.mjs",
+      "sha256": "3d84bfeabdb869cf69f1e03653985395cf2fcad5545ff8d04e0fc5f99e642353"
+    }
+  ]
+}

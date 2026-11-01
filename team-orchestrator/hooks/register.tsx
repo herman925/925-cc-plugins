@@ -22,6 +22,7 @@ import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from 
 import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
+import {pumpSharedDeliveries} from './shared-transport'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
 import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview,readTeamInterview} from './team-setup'
 import {TEAM_TEMPLATES as PRESETS} from './team-templates'
@@ -2276,6 +2277,7 @@ async function reconcile($: any, list: Member[], statuses: Map<string, Status>, 
 async function refresh($: any) {
   const scope = await preflight($)
   if (!scope.ok) return
+  if(await sharedEnabled($))void pumpSharedDeliveries($,scope,{node:sharedConfig.node,orca:await orcaBin($)}).catch(()=>undefined)
   await pull($)
   if ((await readMembers($)).length === 0) return
   // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster

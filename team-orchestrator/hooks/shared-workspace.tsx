@@ -1,6 +1,7 @@
 import {atom,read,update} from 'claude-code'
 import {sharedCall} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
+import {pumpSharedDeliveries} from './shared-transport'
 import {USER_QUESTION_GUIDANCE} from './question-guidance'
 
 export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}
@@ -52,6 +53,7 @@ async function action($:any,work:()=>Promise<void>){
 }
 async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  const command=pending.request.command
+ if(['admitAssignment','reportOutcome'].includes(command.type))await pumpSharedDeliveries($,deps.proof,deps).catch(()=>undefined)
  const patch:Partial<Workspace>={pending:null,retry:false,page:'home',notice:`${pending.label} confirmed.`,error:false}
  if(command.type==='createFreshTeam'){patch.teamId=command.teamId;patch.createdTeamId=command.teamId;patch.memberChoice='';patch.taskChoice='';patch.selectedAssignment='';patch.about=false;patch.notice='Team created. Connect existing sessions to start using tasks.'}
  if(command.type==='admitAssignment'){patch.selectedAssignment=command.assignmentId;patch.taskChoice=command.assignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null}
@@ -108,7 +110,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
  const chosenMember=memberMissing?undefined:members.find((m:any)=>m.member_id===s.memberChoice)||direct[0]||me||members[0]
  const taskMissing=!!s.taskChoice&&!work.some((item:any)=>item.assignment.assignment_id===s.taskChoice)
  const chosenTask=taskMissing?undefined:work.find((item:any)=>item.assignment.assignment_id===s.taskChoice)||selected||work[0]
- const taskStatus=(item:any)=>item.acceptance?item.task.status:item.attempt.outcome?'Needs review':item.assignment.pickup_observed_at_ms?'In progress':'Awaiting pickup'
+ const taskStatus=(item:any)=>item.acceptance?item.task.status:item.assignment.pickup_expired_at_ms?'Returned to head':item.attempt.outcome?'Needs review':item.assignment.pickup_observed_at_ms?'In progress':'Awaiting pickup'
  const taskLabels=work.map((item:any)=>workspaceLine(`${members.find((m:any)=>m.member_id===item.assignment.member_id)?.name||'Member'} · ${taskStatus(item)} · ${Array.from(String(item.brief.instructions)).slice(0,40).join('')}`))
  const taskOptions=work.map((item:any,index:number)=>{
   const peers=work.filter((_:any,i:number)=>taskLabels[i]===taskLabels[index]),id=String(item.assignment.assignment_id)
@@ -211,7 +213,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
       <Text weight="bold">{taskStatus(selected)}</Text>{button('workspace-task-back','Back to task list',async()=>edit('page','tasks'))}<Text>{selected.brief.instructions}</Text><Text weight="bold">Expected result</Text><Text>{selected.brief.expected_result}</Text>
       {selected.attempt.outcome&&<Box flexDirection="column"><Text weight="bold" color="yellow">Worker outcome · {selected.attempt.outcome}</Text><Text>{selected.attempt.summary}</Text><Text weight="bold">Evidence</Text><Text>{selected.attempt.evidence}</Text></Box>}
       {selected.acceptance?<Box flexDirection="column"><Text weight="bold" color="green">Head decision · {selected.acceptance.decision}</Text><Text>{selected.acceptance.reason}</Text></Box>:!pending&&<Box flexDirection="column">
-       {me?.member_id===selected.assignment.member_id&&!selected.attempt.outcome&&<Box flexDirection="column">
+       {selected.assignment.pickup_expired_at_ms&&<Text color="yellow">Pickup window expired · returned to the head for reassignment.</Text>}
+       {me?.member_id===selected.assignment.member_id&&!selected.attempt.outcome&&!selected.assignment.pickup_expired_at_ms&&<Box flexDirection="column">
         {!selected.assignment.pickup_observed_at_ms?button('workspace-pickup','Pick up · read role and brief',()=>action($,async()=>{
          const current=await read($,state),item=current.snapshot.work.find((w:any)=>w.assignment.assignment_id===current.selectedAssignment)
          await mutate($,deps,{type:'verifyAssignment',...authority(current),assignmentId:item.assignment.assignment_id,expectedAttemptGeneration:item.attempt.generation},'Task pickup')

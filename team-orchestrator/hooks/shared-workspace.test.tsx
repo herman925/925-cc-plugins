@@ -40,6 +40,13 @@ function fixture(on:any,who='head'){
  return {model,calls,control,files,item,configSets,refuseConfig:()=>{refuseConfig=true}}
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
+test('a returned expired assignment is labelled clearly and cannot be picked up from the panel',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),item:any=f.item();item.assignment.pickup_expired_at_ms=123;item.assignment.returned_to_member_id='head';f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(JSON.stringify(await band.drawn())).toContain('Returned to head')
+ expect(await band.find({key:'workspace-pickup'})).toBeUndefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='verifyAssignment')).toBe(false)
+})
 
 test('fresh team creation has editable roles, hierarchy and windows, with no side effect from opening or drafting',options,async($:any,on:any)=>{
  const f=fixture(on,'controller'),band=await open($)

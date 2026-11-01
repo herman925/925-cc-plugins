@@ -37,7 +37,20 @@ try {
  const result=envelope.mode==='approveController'
   ? await api.approveController({operationId:envelope.request.operationId,approval:envelope.uiApprovalId})
   : await api[envelope.mode](envelope.request);
- console.log(JSON.stringify({ok:true,result}));
+ const transportTargets=[];
+ if(envelope.mode==='execute' && envelope.request.command?.type==='prepareDeliveries') {
+  // Reservation committed above. Native I/O is deliberately outside the lease.
+  for(const delivery of result.result.deliveries) {
+   const b=delivery.recipient;
+   if(b.machine_id!==actor.machineId||b.provider!==actor.provider||b.execution_host_id!==actor.executionHostId)continue;
+   try {
+    const verified=await native.verifyBinding({projectRoot:actor.projectRoot,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},envelope.proof);
+    if(verified.incarnationId===b.incarnation_id && verified.machineId===b.machine_id && verified.provider===b.provider && verified.executionHostId===b.execution_host_id)
+     transportTargets.push({deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId,replay:delivery.replay,conversationId:verified.conversationId});
+   } catch {/* Stale or unavailable targets remain outstanding. Never retarget by title. */}
+  }
+ }
+ console.log(JSON.stringify({ok:true,result,...(envelope.request.command?.type==='prepareDeliveries'?{transportTargets}:{})}));
  }
 } catch(error) {
  const known=error instanceof StoreError;
