@@ -1,4 +1,4 @@
-# Panel navigation — 0.5.48
+# Panel navigation — 0.5.49
 
 A new project starts with **＋ Create team** and **Settings** in the band. The arrow or `t` opens the same team entry. Create team opens a draft before workspace mode or management permission is enabled.
 
@@ -27,4 +27,10 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.48**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
+Restart/resume the Claude Code conversation after updating so the host loads the new manifest and configuration row, then confirm **0.5.49**. A hooks-only reload can retain the old configuration catalogue. Updating never approves a controller, creates a team or connects a session.
+
+## Sidebar hierarchy
+
+The shared workspace uses compact Team/Settings navigation. A project/status row expands Access controls only when needed; an unready workspace keeps those controls visible. Choose a team, then Members or Tasks. Each native selector shows one subject with its details and explicit actions. Changing a selector does not connect a session, pick up work or accept a task. Missing selected subjects require another explicit choice.
+
+Team info expands the full purpose. Open task retains full instructions, expected result, worker outcome, evidence and the separate head decision. Pending-operation recovery and critical access notices remain visible. Setup uses labelled single-line inputs and separate multiline instructions. Display settings keep placement help behind an expander and show classic card controls only when a classic roster exists.

@@ -45,7 +45,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
  const pending=!!w.pending,busy=s.busy||w.busy||!!access.state.busy
  const labels=['Team','Members','Options','Review & permission']
  async function edit(patch:any){if(!(await read($,setup)).busy&&!w.pending)await patchSharedDraft($,patch)}
- function field(key:string,label:string,value:string,onInput:(value:string)=>Promise<void>,rows=1,autoFocus=false){return <Box width="100%" flexDirection="column"><Text dimColor>{label}</Text><Input key={key} placeholder={label} value={rows>1?workspaceText(value):workspaceLine(value)} rows={rows} autoFocus={autoFocus?true:undefined} onInput={async(value:string)=>{if(!busy)await onInput(rows>1?workspaceText(value):workspaceLine(value))}} onSubmit={()=>{}}/></Box>}
+ function field(key:string,label:string,value:string,onInput:(value:string)=>Promise<void>,rows=1,autoFocus=false){return <Box width="100%" flexDirection="column">{rows>1&&<Text dimColor>{label}</Text>}<Input key={key} label={rows===1?`${label}: `:undefined} placeholder={rows>1?(label==='Purpose'?'Describe the work':'Add instructions'):'Enter value'} value={rows>1?workspaceText(value):workspaceLine(value)} rows={rows} autoFocus={autoFocus?true:undefined} onInput={async(value:string)=>{if(!busy)await onInput(rows>1?workspaceText(value):workspaceLine(value))}} onSubmit={()=>{}}/></Box>}
  async function next(){await act($,async()=>{
   const current=await readSharedWorkspace($),currentSetup=await read($,setup),problem=sharedDraftProblem(current,currentSetup.step)
   if(problem){const index=Number(problem.field.match(/-(\d+)$/)?.[1]??currentSetup.member);await set($,{error:problem.message,member:index,advanced:currentSetup.step===2?true:currentSetup.advanced});await $.ui.focus({requestId:deps.requestId,key:problem.field}).catch(()=>undefined);return}
@@ -73,7 +73,6 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   <Box flexWrap="wrap" columnGap={1}><Text weight="bold" color="cyan">Create team</Text><Text dimColor>Step {s.step+1} of 4 · {labels[s.step]}</Text></Box>
   <Box flexWrap="wrap" columnGap={1}>
    {!pending&&s.step>0&&<Button key="setup-back" label="← Back" onPress={async()=>{if(!busy)await set($,{step:s.step-1,error:''})}}/>}
-   <Button key="workspace-cancel" label="Close setup" onPress={async()=>{if(!busy)await deps.onClose()}}/>
    {!pending&&s.step<3&&<Button key="setup-next" label={busy?'Checking…':'Next →'} variant="primary" onPress={next}/>}
    {!pending&&s.step===3&&deps.enabled&&access.state.checked&&access.state.approved&&<Button key="workspace-create" label={busy?'Creating…':'Create team'} variant="primary" onPress={submit}/>}
   </Box>
@@ -128,7 +127,8 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
     <Text dimColor>Team not created yet. Creating saves the roster; connecting and starting sessions are separate.</Text>
    </Box>}
    <Box flexWrap="wrap" columnGap={1}>
-    <Button key="tab-shared" label="Open existing teams" onPress={async()=>{if(!busy)await deps.onOpenTeams()}}/>
+    <Button key="workspace-cancel" label="Close setup" onPress={async()=>{if(!busy)await deps.onClose()}}/>
+    <Button key="tab-shared" label="Open teams" onPress={async()=>{if(!busy)await deps.onOpenTeams()}}/>
     <Button key="setup-discard" label="Discard draft…" onPress={async()=>{if(!busy)await set($,{discard:true})}}/>
    </Box>
    {s.discard&&<Box flexWrap="wrap" columnGap={1}><Text>Discard this unsaved draft?</Text><Button key="setup-keep-draft" label="Keep draft" onPress={async()=>set($,{discard:false})}/><Button key="setup-confirm-discard" label="Discard" onPress={async()=>{if(!busy){await patchSharedDraft($,{page:'home',members:[],name:'',purpose:''});await set($,{active:false,step:0,discard:false});await deps.onClose()}}}/></Box>}

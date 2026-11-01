@@ -3688,17 +3688,17 @@ async function openTeamEntry($:any){
 }
 async function panel($:any,ui:any,v:View,cols:number,requestId:string=DOCK){
  const {Box,Text,Button}=ui
- const entry=await teamEntryState($),legacy=(await readMembers($)).length>0
+ const legacy=(await readMembers($)).length>0
  await readVersion($)
  const primaryActive=v==='setup'||v==='shared'||v==='roster'
  return <Box flexDirection="column">
-  <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection={cols<110?'column':'row'} justifyContent="space-between">
-   <Box flexWrap="wrap">
-    <Text weight="bold" color="cyan">◆ TEAM ORCHESTRATOR</Text><Text dimColor>{cfg.version?` v${cfg.version}  `:''}</Text>
-    <Button key="tab-team" label={teamEntryLabel(entry,legacy)} variant={primaryActive?'primary':undefined} onPress={async()=>{if(primaryActive)await setPanelView($,'closed');else await openTeamEntry($)}}/>
-    <Button key="tab-settings" label="Settings" variant={v==='settings'?'primary':undefined} onPress={async()=>togglePanelView($,'settings')}/>
-   </Box>
-   <Button key="close" label="x Close" role="dismiss" onPress={async()=>setPanelView($,'closed')}/>
+  <Box flexDirection="row" justifyContent="space-between" flexWrap="wrap">
+   <Box flexWrap="wrap" columnGap={1}><Text weight="bold" color="cyan">Team Orchestrator</Text><Text dimColor>{cfg.version?`v${cfg.version}`:''}</Text></Box>
+   <Button key="close" label="Close" role="dismiss" onPress={async()=>setPanelView($,'closed')}/>
+  </Box>
+  <Box flexWrap="wrap" columnGap={1}>
+   <Button key="tab-team" label="Team" variant={primaryActive?'primary':undefined} onPress={async()=>{if(primaryActive)await setPanelView($,'closed');else await openTeamEntry($)}}/>
+   <Button key="tab-settings" label="Settings" variant={v==='settings'?'primary':undefined} onPress={async()=>togglePanelView($,'settings')}/>
   </Box>
   {(await read($,spawn)).names.length?await spawnView($,ui):v==='setup'?await teamSetupView($,ui,{...await sharedControls($),requestId,revalidate:()=>preflight($),onCreated:()=>setPanelView($,'shared'),onClose:()=>setPanelView($,'closed'),onOpenTeams:()=>openSharedPanel($),onClassic:()=>setPanelView($,'new')}):v==='shared'?await sharedStoreView($,ui,{...await sharedControls($),revalidate:()=>preflight($)},()=>beginTeamSetup($)):v==='new'?await formView($,ui):v==='settings'?await settingsView($,ui):await rosterView($,ui,cols)}
   {legacy&&v!=='setup'&&<Box flexWrap="wrap" columnGap={1}><Text dimColor>Classic teams</Text><Button key="tab-roster" label="Classic roster" onPress={async()=>togglePanelView($,'roster')}/><Button key="tab-new" label="New classic team" onPress={async()=>togglePanelView($,'new')}/><Button key="tab-shared" label="Open shared teams" onPress={async()=>toggleSharedPanel($)}/></Box>}
@@ -3775,15 +3775,16 @@ async function settingsView($: any, ui: any) {
   }
   const layout = async (to:string)=>set({layout:to as Settings['layout']})
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
-      <Text color="cyan">┤ SETTINGS ├</Text>
+    <Box flexDirection="column">
       <Box flexWrap="wrap" columnGap={1}>
         {['display','connection',...(list.length?['classic']:[])].map(value=><Button key={`settings-${value}`} label={value==='display'?'Display':value==='connection'?'Connection':'Classic teams'} variant={section===value?'primary':undefined} onPress={async()=>{await set({section:value})}}/>)}
       </Box>
       {section==='connection'&&<Box flexDirection="column">{await sharedStoreOptionsView($,ui,await sharedControls($),true)}<Button key="settings-shared-open" label="Open shared workspace →" onPress={async()=>openSharedPanel($)}/></Box>}
       {section==='display'&&<Box flexDirection="column">
       <Box flexWrap="wrap"><Text weight="bold">{'Panel'.padEnd(13)}</Text>{Seg(ui,'panel',[['right','Right panel'],['inline','Inline']],s.placement||'right',v=>void setPanelPlacement($,v as 'right'|'inline'))}</Box>
-      <Text dimColor>Right panel is the default for every view. The host docks in fullscreen from 110 terminal columns; otherwise it seats the pane inline. Closing keeps your choice.</Text>
+      <Button key="settings-placement-help" label={s.placementHelp?'Hide placement help':'Placement help'} onPress={async()=>set({placementHelp:!s.placementHelp})}/>
+      {s.placementHelp&&<Text dimColor>Right panel is the default. Docking needs the fullscreen renderer and 110 terminal columns. Otherwise the host uses an inline pane. Closing keeps your choice. The host /tui command changes its user-wide renderer preference and requires a restart.</Text>}
+      {list.length>0&&<Box flexDirection="column"><Text weight="bold">Classic roster display</Text>
       <Box flexWrap="wrap"><Text weight="bold">{'Team cards'.padEnd(13)}</Text>{Seg(ui,'layout',[['stacked','Stacked'],['columns','Side by side']],s.layout,v=>void layout(v))}</Box>
       <Text dimColor>Classic team cards stack or share columns where they fit. This does not change panel placement.</Text>
       <Box>
@@ -3803,7 +3804,8 @@ async function settingsView($: any, ui: any) {
           ))}
         </Box>
       </Box>
-      <Text dimColor>{' '.repeat(13)}NAME always shows.</Text>
+      <Text dimColor>NAME always shows.</Text>
+      </Box>}
       </Box>}
       {section==='classic'&&<Box flexDirection="column"><Text weight="bold">Classic team options</Text><Text dimColor>These options apply to the existing classic roster, separately from shared teams.</Text>
       <Text weight="bold">Workers</Text>

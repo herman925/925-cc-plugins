@@ -125,7 +125,8 @@ test('an already-approved workspace shows a status card and keeps receipt JSON b
  expect(JSON.stringify(await band.drawn())).toContain('APPROVED')
  expect(JSON.stringify(await band.drawn())).not.toContain('private-receipt-id')
  expect(await band.find({key:'shared-approve-controller'})).toBeUndefined()
- await band.press({key:'shared-details'})
+ expect(await band.find({key:'shared-details'})).toBeUndefined()
+ await band.press({key:'shared-access'});await band.press({key:'shared-details'})
  expect(JSON.stringify(await band.drawn())).toContain('private-receipt-id')
 })
 

@@ -63,7 +63,7 @@ test('fresh team creation has editable roles, hierarchy and windows, with no sid
 test('binding uses native session choices and the displayed member/configuration/binding generations',options,async($:any,on:any)=>{
  const f=fixture(on),band=await open($);f.files.calls.length=0
  await band.drawn();await band.drawn();expect(f.files.calls.length).toBe(0)
- await band.press({key:'workspace-bind-1'})
+ await band.press({key:'workspace-bind-worker'})
  expect(f.calls.some(c=>c.mode==='listSessions')).toBe(true)
  expect(f.calls.some(c=>c.request?.command?.type==='bindMember')).toBe(false)
  await band.press({key:'workspace-session-0'})
@@ -73,15 +73,15 @@ test('binding uses native session choices and the displayed member/configuration
 })
 test('head assigns a task then reviews explicit worker evidence before separate acceptance',options,async($:any,on:any)=>{
  const f=fixture(on),band=await open($)
- await band.press({key:'workspace-assign-1'})
+ await band.press({key:'workspace-assign-worker'})
  await band.input({key:'workspace-instructions',text:'Count the fixture words.',kind:'change'})
  await band.input({key:'workspace-expected',text:'13 words with evidence',kind:'change'})
  await band.press({key:'workspace-admit'})
  const admitted=f.calls.find(c=>c.request?.command?.type==='admitAssignment').request.command
  expect(admitted.memberId).toBe('worker');expect(admitted.expectedTargetBindingGeneration).toBe(1)
- await band.press({key:'workspace-task-0'});expect(await band.find({key:'workspace-accepted'})).toBeUndefined()
+ await band.press({key:`workspace-task-${admitted.assignmentId}`});expect(await band.find({key:'workspace-accepted'})).toBeUndefined()
  Object.assign(f.model.work[0].attempt,{generation:3,outcome:'succeeded',summary:'13 words',evidence:'Checked fixture.txt'})
- await band.press({key:'workspace-refresh'});await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-0'})
+ await band.press({key:'workspace-refresh'});await band.press({key:'workspace-tasks-tab'});await band.press({key:`workspace-task-${admitted.assignmentId}`})
  expect(JSON.stringify(await band.drawn())).toContain('Checked fixture.txt')
  await band.press({key:'workspace-accepted'});expect(f.calls.some(c=>c.request?.command?.type==='acceptTask')).toBe(false)
  await band.input({key:'workspace-reason',text:'Independently checked all 13 words.',kind:'change'});await band.press({key:'workspace-accepted'})
@@ -91,16 +91,16 @@ test('head assigns a task then reviews explicit worker evidence before separate 
 })
 test('worker pickup displays official role and brief; reporting never exposes head acceptance',options,async($:any,on:any)=>{
  const f=fixture(on,'worker');f.model.work.push(f.item());const band=await open($)
- expect(JSON.stringify(await band.drawn())).toContain('Member access verified')
+ expect(JSON.stringify(await band.drawn())).toContain('MEMBER')
  expect(await band.find({key:'workspace-new'})).toBeUndefined()
- expect(await band.find({key:'workspace-assign-0'})).toBeUndefined()
- await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-0'});await band.press({key:'workspace-pickup'})
+ expect(await band.find({key:'workspace-assign-head'})).toBeUndefined()
+ await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});await band.press({key:'workspace-pickup'})
  expect(JSON.stringify(await band.drawn())).toContain('READ THIS ROLE BEFORE THE FIXTURE')
  expect(JSON.stringify(await band.drawn())).toContain('13 words with evidence')
  await band.input({key:'workspace-summary',text:'13 words',kind:'change'});await band.input({key:'workspace-evidence',text:'Counted fixture.txt',kind:'change'});await band.press({key:'workspace-report-succeeded'})
  const report=f.calls.find(c=>c.request?.command?.type==='reportOutcome').request.command
  expect(report.expectedAttemptGeneration).toBe(2);expect(report.outcome).toBe('succeeded')
- await band.press({key:'workspace-task-0'})
+ await band.press({key:'workspace-task-assignment'})
  expect(await band.find({key:'workspace-accepted'})).toBeUndefined();expect(f.model.work[0].acceptance).toBe(null)
 })
 test('lost creation reply pauses changes and reconciles the exact original request without another create',options,async($:any,on:any)=>{
@@ -119,7 +119,7 @@ test('invalid windows and unverifiable session discovery do not create writes or
  const f=fixture(on),band=await open($)
  await band.press({key:'workspace-new'});await band.input({key:'workspace-team-name',text:'Invalid',kind:'change'});await band.press({key:'setup-next'});await band.press({key:'setup-next'});await band.input({key:'workspace-pickup',text:'0',kind:'change'});await band.press({key:'setup-next'})
  expect(f.calls.some(c=>c.request?.command?.type==='createFreshTeam')).toBe(false)
- await band.press({key:'tab-shared'});f.control.discoveryFailure=true;await band.press({key:'workspace-bind-1'})
+ await band.press({key:'tab-shared'});f.control.discoveryFailure=true;await band.press({key:'workspace-bind-worker'})
  expect(await band.find({key:'workspace-session-0'})).toBeUndefined();expect(f.calls.some(c=>c.request?.command?.type==='bindMember')).toBe(false)
 })
 test('control-key text and multiline pastes keep the form usable and preserve readable role instructions',options,async($:any,on:any)=>{
@@ -155,7 +155,7 @@ test('confirmed creation opens the workspace despite readback failure and never 
  for(let i=0;i<3;i++)await band.press({key:'setup-next'})
  await band.press({key:'workspace-create'})
  expect(await band.find({key:'workspace-create'})).toBeUndefined()
- expect((await band.find({key:'tab-team'})).props.label).toBe('Team workspace')
+ expect((await band.find({key:'tab-team'})).props.label).toBe('Team')
  expect(JSON.stringify(await band.drawn())).toContain('confirmed. Refresh the workspace')
  f.control.reloadFailure=false;await band.press({key:'workspace-refresh'})
  expect(JSON.stringify(await band.drawn())).toContain('Committed once')
@@ -182,4 +182,70 @@ test('a failed project preference save prevents creation and retains the draft',
  expect(await band.find({key:'workspace-create'})).toBeDefined()
  await band.press({key:'setup-back'});await band.press({key:'setup-back'});await band.press({key:'setup-back'})
  expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Keep if save fails')
+})
+
+test('compact member selector changes only presentation and keeps one named action target',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);const count=f.calls.length
+ expect(await band.find({key:'shared-preview-on'})).toBeUndefined()
+ expect(await band.find({key:'workspace-bind-worker'})).toBeDefined()
+ expect(await band.find({key:'workspace-bind-head'})).toBeUndefined()
+ await band.select({key:'workspace-member-select',value:'head'})
+ expect(f.calls.length).toBe(count)
+ expect(await band.find({key:'workspace-bind-head'})).toBeDefined()
+ expect(await band.find({key:'workspace-bind-worker'})).toBeUndefined()
+ expect((await band.findAll({type:'Text'})).map((t:any)=>t.text).join('\n')).toContain('Head · You · Lead')
+ await band.press({key:'shared-access'})
+ expect(await band.find({key:'shared-preview-on'})).toBeDefined()
+ expect(f.calls.length).toBe(count)
+})
+test('task selector distinguishes duplicate labels and selecting never records pickup',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),first=f.item(),second=f.item()
+ first.assignment.assignment_id='first-same';second.assignment.assignment_id='next-same'
+ second.brief.expected_result='SECOND expected result in full'
+ f.model.work.push(first,second);const band=await open($);const count=f.calls.length
+ const picker=(await band.find({key:'workspace-task-select'})).props
+ expect(picker.options[0].value).toBe('first-same');expect(picker.options[1].value).toBe('next-same')
+ expect(picker.options[0].label).not.toBe(picker.options[1].label)
+ await band.select({key:'workspace-task-select',value:'next-same'})
+ expect(f.calls.length).toBe(count)
+ expect(await band.find({key:'workspace-task-first-same'})).toBeUndefined()
+ await band.press({key:'workspace-task-next-same'})
+ expect(f.calls.length).toBe(count)
+ expect(JSON.stringify(await band.drawn())).toContain('SECOND expected result in full')
+ expect(f.calls.some(c=>c.request?.command?.type==='verifyAssignment')).toBe(false)
+})
+test('returning to an open task preserves unsent review text and full worker evidence',options,async($:any,on:any)=>{
+ const f=fixture(on),item=f.item();Object.assign(item.attempt,{generation:3,outcome:'succeeded',summary:'Ready',evidence:'FULL EVIDENCE '+ 'line '.repeat(80)})
+ f.model.work.push(item);const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ await band.input({key:'workspace-reason',text:'Unsent review draft',kind:'change'})
+ await band.press({key:'workspace-task-back'});await band.press({key:'workspace-task-assignment'})
+ expect((await band.find({key:'workspace-reason'})).props.value).toBe('Unsent review draft')
+ expect(JSON.stringify(await band.drawn())).toContain(item.attempt.evidence)
+ expect(f.calls.some(c=>c.request?.command?.type==='acceptTask')).toBe(false)
+})
+test('refresh does not silently retarget a removed selected member or task',options,async($:any,on:any)=>{
+ const f=fixture(on),item=f.item();f.model.work.push(item);const band=await open($)
+ await band.select({key:'workspace-member-select',value:'worker'})
+ f.model.members=f.model.members.filter((m:any)=>m.member_id!=='worker');f.model.bindings=f.model.bindings.filter((b:any)=>b.member_id!=='worker')
+ await band.press({key:'workspace-refresh'})
+ expect(JSON.stringify(await band.drawn())).toContain('selected member is no longer visible')
+ expect(await band.find({key:'workspace-bind-head'})).toBeUndefined()
+ await band.select({key:'workspace-member-select',value:'head'})
+ expect(await band.find({key:'workspace-bind-head'})).toBeDefined()
+ await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ f.model.work=[];await band.press({key:'workspace-refresh'})
+ expect(JSON.stringify(await band.drawn())).toContain('selected task is no longer visible')
+ expect(await band.find({key:'workspace-pickup'})).toBeUndefined()
+ expect(await band.find({key:'workspace-accepted'})).toBeUndefined()
+ expect(f.calls.some(c=>['bindMember','verifyAssignment','acceptTask'].includes(c.request?.command?.type))).toBe(false)
+})
+
+test('long team purpose stays behind explicit team info while subject navigation stays visible',options,async($:any,on:any)=>{
+ const f=fixture(on);f.model.team.function_text='LONG PURPOSE '+ 'purpose '.repeat(100)
+ const band=await open($),count=f.calls.length
+ expect(await band.find({key:'workspace-member-select'})).toBeDefined()
+ expect(JSON.stringify(await band.drawn())).not.toContain(f.model.team.function_text)
+ await band.press({key:'workspace-about'})
+ expect(JSON.stringify(await band.drawn())).toContain(f.model.team.function_text)
+ expect(f.calls.length).toBe(count)
 })
