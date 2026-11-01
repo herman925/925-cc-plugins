@@ -8,6 +8,7 @@ import * as legacy from '../src/schema5-contract.mjs';
 import {runtimeFixture,rawWrite} from './support/runtime-fixture.mjs';
 import {seedLayout,seedDelivery} from './support/seed-layout.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
+import {connectSqlite} from '../src/engines.mjs';
 
 const code=expected=>error=>error.code===expected;
 for(const engine of ['sqlite','postgres'])describe(`${engine} explicit schema 5 upgrade`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
@@ -46,6 +47,29 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} explicit schema 5 
   assert.deepEqual(await upgradeTeamStore(f.options),receipt);assert.equal((await readdir(join(receipt.backupPath,'..'))).length,1);
   assert.equal((await upgradeTeamStore({...f.options,operationId:'new-check'})).status,'already_current');
   const {db}=await openBackend(f.options);try{assert.equal((await inspectSchema(db)).version,6);}finally{await db.close();}
+  if(engine==='sqlite') {
+   // Exercise recovery in a separate disposable file, never over the source.
+   // The backup carries frozen schema-5 SQL and all contract data. Generated
+   // endpoint columns are recomputed, then every FK and complete row is checked.
+   assert.equal(backup.schemaSql,legacy.ddlFor('sqlite'));
+   const restored=await connectSqlite({path:join(f.root,'backup-restored.sqlite')});
+   try {
+    await restored.exec('PRAGMA foreign_keys=OFF');await restored.begin();await restored.exec(backup.schemaSql);
+    const tables=Object.keys(backup.tables);
+    for(const name of tables){assert.match(name,/^[a-z_]+$/);await restored.exec(`DELETE FROM ${name}`);}
+    for(const name of tables) {
+     const columns=(await restored.query(`PRAGMA table_xinfo(${name})`)).filter(c=>Number(c.hidden)===0).map(c=>c.name);
+     for(const column of columns)assert.match(column,/^[a-z_]+$/);
+     for(const row of backup.tables[name])await restored.query(`INSERT INTO ${name} (${columns.join(',')}) VALUES (${columns.map(c=>`:${c}`).join(',')})`,Object.fromEntries(columns.map(c=>[c,row[c]])));
+    }
+    await restored.commit();await restored.exec('PRAGMA foreign_keys=ON');
+    assert.equal((await restored.query('PRAGMA foreign_keys'))[0].foreign_keys,1);
+    assert.deepEqual(await restored.query('PRAGMA foreign_key_check'),[]);
+    const rowKey=row=>JSON.stringify(Object.fromEntries(Object.keys(row).sort().map(key=>[key,row[key]])));
+    for(const name of tables)assert.deepEqual((await restored.query(`SELECT * FROM ${name}`)).map(rowKey).sort(),backup.tables[name].map(rowKey).sort(),`restored ${name}`);
+    assert.equal((await inspectSchema(restored,{format:legacy.FORMAT,version:legacy.SCHEMA_VERSION,ddl:legacy.DDL,render:legacy.ddlFor,label:'restored team store'})).version,5);
+   }catch(error){await restored.rollback().catch(()=>{});throw error;}finally{await restored.close();}
+  }
   await assert.rejects(rawWrite(f,'DELETE FROM assignment_returns'),e=>e.message.includes('STORE_HISTORY_IMMUTABLE'));
  });
  test('upgrade preserves opaque gate history, blocks open gates, and refuses terminal/open ambiguity',async t=>{
