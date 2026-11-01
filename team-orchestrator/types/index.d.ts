@@ -108,7 +108,8 @@ export type View = 'closed' | 'roster' | 'new' | 'settings' | 'shared' | 'setup'
 export type Spawn = { names: string[]; batch: number; of: number }
 export type Settings = {
   section?: string
-  /** stacked: team cards one under another | columns: side by side where the width allows | dock: the panel in a side pane */
+  placement?: 'right' | 'inline'
+  /** Classic card arrangement; legacy dock values read as columns. Panel placement is separate. */
   layout: 'stacked' | 'columns' | 'dock'
   /** show the live org chart */
   chart: boolean
@@ -134,7 +135,7 @@ declare module 'claude-code' {
       assumptions: Record<string, { id: string; text: string; kind: string; turn: number }[]>
       /** the assumptions view is on here: the team's switch is on and Session Panel is on in this session (#89) */
       assumptionsOn: boolean
-      teamSetup: {scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null;inline:boolean}
+      teamSetup: {scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null}
       sharedStoreStatus: string
       sharedWorkspace: {scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:{request:any;label:string}|null;retry:boolean}
       sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}

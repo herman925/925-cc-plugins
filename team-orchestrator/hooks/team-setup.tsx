@@ -4,8 +4,8 @@ import type {SharedControls} from './shared-store'
 import type {SharedProof} from './shared-bridge'
 import {beginSharedDraft,readSharedWorkspace,patchSharedDraft,editSharedMember,addSharedMember,removeSharedMember,sharedDraftProblem,submitSharedDraft,reconcileSharedDraft,workspaceLine,workspaceText,workspaceScope} from './shared-workspace'
 
-type Setup={scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null;inline:boolean}
-const initial=():Setup=>({scope:'',active:false,step:0,member:0,advanced:false,error:'',busy:false,discard:false,nodeDraft:null,orcaDraft:null,storeHint:null,inline:false})
+type Setup={scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null}
+const initial=():Setup=>({scope:'',active:false,step:0,member:0,advanced:false,error:'',busy:false,discard:false,nodeDraft:null,orcaDraft:null,storeHint:null})
 const setup=atom({plugin:'team-orchestrator',key:'teamSetup'} as const,initial())
 export type SetupDependencies=SharedControls & {revalidate:()=>Promise<SharedProof>;requestId:string;onCreated:()=>Promise<void>;onClose:()=>Promise<void>;onOpenTeams:()=>Promise<void>;onClassic:()=>Promise<void>}
 async function scopeNow($:any){return workspaceScope(String(await $.session.root()),String(await $.session.id()))}
@@ -14,8 +14,6 @@ export async function teamEntryState($:any){
  try{const scope=await scopeNow($),s=await read($,setup),w=await readSharedWorkspace($)
  return {draft:s.scope===scope&&s.active,knownTeam:w.scope===scope&&!!(w.createdTeamId||w.teamId),storeHint:s.scope===scope?s.storeHint:null}}catch{return {draft:false,knownTeam:false,storeHint:null}}
 }
-export async function setupInline($:any){const scope=await scopeNow($),s=await read($,setup);return s.scope===scope&&s.inline===true}
-export async function useInlineSetup($:any){await set($,{inline:true})}
 export async function observeTeamPresence($:any){
  const scope=await scopeNow($),root=String(await $.session.root())
  const exists=await $.fs.exists(`${root}/.team-orchestrator/team.sqlite`).catch(()=>false)
@@ -25,7 +23,7 @@ export async function startTeamSetup($:any){
  const scope=await scopeNow($),old=await read($,setup)
  if(old.scope===scope&&old.active){await patchSharedDraft($,{page:'new'});return}
  await beginSharedDraft($)
- await update($,setup,()=>({...initial(),scope,active:true,storeHint:old.scope===scope?old.storeHint:null,inline:false}))
+ await update($,setup,()=>({...initial(),scope,active:true,storeHint:old.scope===scope?old.storeHint:null}))
 }
 async function finish($:any,deps:SetupDependencies){
  const w=await readSharedWorkspace($)

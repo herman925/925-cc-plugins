@@ -526,7 +526,7 @@ test('settings hide the chart and columns, and stay after a refresh and a new dr
   await twoSmallTeams($, on)
   let band = await bandAt($, 120)
   await band.press({ key: 'tab-settings' })
-  for (const key of ['layout-stacked', 'layout-columns', 'layout-dock', 'chart-1', 'chart-0', 'col-STATUS', 'col-BRIEF']) expect(await band.find({ key })).toBeDefined()
+  for (const key of ['layout-stacked', 'layout-columns', 'panel-right', 'panel-inline', 'chart-1', 'chart-0', 'col-STATUS', 'col-BRIEF']) expect(await band.find({ key })).toBeDefined()
   await band.press({ key: 'chart-0' })
   await band.press({ key: 'col-MODEL' })
   await band.press({ key: 'col-BRIEF' })
@@ -564,14 +564,15 @@ test('dock right puts the panel in the dock pane, which says when it cannot sit 
   await twoSmallTeams($, on)
   const band = await bandAt($, 120)
   await band.press({ key: 'tab-settings' })
-  await band.press({ key: 'layout-dock' })
-  expect(JSON.stringify(await band.find({ key: 'layout-dock' })).includes('#ff5440')).toBe(true)
+  expect(JSON.stringify(await band.find({ key: 'panel-right' })).includes('#ff5440')).toBe(true)
   const pane = await $.ui.mount({
     plugin: 'team-orchestrator', surface: 'terminal', component: 'Pane', requestId: 'team-dock',
     props: { title: 'Team Orchestrator', isFocused: false, bodyColumns: 90, placement: 'inline' } as any,
   })
   expect(await pane.find({ key: 'tab-settings' })).toBeDefined()
-  expect(JSON.stringify(await pane.drawn())).toContain('only in the fullscreen layout')
+  expect(JSON.stringify(await pane.drawn())).toContain('fullscreen layout')
+  await pane.press({key:'layout-columns'})
+  expect(JSON.stringify(await pane.find({key:'panel-right'}))).toContain('#ff5440')
   await pane.press({ key: 'layout-stacked' })
   expect(JSON.stringify(await pane.find({ key: 'layout-stacked' })).includes('#ff5440')).toBe(true)
 })
@@ -1287,12 +1288,13 @@ test('a bulk rename restart keeps the member\'s saved model and effort when they
   expect(cmd).toContain('--effort high')
 })
 
-test('dock right packs cards like side by side; stacked keeps one full-width card per row', async ($, on) => {
+test('card arrangement is independent of the right-panel preference', async ($, on) => {
   await twoSmallTeams($, on)
   const band = await bandAt($, 120)
   expect(cardWidths(await band.drawn())).toEqual([120, 120])
   await band.press({ key: 'tab-settings' })
-  await band.press({ key: 'layout-dock' })
+  await band.press({key:'layout-columns'})
+  expect(JSON.stringify(await band.find({key:'panel-right'}))).toContain('#ff5440')
   const pane = await $.ui.mount({
     plugin: 'team-orchestrator', surface: 'terminal', component: 'Pane', requestId: 'team-dock',
     props: { title: 'Team Orchestrator', isFocused: false, bodyColumns: 120, placement: 'side' } as any,
