@@ -74,6 +74,8 @@ test('binding uses native session choices and the displayed member/configuration
 test('head assigns a task then reviews explicit worker evidence before separate acceptance',options,async($:any,on:any)=>{
  const f=fixture(on),band=await open($)
  await band.press({key:'workspace-assign-worker'})
+ expect((await band.find({key:'workspace-instructions'})).props.label).toBe('Task instructions')
+ expect((await band.find({key:'workspace-instructions'})).props.placeholder).toBe('Enter value')
  await band.input({key:'workspace-instructions',text:'Count the fixture words.',kind:'change'})
  await band.input({key:'workspace-expected',text:'13 words with evidence',kind:'change'})
  await band.press({key:'workspace-admit'})

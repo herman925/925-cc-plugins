@@ -90,7 +90,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   if(s.pending)return <Box borderStyle="round" borderColor="yellow" paddingX={1}><Text>A change from another conversation is still unconfirmed. Return to that conversation and check its receipt.</Text></Box>
   s={...initial(),scope}
  }
- function input(key:string,label:string,value:string,onInput:(v:string)=>any,placeholder=''){return <Box flexDirection="column"><Text dimColor>{label}</Text><Input key={key} value={workspaceLine(value)} placeholder={placeholder} onInput={(text:string)=>onInput(workspaceLine(text))} onSubmit={()=>{}}/></Box>}
+ function input(key:string,label:string,value:string,onInput:(v:string)=>any,placeholder=''){return <Box width="100%" flexDirection="column"><Input key={key} label={label} value={workspaceLine(value)} placeholder={placeholder||'Enter value'} onInput={(text:string)=>onInput(workspaceLine(text))} onSubmit={()=>{}}/></Box>}
  const edit=(key:keyof Workspace,value:any)=>set($,{[key]:value})
  function button(key:string,label:string,onPress:()=>Promise<any>,primary=false){return <Button key={key} label={workspaceLine(label)} variant={primary?'primary':undefined} onPress={async()=>{
   const current=await read($,state)
