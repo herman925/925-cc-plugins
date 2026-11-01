@@ -270,3 +270,13 @@ test('new assignment selects its own preview and cannot inherit another tasks un
  expect((await band.find({key:'workspace-reason'})).props.value).toBe('')
  expect(f.calls.some(c=>c.request?.command?.type==='acceptTask')).toBe(false)
 })
+
+
+test('an approved controller must finish or cancel an active interview before Create is available',options,async($:any,on:any)=>{
+ const f=fixture(on,'controller');on('prompt.submit',async(_$:any,e:any)=>({text:e.text}));on('tool.register',async(_$:any,e:any)=>({value:{tool:`mcp__team-orchestrator__${e.name}`}}))
+ const band=await open($);await band.press({key:'workspace-new'});await band.input({key:'workspace-team-name',text:'Review guard',kind:'change'})
+ await band.press({key:'setup-interview'});for(let i=0;i<3;i++)await band.press({key:'setup-next'})
+ expect(await band.find({key:'setup-interview-cancel'})).toBeDefined();expect(await band.find({key:'workspace-create'})).toBeUndefined()
+ await band.press({key:'setup-interview-cancel'});expect(await band.find({key:'workspace-create'})).toBeDefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='createFreshTeam')).toBe(false)
+})

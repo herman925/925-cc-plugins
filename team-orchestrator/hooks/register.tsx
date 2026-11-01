@@ -23,7 +23,7 @@ import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
-import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview} from './team-setup'
+import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview,readTeamInterview} from './team-setup'
 import {TEAM_TEMPLATES as PRESETS} from './team-templates'
 import {registerDraftTool} from './creation-draft'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
@@ -2952,7 +2952,16 @@ export const register: Register = (on, options) => {
   sharedConfig.enabled = (options as any)?.sharedStorePreview === true
   try{sharedConfig.projectModes=parseProjectWorkspaceModes((options as any)?.projectWorkspaceModes);sharedConfig.projectModesError=''}catch{sharedConfig.projectModes=[];sharedConfig.projectModesError='Saved project workspace choices are invalid. Correct the JSON list in Saved project workspace choices in configuration before continuing. Existing preferences have not been overwritten.'}
   sharedConfig.node = String((options as any)?.sharedStoreNode ?? 'node').trim() || 'node'
-  on('tool.call',{tool:'mcp__team-orchestrator__team_draft'} as any,async($,e)=>{try{await applyTeamInterview($,e);await setPanelView($,'setup');return {result:JSON.stringify({ok:true,status:'draft_only',message:'Proposal ready in Review & permission. No team created, permission granted or session connected.'})}}catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}})
+  on('tool.call',{tool:'mcp__team-orchestrator__team_draft_read'} as any,async($)=>{
+    try{return {result:JSON.stringify(await readTeamInterview($))}}
+    catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}
+  })
+  on('tool.call',{tool:'mcp__team-orchestrator__team_draft'} as any,async($,e)=>{
+    try{
+      await applyTeamInterview($,e);await setPanelView($,'setup')
+      return {result:JSON.stringify({ok:true,status:'draft_only',message:'Proposal ready in Review & permission. No team created, permission granted or session connected.'})}
+    }catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}
+  })
   on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>{if(sharedConfig.projectModesError)return {deny:sharedConfig.projectModesError};return callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})}))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false

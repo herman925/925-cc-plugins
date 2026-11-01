@@ -3,9 +3,9 @@ import {world,mountBand,ID1,ID2} from './test-world'
 import {TEAM_TEMPLATES,templateMembers} from './team-templates'
 import {interviewDraft} from './creation-draft'
 
-async function open($:any,on:any,sid=()=>ID1){const files=world(on),registrations:any[]=[];on('session.id',async()=>({value:sid()}));on('tool.register',async(_$,e)=>{registrations.push(e);return {value:{tool:e.name.startsWith('mcp__')?e.name:`mcp__team-orchestrator__${e.name}`}}});const band=await mountBand($,66);await band.press({key:'main'});return {files,band,registrations,protocols:()=>registrations.filter(e=>e.description?.includes('with interviewId')).map(e=>e.description as string)}}
+async function open($:any,on:any,sid=()=>ID1){const files=world(on),registrations:any[]=[];on('session.id',async()=>({value:sid()}));on('tool.register',async(_$,e)=>{registrations.push(e);return {value:{tool:e.name.startsWith('mcp__')?e.name:`mcp__team-orchestrator__${e.name}`}}});const band=await mountBand($,66);await band.press({key:'main'});return {files,band,registrations}}
 const proposal=(id:string)=>({tool:'mcp__team-orchestrator__team_draft',interviewId:id,name:'Interviewed team',purpose:'Verify the proposal',members:[{name:'Lead',role:'Review',boss:null,officialText:'Delegate and review.'},{name:'Worker',role:'Verify',boss:'Lead',officialText:'Read the brief.\nReturn evidence.'}]})
-const token=(prompt:string)=>prompt.match(/with interviewId ([a-f0-9]+)/)![1]
+async function readInterview($:any){const reply:any=await $.tool.call({tool:'mcp__team-orchestrator__team_draft_read'} as any);expect(typeof reply.result).toBe('string');return JSON.parse(reply.result)}
 
 test('all three original templates are discoverable, previewed and applied only to an editable draft',async($,on)=>{
  const {files,band}=await open($,on)
@@ -47,11 +47,11 @@ test('member picker toggles closed, selecting the same member closes, and close/
 
 test('Interview me submits interactive guidance once and proposal opens Review without creation or permission',async($,on)=>{
  const visible:string[]=[];on('prompt.submit',async(_$,e)=>{visible.push(e.text);return {text:e.text}})
- const {files,band,registrations,protocols}=await open($,on)
- await band.press({key:'setup-interview'});const prompts=protocols();expect(registrations[registrations.length-1].isDeferred).toBe(false)
- expect(prompts.length).toBe(1);expect(visible[0]).not.toContain('interviewId');expect(visible[0]).not.toContain('officialText');expect(visible[0]).not.toContain('mcp__');expect(await band.find({key:'setup-interview'})).toBeUndefined()
- for(const text of ['AskUserQuestion','request_user_input_async','clarify','Keep the turn open','Do not call team_launch'])expect(prompts[0]).toContain(text)
- const response:any=await $.tool.call(proposal(token(prompts[0])) as any)
+ const {files,band,registrations}=await open($,on)
+ await band.press({key:'setup-interview'});const read=await readInterview($);expect(read.ok).toBe(true);expect(registrations[registrations.length-1].isDeferred).toBe(false)
+ expect(visible.length).toBe(1);expect(registrations.every(r=>r.description.length<4096)).toBe(true);expect(visible[0]).not.toContain('interviewId');expect(visible[0]).not.toContain('officialText');expect(visible[0]).not.toContain('mcp__');expect(await band.find({key:'setup-interview'})).toBeUndefined()
+ for(const text of ['AskUserQuestion','request_user_input_async','clarify','Keep the turn open','Do not call team_launch'])expect(read.instructions).toContain(text)
+ const response:any=await $.tool.call(proposal(read.interviewId) as any)
  expect(typeof response.result).toBe('string');expect(JSON.parse(response.result).status).toBe('draft_only')
  expect(JSON.stringify(await band.drawn())).toContain('Interviewed team')
  expect(registrations[registrations.length-1].isDeferred).toBe(true);expect(registrations[registrations.length-1].description).not.toContain('with interviewId')
@@ -60,7 +60,7 @@ test('Interview me submits interactive guidance once and proposal opens Review w
  expect(await band.find({key:'setup-interview-cancel'})).toBeUndefined()
  expect(files.calls.some(a=>String(a[1]).endsWith('mod-bridge.mjs'))).toBe(false)
  expect([...files.keys()].some(k=>k.includes('controller-actions'))).toBe(false)
- const replay:any=await $.tool.call(proposal(token(prompts[0])) as any);expect(typeof replay.result).toBe('string');expect(JSON.parse(replay.result).error.code).toBe('DRAFT_REFUSED')
+ const replay:any=await $.tool.call(proposal(read.interviewId) as any);expect(typeof replay.result).toBe('string');expect(JSON.parse(replay.result).error.code).toBe('DRAFT_REFUSED')
  await band.press({key:'setup-review-members'});await band.press({key:'setup-member-select'})
  const rows=(await band.findAll({type:'Button'})).filter(b=>b.key?.startsWith('setup-member-option-'));await band.press({key:rows[1].key})
  expect((await band.find({key:'workspace-member-official-1'})).props.value).toBe('Read the brief.\nReturn evidence.')
@@ -68,13 +68,13 @@ test('Interview me submits interactive guidance once and proposal opens Review w
 
 test('stale, cancelled and wrong-conversation interview proposals preserve the current draft',async($,on)=>{
  let sid:string=ID1;on('prompt.submit',async(_$,e)=>({text:e.text}))
- const {band,protocols,registrations}=await open($,on,()=>sid)
- await band.press({key:'setup-interview'});await band.input({key:'workspace-team-name',text:'Manual edit',kind:'change'})
- const stale:any=await $.tool.call(proposal(token(protocols()[0])) as any);expect(JSON.stringify(stale)).toContain('draft changed')
+ const {band,registrations}=await open($,on,()=>sid)
+ await band.press({key:'setup-interview'});const read=await readInterview($);await band.input({key:'workspace-team-name',text:'Manual edit',kind:'change'})
+ const stale:any=await $.tool.call(proposal(read.interviewId) as any);expect(JSON.stringify(stale)).toContain('draft changed')
  expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Manual edit')
- await band.press({key:'setup-interview-cancel'});expect(registrations[registrations.length-1].isDeferred).toBe(true);const cancelled:any=await $.tool.call(proposal(token(protocols()[0])) as any);expect(JSON.stringify(cancelled)).toContain('DRAFT_REFUSED')
- await band.press({key:'setup-interview'});sid=ID2
- const moved:any=await $.tool.call(proposal(token(protocols()[1])) as any);expect(JSON.stringify(moved)).toContain('DRAFT_REFUSED')
+ await band.press({key:'setup-interview-cancel'});expect(registrations[registrations.length-1].isDeferred).toBe(true);const cancelled:any=await $.tool.call(proposal(read.interviewId) as any);expect(JSON.stringify(cancelled)).toContain('DRAFT_REFUSED')
+ await band.press({key:'setup-interview'});const second=await readInterview($);sid=ID2
+ const moved:any=await $.tool.call(proposal(second.interviewId) as any);expect(JSON.stringify(moved)).toContain('DRAFT_REFUSED')
  sid=ID1;expect((await band.find({key:'workspace-team-name'})).props.value).toBe('Manual edit')
 })
 
@@ -83,4 +83,15 @@ test('refused interview prompt can be retried and invalid hierarchy cannot repla
  await band.press({key:'setup-interview'});expect(await band.find({key:'setup-interview'})).toBeDefined();expect(JSON.stringify(await band.drawn())).toContain('test refusal')
  expect(()=>interviewDraft({...proposal('id'),members:[{name:'Worker',role:'Work',boss:'Missing',officialText:'Verify.'}]})).toThrow()
  expect(()=>interviewDraft({...proposal('id'),pickup:0})).toThrow()
+})
+
+
+test('draft reader preserves the whole large template and refuses reads without an active interview',async($,on)=>{
+ on('prompt.submit',async(_$,e)=>({text:e.text}));const {band,registrations}=await open($,on)
+ expect((await readInterview($)).error.code).toBe('DRAFT_REFUSED')
+ await band.press({key:'setup-template-Tech Team'});await band.press({key:'setup-template-apply'});await band.press({key:'setup-interview'})
+ const first=await readInterview($),again=await readInterview($)
+ expect(first.instructions).toContain('Security Team-Worker-4');expect(first.instructions).toContain('Security Team-Head');expect(first.instructions).toContain('AskUserQuestion')
+ expect(first.interviewId).toBe(again.interviewId);expect(registrations.every(r=>r.description.length<4096)).toBe(true)
+ await band.press({key:'setup-interview-cancel'});expect((await readInterview($)).error.code).toBe('DRAFT_REFUSED')
 })

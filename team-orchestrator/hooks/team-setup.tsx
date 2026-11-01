@@ -29,6 +29,13 @@ export async function startTeamSetup($:any){
 }
 export async function closeSetupMenus($:any){await set($,{memberOpen:false,template:''})}
 export async function cancelTeamInterview($:any){await set($,{interviewId:'',interviewSnapshot:''});await registerDraftTool($).catch(()=>undefined)}
+export async function readTeamInterview($:any){
+ const scope=await scopeNow($),s=await read($,setup),w=await readSharedWorkspace($)
+ if(s.scope!==scope||w.scope!==scope||!s.active||!s.interviewId)throw Error('Start Interview me from this conversation before reading its draft.')
+ if(s.busy||w.busy||w.pending)throw Error('Wait for the current draft action or pending operation to settle.')
+ if(draftFingerprint(w)!==s.interviewSnapshot)throw Error('The draft changed during the interview. Your edits were kept; restart Interview me to use them.')
+ return {ok:true,interviewId:s.interviewId,instructions:interviewPrompt(s.interviewId,w)}
+}
 export async function applyTeamInterview($:any,input:any){
  const scope=await scopeNow($);let acquired=false
  await update($,setup,old=>{if(old.busy)return old;acquired=true;return {...old,busy:true}})
@@ -72,6 +79,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   if(step===3&&deps.enabled)await refreshSharedStore($,deps)
  })}
  async function submit(){await act($,async()=>{
+  if((await read($,setup)).interviewId)throw Error('Finish or cancel the interview proposal before creating a team.')
   const current=await sharedAccessState($)
   if(!current.proof.ok||!current.state.checked||!current.state.approved)throw Error('Check access and allow team management before creating.')
   const fresh=await deps.revalidate()
@@ -99,7 +107,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   const current=await readSharedWorkspace($),currentSetup=await read($,setup)
   if(current.pending||current.busy||currentSetup.interviewId)throw Error('Finish or cancel the current proposal before starting another interview.')
   const id=draftId();await set($,{interviewId:id,interviewSnapshot:draftFingerprint(current),template:'',memberOpen:false})
-  try{await registerDraftTool($,interviewPrompt(id,current));const submitted=await $.prompt.submit({text:INTERVIEW_REQUEST});if(submitted?.drop)throw Error(`Interview did not start: ${submitted.drop}`)}catch(error){await cancelTeamInterview($);throw error}
+  try{await registerDraftTool($,true);const submitted=await $.prompt.submit({text:INTERVIEW_REQUEST});if(submitted?.drop)throw Error(`Interview did not start: ${submitted.drop}`)}catch(error){await cancelTeamInterview($);throw error}
  })}
 
  return <Box flexDirection="column">
@@ -107,7 +115,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
   <Box flexWrap="wrap" columnGap={1}>
    {!pending&&s.step>0&&<Button key="setup-back" label="← Back" onPress={async()=>{if(!busy)await set($,{step:s.step-1,error:'',memberOpen:false,template:''})}}/>}
    {!pending&&s.step<3&&<Button key="setup-next" label={busy?'Checking…':'Next →'} variant="primary" onPress={next}/>}
-   {!pending&&s.step===3&&deps.enabled&&access.state.checked&&access.state.approved&&<Button key="workspace-create" label={busy?'Creating…':'Create team'} variant="primary" onPress={submit}/>}
+   {!pending&&!s.interviewId&&s.step===3&&deps.enabled&&access.state.checked&&access.state.approved&&<Button key="workspace-create" label={busy?'Creating…':'Create team'} variant="primary" onPress={submit}/>}
   </Box>
   {s.error&&<Text color="yellow">{s.error}</Text>}
   {w.notice&&<Text color={w.error?'yellow':'green'}>{w.notice}</Text>}
