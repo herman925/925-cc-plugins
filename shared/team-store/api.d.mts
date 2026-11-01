@@ -15,6 +15,7 @@ export type Command =
   | {type:'inspectTeam';teamId:string}
   | {type:'inspectAssignment';teamId:string;assignmentId:string}
   | {type:'inspectInbox';teamId:string;recipientMemberId:string}
+  | {type:'inspectDelivery';teamId:string;deliveryId:string}
   | (MemberAuthority & {type:'readInbox';deliveryId:string;expectedDeliveryGeneration:number})
   | (MemberAuthority & {type:'prepareDeliveries'})
   | (MemberAuthority & {type:'observePickupDeadlines'})

@@ -2,6 +2,7 @@ import {atom,read,update} from 'claude-code'
 import {sharedCall} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
 import {pumpSharedDeliveries} from './shared-transport'
+import {sharedMailView} from './shared-mail'
 import {USER_QUESTION_GUIDANCE} from './question-guidance'
 
 export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}
@@ -53,10 +54,11 @@ async function action($:any,work:()=>Promise<void>){
 }
 async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  const command=pending.request.command
- if(['admitAssignment','reportOutcome'].includes(command.type))await pumpSharedDeliveries($,deps.proof,deps).catch(()=>undefined)
+ if(['admitAssignment','retryAssignment','reportOutcome'].includes(command.type))await pumpSharedDeliveries($,deps.proof,deps).catch(()=>undefined)
  const patch:Partial<Workspace>={pending:null,retry:false,page:'home',notice:`${pending.label} confirmed.`,error:false}
  if(command.type==='createFreshTeam'){patch.teamId=command.teamId;patch.createdTeamId=command.teamId;patch.memberChoice='';patch.taskChoice='';patch.selectedAssignment='';patch.about=false;patch.notice='Team created. Connect existing sessions to start using tasks.'}
  if(command.type==='admitAssignment'){patch.selectedAssignment=command.assignmentId;patch.taskChoice=command.assignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null}
+ if(command.type==='retryAssignment'){patch.selectedAssignment=command.newAssignmentId;patch.taskChoice=command.newAssignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null;patch.page='review'}
  if(command.type==='verifyAssignment'){patch.selectedAssignment=command.assignmentId;patch.verified=result;patch.page='review'}
  if(command.type==='reportOutcome'||command.type==='acceptTask')patch.selectedAssignment=command.assignmentId
  await set($,patch)
@@ -106,6 +108,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
  const controller=Number.isSafeInteger(s.caller?.controllerGeneration)?s.caller.controllerGeneration:deps.controllerGeneration
  const direct=members.filter((m:any)=>me&&m.boss_member_id===me.member_id&&m.membership_state==='active')
  const selected=work.find((w:any)=>w.assignment.assignment_id===s.selectedAssignment)
+ const retryReports=direct.filter((m:any)=>bindings.some((b:any)=>b.member_id===m.member_id))
+ const retryMember=retryReports.find((m:any)=>m.member_id===s.assignmentMember)||retryReports.find((m:any)=>m.member_id===selected?.assignment.member_id)||retryReports[0]
  const memberMissing=!!s.memberChoice&&!members.some((m:any)=>m.member_id===s.memberChoice)
  const chosenMember=memberMissing?undefined:members.find((m:any)=>m.member_id===s.memberChoice)||direct[0]||me||members[0]
  const taskMissing=!!s.taskChoice&&!work.some((item:any)=>item.assignment.assignment_id===s.taskChoice)
@@ -141,9 +145,10 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   {s.page==='new'&&!pending?<Box flexDirection="column"><Text>A team draft is saved.</Text>{deps.onNewTeam&&button('workspace-resume-setup','Continue setup',deps.onNewTeam,true)}</Box>:<Box flexDirection="column">
    {s.caller&&!s.teams.length&&<Text dimColor>{controller?'No teams yet. Create your first shared team.':'No team binding for this conversation. Ask an approved controller to bind it.'}</Text>}
    {snapshot&&<Box flexDirection="column">
-    <Text dimColor>{members.length} members · {bindings.length} connected · {work.length} visible tasks</Text>
+    <Text dimColor>{members.length} members · {bindings.length} connected · {new Set(work.map((item:any)=>item.task.task_id)).size} tasks · {work.length} attempts</Text>
     {s.about&&snapshot.team.function_text&&<Text>{snapshot.team.function_text}</Text>}
-    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}</Box>
+    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}{me&&button('workspace-inbox-tab',s.page==='inbox'?'● Inbox':'Inbox',async()=>edit('page','inbox'))}</Box>
+    {s.page==='inbox'&&me&&!pending&&await sharedMailView($,ui,deps,members)}
     {s.page==='home'&&members.length>0&&<Box flexDirection="column">
      {memberMissing&&<Text color="yellow">The selected member is no longer visible. Refresh or choose a member to continue.</Text>}
      <Select key="workspace-member-select" label="Member " value={chosenMember?.member_id} options={members.map((m:any)=>({value:m.member_id,label:workspaceLine(`${m.name}${me?.member_id===m.member_id?' · You':''} · ${bindings.some((b:any)=>b.member_id===m.member_id)?'Connected':'Not connected'}`)}))} onSelect={async(value:string)=>{if(!s.busy)await edit('memberChoice',value)}}/>
@@ -214,6 +219,17 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
       {selected.attempt.outcome&&<Box flexDirection="column"><Text weight="bold" color="yellow">Worker outcome · {selected.attempt.outcome}</Text><Text>{selected.attempt.summary}</Text><Text weight="bold">Evidence</Text><Text>{selected.attempt.evidence}</Text></Box>}
       {selected.acceptance?<Box flexDirection="column"><Text weight="bold" color="green">Head decision · {selected.acceptance.decision}</Text><Text>{selected.acceptance.reason}</Text></Box>:!pending&&<Box flexDirection="column">
        {selected.assignment.pickup_expired_at_ms&&<Text color="yellow">Pickup window expired · returned to the head for reassignment.</Text>}
+       {selected.assignment.pickup_expired_at_ms&&selected.assignment.returned_to_member_id===me?.member_id&&!work.some((item:any)=>item.assignment.previous_assignment_id===selected.assignment.assignment_id)&&<Box flexDirection="column">
+        {retryReports.length>0&&<Select key="workspace-retry-target" label="Reassign to " value={retryMember?.member_id} options={retryReports.map((m:any)=>({value:m.member_id,label:workspaceLine(m.name)}))} onSelect={async(value:string)=>edit('assignmentMember',value)}/>}
+        {retryReports.length===0&&<Text dimColor>Connect a direct report before reassigning this task.</Text>}
+        {retryReports.length>0&&button('workspace-retry-assignment','Reassign task',()=>action($,async()=>{
+         const current=await read($,state),item=current.snapshot.work.find((w:any)=>w.assignment.assignment_id===current.selectedAssignment)
+         const candidates=current.snapshot.members.filter((m:any)=>m.boss_member_id===current.caller.member.member_id&&m.membership_state==='active'&&current.snapshot.bindings.some((b:any)=>b.member_id===m.member_id))
+         const target=candidates.find((m:any)=>m.member_id===current.assignmentMember)||candidates.find((m:any)=>m.member_id===item.assignment.member_id)||candidates[0],targetId=target?.member_id,binding=current.snapshot.bindings.find((b:any)=>b.member_id===targetId)
+         if(!target||!binding)fieldError('Choose a connected direct report for this task.')
+         await mutate($,deps,{...authority(current),type:'retryAssignment',assignmentId:item.assignment.assignment_id,newAssignmentId:uid(),memberId:targetId,expectedAttemptGeneration:item.attempt.generation,expectedTargetGeneration:target.generation,expectedTargetBindingGeneration:binding.generation},'Task reassignment')
+        }),true)}
+       </Box>}
        {me?.member_id===selected.assignment.member_id&&!selected.attempt.outcome&&!selected.assignment.pickup_expired_at_ms&&<Box flexDirection="column">
         {!selected.assignment.pickup_observed_at_ms?button('workspace-pickup','Pick up · read role and brief',()=>action($,async()=>{
          const current=await read($,state),item=current.snapshot.work.find((w:any)=>w.assignment.assignment_id===current.selectedAssignment)

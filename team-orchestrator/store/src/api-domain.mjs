@@ -27,6 +27,7 @@ const fields = {
   inspectCaller: [],
   inspectAssignment: ['teamId','assignmentId'],
   inspectInbox: ['teamId','recipientMemberId'],
+  inspectDelivery: ['teamId','deliveryId'],
   readInbox: ['teamId','deliveryId','expectedDeliveryGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   prepareDeliveries: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   observePickupDeadlines: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
@@ -110,6 +111,51 @@ export async function assertApiCaller(db, command, actor) {
   await memberActor(db,actor,command,false);
 }
 
+// Receipt recovery does not repeat the effect, but still discloses its result.
+// A conversation may have been rebound to another member since that effect.
+export async function assertApiReceipt(db,command,actor,receipt) {
+ const type=command.type,value=receipt.result;
+ if(type==='approveController'){await controller(db,actor);return;}
+ if(['createFreshTeam','bindMember','revokeController'].includes(type))return;
+ if(type==='inspectCaller') {
+  if(value.controllerGeneration!==null)await controller(db,actor);
+  if(value.member) {
+   const {member}=await memberActor(db,actor,{teamId:value.member.team_id},false);
+   if(member.member_id!==value.member.member_id)fail('ASSIGNEE_REQUIRED','This receipt belongs to a different member binding.');
+  }
+  return;
+ }
+ const {member}=await memberActor(db,actor,command,false).catch(async error=>{
+  if(type==='inspectTeam'&&!value.work?.length){await controller(db,actor);return {member:null};}
+  throw error;
+ });
+ if(!member)return;
+ const canInspect=async assignment=>{
+  if(assignment.member_id===member.member_id)return true;
+  const report=await reference(db,'members','member_id',assignment.member_id);
+  return assignment.assigned_by_member_id===member.member_id && report.boss_member_id===member.member_id;
+ };
+ if(type==='inspectTeam') {
+  for(const item of value.work??[])if(!await canInspect(item.assignment))fail('ASSIGNEE_REQUIRED','Task evidence in this receipt is outside the current member scope.');
+ } else if(type==='readInbox') {
+  if(value.message.recipient_member_id!==member.member_id)fail('ASSIGNEE_REQUIRED','This read receipt belongs to a different recipient.');
+ } else if(type==='inspectDelivery') {
+  if(value.message.recipient_member_id!==member.member_id&&member.boss_member_id!==null)fail('ASSIGNEE_REQUIRED','This delivery belongs to a different recipient.');
+ } else if(type==='inspectInbox') {
+  if(command.recipientMemberId!==member.member_id&&member.boss_member_id!==null)fail('HEAD_REQUIRED','Only the current top head may inspect another recipient.');
+ } else if(type==='prepareDeliveries') {
+  for(const item of value.deliveries??[]) {
+   const message=await reference(db,'messages','message_id',item.messageId);
+   if(member.boss_member_id!==null&&message.sender_member_id!==member.member_id)fail('ASSIGNEE_REQUIRED','This wake reservation belongs to another sender.');
+  }
+ } else if(['inspectAssignment','admitAssignment','retryAssignment','verifyAssignment','reportOutcome','acceptTask'].includes(type)) {
+  const assignment=await reference(db,'assignments','assignment_id',type==='retryAssignment'?command.newAssignmentId:command.assignmentId);
+  const allowed=type==='inspectAssignment'?await canInspect(assignment):['verifyAssignment','reportOutcome'].includes(type)?assignment.member_id===member.member_id:
+   assignment.assigned_by_member_id===member.member_id && await canInspect(assignment);
+  if(!allowed)fail('ASSIGNEE_REQUIRED','Assignment evidence in this receipt is outside the current member scope.');
+ }
+}
+
 // Runs only after the store has locked and validated its lease. The host has
 // already been contacted outside this transaction; all mutable authority is read
 // again here. No arbitrary client callback executes under the lock.
@@ -124,15 +170,16 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     return { controllerId: id, controllerGeneration: old ? gen(old.generation, 'controller generation') : 1 };
   }
   if (type === 'inspectCaller') {
+    const [identity]=await db.query('SELECT project_id FROM project_identity WHERE singleton=1');
     const [approval] = await db.query('SELECT generation,revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
     const [binding] = await db.query('SELECT * FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
     const teams = approval && Number(approval.revoked)===0 ? await db.query('SELECT team_id,name,function_text,config_version FROM teams ORDER BY name,team_id') : [];
-    if (!binding) return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,teams};
+    if (!binding) return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,teams};
     const row = await reference(db,'members','member_id',binding.member_id);
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
     const team = await reference(db,'teams','team_id',member.team_id);
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
-    return {controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
+    return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
   }
   if (['revokeController','createFreshTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {
@@ -195,6 +242,14 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const recipient=await reference(db,'members','member_id',command.recipientMemberId);
     if(recipient.team_id!==command.teamId)fail('MEMBER_SCOPE','The recipient belongs to another team.');
     return {messages:await inspectInbox(db,command.teamId,command.recipientMemberId)};
+  }
+  if(type==='inspectDelivery') {
+    const {member}=await memberActor(db,actor,command,false);
+    const delivery=await reference(db,'deliveries','delivery_id',command.deliveryId);
+    if(delivery.team_id!==command.teamId)fail('MEMBER_SCOPE','The delivery belongs to another team.');
+    const message=await reference(db,'messages','message_id',delivery.message_id);
+    if(message.recipient_member_id!==member.member_id&&member.boss_member_id!==null)fail('ASSIGNEE_REQUIRED','Only the recipient or top head may inspect this delivery.');
+    return {delivery,message,thread:await reference(db,'threads','thread_id',message.thread_id),run:await reference(db,'runs','run_id',delivery.run_id)};
   }
   await teamVersion(db,command);
   if (type === 'bindMember') {

@@ -6,6 +6,8 @@ declare const setTimeout:(fn:()=>void,ms:number)=>unknown
 test('the shared store blocks raw state and private approval access even for a controller',()=>{
  for(const tool of ['Write','Edit','NotebookEdit'])expect(sharedStoreProtection(tool,'C:/proj/.team-orchestrator/team.sqlite','')).toBeDefined()
  expect(sharedStoreProtection('Read','C:/home/.claude/team-orchestrator/controller-actions/secret.json','')).toBeDefined()
+ expect(sharedStoreProtection('Read','C:/home/.claude/team-orchestrator/project-uuid/machine.sqlite','')).toBeDefined()
+ expect(sharedStoreProtection('Bash','','sqlite3 ~/.claude/team-orchestrator/project-uuid/machine.sqlite "SELECT * FROM local_operations"')).toBeDefined()
  expect(sharedStoreProtection('Bash','','node store/mod-bridge.mjs')).toBeDefined()
  expect(sharedStoreProtection('Bash','','sqlite3 .team-orchestrator/team.sqlite "UPDATE members SET allow_write=1"')).toBeDefined()
  expect(sharedStoreProtection('Read','C:/proj/README.md','')).toBeUndefined()

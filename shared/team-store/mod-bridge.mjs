@@ -9,13 +9,14 @@ import {createTeamApi} from './api.mjs';
 import {createModNative} from './mod-native.mjs';
 import {exact} from './src/api-domain.mjs';
 import {StoreError,refusal} from './src/errors.mjs';
+import {createInboxJournal} from './src/inbox-journal.mjs';
 
-let api;
+let api,journal;
 try {
  let input='';for await(const chunk of process.stdin){input+=chunk;if(Buffer.byteLength(input)>256*1024)throw refusal('API_INPUT_INVALID','Mod request is oversized.');}
  const envelope=JSON.parse(input);
  exact(envelope,['mode','proof','request','uiApprovalId','orcaCommand']);
- if(!['execute','reconcile','approveController','listSessions'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
  const native=await createModNative({orcaCommand:envelope.orcaCommand});
  const actor=await native.verifyCaller(envelope.proof);
  if(envelope.mode==='listSessions') {
@@ -34,7 +35,13 @@ try {
    const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
    return ticket.action==='approveController' && ticket.id===approval && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000;
   }});
- const result=envelope.mode==='approveController'
+ let result;
+ if(['inboxPoll','inboxAttached'].includes(envelope.mode)) {
+  exact(envelope.request,envelope.mode==='inboxPoll'?[]:['readReceiptId']);
+  journal=await createInboxJournal({api,actor,writer:{client:'team-orchestrator',version:manifest.version},machineConfigRoot:process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude')});
+  if(envelope.mode==='inboxAttached'&&!journal)throw refusal('API_BINDING_REQUIRED','This conversation has no member binding.');
+  result=envelope.mode==='inboxPoll'?(await journal?.poll()??{message:null}):await journal.attached(envelope.request.readReceiptId);
+ } else result=envelope.mode==='approveController'
   ? await api.approveController({operationId:envelope.request.operationId,approval:envelope.uiApprovalId})
   : await api[envelope.mode](envelope.request);
  const transportTargets=[];
@@ -57,5 +64,6 @@ try {
  console.log(JSON.stringify({ok:false,error:{code:known?error.code:'API_BRIDGE_FAILED',message:known?error.message:'The private Mod bridge could not verify or complete this operation.',...(known?{details:error.details}:{})}}));
  process.exitCode=1;
 } finally {
+ try{await journal?.close();}catch{process.exitCode=1;}
  try{await api?.close();}catch{process.exitCode=1;}
 }

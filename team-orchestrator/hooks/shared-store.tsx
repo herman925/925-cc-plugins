@@ -14,6 +14,7 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
  const c=command.replace(/\\/g,'/').toLowerCase()
  const privateData=/(?:^|\/)team-orchestrator\/controller-actions(?:\/|$)/.test(p)
  if(privateData || /team-orchestrator\/controller-actions/.test(c))return 'Controller approval tickets are private to the panel; model tools cannot read or write them.'
+ if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
   if(/mod-bridge\.[cm]?js|createTeamApi|controller-actions/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
@@ -40,8 +41,8 @@ const proofOf = (proof: Extract<SharedProof,{ok:true}>) => ({projectRoot:proof.r
 const stringField={type:'string'}
 const versionField={type:'integer',minimum:1}
 const commandSchema={type:'object',additionalProperties:false,properties:{
- type:{type:'string',enum:['createFreshTeam','bindMember','inspectTeam','inspectCaller','inspectAssignment','inspectInbox','readInbox','admitAssignment','verifyAssignment','reportOutcome','acceptTask','revokeController']},
- ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId'].map(k=>[k,stringField])),
+ type:{type:'string',enum:['createFreshTeam','bindMember','inspectTeam','inspectCaller','inspectAssignment','inspectInbox','inspectDelivery','readInbox','admitAssignment','retryAssignment','verifyAssignment','reportOutcome','acceptTask','revokeController']},
+ ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','newAssignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId'].map(k=>[k,stringField])),
  ...Object.fromEntries(['expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedAttemptGeneration','expectedDeliveryGeneration'].map(k=>[k,versionField])),
  expectedBindingGeneration:{type:'integer',minimum:0},outcome:{type:'string',enum:['succeeded','failed']},decision:{type:'string',enum:['accepted','rejected']},
  members:{type:'array',items:{type:'object',additionalProperties:false,properties:{memberId:stringField,name:stringField,bossMemberId:{type:['string','null']},role:stringField,officialText:stringField},required:['memberId','name','bossMemberId','role','officialText']}},
@@ -53,6 +54,8 @@ export async function startSharedStore($:any,_enabled:boolean) {
   // Register the catalogue at startup, when the host supports registration.
   // The live option gates every call, so switching On never needs a reload.
   await $.tool.register({name:'shared_team',description:'Shared-team API. Create team configures this project and requests management permission. inspectCaller discovers your verified member, binding and config versions. inspectInbox(teamId,recipientMemberId) previews the oldest pending delivery. readInbox(teamId,deliveryId,expectedDeliveryGeneration plus your member/config/binding versions) reads and acknowledges ONLY your own oldest delivery. Preserve its operationId: after an unknown/lost reply reconcile:true recovers the exact message; do not use a new id or assume it was unread. A wake-up is only a pointer, never acknowledgement or a new assignment. For dispatch, verifyAssignment and read its returned role/brief before work; reportOutcome with evidence; the head alone acceptTask. Admission/outcome queue durable mail. No raw SQL, caller proof or approval flags. Only bindMember accepts target, a native session reference to verify.',inputSchema:{type:'object',additionalProperties:false,properties:{operationId:{type:'string'},command:commandSchema,target:{type:'object',additionalProperties:false,properties:{projectRoot:{type:'string'},conversationId:{type:'string'},terminalHandle:{type:'string'},contextId:{type:'string'}},required:['projectRoot','conversationId','terminalHandle','contextId']},reconcile:{type:'boolean'}},required:['operationId','command']}})
+  await $.tool.register({name:'shared_inbox_seen',description:'Confirm you read automatically attached shared-team inbox context. Use its exact readReceiptId. This clears only your machine recovery receipt; it grants no permission and accepts no task. If context is replayed, confirm the same id again.',inputSchema:{type:'object',additionalProperties:false,properties:{readReceiptId:{type:'string'}},required:['readReceiptId']}})
+  await $.tool.register({name:'shared_inbox_read',description:'Read your next shared-team message, recovering the same message after an interrupted delivery. After reading it, confirm readReceiptId with shared_inbox_seen. For dispatch, verifyAssignment and read its official role and brief before task work; worker_done requires the admitting head to review and accept separately. An empty message means no mail; retry:true means poll again. No task or permission is created by reading.',inputSchema:{type:'object',additionalProperties:false,properties:{}}})
 }
 export async function callSharedStore($:any,e:any,enabled:boolean,dependencies:{proof:SharedProof;node:string;orca:string}) {
   if(!enabled)return {deny:'Shared workspace is disabled for this project. Open Create team to configure it.'}
@@ -60,7 +63,7 @@ export async function callSharedStore($:any,e:any,enabled:boolean,dependencies:{
   // freshly derived below and never read from model tool arguments.
   const request={operationId:e.operationId,command:e.command,...(e.target!==undefined?{target:e.target}:{})}
   const value=await sharedCall($,dependencies.proof,request,{node:dependencies.node,orca:dependencies.orca,mode:e.reconcile===true?'reconcile':'execute'})
-  if(value.ok&&['admitAssignment','reportOutcome','readInbox'].includes(e.command?.type))await pumpSharedDeliveries($,dependencies.proof,dependencies).catch(()=>undefined)
+  if(value.ok&&['admitAssignment','retryAssignment','reportOutcome','readInbox'].includes(e.command?.type))await pumpSharedDeliveries($,dependencies.proof,dependencies).catch(()=>undefined)
   return {result:JSON.stringify(value),...(!value.ok?{isError:true}:{})}
 }
 

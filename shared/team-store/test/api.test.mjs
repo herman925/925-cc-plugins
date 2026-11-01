@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {createTeamApi} from '../api.mjs';
 import {runtimeFixture,rawWrite} from './support/runtime-fixture.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
+import {createInboxJournal} from '../src/inbox-journal.mjs';
+import {join} from 'node:path';
 
 const code = expected=>error=>error.code===expected;
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:8,launch:'demand',batch:3,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
@@ -108,6 +110,90 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   const next=(await peek()).result.messages[0];assert.notEqual(next.delivery_id,oldest.delivery_id);
   await assert.rejects(f.call(read),code('API_INBOX_ORDER'));
   assert.equal((await f.rows("SELECT COUNT(*) AS n FROM deliveries WHERE status='acknowledged'"))[0].n,engine==='postgres'?'1':1);
+ });
+ test('read receipt recovery follows the bound recipient, not just the conversation id',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');
+  const [message]=(await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'worker'})).result.messages;
+  const request={operationId:'recipient-read',command:{...f.base,type:'readInbox',deliveryId:message.delivery_id,expectedDeliveryGeneration:message.delivery_generation}};
+  const first=await f.api.execute(request);
+  f.native.current=f.actor('controller');await f.bind('worker','worker',1);
+  f.native.current=f.actor('worker');assert.deepEqual(await f.api.reconcile(request),first);
+  f.native.current=f.actor('controller');await rawWrite(f,"DELETE FROM member_bindings WHERE member_id='worker'");await f.bind('other','worker',1);
+  f.native.current=f.actor('worker');
+  await assert.rejects(f.api.reconcile(request),code('API_ASSIGNEE_REQUIRED'));
+  await assert.rejects(f.api.execute(request),code('API_ASSIGNEE_REQUIRED'));
+ });
+ test('task evidence receipts cannot bypass a changed reporting relationship',async t=>{
+  const f=await setup(t);await f.ready();
+  const request={operationId:'head-evidence',command:{type:'inspectAssignment',teamId:'team',assignmentId:'assignment'}};
+  await f.api.execute(request);
+  await rawWrite(f,"UPDATE members SET boss_member_id='other' WHERE member_id='worker'");
+  await assert.rejects(f.api.reconcile(request),code('API_ASSIGNEE_REQUIRED'));
+  await assert.rejects(f.api.execute(request),code('API_ASSIGNEE_REQUIRED'));
+ });
+ test('replaying a previous approval cannot report a revoked controller as approved',async t=>{
+  const f=await setup(t);const approval=await f.approve();
+  await f.call({type:'revokeController',controllerId:approval.result.controllerId,expectedControllerGeneration:1});
+  await assert.rejects(f.api.approveController({operationId:approval.operationId,approval:'specific-ui-action'}),code('API_CONTROLLER_REQUIRED'));
+ });
+ test('machine inbox journal recovers the same acknowledged message until the model confirms context',async t=>{
+  const f=await setup(t);await f.ready();await f.call({...f.admit,taskId:'second-task',assignmentId:'second-assignment'});f.native.current=f.actor('worker');
+  const options={api:f.api,actor:f.actor('worker'),writer:{client:'team-orchestrator',version:'0.5.42'},machineConfigRoot:join(f.root,'observations')};
+  let journal=await createInboxJournal(options);let first;
+  try{first=await journal.poll();assert.equal(JSON.parse(first.message.body).assignmentId,'assignment');}finally{await journal.close();}
+  journal=await createInboxJournal(options);
+  try{
+   assert.deepEqual(await journal.poll(),first);
+   await journal.attached(first.readReceiptId);await journal.attached(first.readReceiptId);
+   const second=await journal.poll();assert.notEqual(second.message.message_id,first.message.message_id);
+   assert.equal(JSON.parse(second.message.body).assignmentId,'second-assignment');
+  }finally{await journal.close();}
+ });
+ test('machine inbox journal recovers a lost shared commit reply across a verified same-member rebind',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');
+  const proxy={reconcile:request=>f.api.reconcile(request),execute:async request=>{
+   const result=await f.api.execute(request);
+   if(request.command.type==='readInbox')throw Object.assign(new Error('Lost reply'),{code:'STORE_COMMIT_UNKNOWN'});
+   return result;
+  }};
+  const options={actor:f.actor('worker'),writer:{client:'team-orchestrator',version:'0.5.42'},machineConfigRoot:join(f.root,'observations')};
+  let journal=await createInboxJournal({...options,api:proxy});
+  try{await assert.rejects(journal.poll(),code('STORE_COMMIT_UNKNOWN'));}finally{await journal.close();}
+  f.native.current=f.actor('controller');await f.bind('worker','worker',1);f.native.current=f.actor('worker');
+  journal=await createInboxJournal({...options,api:f.api});
+  try{
+   const recovered=await journal.poll();assert.equal(JSON.parse(recovered.message.body).assignmentId,'assignment');
+   await journal.attached(recovered.readReceiptId);assert.equal((await journal.poll()).message,null);
+  }finally{await journal.close();}
+  assert.equal(Number((await f.rows("SELECT COUNT(*) AS n FROM operations WHERE operation_id LIKE 'inbox-read-%'"))[0].n),1);
+ });
+ test('an uncommitted stale journal stage is retired before reading the current delivery generation',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');
+  const options={actor:f.actor('worker'),writer:{client:'team-orchestrator',version:'0.5.42'},machineConfigRoot:join(f.root,'observations')};
+  const proxy={reconcile:request=>f.api.reconcile(request),execute:async request=>{
+   if(request.command.type==='readInbox')throw Object.assign(new Error('No reply before commit'),{code:'STORE_COMMIT_UNKNOWN'});
+   return f.api.execute(request);
+  }};
+  let journal=await createInboxJournal({...options,api:proxy});
+  try{await assert.rejects(journal.poll(),code('STORE_COMMIT_UNKNOWN'));}finally{await journal.close();}
+  f.native.current=f.actor('head');await f.call({...f.base,type:'prepareDeliveries'});f.native.current=f.actor('worker');
+  journal=await createInboxJournal({...options,api:f.api});
+  try{
+   assert.deepEqual(await journal.poll(),{message:null,retry:true});
+   const current=await journal.poll();assert.equal(JSON.parse(current.message.body).assignmentId,'assignment');
+   await journal.attached(current.readReceiptId);
+  }finally{await journal.close();}
+ });
+ test('a machine recovery receipt cannot be confirmed by another member or revive a terminal thread',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');
+  const options={api:f.api,writer:{client:'team-orchestrator',version:'0.5.42'},machineConfigRoot:join(f.root,'observations')};
+  let journal=await createInboxJournal({...options,actor:f.actor('worker')});let read;
+  try{read=await journal.poll();}finally{await journal.close();}
+  f.native.current=f.actor('other');journal=await createInboxJournal({...options,actor:f.actor('other')});
+  try{await assert.rejects(journal.attached(read.readReceiptId),code('API_ASSIGNEE_REQUIRED'));}finally{await journal.close();}
+  f.native.current=f.actor('worker');await f.call(f.verify);await f.call(f.report);f.native.current=f.actor('head');await f.call(f.accept);
+  f.native.current=f.actor('worker');journal=await createInboxJournal({...options,actor:f.actor('worker')});
+  try{assert.deepEqual(await journal.poll(),{message:null,retry:true});assert.equal((await journal.poll()).message,null);}finally{await journal.close();}
  });
  test('a returned unpicked task retries as a new linked assignment and preserves the fenced predecessor',async t=>{
   const f=await setup(t);await f.ready();

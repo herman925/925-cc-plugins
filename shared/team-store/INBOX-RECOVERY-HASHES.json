@@ -1,0 +1,89 @@
+{
+  "baseCommit": "8a3eb3a3d1a4a31c21ec6b12c73de0f32605da31",
+  "files": [
+    {
+      "path": "shared/team-store/api.d.mts",
+      "sha256": "86e239c8b435ae0a6104df9be5fdb12bc55963693eaba3b698b7c3ca20ce2243"
+    },
+    {
+      "path": "shared/team-store/mod-bridge.mjs",
+      "sha256": "cb0bf0239d58e9e3a7edafae56ba84082409f866346401cc9efc3089a612b568"
+    },
+    {
+      "path": "shared/team-store/src/api-domain.mjs",
+      "sha256": "aa3371812bc3f2dcc4d3a2786cd7f4f710f4813c93144657d95920019518cf6e"
+    },
+    {
+      "path": "shared/team-store/src/inbox-journal.mjs",
+      "sha256": "c869633551be747868ba70a29e782e32e25c92201507fd6db621a82cde42ad3b"
+    },
+    {
+      "path": "shared/team-store/src/machine-store.mjs",
+      "sha256": "2c8647878f67dfe3925f14fa451dcfe09098cfda3d8a1da041d46d538a8d68e5"
+    },
+    {
+      "path": "shared/team-store/src/store.mjs",
+      "sha256": "e11f1345c89c3e53260f6b55f397050936c66afd6c2a0b76b692d70466b834a7"
+    },
+    {
+      "path": "shared/team-store/test/api.test.mjs",
+      "sha256": "8aa66cd85ce76d3207f90e6b26a66f3171decf421221d8d2f9be89363aefb9f4"
+    },
+    {
+      "path": "team-orchestrator/hooks/register.tsx",
+      "sha256": "f7a95ca898ab1d00050b822fc656069ae21d1044eb1608d3704587537fb1c179"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-inbox.test.ts",
+      "sha256": "7155e2d0882f7956422ca46d33dd241523b13fb0a40ef5907f474c0f7d48b9c5"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-inbox.ts",
+      "sha256": "c3a778a5b80ae46969d639e84c24d0dd42bd01de6acf0dda68dab5825c28a58d"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-mail.tsx",
+      "sha256": "b7a84360404fc7b8e4a8d5bdaa40321c83ffe83e98e887ef64421d1f751a1675"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-store.test.tsx",
+      "sha256": "9773be6a8e795b70d63063e2ee8d428f7fdca5d587f564bdf55d6a10640cf0e7"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-store.tsx",
+      "sha256": "c2bf76cec6306e806b16018338b091fd8e9d6c7e84eac802373cc3f0b98157b4"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-workspace.test.tsx",
+      "sha256": "32d9dd3d50c3666539ed8a195a1c3ab538c9f163df6fec094381190f49c19fa0"
+    },
+    {
+      "path": "team-orchestrator/hooks/shared-workspace.tsx",
+      "sha256": "4df51c27152a436981b63c4f2144145581f5dcb624f80b0d067b11abe0bccf10"
+    },
+    {
+      "path": "team-orchestrator/store/mod-bridge.mjs",
+      "sha256": "cb0bf0239d58e9e3a7edafae56ba84082409f866346401cc9efc3089a612b568"
+    },
+    {
+      "path": "team-orchestrator/store/src/api-domain.mjs",
+      "sha256": "aa3371812bc3f2dcc4d3a2786cd7f4f710f4813c93144657d95920019518cf6e"
+    },
+    {
+      "path": "team-orchestrator/store/src/inbox-journal.mjs",
+      "sha256": "c869633551be747868ba70a29e782e32e25c92201507fd6db621a82cde42ad3b"
+    },
+    {
+      "path": "team-orchestrator/store/src/machine-store.mjs",
+      "sha256": "2c8647878f67dfe3925f14fa451dcfe09098cfda3d8a1da041d46d538a8d68e5"
+    },
+    {
+      "path": "team-orchestrator/store/src/store.mjs",
+      "sha256": "e11f1345c89c3e53260f6b55f397050936c66afd6c2a0b76b692d70466b834a7"
+    },
+    {
+      "path": "team-orchestrator/types/index.d.ts",
+      "sha256": "d30028c656c4eefc7dd3f41471feb178b9ef43b55f8cb72af6c9f1dbd774372a"
+    }
+  ]
+}
