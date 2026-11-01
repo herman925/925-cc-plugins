@@ -18,6 +18,27 @@ test('the disabled preview cannot invoke its private bridge',async($,on)=>{
  const r:any=await $.tool.call({tool:'mcp__team-orchestrator__shared_team',operationId:'op',command:{type:'inspectCaller'}} as any)
  expect(r.deny).toContain('disabled');expect(calls.length).toBe(0)
 })
+
+test('a known older shared store preserves ordinary writes without dropping member guards',async($,on)=>{
+ let member:any=null
+ const calls:any[]=[]
+ on('tool.call',{tool:'Write'} as any,async()=>({result:'ordinary write completed'}) as any)
+ const files=world(on,[],[],e=>{
+  if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
+  const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
+  if(envelope.mode!=='guardInspect')return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Update required'}})
+  return JSON.stringify({ok:true,result:{result:{member,hasReports:!!member,storeVersion:5,upgradeRequired:true}}})
+ });sessionAs(on,ID1);files.set('C:/proj/.team-orchestrator/team.sqlite','older schema fixture')
+ const ordinary:any=await $.tool.call({tool:'Write',file_path:'C:/temp/unrelated.md',content:'report'} as any)
+ expect(ordinary.result).toBe('ordinary write completed');expect(calls[0].mode).toBe('guardInspect');expect(calls[0].request.command).toBeUndefined()
+ member={name:'Head',boss_member_id:null,allow_write:0,allow_agent:0}
+ const head:any=await $.tool.call({tool:'Write',file_path:'C:/temp/unrelated.md',content:'report'} as any)
+ expect(head.deny).toContain('has reports')
+ const agent:any=await $.tool.call({tool:'Agent',subagent_type:'general-purpose',prompt:'x'} as any)
+ expect(agent.deny).toContain('no subagent permission')
+ const protectedWrite:any=await $.tool.call({tool:'Write',file_path:'C:/proj/.team-orchestrator/team.sqlite',content:'x'} as any)
+ expect(protectedWrite.deny).toContain('typed shared_team')
+})
 test('an older workspace updates only after a scoped native click and does not grant management',{options:{sharedStorePreview:true,orcaCommand:'orca'}} as any,async($:any,on:any)=>{
  let version=5;const calls:any[]=[]
  const files=world(on,[],[],e=>{

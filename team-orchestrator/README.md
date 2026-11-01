@@ -1,5 +1,7 @@
 # team-orchestrator
 
+**0.5.53** fixes permission checks against older supported shared stores: ordinary nonmember file work continues while existing member guards remain enforced. The compatibility reader is read-only; workspace updates stay explicit. See [the guard validation](../shared/team-store/VALIDATION-GUARD-COMPATIBILITY.md).
+
 **0.5.52** adds timed question/answer threads, durable deadline notices and fresh shared-member launch from the right panel. Existing schema-5/6 workspaces update explicitly with a backup. See [the release guide](docs/RELEASE-QUESTIONS-LAUNCH-0.5.52.md) for capacity, recovery and acceptance limits.
 
 **0.5.51** adds a durable shared inbox, per-attempt retry history, explicit schema-5 workspace update with a backup, pickup/task deadline returns and native decision-gate controls. Only the recipient marks mail read. Answering every gate resumes the same still-valid assignment; returned or expired work needs reassignment. Worker outcome and head acceptance remain separate. See [update and testing instructions](docs/RELEASE-RUNTIME-0.5.51.md). Automatic model-delivery acceptance is still being checked independently; queued mail alone is not proof of delivery.
@@ -805,6 +807,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.53 | Read-only permission inspection for schemas 5, 6 and 7; prevents schema mismatch from blocking ordinary nonmember Write/Edit while retaining member and state guards. |
 | 0.5.52 | Bounded questions, recipient-owned deadline notices, active-client scheduling and durable fresh-member launch with verified self-binding. Explicit backed-up schema-5/6 update. |
 | 0.5.51 | Durable shared inbox and recipient read recovery; immutable retry/acceptance history; explicit schema-5 update with backup; pickup/task deadline returns; native gate choices and same-assignment resume. Transport runs outside the short UI callback budget. |
 | 0.5.50 | Restore original templates and Interview me in shared Create team. Templates explicitly apply to an editable draft; guided questions return through a scoped draft-only tool to Review. Member picker toggles closed and avoids repeated Head wording; draft edits survive navigation. |

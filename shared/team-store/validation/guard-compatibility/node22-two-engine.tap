@@ -1,0 +1,79 @@
+TAP version 13
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite: schema 5 guard reads live authority without migration, lease or operation writes
+ok 1 - sqlite: schema 5 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 143.2737
+  ...
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite: schema 6 guard reads live authority without migration, lease or operation writes
+ok 2 - sqlite: schema 6 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 134.4506
+  ...
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: sqlite: schema 7 guard reads live authority without migration, lease or operation writes
+ok 3 - sqlite: schema 7 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 135.6972
+  ...
+# Subtest: postgres: schema 5 guard reads live authority without migration, lease or operation writes
+ok 4 - postgres: schema 5 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 450.5437
+  ...
+# Subtest: postgres: schema 6 guard reads live authority without migration, lease or operation writes
+ok 5 - postgres: schema 6 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 354.9702
+  ...
+# Subtest: postgres: schema 7 guard reads live authority without migration, lease or operation writes
+ok 6 - postgres: schema 7 guard reads live authority without migration, lease or operation writes
+  ---
+  duration_ms: 364.1472
+  ...
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:34160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: unknown schemas remain refused; a store mismatch never becomes permission evidence
+ok 7 - unknown schemas remain refused; a store mismatch never becomes permission evidence
+  ---
+  duration_ms: 61.5671
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1715.2492

@@ -2127,6 +2127,7 @@ let turn: Grants = NO_GRANTS
 // A helper's call (a subagent's or a workflow agent's, carrying agentId) runs in this same session, so it is judged
 // as this session's member, by the grants standing right now: a helper has exactly what its spawner has (#73).
 // Bash and PowerShell are judged only against the team files (#58).
+const guardUpgradeNotices=new Set<string>()
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
   const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
   const command = shell ? String(e.command ?? '') : ''
@@ -2138,9 +2139,11 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
       const scope=await preflight($)
       if(!scope.ok)return `Blocked ${tool}: shared caller verification failed: ${scope.reason}`
       if(await $.fs.exists(`${scope.root}/.team-orchestrator/team.sqlite`)){
-        const reply=await sharedCall($,scope,{operationId:`guard-${uuid()}`,command:{type:'inspectCaller'}},{node:sharedConfig.node,orca:await orcaBin($)})
+        const reply=await sharedCall($,scope,{},{node:sharedConfig.node,orca:await orcaBin($),mode:'guardInspect'})
         if(!reply.ok)return `Blocked ${tool}: ${reply.error?.code}: ${reply.error?.message}`
         const current=reply.result.result
+        const noticeKey=JSON.stringify([scope.root,scope.sessionId,current.storeVersion])
+        if(current.upgradeRequired&&!guardUpgradeNotices.has(noticeKey)){guardUpgradeNotices.add(noticeKey);await $.ui.toast('Shared workspace needs Update workspace. Existing member permissions remain enforced; ordinary nonmember work can continue.').catch(()=>undefined)}
         if(current.member){
           const row=current.member
           const me={name:row.name,boss:row.boss_member_id??'user',allowAgent:Number(row.allow_agent)===1,allowWrite:Number(row.allow_write)===1} as Member

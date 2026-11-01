@@ -1,6 +1,7 @@
 // Private subprocess entry point for the Mod hooks. This is not a CLI offered to
 // agents. JSON comes from $.process.run stdin; model tools cannot choose proof,
 // approval, storage configuration or the native verifier.
+import {inspectGuardCaller} from './src/guard-reader.mjs';
 import {fileURLToPath} from 'node:url';
 import {launchMember} from './src/mod-launch.mjs';
 import {hostname} from 'node:os';
@@ -19,7 +20,7 @@ try {
  let input='';for await(const chunk of process.stdin){input+=chunk;if(Buffer.byteLength(input)>256*1024)throw refusal('API_INPUT_INVALID','Mod request is oversized.');}
  const envelope=JSON.parse(input);
  exact(envelope,['mode','proof','request','uiApprovalId','orcaCommand']);
- if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore','launchMember','attachLaunch'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore','launchMember','attachLaunch','guardInspect'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
  const native=await createModNative({orcaCommand:envelope.orcaCommand});
  const actor=await native.verifyCaller(envelope.proof);
  const userAction=async action=>{
@@ -31,7 +32,9 @@ try {
   return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||[5,6].includes(ticket.fromVersion)&&ticket.toVersion===7);
   }catch{return false;}
  };
- if(envelope.mode==='listSessions') {
+ if(envelope.mode==='guardInspect'){
+  exact(envelope.request,[]);console.log(JSON.stringify({ok:true,result:{result:await inspectGuardCaller({actor})}}));
+ } else if(envelope.mode==='listSessions') {
   exact(envelope.request,[]);
   console.log(JSON.stringify({ok:true,result:{sessions:await native.listTargets(envelope.proof)}}));
  } else if(envelope.mode==='upgradeStore') {

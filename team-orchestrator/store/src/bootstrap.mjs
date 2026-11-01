@@ -142,6 +142,8 @@ async function localPath(projectRoot, create) {
   return path;
 }
 
+export const existingLocalPath=projectRoot=>localPath(projectRoot,false);
+
 // Internal connection bootstrap. The public store must authorize before create=true.
 export async function openBackend(options,definition=SHARED_SCHEMA) {
   const create = options.create === true;
