@@ -1,0 +1,26 @@
+[
+  {
+    "sha256": "5532a19a5bdb4b5500e60eba69afab2eab5ed06eabdd5e01bc24ee41d51fcda0",
+    "path": "team-orchestrator/.claude-plugin/plugin.json"
+  },
+  {
+    "sha256": "a89bcff6c67786180da6fe4256e8899ae24d4dd01547507752e0aac04aa32d7a",
+    "path": "team-orchestrator/hooks/register.tsx"
+  },
+  {
+    "sha256": "d240259fcd4a924912d3297568e59997bc4f7bbcbb2a9a77dff513e57efb234c",
+    "path": "team-orchestrator/hooks/shared-store.tsx"
+  },
+  {
+    "sha256": "8cac27c29d14050b2f01c096dd81b70a2e4b17fab59f2984f739cecd3538c411",
+    "path": "team-orchestrator/hooks/shared-workspace.tsx"
+  },
+  {
+    "sha256": "c9ca93662e8171c32f33db7429bf27bab997c65d2bc63eda2cb9976bd735b495",
+    "path": "team-orchestrator/hooks/team-setup.tsx"
+  },
+  {
+    "sha256": "0b1a768cacbf4c083a50d6e39d1d914c542ce1adda1f20550d16f2b0d3e41788",
+    "path": "team-orchestrator/types/index.d.ts"
+  }
+]
