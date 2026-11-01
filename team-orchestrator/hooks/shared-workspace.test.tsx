@@ -72,6 +72,14 @@ test('the head reassigns a returned task as a new attempt with fresh visible aut
  expect(f.model.work.length).toBe(2);expect(f.model.work[0].assignment.pickup_expired_at_ms).toBe(123)
  expect(await band.find({key:'workspace-retry-assignment'})).toBeUndefined()
 })
+test('a rejected attempt retains its review and offers a separate reassignment action',options,async($:any,on:any)=>{
+ const f=fixture(on,'head'),item:any=f.item();item.attempt={generation:3,outcome:'succeeded',summary:'Original',evidence:'Old proof'};item.acceptance={decision:'rejected',reason:'Needs correction'};item.returned={reason:'rejected',returned_to_member_id:'head'};item.task.status='blocked';f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(JSON.stringify(await band.drawn())).toContain('Needs correction');expect(await band.find({key:'workspace-retry-assignment'})).toBeDefined()
+ expect(await band.find({key:'workspace-accepted'})).toBeUndefined();await band.press({key:'workspace-retry-assignment'})
+ expect(item.acceptance.reason).toBe('Needs correction');expect(f.model.work.length).toBe(2)
+ expect(f.calls.find(c=>c.request?.command?.type==='retryAssignment').request.command.expectedAttemptGeneration).toBe(3)
+})
 
 test('fresh team creation has editable roles, hierarchy and windows, with no side effect from opening or drafting',options,async($:any,on:any)=>{
  const f=fixture(on,'controller'),band=await open($)

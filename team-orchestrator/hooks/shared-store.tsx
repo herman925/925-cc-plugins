@@ -17,7 +17,7 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
  if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
-  if(/mod-bridge\.[cm]?js|createTeamApi|controller-actions/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
+  if(/mod-bridge\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
   if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(c) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
  }
  return undefined
@@ -25,8 +25,8 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
 
 const status = atom({plugin:'team-orchestrator',key:'sharedStoreStatus'} as const,'')
 const displayedProof = atom({plugin:'team-orchestrator',key:'sharedStoreProof'} as const,{ok:false,reason:'Open Team workspace to verify this conversation.'} as SharedProof)
-type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
-const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,access:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false} as SharedUi)
+type SharedUi = {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean;upgrade:boolean}
+const uiState = atom({plugin:'team-orchestrator',key:'sharedStoreUi'} as const,{busy:'',notice:'',tone:'gray',details:false,connection:false,access:false,nodeDraft:null,orcaDraft:null,checked:false,approved:null,member:false,upgrade:false} as SharedUi)
 export type SharedControls = {enabled:boolean;preferenceError?:string;node:string;orca:string;setEnabled:(enabled:boolean)=>Promise<void>;rememberProject?:()=>Promise<void>;setNode:(value:string)=>Promise<void>;setOrca:(value:string)=>Promise<void>}
 export type SharedAccess = {enabled:boolean;node:string;orca:string;revalidate:()=>Promise<SharedProof>}
 export async function setSharedStoreProof($:any,proof:SharedProof) { await update($,displayedProof,()=>proof) }
@@ -70,7 +70,7 @@ export async function callSharedStore($:any,e:any,enabled:boolean,dependencies:{
 // Explicit actions own all I/O. Repeated renders only read display state.
 export async function refreshSharedStore($:any,dependencies:SharedAccess) {
  if(!dependencies.enabled || !await beginSharedAction($,'verify'))return
- await update($,uiState,old=>({...old,checked:false,approved:null,member:false}))
+ await update($,uiState,old=>({...old,checked:false,approved:null,member:false,upgrade:false}))
  await setSharedStoreProof($,{ok:false,reason:'Checking this project and conversation…'})
  try {
   const proof=await dependencies.revalidate();await setSharedStoreProof($,proof)
@@ -80,9 +80,30 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
    await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
+  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&result.error.details?.version===5&&result.error.details?.supported===6) {
+   await update($,uiState,old=>({...old,upgrade:true}));await sharedFeedback($,'Update this workspace to continue. A backup will be kept before its data changes.','yellow')
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
  finally {await update($,uiState,old=>({...old,busy:''}))}
+}
+
+export async function upgradeSharedWorkspace($:any,dependencies:SharedAccess) {
+ const proof=await read($,displayedProof),state=await read($,uiState)
+ if(!dependencies.enabled||!proof.ok||!state.upgrade||!await beginSharedAction($,'upgrade'))return
+ let updated=false
+ try {
+  const current=await dependencies.revalidate()
+  if(!current.ok||JSON.stringify(proofOf(current))!==JSON.stringify(proofOf(proof)))throw Error('This conversation changed. Check access before updating.')
+  const token=id(),config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
+  if(!config||config==='/.claude')throw Error('Local configuration folder could not be verified.')
+  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:5,toVersion:6,...proofOf(current)}))
+  const result=await sharedCall($,current,{operationId:`upgrade-${token}`},{...dependencies,mode:'upgradeStore',uiApprovalId:token})
+  await update($,status,()=>JSON.stringify(result));updated=result.ok===true
+  if(updated){await update($,uiState,old=>({...old,upgrade:false,checked:false,approved:null,member:false}));await sharedFeedback($,'Workspace updated. Existing approvals and history are kept.','green')}
+  else await sharedFeedback($,result.error?.message||'Update is not confirmed. Check access before repeating.','yellow')
+ }catch(error){await sharedFeedback($,error instanceof Error?error.message:String(error),'yellow')}
+ finally{await update($,uiState,old=>({...old,busy:''}))}
+ if(updated)await refreshSharedStore($,dependencies)
 }
 
 export async function sharedStoreOptionsView($:any,ui:any,dependencies:SharedControls,expanded=false,compact=false,actions:any=null) {
@@ -152,17 +173,18 @@ export async function sharedStoreView($:any,ui:any,dependencies:SharedAccess & S
  const proof=await read($,displayedProof),state=await read($,uiState),message=await read($,status)
  const ready=dependencies.enabled&&proof.ok&&state.checked
  const approved=ready?state.approved:null
- const label=!dependencies.enabled?'OFF':state.busy==='verify'?'CHECKING':approved?'APPROVED':ready&&state.member?'MEMBER':ready?'NEEDS APPROVAL':'CHECK ACCESS'
+ const label=!dependencies.enabled?'OFF':state.busy==='verify'?'CHECKING':state.upgrade?'UPDATE NEEDED':approved?'APPROVED':ready&&state.member?'MEMBER':ready?'NEEDS APPROVAL':'CHECK ACCESS'
  const color=approved||ready&&state.member?'green':!dependencies.enabled?'gray':'yellow'
- const accessAction=async(approve=false)=>{
-  if(approve)await approveSharedController($,dependencies);else await refreshSharedStore($,dependencies)
+ const accessAction=async(action:'check'|'approve'|'upgrade'='check')=>{
+  if(action==='upgrade')await upgradeSharedWorkspace($,dependencies);else if(action==='approve')await approveSharedController($,dependencies);else await refreshSharedStore($,dependencies)
   const current=await sharedAccessState($)
   if(current.proof.ok&&current.state.checked&&(current.state.approved||current.state.member))await refreshSharedWorkspace($,{...dependencies,proof:current.proof,controllerGeneration:current.state.approved})
  }
  const actions=<Box flexDirection="column">
   <Box flexWrap="wrap" columnGap={1}>
    {dependencies.enabled&&<Button key="shared-refresh" label={state.busy==='verify'?'Checking…':'Check access'} onPress={async()=>accessAction()}/>}
-   {ready&&!approved&&<Button key="shared-approve-controller" label={state.busy==='approve'?'Approving…':state.member?'Allow management (optional)':'Allow team management'} variant={state.member?undefined:'primary'} onPress={async()=>accessAction(true)}/>}
+   {ready&&!approved&&<Button key="shared-approve-controller" label={state.busy==='approve'?'Approving…':state.member?'Allow management (optional)':'Allow team management'} variant={state.member?undefined:'primary'} onPress={async()=>accessAction('approve')}/>}
+   {state.upgrade&&<Button key="shared-upgrade-store" label={state.busy==='upgrade'?'Updating…':'Update workspace'} variant="primary" onPress={async()=>accessAction('upgrade')}/>}
   </Box>
   <Box flexWrap="wrap" columnGap={1}>
    <Button key="shared-connection" label={state.connection?'Connection ▴':'Connection ▾'} onPress={async()=>{await update($,uiState,old=>({...old,connection:!old.connection}))}}/>
@@ -205,6 +227,7 @@ export async function sharedPermissionView($:any,ui:any,dependencies:SharedAcces
   {dependencies.preferenceError&&<Text color="yellow">{dependencies.preferenceError}</Text>}
   <Text>{proof.ok?proof.root:'Project identity will be checked before permission is requested.'}</Text>
   {!dependencies.enabled?<Box flexDirection="column"><Text>Use shared teams in this project. Other projects keep their defaults.</Text><Button key="setup-enable-project" label="Use shared workspace for this project" variant="primary" onPress={async()=>{try{await dependencies.setEnabled(true);await refreshSharedStore($,{...dependencies,enabled:true})}catch(error){await sharedFeedback($,String(error),'yellow')}}}/></Box>
+  :state.upgrade?<Box flexDirection="column"><Text>Update this workspace to continue. Existing approvals and history are preserved, with a backup kept before changes.</Text><Button key="shared-upgrade-store" label={state.busy==='upgrade'?'Updating…':'Update workspace'} variant="primary" onPress={async()=>upgradeSharedWorkspace($,dependencies)}/></Box>
   :!state.checked?<Box flexDirection="column"><Button key="shared-refresh" label={state.busy?'Checking…':'Check project access'} variant="primary" onPress={async()=>refreshSharedStore($,dependencies)}/>{!proof.ok&&<Text color="yellow">{proof.reason}</Text>}</Box>
   :state.approved?<Text color="green">✓ Management allowed for this conversation.</Text>
   :<Box flexDirection="column"><Text>Allow this conversation to set up and manage teams in this project. Other approved conversations keep their access. Worker file and Agent permissions stay separate.</Text><Button key="shared-approve-controller" label={state.busy==='approve'?'Allowing…':'Allow team management'} variant="primary" onPress={async()=>approveSharedController($,dependencies)}/></Box>}

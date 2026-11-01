@@ -94,6 +94,7 @@ export async function expirePickups(db,teamId,now) {
   const changed=await db.query(`UPDATE assignments SET pickup_expired_at_ms=:now,returned_to_member_id=assigned_by_member_id
    WHERE assignment_id=:id AND pickup_observed_at_ms IS NULL AND pickup_expired_at_ms IS NULL RETURNING assignment_id`,{id:a.assignment_id,now});
   if(!changed.length)continue;
+  await db.query("INSERT INTO assignment_returns (assignment_id,returned_to_member_id,reason,returned_at_ms) VALUES (:id,:head,'pickup_expired',:now)",{id:a.assignment_id,head:a.assigned_by_member_id,now});
   await db.query('UPDATE assignment_attempts SET generation=generation+1 WHERE assignment_id=:id',{id:a.assignment_id});
   await settleAssignmentThread(db,a.assignment_id,'expired','Pickup deadline expired');
   // The shared assignment is the return receipt. Do not forge a message from

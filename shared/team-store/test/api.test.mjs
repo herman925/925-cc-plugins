@@ -206,11 +206,36 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   await assert.rejects(f.call({...retry,newAssignmentId:'duplicate',expectedAttemptGeneration:3}),code('API_RETRY_EXISTS'));
   assert.equal((await f.rows("SELECT status FROM threads WHERE assignment_id='assignment'"))[0].status,'fenced');
   assert.equal((await f.rows("SELECT status FROM threads WHERE assignment_id='retry'"))[0].status,'open');
-  f.native.current=f.actor('worker');await assert.rejects(f.call({...f.verify,expectedAttemptGeneration:3}),code('API_PICKUP_EXPIRED'));
+  f.native.current=f.actor('worker');await assert.rejects(f.call({...f.verify,expectedAttemptGeneration:3}),code('API_ATTEMPT_SETTLED'));
   f.native.current=f.actor('other');await f.call({...f.verify,assignmentId:'retry'});await f.call({...f.report,assignmentId:'retry'});
   f.native.current=f.actor('head');await f.call({...f.accept,assignmentId:'retry'});
   assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'succeeded');
   assert.equal((await f.rows('SELECT * FROM task_acceptances'))[0].assignment_id,'retry');
+ });
+ test('head inspection cannot clear a worker delivery',async t=>{
+  const f=await setup(t);await f.ready();
+  const [message]=(await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'worker'})).result.messages;
+  const view=await f.call({type:'inspectDelivery',teamId:'team',deliveryId:message.delivery_id});
+  assert.equal(view.result.delivery.status,'outstanding');
+  await assert.rejects(f.call({...f.base,type:'readInbox',deliveryId:message.delivery_id,expectedDeliveryGeneration:message.delivery_generation}),code('API_INBOX_ORDER'));
+  f.native.current=f.actor('worker');
+  assert.equal((await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'worker'})).result.messages[0].delivery_id,message.delivery_id);
+ });
+ test('a rejected outcome stays immutable while a new attempt can receive separate acceptance',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');await f.call(f.verify);await f.call(f.report);
+  f.native.current=f.actor('head');await f.call({...f.accept,decision:'rejected',reason:'Needs correction'});
+  const old=(await f.call({type:'inspectAssignment',teamId:'team',assignmentId:'assignment'})).result;
+  assert.equal(old.returned.reason,'rejected');assert.equal(old.acceptance.decision,'rejected');
+  await f.call({...f.base,type:'retryAssignment',assignmentId:'assignment',newAssignmentId:'retry',memberId:'other',expectedAttemptGeneration:3,expectedTargetGeneration:1,expectedTargetBindingGeneration:1});
+  f.native.current=f.actor('other');await f.call({...f.verify,assignmentId:'retry'});await f.call({...f.report,assignmentId:'retry',summary:'Corrected 5'});
+  f.native.current=f.actor('head');await f.call({...f.accept,assignmentId:'retry'});
+  const history=await f.rows('SELECT * FROM task_acceptances ORDER BY assignment_id');assert.equal(history.length,2);
+  assert.equal(history[0].decision,'rejected');assert.equal(history[1].decision,'accepted');
+  const previous=(await f.call({type:'inspectAssignment',teamId:'team',assignmentId:'assignment'})).result;
+  assert.deepEqual(previous.acceptance,old.acceptance);assert.equal(previous.attempt.summary,'5');
+  await assert.rejects(f.call({...f.accept,expectedAttemptGeneration:4}),code('API_ATTEMPT_SETTLED'));
+  await assert.rejects(rawWrite(f,"UPDATE task_acceptances SET reason='changed'"),error=>String(error.message).includes('STORE_HISTORY_IMMUTABLE'));
+  await assert.rejects(rawWrite(f,'DELETE FROM assignment_returns'),error=>String(error.message).includes('STORE_HISTORY_IMMUTABLE'));
  });
  test('self-asserted caller, approval, paths and raw mutations cannot become authority',async t=>{
   const f=await setup(t);

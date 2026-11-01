@@ -10,18 +10,34 @@ import {createModNative} from './mod-native.mjs';
 import {exact} from './src/api-domain.mjs';
 import {StoreError,refusal} from './src/errors.mjs';
 import {createInboxJournal} from './src/inbox-journal.mjs';
+import {upgradeTeamStore} from './src/upgrade.mjs';
 
 let api,journal;
 try {
  let input='';for await(const chunk of process.stdin){input+=chunk;if(Buffer.byteLength(input)>256*1024)throw refusal('API_INPUT_INVALID','Mod request is oversized.');}
  const envelope=JSON.parse(input);
  exact(envelope,['mode','proof','request','uiApprovalId','orcaCommand']);
- if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
  const native=await createModNative({orcaCommand:envelope.orcaCommand});
  const actor=await native.verifyCaller(envelope.proof);
+ const userAction=async action=>{
+  try {
+  if(!/^[a-f0-9]{32}$/.test(envelope.uiApprovalId??''))return false;
+  const ticketPath=join(process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),'team-orchestrator','controller-actions',`${envelope.uiApprovalId}.json`);
+  const info=await lstat(ticketPath);if(!info.isFile()||info.isSymbolicLink()||info.size>8192)return false;
+  const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
+  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||ticket.fromVersion===5&&ticket.toVersion===6);
+  }catch{return false;}
+ };
  if(envelope.mode==='listSessions') {
   exact(envelope.request,[]);
   console.log(JSON.stringify({ok:true,result:{sessions:await native.listTargets(envelope.proof)}}));
+ } else if(envelope.mode==='upgradeStore') {
+  exact(envelope.request,['operationId']);
+  if(!await userAction('upgradeStore'))throw refusal('API_APPROVAL_REQUIRED','An explicit workspace update action is required.');
+  const manifest=JSON.parse(await readFile(new URL('../.claude-plugin/plugin.json',import.meta.url),'utf8'));
+  const result=await upgradeTeamStore({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:{client:'team-orchestrator',version:manifest.version},operationId:envelope.request.operationId,backupRoot:process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),caller:{principalId:actor.conversationId},authorize:()=>true});
+  console.log(JSON.stringify({ok:true,result}));
  } else {
  // UI evidence is an exact action id, not an arbitrary successful question in
  // this turn. The model-facing request schema has no approval field.
@@ -29,11 +45,7 @@ try {
  api=await createTeamApi({projectRoot:actor.projectRoot,machineId:hostname(),writer:{client:'team-orchestrator',version:manifest.version},
   authenticate:()=>native.verifyCaller(envelope.proof),verifyTarget:target=>native.verifyBinding(target,envelope.proof),
   confirmController:async({approval})=>{
-   if(envelope.mode!=='approveController'||!/^\w{32}$/.test(envelope.uiApprovalId??'')||approval!==envelope.uiApprovalId)return false;
-   const ticketPath=join(process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),'team-orchestrator','controller-actions',`${approval}.json`);
-   const info=await lstat(ticketPath);if(!info.isFile()||info.isSymbolicLink()||info.size>8192)return false;
-   const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
-   return ticket.action==='approveController' && ticket.id===approval && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000;
+   return envelope.mode==='approveController'&&approval===envelope.uiApprovalId&&await userAction('approveController');
   }});
  let result;
  if(['inboxPoll','inboxAttached'].includes(envelope.mode)) {

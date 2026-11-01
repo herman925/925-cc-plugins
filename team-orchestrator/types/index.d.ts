@@ -140,7 +140,7 @@ declare module 'claude-code' {
       sharedStoreStatus: string
       sharedMail: {scope:string;busy:boolean;checked:boolean;message:any;error:string}
       sharedWorkspace: {scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;memberChoice:string;taskChoice:string;about:boolean;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:{request:any;label:string}|null;retry:boolean}
-      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean}
+      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean;upgrade:boolean}
       sharedStoreProof: { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
     }
   }

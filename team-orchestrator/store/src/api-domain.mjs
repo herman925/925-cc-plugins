@@ -219,8 +219,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
         const visible=await db.query(`SELECT a.* FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN runs r ON r.run_id=t.run_id JOIN members m ON m.member_id=a.member_id
           WHERE r.team_id=:team AND (a.member_id=:member OR (a.assigned_by_member_id=:member AND m.boss_member_id=:member)) ORDER BY a.admitted_at_ms DESC,a.assignment_id LIMIT 100`,{team:command.teamId,member:member.member_id});
         for(const assignment of visible) {
-          const [acceptance]=await db.query('SELECT * FROM task_acceptances WHERE task_id=:id',{id:assignment.task_id});
-          work.push({assignment,task:await reference(db,'tasks','task_id',assignment.task_id),brief:await reference(db,'task_briefs','task_id',assignment.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',assignment.assignment_id),acceptance:acceptance??null});
+          const [acceptance]=await db.query('SELECT * FROM task_acceptances WHERE task_id=:id AND assignment_id=:assignment',{id:assignment.task_id,assignment:assignment.assignment_id});
+          const [returned]=await db.query('SELECT * FROM assignment_returns WHERE assignment_id=:id',{id:assignment.assignment_id});
+          work.push({assignment,task:await reference(db,'tasks','task_id',assignment.task_id),brief:await reference(db,'task_briefs','task_id',assignment.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',assignment.assignment_id),acceptance:acceptance??null,returned:returned??null});
         }
       }
     }
@@ -233,8 +234,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const run = await reference(db,'runs','run_id',task.run_id);
     const report = await reference(db,'members','member_id',assignment.member_id);
     if (run.team_id !== command.teamId || (assignment.member_id !== member.member_id && (assignment.assigned_by_member_id !== member.member_id || report.boss_member_id !== member.member_id))) fail('ASSIGNEE_REQUIRED','Only the assignee or its current admitting head may inspect this attempt.');
-    const [acceptance] = await db.query('SELECT * FROM task_acceptances WHERE task_id=:id',{id:task.task_id});
-    return {assignment,task,brief:await reference(db,'task_briefs','task_id',task.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',command.assignmentId),acceptance:acceptance??null};
+    const [acceptance] = await db.query('SELECT * FROM task_acceptances WHERE task_id=:id AND assignment_id=:assignment',{id:task.task_id,assignment:assignment.assignment_id});
+    const [returned]=await db.query('SELECT * FROM assignment_returns WHERE assignment_id=:id',{id:assignment.assignment_id});
+    return {assignment,task,brief:await reference(db,'task_briefs','task_id',task.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',command.assignmentId),acceptance:acceptance??null,returned:returned??null};
   }
   if(type==='inspectInbox') {
     const {member}=await memberActor(db,actor,command,false);
@@ -297,11 +299,17 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   if (run.team_id !== command.teamId) fail('MEMBER_SCOPE','Assignment belongs to another team.');
   const attempt = await reference(db,'assignment_attempts','assignment_id',command.assignmentId);
   expected(command.expectedAttemptGeneration,attempt.generation,'attempt generation');
-  const [settled] = await db.query('SELECT task_id FROM task_acceptances WHERE task_id=:id',{id:task.task_id});
-  if (settled || task.status !== 'open') fail('ATTEMPT_SETTLED','This task has already been decided or is not open.');
+  const [settled] = await db.query('SELECT decision FROM task_acceptances WHERE task_id=:id AND assignment_id=:assignment',{id:task.task_id,assignment:assignment.assignment_id});
+  if (type!=='retryAssignment'&&(settled || task.status !== 'open')) fail('ATTEMPT_SETTLED','This attempt has already been decided or is not open.');
+  if(type!=='retryAssignment') {
+    const [successor]=await db.query('SELECT assignment_id FROM assignments WHERE previous_assignment_id=:id',{id:command.assignmentId});
+    if(successor)fail('ATTEMPT_SETTLED','This attempt has been superseded by a retry.');
+  }
   const next = nextInteger(gen(attempt.generation,'attempt generation'),'attempt generation');
   if(type==='retryAssignment') {
-    if(assignment.assigned_by_member_id!==member.member_id || assignment.returned_to_member_id!==member.member_id || assignment.pickup_expired_at_ms===null)fail('RETURN_REQUIRED','Only the current admitting head may retry a returned, unpicked assignment.');
+    const [returned]=await db.query('SELECT * FROM assignment_returns WHERE assignment_id=:id',{id:command.assignmentId});
+    if(assignment.assigned_by_member_id!==member.member_id || returned?.returned_to_member_id!==member.member_id)fail('RETURN_REQUIRED','Only the admitting head may retry an assignment returned to it.');
+    if(!['open','blocked'].includes(task.status)||settled&&settled.decision==='accepted')fail('ATTEMPT_SETTLED','An accepted task cannot be reopened by retry.');
     const [successor]=await db.query('SELECT assignment_id FROM assignments WHERE previous_assignment_id=:id',{id:command.assignmentId});
     if(successor)fail('RETRY_EXISTS','This attempt already has a successor. Inspect that assignment.');
     const recipient=await reference(db,'members','member_id',command.memberId);
@@ -316,6 +324,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
       VALUES (:id,:task,:member,:now,:head,:deadline,:window,:previous)`,{id:command.newAssignmentId,task:task.task_id,member:command.memberId,now,head:member.member_id,deadline:pickupDeadlineMs,window:settings.task_window_minutes,previous:command.assignmentId});
     await db.query('INSERT INTO assignment_attempts (assignment_id,generation) VALUES (:id,1)',{id:command.newAssignmentId});
     await db.query('UPDATE assignment_attempts SET generation=:next WHERE assignment_id=:id AND generation=:expected',{next,id:command.assignmentId,expected:command.expectedAttemptGeneration});
+    await db.query("UPDATE tasks SET status='open',outcome=NULL WHERE task_id=:id AND status IN ('open','blocked')",{id:task.task_id});
     const threadId=await openAssignmentThread(db,{assignmentId:command.newAssignmentId,taskId:task.task_id,runId:run.run_id,teamId:command.teamId,headId:member.member_id,memberId:command.memberId});
     const brief=await reference(db,'task_briefs','task_id',task.task_id);
     const delivery=await enqueueMessage(db,{eventId:`dispatch:${command.newAssignmentId}`,runId:run.run_id,teamId:command.teamId,threadId,senderId:member.member_id,recipientId:command.memberId,
@@ -348,6 +357,10 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if (attempt.outcome === null) fail('OUTCOME_REQUIRED','The worker must report an explicit outcome first.');
     await db.query('INSERT INTO task_acceptances (task_id,assignment_id,accepted_by_member_id,decision,reason,decided_at_ms) VALUES (:task,:assignment,:head,:decision,:reason,:now)',{task:task.task_id,assignment:command.assignmentId,head:member.member_id,decision:command.decision,reason:command.reason,now});
     await db.query('UPDATE tasks SET status=:status,outcome=:outcome WHERE task_id=:id AND status=\'open\'',{status:command.decision==='accepted'?attempt.outcome:'blocked',outcome:command.decision==='accepted'?attempt.outcome:null,id:task.task_id});
+    if(command.decision==='rejected') {
+      await db.query('INSERT INTO assignment_returns (assignment_id,returned_to_member_id,reason,returned_at_ms) VALUES (:id,:head,\'rejected\',:now)',{id:command.assignmentId,head:member.member_id,now});
+      await db.query('UPDATE assignments SET returned_to_member_id=:head WHERE assignment_id=:id',{head:member.member_id,id:command.assignmentId});
+    }
     await settleAssignmentThread(db,command.assignmentId,command.decision,command.reason);
     return {taskId:task.task_id,decision:command.decision,workerOutcome:attempt.outcome,summary:attempt.summary,evidence:attempt.evidence};
   }

@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, SQL, RULES } from '../contract.mjs';
+import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, historyGuardsFor, SQL, RULES } from '../contract.mjs';
 import { fixture, postgresTestUrl } from './support/engines.mjs';
 import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
 
@@ -31,10 +31,11 @@ test('one common table source renders explicit collations and equivalent immutab
   for (const [engine, collation] of [['sqlite', 'BINARY'], ['postgres', '"C"']]) {
     const tables = ddlFor(engine);
     assert.ok(tables.includes(messageGuardsFor(engine)));
+    assert.ok(tables.includes(historyGuardsFor(engine)));
     assert.ok(tables.includes(`message_id TEXT COLLATE ${collation} NOT NULL PRIMARY KEY`));
     assert.ok(!tables.includes('{{'));
     const sharedBody = DDL.replaceAll('{{identity_collation}}', collation).split('{{message_guards}}')[0];
-    for (const part of sharedBody.split('{{delivery_message_fk}}')) assert.ok(tables.includes(part));
+    for (const part of sharedBody.split(/\{\{(?:delivery_message_fk|history_guards)\}\}/)) assert.ok(tables.includes(part));
   }
   assert.throws(() => ddlFor('mysql'), /Unsupported/);
   assert.throws(() => ddlFor('toString'), /Unsupported/);

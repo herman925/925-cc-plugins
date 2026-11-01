@@ -114,7 +114,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
  const chosenMember=memberMissing?undefined:members.find((m:any)=>m.member_id===s.memberChoice)||direct[0]||me||members[0]
  const taskMissing=!!s.taskChoice&&!work.some((item:any)=>item.assignment.assignment_id===s.taskChoice)
  const chosenTask=taskMissing?undefined:work.find((item:any)=>item.assignment.assignment_id===s.taskChoice)||selected||work[0]
- const taskStatus=(item:any)=>item.acceptance?item.task.status:item.assignment.pickup_expired_at_ms?'Returned to head':item.attempt.outcome?'Needs review':item.assignment.pickup_observed_at_ms?'In progress':'Awaiting pickup'
+ const taskStatus=(item:any)=>item.acceptance?.decision==='rejected'?'Rejected':item.acceptance?item.task.status:item.returned||item.assignment.pickup_expired_at_ms?'Returned to head':item.attempt.outcome?'Needs review':item.assignment.pickup_observed_at_ms?'In progress':'Awaiting pickup'
  const taskLabels=work.map((item:any)=>workspaceLine(`${members.find((m:any)=>m.member_id===item.assignment.member_id)?.name||'Member'} · ${taskStatus(item)} · ${Array.from(String(item.brief.instructions)).slice(0,40).join('')}`))
  const taskOptions=work.map((item:any,index:number)=>{
   const peers=work.filter((_:any,i:number)=>taskLabels[i]===taskLabels[index]),id=String(item.assignment.assignment_id)
@@ -192,7 +192,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
      <Text weight="bold">Assign to {members.find((m:any)=>m.member_id===s.assignmentMember)?.name}</Text>
      {input('workspace-instructions','Task instructions',s.instructions,v=>edit('instructions',v))}
      {input('workspace-expected','Expected result / acceptance criteria',s.expectedResult,v=>edit('expectedResult',v))}
-     <Text dimColor>Records the assignment. The worker must pick it up through the Tasks panel or shared_team tool; automatic delivery is not implemented.</Text>
+     <Text dimColor>Saves the assignment and queues its delivery. The worker reads the official role and brief at pickup.</Text>
      <Box flexWrap="wrap" columnGap={1}>{button('workspace-admit','Assign task',()=>action($,async()=>{
       const current=await read($,state);if(!workspaceLine(current.instructions).trim()||!workspaceLine(current.expectedResult).trim())fieldError('Enter task instructions and an expected result.')
       const m=current.snapshot.members.find((m:any)=>m.member_id===current.assignmentMember)
@@ -217,9 +217,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
      {s.page==='review'&&selected&&<Box flexDirection="column">
       <Text weight="bold">{taskStatus(selected)}</Text>{button('workspace-task-back','Back to task list',async()=>edit('page','tasks'))}<Text>{selected.brief.instructions}</Text><Text weight="bold">Expected result</Text><Text>{selected.brief.expected_result}</Text>
       {selected.attempt.outcome&&<Box flexDirection="column"><Text weight="bold" color="yellow">Worker outcome · {selected.attempt.outcome}</Text><Text>{selected.attempt.summary}</Text><Text weight="bold">Evidence</Text><Text>{selected.attempt.evidence}</Text></Box>}
-      {selected.acceptance?<Box flexDirection="column"><Text weight="bold" color="green">Head decision · {selected.acceptance.decision}</Text><Text>{selected.acceptance.reason}</Text></Box>:!pending&&<Box flexDirection="column">
        {selected.assignment.pickup_expired_at_ms&&<Text color="yellow">Pickup window expired · returned to the head for reassignment.</Text>}
-       {selected.assignment.pickup_expired_at_ms&&selected.assignment.returned_to_member_id===me?.member_id&&!work.some((item:any)=>item.assignment.previous_assignment_id===selected.assignment.assignment_id)&&<Box flexDirection="column">
+       {!pending&&(selected.returned||selected.assignment.pickup_expired_at_ms)&&(selected.returned?.returned_to_member_id??selected.assignment.returned_to_member_id)===me?.member_id&&!work.some((item:any)=>item.assignment.previous_assignment_id===selected.assignment.assignment_id)&&<Box flexDirection="column">
         {retryReports.length>0&&<Select key="workspace-retry-target" label="Reassign to " value={retryMember?.member_id} options={retryReports.map((m:any)=>({value:m.member_id,label:workspaceLine(m.name)}))} onSelect={async(value:string)=>edit('assignmentMember',value)}/>}
         {retryReports.length===0&&<Text dimColor>Connect a direct report before reassigning this task.</Text>}
         {retryReports.length>0&&button('workspace-retry-assignment','Reassign task',()=>action($,async()=>{
@@ -230,7 +229,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
          await mutate($,deps,{...authority(current),type:'retryAssignment',assignmentId:item.assignment.assignment_id,newAssignmentId:uid(),memberId:targetId,expectedAttemptGeneration:item.attempt.generation,expectedTargetGeneration:target.generation,expectedTargetBindingGeneration:binding.generation},'Task reassignment')
         }),true)}
        </Box>}
-       {me?.member_id===selected.assignment.member_id&&!selected.attempt.outcome&&!selected.assignment.pickup_expired_at_ms&&<Box flexDirection="column">
+      {selected.acceptance?<Box flexDirection="column"><Text weight="bold" color={selected.acceptance.decision==='accepted'?'green':'yellow'}>Head decision · {selected.acceptance.decision}</Text><Text>{selected.acceptance.reason}</Text></Box>:!pending&&<Box flexDirection="column">
+       {me?.member_id===selected.assignment.member_id&&!selected.attempt.outcome&&!selected.returned&&!selected.assignment.pickup_expired_at_ms&&<Box flexDirection="column">
         {!selected.assignment.pickup_observed_at_ms?button('workspace-pickup','Pick up · read role and brief',()=>action($,async()=>{
          const current=await read($,state),item=current.snapshot.work.find((w:any)=>w.assignment.assignment_id===current.selectedAssignment)
          await mutate($,deps,{type:'verifyAssignment',...authority(current),assignmentId:item.assignment.assignment_id,expectedAttemptGeneration:item.attempt.generation},'Task pickup')
