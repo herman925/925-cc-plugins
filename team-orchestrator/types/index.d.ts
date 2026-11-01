@@ -139,8 +139,9 @@ declare module 'claude-code' {
       teamSetup: {scope:string;active:boolean;step:number;member:number;advanced:boolean;error:string;busy:boolean;discard:boolean;nodeDraft:string|null;orcaDraft:string|null;storeHint:boolean|null;memberOpen:boolean;template:string;interviewId:string;interviewSnapshot:string}
       sharedStoreStatus: string
       sharedMail: {scope:string;busy:boolean;checked:boolean;message:any;error:string}
+      sharedQuestions: {scope:string;compose:boolean;target:string;assignment:string;question:string;answer:string;selected:string}
       sharedWorkspace: {scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;memberChoice:string;taskChoice:string;about:boolean;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:{request:any;label:string}|null;retry:boolean;gateChoice:string;gateNote:string;gateDraft:{replaceId:string;question:string;options:string[]}|null}
-      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean;upgrade:boolean}
+      sharedStoreUi: {busy:string;notice:string;tone:string;details:boolean;connection:boolean;access:boolean;nodeDraft:string|null;orcaDraft:string|null;checked:boolean;approved:number|null;member:boolean;upgrade:boolean;upgradeFrom:number|null}
       sharedStoreProof: { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
     }
   }

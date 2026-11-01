@@ -1,6 +1,8 @@
 // Private subprocess entry point for the Mod hooks. This is not a CLI offered to
 // agents. JSON comes from $.process.run stdin; model tools cannot choose proof,
 // approval, storage configuration or the native verifier.
+import {fileURLToPath} from 'node:url';
+import {launchMember} from './src/mod-launch.mjs';
 import {hostname} from 'node:os';
 import {homedir} from 'node:os';
 import {readFile,lstat} from 'node:fs/promises';
@@ -17,7 +19,7 @@ try {
  let input='';for await(const chunk of process.stdin){input+=chunk;if(Buffer.byteLength(input)>256*1024)throw refusal('API_INPUT_INVALID','Mod request is oversized.');}
  const envelope=JSON.parse(input);
  exact(envelope,['mode','proof','request','uiApprovalId','orcaCommand']);
- if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore','launchMember','attachLaunch'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
  const native=await createModNative({orcaCommand:envelope.orcaCommand});
  const actor=await native.verifyCaller(envelope.proof);
  const userAction=async action=>{
@@ -26,7 +28,7 @@ try {
   const ticketPath=join(process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),'team-orchestrator','controller-actions',`${envelope.uiApprovalId}.json`);
   const info=await lstat(ticketPath);if(!info.isFile()||info.isSymbolicLink()||info.size>8192)return false;
   const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
-  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||ticket.fromVersion===5&&ticket.toVersion===6);
+  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||[5,6].includes(ticket.fromVersion)&&ticket.toVersion===7);
   }catch{return false;}
  };
  if(envelope.mode==='listSessions') {
@@ -47,8 +49,11 @@ try {
   confirmController:async({approval})=>{
    return envelope.mode==='approveController'&&approval===envelope.uiApprovalId&&await userAction('approveController');
   }});
+ if(envelope.mode!=='approveController')await api.launch({operationId:`auto-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});
  let result;
- if(['inboxPoll','inboxAttached'].includes(envelope.mode)) {
+ if(envelope.mode==='launchMember') {result=await launchMember({api,native,actor,request:envelope.request,configuration:{node:process.execPath,orca:envelope.orcaCommand},pluginRoot:fileURLToPath(new URL('../',import.meta.url))});}
+ else if(envelope.mode==='attachLaunch') {exact(envelope.request,[]);result=await api.launch({operationId:`launch-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});}
+ else if(['inboxPoll','inboxAttached'].includes(envelope.mode)) {
   exact(envelope.request,envelope.mode==='inboxPoll'?[]:['readReceiptId']);
   journal=await createInboxJournal({api,actor,writer:{client:'team-orchestrator',version:manifest.version},machineConfigRoot:process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude')});
   if(envelope.mode==='inboxAttached'&&!journal)throw refusal('API_BINDING_REQUIRED','This conversation has no member binding.');
@@ -65,7 +70,7 @@ try {
    try {
     const verified=await native.verifyBinding({projectRoot:actor.projectRoot,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},envelope.proof);
     if(verified.incarnationId===b.incarnation_id && verified.machineId===b.machine_id && verified.provider===b.provider && verified.executionHostId===b.execution_host_id)
-     transportTargets.push({deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId,replay:delivery.replay,conversationId:verified.conversationId});
+     transportTargets.push({...(delivery.noticeId?{noticeId:delivery.noticeId}:{}),deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId,replay:delivery.replay,conversationId:verified.conversationId});
    } catch {/* Stale or unavailable targets remain outstanding. Never retarget by title. */}
   }
  }

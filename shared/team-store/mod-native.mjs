@@ -111,5 +111,5 @@ export async function createModNative({orcaCommand=process.env.ORCA_CLI_COMMAND|
   }
   return sessions;
  };
- return Object.freeze({verify:input=>verify(input),verifyCaller:input=>verify(input,true),verifyBinding,listTargets});
+ return Object.freeze({createTerminal:async({context,title,command})=>cli(['terminal','create','--worktree',context,'--title',title,'--command',command]),verify:input=>verify(input),verifyCaller:input=>verify(input,true),verifyBinding,listTargets});
 }

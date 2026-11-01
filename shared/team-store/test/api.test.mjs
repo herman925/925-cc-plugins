@@ -429,4 +429,51 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   assert.equal((await f.rows('SELECT * FROM members')).length,0);
   assert.equal((await f.rows('SELECT * FROM controller_approvals')).length,1);
  });
+ test('questions start their answer window on recipient read and settle once with durable answer mail',async t=>{
+  const f=await setup(t);await f.ready();
+  const q={...f.base,type:'askQuestion',threadId:'q',runId:'unused',assignmentId:'assignment',recipientMemberId:'worker',question:'Which approach?'};
+  await f.call(q);
+  const inspect=()=>f.call({type:'inspectQuestion',teamId:'team',threadId:'q'});
+  assert.equal((await inspect()).result.thread.answer_deadline_ms,null);
+  f.native.current=f.actor('other');await assert.rejects(inspect(),code('API_QUESTION_SCOPE'));
+  f.native.current=f.actor('worker');
+  await assert.rejects(f.call({...f.base,type:'answerQuestion',threadId:'q',answer:'A',expectedThreadGeneration:1}),code('API_QUESTION_SETTLED'));
+  // The dispatch remains first in FIFO. Read it, then the question.
+  for(let i=0;i<2;i++){const m=(await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'worker'})).result.messages[0];await f.call({...f.base,type:'readInbox',deliveryId:m.delivery_id,expectedDeliveryGeneration:m.delivery_generation});}
+  const thread=(await inspect()).result.thread;assert.equal(thread.answer_deadline_ms-thread.question_delivered_at_ms,180000);
+  const answer={...f.base,type:'answerQuestion',threadId:'q',answer:'Use A',expectedThreadGeneration:1};
+  const race=await Promise.allSettled([f.call(answer),f.call(answer)]);assert.equal(race.filter(r=>r.status==='fulfilled').length,1);assert.equal(race.find(r=>r.status==='fulfilled').value.result.status,'answered');await assert.rejects(f.call(answer),code('API_QUESTION_SETTLED'));
+  f.native.current=f.actor('head');const inbox=(await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'head'})).result.messages[0];
+  assert.equal(JSON.parse(inbox.body).event,'question_answered');assert.equal(JSON.parse(inbox.body).answer,'Use A');
+  assert.equal((await f.rows("SELECT status FROM threads WHERE thread_kind='work'"))[0].status,'open');
+ });
+ test('question expiry refuses late answers and notifies once without rewriting the question',async t=>{
+  const f=await setup(t);await f.ready();await f.call({...f.base,type:'askQuestion',threadId:'q',runId:'qr',assignmentId:null,recipientMemberId:'worker',question:'Status?'});
+  const before=await f.rows("SELECT body FROM messages WHERE kind='question'");
+  await rawWrite(f,"UPDATE threads SET question_delivered_at_ms=1,answer_deadline_ms=2 WHERE thread_id='q'");
+  f.native.current=f.actor('worker');await assert.rejects(f.call({...f.base,type:'answerQuestion',threadId:'q',answer:'late',expectedThreadGeneration:1}),code('API_QUESTION_SETTLED'));
+  f.native.current=f.actor('head');assert.deepEqual((await f.call({...f.base,type:'observeDeadlines'})).result.expiredQuestions,['q']);assert.deepEqual((await f.call({...f.base,type:'observeDeadlines'})).result.expiredQuestions,[]);
+  assert.deepEqual(await f.rows("SELECT body FROM messages WHERE kind='question'"),before);
+  assert.equal((await f.rows("SELECT status FROM threads WHERE thread_id='q'"))[0].status,'fenced');
+  const n=(await f.call({type:'inspectTeam',teamId:'team'})).result.notices[0];assert.equal(JSON.parse(n.event_json).event,'question_expired');f.native.current=f.actor('worker');await assert.rejects(f.call({...f.base,type:'acknowledgeNotice',noticeId:n.notice_id}),code('API_ASSIGNEE_REQUIRED'));f.native.current=f.actor('head');await f.call({...f.base,type:'acknowledgeNotice',noticeId:n.notice_id});assert.equal((await f.call({type:'inspectTeam',teamId:'team'})).result.notices.length,0);
+ });
+ test('private launch reservations queue at capacity and only one claim can start and self-bind',async t=>{
+  const f=await setup(t);await f.approve();await f.call({...f.fresh,settings:{...settings,maxOpen:1}});
+  const reserve={type:'reserveLaunch',teamId:'team',memberId:'worker',launchId:'launch',expectedConfigVersion:7,expectedMemberGeneration:1,expectedControllerGeneration:1};
+  await assert.rejects(f.call(reserve),code('API_OPERATION_DENIED'));
+  const launch=(await f.api.launch({operationId:'reserve',command:reserve})).result.launch;
+  const claim={type:'claimLaunch',teamId:'team',launchId:'launch',expectedConfigVersion:7,expectedControllerGeneration:1};
+  assert.equal((await f.api.launch({operationId:'claim1',command:claim})).result.claimed,true);
+  assert.equal((await f.api.launch({operationId:'claim2',command:claim})).result.claimed,false);
+  const other={...reserve,memberId:'other',launchId:'other-launch'};
+  await f.api.launch({operationId:'other-reserve',command:other});
+  assert.equal((await f.api.launch({operationId:'other-claim',command:{...claim,launchId:'other-launch'}})).result.queued,true);
+  f.native.current={...f.actor('worker'),conversationId:launch.conversation_id};
+  const attached=await f.api.launch({operationId:'attach',command:{type:'attachLaunch'}});assert.equal(attached.result.attached,true);
+  assert.equal((await f.call({type:'inspectCaller'})).result.member.member_id,'worker');
+  assert.equal((await f.rows('SELECT * FROM member_bindings')).length,1);
+  assert.equal((await f.rows("SELECT status FROM member_launches WHERE launch_id='launch'"))[0].status,'bound');
+  f.native.current={...f.native.current,incarnationId:'resumed-process',terminalHandle:'resumed-terminal'};await f.api.launch({operationId:'resume-attach',command:{type:'attachLaunch'}});assert.equal((await f.call({type:'inspectCaller'})).result.binding.generation,2);
+ });
+
 });

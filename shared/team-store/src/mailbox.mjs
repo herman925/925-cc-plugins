@@ -3,6 +3,7 @@
 import {createHash} from 'node:crypto';
 import {byteOrder} from './configuration.mjs';
 import {databaseInteger,integer,nextInteger} from './validation.mjs';
+import {startQuestionWindow} from './questions.mjs';
 import {refusal} from './errors.mjs';
 
 const identity=(kind,id)=>`${kind}-${createHash('sha256').update(id).digest('hex')}`;
@@ -15,11 +16,11 @@ export async function inspectInbox(db,teamId,recipientId) {
   t.status AS thread_status,t.assignment_id FROM messages m
   JOIN deliveries d ON d.message_id=m.message_id JOIN threads t ON t.thread_id=m.thread_id JOIN runs r ON r.run_id=d.run_id
   WHERE m.team_id=:team AND m.recipient_member_id=:recipient AND d.status='outstanding'
-   AND d.consumer_generation=r.consumer_generation AND t.status='open'
+   AND d.consumer_generation=r.consumer_generation AND (t.status='open' OR (t.thread_kind='question' AND m.kind='status'))
   ORDER BY m.created_at_ms,m.message_id LIMIT 1`,{team:teamId,recipient:recipientId});
 }
 
-export async function readOwnInbox(db,{teamId,memberId,deliveryId,expectedDeliveryGeneration}) {
+export async function readOwnInbox(db,{teamId,memberId,deliveryId,expectedDeliveryGeneration,now}) {
  const [message]=await inspectInbox(db,teamId,memberId);
  if(!message || message.delivery_id!==deliveryId)throw refusal('API_INBOX_ORDER','Only the oldest outstanding delivery addressed to this member can be read. Inspect the inbox again.');
  if(databaseInteger(message.delivery_generation,'delivery generation')!==expectedDeliveryGeneration)throw refusal('API_STALE_AUTHORITY','Delivery generation changed; inspect before a new read operation.');
@@ -27,6 +28,7 @@ export async function readOwnInbox(db,{teamId,memberId,deliveryId,expectedDelive
  const changed=await db.query(`UPDATE deliveries SET status='acknowledged',generation=:next
   WHERE delivery_id=:id AND status='outstanding' AND generation=:expected RETURNING delivery_id`,{id:deliveryId,next:generation,expected:expectedDeliveryGeneration});
  if(!changed.length)throw refusal('API_STALE_AUTHORITY','Delivery was already decided.');
+ await startQuestionWindow(db,message,now);
  return {message:{...message,delivery_status:'acknowledged',delivery_generation:generation},deliveryId,deliveryGeneration:generation,acknowledged:true};
 }
 
@@ -47,6 +49,14 @@ export async function prepareDeliveries(db,{teamId,member,now}) {
    WHERE delivery_id=:id AND status='outstanding' AND generation=:expected RETURNING delivery_id`,
    {count,now,next:generation,id:message.delivery_id,expected:databaseInteger(message.delivery_generation,'delivery generation')});
   if(changed.length)claims.push({deliveryId:message.delivery_id,messageId:message.message_id,threadId:message.thread_id,replay:count>1,recipient:binding});
+ }
+ const notices=await db.query(`SELECT n.* FROM deadline_notices n WHERE n.team_id=:team AND n.read_at_ms IS NULL
+  AND (n.last_notified_at_ms IS NULL OR n.last_notified_at_ms<=:cutoff) ORDER BY n.created_at_ms,n.notice_id`,{team:teamId,cutoff:now-interval});
+ for(const n of notices){
+  const [binding]=await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:n.recipient_member_id});
+  if(!binding)continue;
+  await db.query('UPDATE deadline_notices SET last_notified_at_ms=:now WHERE notice_id=:id',{id:n.notice_id,now});
+  claims.push({noticeId:n.notice_id,recipient:binding});
  }
  return {deliveries:claims};
 }
@@ -104,6 +114,7 @@ export async function expirePickups(db,teamId,now) {
   if(taskExpired)await db.query("UPDATE tasks SET status='blocked' WHERE task_id=:id",{id:a.task_id});
   await db.query('UPDATE assignment_attempts SET generation=generation+1 WHERE assignment_id=:id',{id:a.assignment_id});
   await settleAssignmentThread(db,a.assignment_id,'expired',taskExpired?'Task deadline expired':'Pickup deadline expired');
+  await db.query('INSERT INTO deadline_notices (notice_id,team_id,recipient_member_id,event_json,created_at_ms) VALUES (:id,:team,:recipient,:event,:now)',{id:`assignment-return:${a.assignment_id}`,team:teamId,recipient:a.assigned_by_member_id,event:JSON.stringify({event:taskExpired?'task_expired':'pickup_expired',assignmentId:a.assignment_id}),now});
   // The shared assignment is the return receipt. Do not forge a message from
   // the worker (or invent a synthetic team member) for an observer's event.
   returned.push({assignmentId:a.assignment_id,returnedToMemberId:a.assigned_by_member_id,...(taskExpired?{taskExpiredAtMs:now}:{pickupExpiredAtMs:now})});

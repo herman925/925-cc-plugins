@@ -1,7 +1,7 @@
 // Shared contract for issue #154, consumed by the Mod's typed adapter.
 // One shared table source; dialect fragments only implement equivalent constraints.
 export const FORMAT = 'team-orchestrator-shared';
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export const WRITER_PROTOCOL_VERSION = 1;
 export const KNOWN_WRITER_FAMILIES = Object.freeze(['team-orchestrator', 'team-orchestrator-orca']);
 export const MACHINE_FORMAT = 'team-orchestrator-machine';
@@ -220,6 +220,8 @@ CREATE TABLE threads (
   status TEXT COLLATE {{identity_collation}} NOT NULL CHECK (status IN ('open', 'answered', 'fenced', 'superseded')),
   generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
   answer TEXT,
+  thread_kind TEXT NOT NULL DEFAULT 'work' CHECK (thread_kind IN ('work','question')),
+  answer_window_minutes BIGINT CHECK (answer_window_minutes IS NULL OR (answer_window_minutes >= 1 AND answer_window_minutes <= 9007199254740991)),
   task_id TEXT COLLATE {{identity_collation}},
   endpoint_a_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
   endpoint_b_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
@@ -240,9 +242,28 @@ CREATE TABLE threads (
   CHECK ((status = 'answered' AND answer IS NOT NULL) OR (status IN ('open', 'fenced', 'superseded') AND answer IS NULL))
 );
 CREATE UNIQUE INDEX one_open_thread_per_task_endpoints
-ON threads (task_id, endpoint_a_member_id, endpoint_b_member_id) WHERE status = 'open' AND task_id IS NOT NULL;
+ON threads (task_id, endpoint_a_member_id, endpoint_b_member_id, thread_kind) WHERE status = 'open' AND task_id IS NOT NULL;
 CREATE UNIQUE INDEX one_open_thread_per_team_endpoints
-ON threads (team_id, endpoint_a_member_id, endpoint_b_member_id) WHERE status = 'open' AND task_id IS NULL;
+ON threads (team_id, endpoint_a_member_id, endpoint_b_member_id, thread_kind) WHERE status = 'open' AND task_id IS NULL;
+CREATE TABLE member_launches (
+  launch_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY,
+  member_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE REFERENCES members (member_id),
+  controller_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES controller_approvals (controller_id),
+  machine_id TEXT COLLATE {{identity_collation}} NOT NULL,
+  conversation_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('queued','claimed','bound')),
+  generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
+  created_at_ms BIGINT NOT NULL CHECK (created_at_ms >= 0 AND created_at_ms <= 9007199254740991)
+);
+CREATE TABLE deadline_notices (
+  notice_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY,
+  team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
+  recipient_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+  event_json TEXT NOT NULL,
+  created_at_ms BIGINT NOT NULL,
+  read_at_ms BIGINT,
+  last_notified_at_ms BIGINT
+);
 CREATE TABLE deliveries (
   delivery_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(delivery_id) > 0),
   run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
@@ -304,13 +325,14 @@ CREATE TABLE decision_gate_supersessions (
 );
 {{history_guards}}
 {{gate_guards}}
+{{runtime_guards}}
 CREATE TABLE operations (
   operation_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(operation_id) > 0),
   request_fingerprint TEXT NOT NULL,
   result TEXT NOT NULL,
   committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0 AND committed_at_ms <= 9007199254740991)
 );
-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 6);
+INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 7);
 INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
 VALUES (1, NULL, NULL, 0, 0);
 `;
@@ -449,12 +471,34 @@ CREATE TRIGGER gate_supersession_forward BEFORE INSERT ON decision_gate_superses
  throw new Error(`Unsupported team-store engine: ${engine}`);
 }
 
+export function runtimeGuardsFor(engine) {
+ const different=engine==='sqlite'?'IS NOT':'IS DISTINCT FROM';
+ const unchanged=(columns)=>columns.map(k=>`NEW.${k} ${different} OLD.${k}`).join(' OR ');
+ const rules={
+  member_launches:`${unchanged(['launch_id','member_id','controller_id','machine_id','conversation_id','created_at_ms'])} OR NEW.generation<>OLD.generation+1 OR NOT ((OLD.status='queued' AND NEW.status='claimed') OR (OLD.status='claimed' AND NEW.status='bound'))`,
+  deadline_notices:`${unchanged(['notice_id','team_id','recipient_member_id','event_json','created_at_ms'])} OR (OLD.read_at_ms IS NOT NULL AND NEW.read_at_ms ${different} OLD.read_at_ms) OR (NEW.read_at_ms IS NOT NULL AND NEW.read_at_ms<NEW.created_at_ms) OR (OLD.last_notified_at_ms IS NOT NULL AND (NEW.last_notified_at_ms IS NULL OR NEW.last_notified_at_ms<OLD.last_notified_at_ms))`
+ };
+ return Object.entries(rules).map(([table,condition])=>{
+  const error='STORE_RUNTIME_IMMUTABLE: Runtime identities and terminal transitions cannot be rewritten.';
+  if(engine==='sqlite')return `CREATE TRIGGER ${table}_guard_update BEFORE UPDATE ON ${table} WHEN ${condition} BEGIN SELECT RAISE(ABORT,'${error}'); END;
+CREATE TRIGGER ${table}_guard_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'${error}'); END;
+CREATE TRIGGER ${table}_guard_replace BEFORE INSERT ON ${table} WHEN EXISTS (SELECT 1 FROM ${table} WHERE ${table==='member_launches'?'launch_id=NEW.launch_id OR member_id=NEW.member_id OR conversation_id=NEW.conversation_id':'notice_id=NEW.notice_id'}) BEGIN SELECT RAISE(ABORT,'${error}'); END;`;
+  return `CREATE FUNCTION ${table}_guard() RETURNS trigger LANGUAGE plpgsql AS $guard$ BEGIN
+ IF TG_OP<>'UPDATE' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='${error}'; END IF;
+ IF ${condition} THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='${error}'; END IF;
+ RETURN NEW; END; $guard$;
+CREATE TRIGGER ${table}_guard_update BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION ${table}_guard();
+CREATE TRIGGER ${table}_guard_truncate BEFORE TRUNCATE ON ${table} FOR EACH STATEMENT EXECUTE FUNCTION ${table}_guard();`;
+ }).join('\n');
+}
+
 export function ddlFor(engine) {
   if (engine !== 'sqlite' && engine !== 'postgres') throw new Error(`Unsupported team-store engine: ${engine}`);
   const collation = engine === 'sqlite' ? 'BINARY' : '"C"';
   return DDL.replaceAll('{{identity_collation}}', collation)
     .replaceAll('{{history_guards}}',historyGuardsFor(engine))
     .replaceAll('{{gate_guards}}',gateGuardsFor(engine))
+    .replaceAll('{{runtime_guards}}',runtimeGuardsFor(engine))
     .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
     .replace('{{message_guards}}', messageGuardsFor(engine));
 }

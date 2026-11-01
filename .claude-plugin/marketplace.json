@@ -15,7 +15,7 @@
     {
       "name": "team-orchestrator",
       "source": "./team-orchestrator",
-      "description": "Team Orchestrator: guided team setup, native right panel, verified session connections, durable shared inbox, task history and decision gates. Classic Orca teams remain available separately."
+      "description": "Team Orchestrator: guided team setup, native right panel, verified session connections and launch, durable inbox, bounded questions, deadline notices and decision gates. Classic Orca teams remain available separately."
     },
     {
       "name": "session-panel",
