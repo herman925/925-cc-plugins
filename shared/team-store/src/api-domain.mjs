@@ -120,6 +120,18 @@ async function teamVersion(db, command) {
   return team;
 }
 
+export async function readGuardAuthority(db,actor,version){
+ const [binding]=await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
+ if(!binding){
+  if(version>=7&&(await db.query('SELECT 1 FROM member_launches WHERE conversation_id=:id AND machine_id=:machine',{id:actor.conversationId,machine:actor.machineId})).length)fail('LAUNCH_ATTACH_REQUIRED','Reserved workers must finish verified self-binding before work.');
+  return {member:null,hasReports:false};
+ }
+ const row=await reference(db,'members','member_id',binding.member_id);
+ const {member}=await memberActor(db,actor,{teamId:row.team_id},false);
+ const reports=await db.query("SELECT 1 FROM members WHERE boss_member_id=:id AND membership_state='active' LIMIT 1",{id:member.member_id});
+ return {member,hasReports:reports.length>0};
+}
+
 export async function assertApiCaller(db, command, actor) {
   if (['approveController','attachLaunch'].includes(command.type)) return;
   if(['reserveLaunch','claimLaunch'].includes(command.type)){await controller(db,actor);return;}
