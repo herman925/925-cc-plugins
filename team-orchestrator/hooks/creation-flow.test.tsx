@@ -16,7 +16,7 @@ test('all three original templates are discoverable, previewed and applied only 
   await band.press({key:'setup-template-apply'})
   expect((await band.find({key:'workspace-team-name'})).props.value).toBe(t.form.team)
   expect((await band.find({key:'workspace-team-purpose'})).props.value).toBe('Keep this purpose')
-  await band.press({key:'setup-next'});await band.press({key:'setup-member-select'})
+  await band.press({key:'setup-next'});expect((await band.find({key:'workspace-member-official-0'})).props.value).toContain('AskUserQuestion');await band.press({key:'setup-member-select'})
   const rows=(await band.findAll({type:'Button'})).filter(b=>b.key?.startsWith('setup-member-option-'))
   expect(rows.length).toBe([4,11,21][index])
   const plan=templateMembers(t,'Purpose'),names=new Set<string>()
