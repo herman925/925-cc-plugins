@@ -1,0 +1,125 @@
+{
+  "kind": "native_test_driver_after_provider_402",
+  "realModelAcceptance": false,
+  "passed": true,
+  "before": {
+    "assignment": {
+      "assignment_id": "assign-lifecycle-002",
+      "task_id": "task-lifecycle-001",
+      "member_id": "171e3b1a05a7fedf7f705c4030ee4363",
+      "admitted_at_ms": 1793563218360,
+      "assigned_by_member_id": "d741b947d241c9dddebf977259cce802",
+      "pickup_deadline_ms": 1793563338360,
+      "pickup_observed_at_ms": 1793563272959,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": null,
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    },
+    "task": {
+      "task_id": "task-lifecycle-001",
+      "run_id": "run-lifecycle-001",
+      "status": "open",
+      "outcome": null
+    },
+    "brief": {
+      "task_id": "task-lifecycle-001",
+      "instructions": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "expected_result": "The verbatim instruction line above."
+    },
+    "attempt": {
+      "assignment_id": "assign-lifecycle-002",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "evidence": "Verbatim instruction line from brief: Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "reported_at_ms": 1793563288193
+    },
+    "acceptance": null,
+    "returned": null,
+    "gates": []
+  },
+  "acceptance": {
+    "taskId": "task-lifecycle-001",
+    "decision": "accepted",
+    "workerOutcome": "succeeded",
+    "summary": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+    "evidence": "Verbatim instruction line from brief: Report the exact text of this instruction line back, verbatim, as your only deliverable."
+  },
+  "after": {
+    "assignment": {
+      "assignment_id": "assign-lifecycle-002",
+      "task_id": "task-lifecycle-001",
+      "member_id": "171e3b1a05a7fedf7f705c4030ee4363",
+      "admitted_at_ms": 1793563218360,
+      "assigned_by_member_id": "d741b947d241c9dddebf977259cce802",
+      "pickup_deadline_ms": 1793563338360,
+      "pickup_observed_at_ms": 1793563272959,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": null,
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    },
+    "task": {
+      "task_id": "task-lifecycle-001",
+      "run_id": "run-lifecycle-001",
+      "status": "succeeded",
+      "outcome": "succeeded"
+    },
+    "brief": {
+      "task_id": "task-lifecycle-001",
+      "instructions": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "expected_result": "The verbatim instruction line above."
+    },
+    "attempt": {
+      "assignment_id": "assign-lifecycle-002",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "evidence": "Verbatim instruction line from brief: Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+      "reported_at_ms": 1793563288193
+    },
+    "acceptance": {
+      "task_id": "task-lifecycle-001",
+      "assignment_id": "assign-lifecycle-002",
+      "accepted_by_member_id": "d741b947d241c9dddebf977259cce802",
+      "decision": "accepted",
+      "reason": "Native test driver after provider402 independently confirmed summary exactly equals the original instruction and evidence exactly equals the fixed explanatory prefix plus that instruction. No real-model head decision is claimed.",
+      "decided_at_ms": 1793564133903
+    },
+    "returned": null,
+    "gates": []
+  },
+  "acceptCall": {
+    "input": {
+      "operationId": "native-driver-acceptTask-319d69608252f05f",
+      "command": {
+        "type": "acceptTask",
+        "teamId": "bd748ab66729eef30a98937ec67d1286",
+        "assignmentId": "assign-lifecycle-002",
+        "decision": "accepted",
+        "reason": "Native test driver after provider402 independently confirmed summary exactly equals the original instruction and evidence exactly equals the fixed explanatory prefix plus that instruction. No real-model head decision is claimed.",
+        "expectedConfigVersion": 9,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "expectedAttemptGeneration": 3
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-driver-acceptTask-319d69608252f05f",
+        "kind": "api",
+        "result": {
+          "taskId": "task-lifecycle-001",
+          "decision": "accepted",
+          "workerOutcome": "succeeded",
+          "summary": "Report the exact text of this instruction line back, verbatim, as your only deliverable.",
+          "evidence": "Verbatim instruction line from brief: Report the exact text of this instruction line back, verbatim, as your only deliverable."
+        }
+      }
+    }
+  }
+}
