@@ -44,6 +44,30 @@ function fixture(on:any,who='head'){
  return {model,calls,control,files,item,configSets,refuseConfig:()=>{refuseConfig=true}}
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
+test('decision gates use native choices, preserve displayed authority and hide blocked work actions',options,async($:any,on:any)=>{
+ const f=fixture(on),item:any=f.item();item.task.status='blocked';item.gates=[{gate_id:'g1',question:'Choose a route',status:'open',generation:3,options_json:'["Route A","Route B"]',superseded_by_gate_id:null}];f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});
+ expect(JSON.stringify(await band.drawn())).toContain('Decision needed');expect(await band.find({key:'workspace-gate-select'})).toBeDefined()
+ expect((await band.find({key:'workspace-gate-choice-0'})).props.label).toBe('Route A')
+ expect(await band.find({key:'workspace-accepted'})).toBeUndefined()
+ await band.input({key:'workspace-gate-note',text:'Approved for this task',kind:'change'});await band.press({key:'workspace-gate-choice-0'})
+ const command=f.calls.find(c=>c.request?.command?.type==='resolveGate').request.command
+ expect(command.gateId).toBe('g1');expect(command.expectedGateGeneration).toBe(3);expect(command.choice).toBe('Route A');expect(command.note).toBe('Approved for this task');expect(command.expectedConfigVersion).toBe(5)
+})
+test('gate creation and replacement stay drafts until saved and keep each offered option separate',options,async($:any,on:any)=>{
+ const f=fixture(on),item:any=f.item();f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});await band.press({key:'workspace-gate-new'})
+ await band.input({key:'workspace-gate-question',text:'Choose a route',kind:'change'});await band.input({key:'workspace-gate-option-0',text:'A',kind:'change'});await band.input({key:'workspace-gate-option-1',text:'B',kind:'change'});
+ expect(f.calls.some(c=>c.request?.command?.type==='openGate')).toBe(false)
+ await band.press({key:'workspace-gate-save'});const command=f.calls.find(c=>c.request?.command?.type==='openGate').request.command
+ expect(command.options).toEqual(['A','B']);expect(command.question).toBe('Choose a route');expect(command.assignmentId).toBe('assignment');expect(command.expectedAttemptGeneration).toBe(1)
+})
+test('a worker sees the pending decision but cannot answer or report while blocked',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),item:any=f.item();item.task.status='blocked';item.gates=[{gate_id:'g1',question:'Choose a route',status:'open',generation:1,options_json:'["A","B"]'}];f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(await band.find({key:'workspace-gate-choice-0'})).toBeUndefined();expect(await band.find({key:'workspace-gate-new'})).toBeUndefined();expect(await band.find({key:'workspace-pickup'})).toBeUndefined()
+ expect(JSON.stringify(await band.drawn())).toContain('This task stays blocked.')
+})
 test('Inbox uses native controls; preview does not acknowledge or expose a protocol wall',options,async($:any,on:any)=>{
  const f=fixture(on,'worker'),prompts:any[]=[];on('prompt.submit',async(_$:any,e:any)=>{prompts.push(e);return {text:e.text}})
  const band=await open($);await band.press({key:'workspace-inbox-tab'});

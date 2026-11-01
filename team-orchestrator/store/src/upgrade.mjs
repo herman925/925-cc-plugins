@@ -5,7 +5,7 @@ import {join,isAbsolute} from 'node:path';
 import {realpath,lstat,mkdir,open} from 'node:fs/promises';
 import {openBackend,inspectSchema,SHARED_SCHEMA} from './bootstrap.mjs';
 import * as legacy from './schema5-contract.mjs';
-import {ddlFor,historyGuardsFor} from '../contract.mjs';
+import {ddlFor,historyGuardsFor,gateGuardsFor} from '../contract.mjs';
 import {normalizeWriter,checkWriter} from './writers.mjs';
 import {authorize} from './authority.mjs';
 import {text,integer,databaseInteger,nextInteger} from './validation.mjs';
@@ -77,7 +77,8 @@ export async function upgradeTeamStore(options,dependencies={}) {
    const ddl=ddlFor(db.engine);
    await db.exec('ALTER TABLE task_acceptances RENAME TO task_acceptances_schema5');
    await db.exec('CREATE UNIQUE INDEX assignment_admitting_head ON assignments (assignment_id,assigned_by_member_id)');
-   for(const name of ['task_acceptances','assignment_returns','schema_migrations']) {
+   await db.exec('CREATE UNIQUE INDEX decision_gate_task ON decision_gates (gate_id,task_id)');
+   for(const name of ['task_acceptances','assignment_returns','schema_migrations','decision_gate_supersessions']) {
     const sql=ddl.match(new RegExp(`CREATE TABLE ${name} \\([\\s\\S]*?\\n\\);`))?.[0];
     if(!sql)throw refusal('STORE_UPGRADE_INVALID','Upgrade DDL is incomplete.');
     await db.exec(sql);
@@ -90,6 +91,10 @@ export async function upgradeTeamStore(options,dependencies={}) {
    await db.exec(`INSERT INTO assignment_returns (assignment_id,returned_to_member_id,reason,returned_at_ms)
     SELECT assignment_id,accepted_by_member_id,'rejected',decided_at_ms FROM task_acceptances WHERE decision='rejected'`);
    await db.exec(historyGuardsFor(db.engine));
+   await db.exec(gateGuardsFor(db.engine));
+   const inconsistent=await db.query("SELECT 1 FROM decision_gates g JOIN tasks t ON t.task_id=g.task_id WHERE g.status='open' AND t.status NOT IN ('open','blocked')");
+   if(inconsistent.length)throw refusal('STORE_UPGRADE_INVALID','An open historical gate belongs to a terminal task. Resolve this ambiguity before upgrading.');
+   await db.exec("UPDATE tasks SET status='blocked' WHERE task_id IN (SELECT task_id FROM decision_gates WHERE status='open')");
    const finished=await db.now();
    if(finished<now||finished>=expiry)throw refusal('STORE_LEASE_EXPIRED','Upgrade exceeded its database lease; the transaction was rolled back.');
    await db.query('INSERT INTO schema_migrations VALUES (:id,5,6,:machine,:path,:now)',{id:operationId,machine:machineId,path:backupPath,now:finished});

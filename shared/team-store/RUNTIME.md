@@ -1,5 +1,7 @@
 # Shared store adapter
 
+**Historical foundation reference.** The current unreleased branch also has [schema-6 runtime behavior](SCHEMA-6-RUNTIME.md). The schema-4 scope statements below describe the original adapter increment, not the current client integration or its acceptance.
+
 Status: implemented and unreleased; neither shipped client uses it. Shared schema **4** and separate SQLite-only machine schema **1** have one source in `contract.mjs`. Unsupported versions, including shared versions 1–3, are refused without migration.
 
 The corrected #152 layout is implemented: a thread always has a team and optionally a task, immutable messages pair one-to-one with deliveries, question and optional task windows are distinct. The inbox/transport/lifecycle behavior that consumes these records remains outside this slice. See `SCHEMA-4.md`.

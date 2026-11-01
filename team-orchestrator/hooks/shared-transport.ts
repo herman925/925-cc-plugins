@@ -5,6 +5,15 @@ const operationId=()=>`transport-${Array.from(crypto.getRandomValues(new Uint8Ar
 // One local pump at a time; the shared reservation also serializes other clients.
 // Failed/unknown sends remain outstanding and are retried at the team rate.
 let pumping=false
+let queued=false
+// A native UI/tool callback has a short host budget. Confirm its durable receipt
+// first; transport belongs to a separate host timer, with the periodic pump as
+// recovery if a reload cancels this timer. No delivery is acknowledged here.
+export function queueSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}) {
+ if(!proof.ok||queued)return
+ queued=true
+ $.clock.after(1,()=>{queued=false;void pumpSharedDeliveries($,proof,options).catch(()=>undefined)})
+}
 export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}) {
  if(!proof.ok||pumping)return
  pumping=true
@@ -21,7 +30,7 @@ export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node
    // Only the private bridge's current native verification yields a target.
    if(target.conversationId===proof.sessionId)continue
    const pointer=JSON.stringify({teamId:info.member.team_id,deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId,replay:target.replay})
-   await $.session.send({to:{sessionId:target.conversationId},text:`Shared team inbox has pending mail. Use shared_team to inspect your caller and read your inbox; verify an admitted assignment and read its returned role and brief before work. This wake-up is not acknowledgement.\n${pointer}`}).catch(()=>undefined)
+   await $.session.send({to:{sessionId:target.conversationId},text:`Shared team inbox has pending mail. Use shared_inbox_read to recover your next message, then confirm its readReceiptId with shared_inbox_seen. For a dispatch, inspect your caller with shared_team, verify the admitted assignment and read its returned role and brief before work. This wake-up is not acknowledgement.\n${pointer}`}).catch(()=>undefined)
   }
  } finally {pumping=false}
 }

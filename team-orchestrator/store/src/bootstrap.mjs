@@ -38,10 +38,13 @@ export async function inspectSchema(db, definition = SHARED_SCHEMA, expectedIden
   if (definition.format === FORMAT) {
     const guards = db.engine === 'sqlite' ? objects : await db.query(`SELECT t.tgname AS name FROM pg_catalog.pg_trigger t
       JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-      WHERE c.relname IN ('messages','task_acceptances','assignment_returns') AND n.nspname=current_schema() AND NOT t.tgisinternal`);
+      WHERE c.relname IN ('messages','task_acceptances','assignment_returns','decision_gate_supersessions','decision_gates','tasks') AND n.nspname=current_schema() AND NOT t.tgisinternal`);
     const required = db.engine === 'sqlite' ? ['messages_immutable_update', 'messages_immutable_delete', 'messages_immutable_replace']
       : ['messages_immutable_update', 'messages_immutable_truncate'];
-    if(definition.version>=6)for(const name of ['task_acceptances','assignment_returns'])required.push(`${name}_immutable_update`,`${name}_immutable_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${name}_immutable_replace`]:[]));
+    if(definition.version>=6){
+      for(const name of ['task_acceptances','assignment_returns','decision_gate_supersessions'])required.push(`${name}_immutable_update`,`${name}_immutable_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${name}_immutable_replace`]:[]));
+      required.push('gate_task_blocked','gate_live_task','gate_insert_block','gate_resolution_once','gate_no_delete','gate_supersession_forward',db.engine==='sqlite'?'gate_no_replace':'gate_no_truncate');
+    }
     const absent = required.filter(name => !guards.some(row => row.name === name));
     if (absent.length) throw refusal('STORE_SCHEMA_INCOMPLETE', `Immutability guards are missing: ${absent.join(', ')}. No write was authorized.`, { missing: absent });
   }

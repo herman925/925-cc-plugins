@@ -11,6 +11,9 @@ export interface Settings {
 interface MemberAuthority { teamId:string; expectedConfigVersion:number; expectedMemberGeneration:number; expectedBindingGeneration:number }
 interface AttemptAuthority extends MemberAuthority { assignmentId:string; expectedAttemptGeneration:number }
 export type Command =
+  | (AttemptAuthority & {type:'openGate';gateId:string;question:string;options:string[]})
+  | (MemberAuthority & {type:'replaceGate';gateId:string;newGateId:string;expectedGateGeneration:number;question:string;options:string[]})
+  | (MemberAuthority & {type:'resolveGate';gateId:string;expectedGateGeneration:number;choice:string;note?:string})
   | {type:'inspectCaller'}
   | {type:'inspectTeam';teamId:string}
   | {type:'inspectAssignment';teamId:string;assignmentId:string}

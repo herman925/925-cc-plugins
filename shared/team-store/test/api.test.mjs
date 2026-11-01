@@ -29,6 +29,91 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   const ready=async()=>{await approve();await call(fresh);await bind('head');await bind('worker');await bind('other');native.current=actor('head');await call(admit);};
   return {...f,api,native,actor,call,approve,fresh,bind,base,admit,verify,report,accept,rows,ready};
  }
+ test('all gates must be answered before the same valid assignment resumes',async t=>{
+  const f=await setup(t);await f.ready();
+  const gate={...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,question:'Which route?',options:['A','B']};
+  await assert.rejects(f.call({...gate,gateId:'invalid',options:['A','A']}),code('API_INPUT_INVALID'));
+  f.native.current=f.actor('worker');await assert.rejects(f.call({...gate,gateId:'g1'}),code('API_HEAD_REQUIRED'));
+  f.native.current=f.actor('head');await f.call({...gate,gateId:'g1'});await f.call({...gate,gateId:'g2'});
+  f.native.current=f.actor('worker');await assert.rejects(f.call(f.verify),code('API_TASK_BLOCKED'));
+  f.native.current=f.actor('head');
+  const resolve={...f.base,type:'resolveGate',expectedGateGeneration:1,choice:'A',note:'User chose A'};
+  await assert.rejects(f.call({...resolve,gateId:'g1',choice:'C'}),code('API_GATE_CHOICE_INVALID'));
+  assert.equal((await f.call({...resolve,gateId:'g1'})).result.resumed,false);
+  assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'blocked');
+  const request={operationId:'last-gate-answer',command:{...resolve,gateId:'g2'}};
+  const answer=await f.api.execute(request);assert.equal(answer.result.resumed,true);
+  assert.deepEqual(await f.api.reconcile(request),answer);assert.deepEqual(await f.api.execute(request),answer);
+  assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'open');
+  assert.equal((await f.rows('SELECT * FROM assignments')).length,1);
+  const messages=await f.rows('SELECT * FROM messages ORDER BY created_at_ms');assert.equal(messages.length,2);assert.equal(JSON.parse(messages[1].body).event,'task_resumed');assert.equal(messages[1].recipient_member_id,'worker');
+  f.native.current=f.actor('worker');const pickup=await f.call(f.verify);assert.equal(pickup.result.gates.length,2);
+  assert.equal(JSON.parse(pickup.result.gates[0].resolution_json).note,'User chose A');
+  f.native.current=f.actor('head');await assert.rejects(f.call({...resolve,gateId:'g1',expectedGateGeneration:2}),code('API_GATE_SETTLED'));
+ });
+ test('replacement gates preserve history and cannot unblock on an unoffered choice',async t=>{
+  const f=await setup(t);await f.ready();
+  await f.call({...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,gateId:'old',question:'Old?',options:['A','B']});
+  const replacement={...f.base,type:'replaceGate',gateId:'old',newGateId:'new',expectedGateGeneration:1,question:'Different route?',options:['C','D']};
+  await f.call(replacement);
+  const answer={...f.base,type:'resolveGate',expectedGateGeneration:1,choice:'C'};
+  await assert.rejects(f.call({...answer,gateId:'old',choice:'A'}),code('API_GATE_SETTLED'));
+  await assert.rejects(rawWrite(f,"UPDATE tasks SET status='open'"));
+  await assert.rejects(rawWrite(f,"UPDATE decision_gates SET question='overwrite' WHERE gate_id='old'"));
+  await assert.rejects(rawWrite(f,"DELETE FROM decision_gate_supersessions"));
+  assert.equal((await f.call({...answer,gateId:'new'})).result.resumed,true);
+  const gates=await f.rows('SELECT * FROM decision_gates ORDER BY gate_id');
+  assert.equal(gates.find(g=>g.gate_id==='old').status,'open');assert.equal(gates.find(g=>g.gate_id==='old').question,'Old?');
+  await assert.rejects(rawWrite(f,"UPDATE decision_gates SET resolution_json='changed' WHERE gate_id='new'"));
+ });
+ test('an expired gate answer is saved without reviving a returned assignment; retry keeps remaining gates',async t=>{
+  const f=await setup(t);await f.ready();
+  const gate={...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,question:'Choose?',options:['A','B']};
+  await f.call({...gate,gateId:'g1'});await f.call({...gate,gateId:'g2'});
+  await rawWrite(f,'UPDATE assignments SET pickup_deadline_ms=admitted_at_ms+1');
+  await f.call({...f.base,type:'observePickupDeadlines'});
+  const resolve={...f.base,type:'resolveGate',expectedGateGeneration:1,choice:'A'};
+  assert.equal((await f.call({...resolve,gateId:'g1'})).result.resumed,false);
+  await f.call({...f.base,type:'retryAssignment',assignmentId:'assignment',newAssignmentId:'retry',memberId:'worker',expectedAttemptGeneration:2,expectedTargetGeneration:1,expectedTargetBindingGeneration:1});
+  assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'blocked');
+  const result=await f.call({...resolve,gateId:'g2'});assert.equal(result.result.resumed,true);assert.equal(result.result.assignmentId,'retry');
+  assert.equal((await f.rows('SELECT * FROM assignment_returns')).length,1);
+ });
+ test('task deadlines return only unfinished attempts, once, including while gated',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');await f.call(f.verify);
+  await rawWrite(f,'UPDATE assignments SET task_window_minutes=1,task_deadline_ms=pickup_observed_at_ms');
+  await assert.rejects(f.call(f.report),code('API_TASK_EXPIRED'));
+  f.native.current=f.actor('head');await f.call({...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:2,gateId:'g',question:'Continue?',options:['Yes','No']});
+  const observed=(await f.call({...f.base,type:'observePickupDeadlines'})).result;
+  assert.equal(observed.returned.length,1);assert.ok(observed.returned[0].taskExpiredAtMs);
+  assert.equal((await f.rows('SELECT reason FROM assignment_returns'))[0].reason,'task_expired');
+  assert.equal((await f.call({...f.base,type:'observePickupDeadlines'})).result.returned.length,0);
+  assert.equal((await f.call({...f.base,type:'resolveGate',gateId:'g',expectedGateGeneration:1,choice:'Yes'})).result.resumed,false);
+  assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'blocked');
+ });
+ test('a late gate answer cannot resume an expired attempt before the observer runs',async t=>{
+  const f=await setup(t);await f.ready();
+  await f.call({...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,gateId:'g',question:'Choose?',options:['A','B']});
+  await rawWrite(f,'UPDATE assignments SET pickup_deadline_ms=admitted_at_ms+1');
+  const result=await f.call({...f.base,type:'resolveGate',gateId:'g',expectedGateGeneration:1,choice:'A'});
+  assert.equal(result.result.resumed,false);assert.equal(result.result.gates[0].status,'resolved');
+  assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'blocked');
+  assert.equal((await f.rows('SELECT * FROM messages')).length,1);
+  assert.equal((await f.call({...f.base,type:'observePickupDeadlines'})).result.returned.length,1);
+ });
+ test('gate receipts recheck the current head before disclosing a prior decision',async t=>{
+  const f=await setup(t);await f.ready();
+  await f.call({...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,gateId:'g',question:'Choose?',options:['A','B']});
+  const request={operationId:'answered-gate',command:{...f.base,type:'resolveGate',gateId:'g',expectedGateGeneration:1,choice:'A'}};
+  await f.api.execute(request);await rawWrite(f,"UPDATE members SET boss_member_id='other' WHERE member_id='worker'");
+  await assert.rejects(f.api.reconcile(request),code('API_HEAD_REQUIRED'));await assert.rejects(f.api.execute(request),code('API_HEAD_REQUIRED'));
+ });
+ test('an explicit outcome stops the task window while head review is pending',async t=>{
+  const f=await setup(t);await f.ready();f.native.current=f.actor('worker');await f.call(f.verify);await f.call(f.report);
+  await rawWrite(f,'UPDATE assignments SET task_window_minutes=1,task_deadline_ms=pickup_observed_at_ms');
+  f.native.current=f.actor('head');assert.equal((await f.call({...f.base,type:'observePickupDeadlines'})).result.returned.length,0);
+  await f.call(f.accept);assert.equal((await f.rows('SELECT status FROM tasks'))[0].status,'succeeded');
+ });
  test('complete fresh team flow records worker outcome separately from head acceptance',async t=>{
   const f=await setup(t); await f.ready(); f.native.current=f.actor('worker');
   const pickup=await f.call(f.verify); assert.equal(pickup.result.brief.instructions,'Return 2 + 3.'); assert.equal(pickup.result.role.official_text,'Worker role');

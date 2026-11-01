@@ -48,6 +48,19 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} explicit schema 5 
   const {db}=await openBackend(f.options);try{assert.equal((await inspectSchema(db)).version,6);}finally{await db.close();}
   await assert.rejects(rawWrite(f,'DELETE FROM assignment_returns'),e=>e.message.includes('STORE_HISTORY_IMMUTABLE'));
  });
+ test('upgrade preserves opaque gate history, blocks open gates, and refuses terminal/open ambiguity',async t=>{
+  const f=await setup(t);
+  await rawWrite(f,`INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES ('open-gate','pickup','Historical question','opaque old options');
+   INSERT INTO decision_gates (gate_id,task_id,question,status,options_json,resolution_json,resolved_at_ms) VALUES ('answered','rejected','Old answer','resolved','["A","B"]','opaque old answer',1000)`);
+  await upgradeTeamStore(f.options);
+  assert.equal((await f.rows("SELECT status FROM tasks WHERE task_id='pickup'"))[0].status,'blocked');
+  assert.equal((await f.rows("SELECT options_json FROM decision_gates WHERE gate_id='open-gate'"))[0].options_json,'opaque old options');
+  assert.equal((await f.rows("SELECT resolution_json FROM decision_gates WHERE gate_id='answered'"))[0].resolution_json,'opaque old answer');
+  await assert.rejects(rawWrite(f,"UPDATE tasks SET status='open' WHERE task_id='pickup'"),/STORE_GATE_OPEN/);
+  const ambiguous=await setup(t);await rawWrite(ambiguous,"UPDATE tasks SET status='succeeded',outcome='succeeded' WHERE task_id='pickup';INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('ambiguous','pickup','Unanswered?')");
+  await assert.rejects(upgradeTeamStore(ambiguous.options),code('STORE_UPGRADE_INVALID'));
+  assert.equal(Number((await ambiguous.rows('SELECT schema_version FROM store_metadata'))[0].schema_version),5);
+ });
  test('authorization, unsupported versions, ambiguous history and live leases refuse before backup or DDL',async t=>{
   const f=await setup(t);await assert.rejects(upgradeTeamStore({...f.options,authorize:()=>false}),code('STORE_AUTHORITY_DENIED'));
   await rawWrite(f,'UPDATE store_metadata SET schema_version=4');await assert.rejects(upgradeTeamStore(f.options),code('STORE_VERSION_UNSUPPORTED'));

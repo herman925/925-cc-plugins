@@ -1,5 +1,7 @@
 # API boundary — implemented preview, acceptance pending
 
+**Development update:** [schema 6 runtime](SCHEMA-6-RUNTIME.md) adds durable inbox/replay primitives, per-attempt history, explicit schema-5 update, deadline returns and gate application. The schema-5 acceptance below remains historical; newer validation reports name their exact checkpoint and limits.
+
 Status: the private typed API and opt-in fresh-team Mod source integration for #141 are implemented in schema 5. See [the implementation contract and remaining acceptance](SCHEMA-5.md). Installed clients have not been changed. Schema-4 independent verification is historical evidence, preserved separately; it does not cover this increment.
 
 ## Settled constraints

@@ -214,7 +214,6 @@ CREATE TABLE schema_migrations (
   backup_path TEXT NOT NULL,
   applied_at_ms BIGINT NOT NULL CHECK (applied_at_ms >= 0 AND applied_at_ms <= 9007199254740991)
 );
-{{history_guards}}
 CREATE TABLE threads (
   thread_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(thread_id) > 0),
   run_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES runs (run_id),
@@ -292,6 +291,19 @@ CREATE TABLE decision_gates (
   CHECK ((status = 'open' AND resolution_json IS NULL AND resolved_at_ms IS NULL)
     OR (status = 'resolved' AND resolution_json IS NOT NULL AND resolved_at_ms IS NOT NULL))
 );
+CREATE UNIQUE INDEX decision_gate_task ON decision_gates (gate_id,task_id);
+CREATE TABLE decision_gate_supersessions (
+  old_gate_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY,
+  new_gate_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE,
+  task_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES tasks (task_id),
+  created_by_member_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES members (member_id),
+  created_at_ms BIGINT NOT NULL CHECK (created_at_ms >= 0 AND created_at_ms <= 9007199254740991),
+  FOREIGN KEY (old_gate_id,task_id) REFERENCES decision_gates (gate_id,task_id),
+  FOREIGN KEY (new_gate_id,task_id) REFERENCES decision_gates (gate_id,task_id),
+  CHECK (old_gate_id<>new_gate_id)
+);
+{{history_guards}}
+{{gate_guards}}
 CREATE TABLE operations (
   operation_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY CHECK (length(operation_id) > 0),
   request_fingerprint TEXT NOT NULL,
@@ -384,19 +396,50 @@ CREATE TRIGGER messages_immutable_truncate BEFORE TRUNCATE ON messages FOR EACH 
 }
 
 export function historyGuardsFor(engine) {
- const names=['task_acceptances','assignment_returns'];
- if(engine==='sqlite')return names.map(name=>`
+ const tables=[['task_acceptances','assignment_id'],['assignment_returns','assignment_id'],['decision_gate_supersessions','old_gate_id']];
+ if(engine==='sqlite')return tables.map(([name,key])=>`
 CREATE TRIGGER ${name}_immutable_update BEFORE UPDATE ON ${name} BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;
 CREATE TRIGGER ${name}_immutable_delete BEFORE DELETE ON ${name} BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;
 CREATE TRIGGER ${name}_immutable_replace BEFORE INSERT ON ${name}
-WHEN EXISTS (SELECT 1 FROM ${name} WHERE assignment_id=NEW.assignment_id)
+WHEN EXISTS (SELECT 1 FROM ${name} WHERE ${key}=NEW.${key})
 BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;`).join('\n');
  if(engine==='postgres')return `
 CREATE FUNCTION reject_lifecycle_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $guard$
 BEGIN RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='${HISTORY_IMMUTABLE}'; END;
 $guard$;
-${names.map(name=>`CREATE TRIGGER ${name}_immutable_update BEFORE UPDATE OR DELETE ON ${name} FOR EACH ROW EXECUTE FUNCTION reject_lifecycle_history_mutation();
+${tables.map(([name])=>`CREATE TRIGGER ${name}_immutable_update BEFORE UPDATE OR DELETE ON ${name} FOR EACH ROW EXECUTE FUNCTION reject_lifecycle_history_mutation();
 CREATE TRIGGER ${name}_immutable_truncate BEFORE TRUNCATE ON ${name} FOR EACH STATEMENT EXECUTE FUNCTION reject_lifecycle_history_mutation();`).join('\n')}`;
+ throw new Error(`Unsupported team-store engine: ${engine}`);
+}
+
+export function gateGuardsFor(engine) {
+ const c=engine==='sqlite'?'BINARY':'"C"';
+ const open=`EXISTS (SELECT 1 FROM decision_gates g WHERE g.task_id=NEW.task_id AND g.status='open' AND NOT EXISTS (SELECT 1 FROM decision_gate_supersessions s WHERE s.old_gate_id=g.gate_id))`;
+ const changed=`OLD.status<>'open' OR NEW.status<>'resolved' OR NEW.generation<>OLD.generation+1 OR NEW.gate_id<>OLD.gate_id OR NEW.task_id<>OLD.task_id OR (NEW.question COLLATE ${c})<>(OLD.question COLLATE ${c}) OR ((OLD.options_json IS NULL)<>(NEW.options_json IS NULL)) OR (COALESCE(OLD.options_json,'') COLLATE ${c})<>(COALESCE(NEW.options_json,'') COLLATE ${c}) OR EXISTS (SELECT 1 FROM decision_gate_supersessions s WHERE s.old_gate_id=OLD.gate_id)`;
+ const replaced=`EXISTS (SELECT 1 FROM decision_gate_supersessions s WHERE s.old_gate_id=NEW.new_gate_id) OR (SELECT status FROM decision_gates WHERE gate_id=NEW.old_gate_id)<>'open' OR (SELECT status FROM decision_gates WHERE gate_id=NEW.new_gate_id)<>'open'`;
+ if(engine==='sqlite')return `
+CREATE TRIGGER gate_task_blocked BEFORE UPDATE ON tasks WHEN NEW.status<>'blocked' AND ${open} BEGIN SELECT RAISE(ABORT,'STORE_GATE_OPEN'); END;
+CREATE TRIGGER gate_live_task BEFORE INSERT ON decision_gates WHEN (SELECT status FROM tasks WHERE task_id=NEW.task_id) NOT IN ('open','blocked') BEGIN SELECT RAISE(ABORT,'STORE_TASK_TERMINAL'); END;
+CREATE TRIGGER gate_insert_block AFTER INSERT ON decision_gates WHEN NEW.status='open' BEGIN UPDATE tasks SET status='blocked' WHERE task_id=NEW.task_id; END;
+CREATE TRIGGER gate_resolution_once BEFORE UPDATE ON decision_gates WHEN ${changed} BEGIN SELECT RAISE(ABORT,'STORE_GATE_IMMUTABLE'); END;
+CREATE TRIGGER gate_no_delete BEFORE DELETE ON decision_gates BEGIN SELECT RAISE(ABORT,'STORE_GATE_IMMUTABLE'); END;
+CREATE TRIGGER gate_no_replace BEFORE INSERT ON decision_gates WHEN EXISTS (SELECT 1 FROM decision_gates WHERE gate_id=NEW.gate_id) BEGIN SELECT RAISE(ABORT,'STORE_GATE_IMMUTABLE'); END;
+CREATE TRIGGER gate_supersession_forward BEFORE INSERT ON decision_gate_supersessions WHEN ${replaced} BEGIN SELECT RAISE(ABORT,'STORE_GATE_SUPERSESSION_INVALID'); END;`;
+ if(engine==='postgres')return `
+CREATE FUNCTION enforce_gate_task_block() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN IF NEW.status<>'blocked' AND ${open} THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='STORE_GATE_OPEN'; END IF; RETURN NEW; END; $g$;
+CREATE TRIGGER gate_task_blocked BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION enforce_gate_task_block();
+CREATE FUNCTION enforce_gate_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='STORE_GATE_IMMUTABLE'; END IF;
+ IF TG_OP='INSERT' THEN IF (SELECT status FROM tasks WHERE task_id=NEW.task_id) NOT IN ('open','blocked') THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='STORE_TASK_TERMINAL'; END IF;
+ ELSE IF ${changed} THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='STORE_GATE_IMMUTABLE'; END IF; END IF; RETURN NEW; END; $g$;
+CREATE TRIGGER gate_live_task BEFORE INSERT ON decision_gates FOR EACH ROW EXECUTE FUNCTION enforce_gate_lifecycle();
+CREATE FUNCTION block_gate_task() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN IF NEW.status='open' THEN UPDATE tasks SET status='blocked' WHERE task_id=NEW.task_id; END IF; RETURN NEW; END; $g$;
+CREATE TRIGGER gate_insert_block AFTER INSERT ON decision_gates FOR EACH ROW EXECUTE FUNCTION block_gate_task();
+CREATE TRIGGER gate_resolution_once BEFORE UPDATE ON decision_gates FOR EACH ROW EXECUTE FUNCTION enforce_gate_lifecycle();
+CREATE TRIGGER gate_no_delete BEFORE DELETE ON decision_gates FOR EACH ROW EXECUTE FUNCTION enforce_gate_lifecycle();
+CREATE TRIGGER gate_no_truncate BEFORE TRUNCATE ON decision_gates FOR EACH STATEMENT EXECUTE FUNCTION reject_lifecycle_history_mutation();
+CREATE FUNCTION enforce_gate_supersession() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN IF ${replaced} THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='STORE_GATE_SUPERSESSION_INVALID'; END IF; RETURN NEW; END; $g$;
+CREATE TRIGGER gate_supersession_forward BEFORE INSERT ON decision_gate_supersessions FOR EACH ROW EXECUTE FUNCTION enforce_gate_supersession();`;
  throw new Error(`Unsupported team-store engine: ${engine}`);
 }
 
@@ -405,6 +448,7 @@ export function ddlFor(engine) {
   const collation = engine === 'sqlite' ? 'BINARY' : '"C"';
   return DDL.replaceAll('{{identity_collation}}', collation)
     .replaceAll('{{history_guards}}',historyGuardsFor(engine))
+    .replaceAll('{{gate_guards}}',gateGuardsFor(engine))
     .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
     .replace('{{message_guards}}', messageGuardsFor(engine));
 }
@@ -478,7 +522,7 @@ export const RULES = Object.freeze({
   messages: 'Messages are immutable content with stable identity and one delivery membership, one team/thread, sender, recipient, kind, body and creation time. Database guards reject updates, replacement and deletion. Create the message and its sole delivery together in one transaction; deferred mutual foreign keys require both at commit. Acknowledging or fencing a delivery and closing a thread do not mutate messages. Deliveries is the single batch-state table; there is no second delivery_batches state owner.',
   windows: 'Require explicit positive pickup and answer minutes, explicit task minutes or NULL for off, and explicit positive replay interval milliseconds. A question answer window starts when that question is delivered, not when work is picked up. Pickup comes from a local status observation; the shared store records only its time. Task-window minutes are snapshotted at admission; NULL minutes and deadline mean off. When enabled, no deadline exists before pickup and the deadline cannot precede pickup. No observer, timeout, scheduling or gate-application behavior is implemented here.',
   replay: 'Replay reuses the same delivery and immutable message. Replay count/time are delivery metadata, never message edits or a new message identity. Acknowledgement stops replay; an already-answered message must never be replayed. The future lifecycle enforces queue order, replay rate and delivery eligibility; these rules are not implemented by a timer or transport here.',
-  gates: 'The store preserves options_json and resolution_json as opaque nullable TEXT and enforces only open/resolved presence consistency. The client validates JSON syntax, at least two offered strings, and a resolution naming an offered option with an optional note. An unoffered answer requires a new gate. No common JSON parser or option interpretation is embedded in the shared schema. Gate application and automatic unblocking remain undecided.',
+  gates: 'The store preserves options_json and resolution_json as opaque nullable TEXT. The client validates JSON syntax, at least two offered strings, and a resolution naming an offered option with an optional note. An unoffered answer requires a new gate and an immutable supersession link. Database guards preserve gate content, allow one generation-checked open-to-resolved transition, and block task advancement while effective open gates remain. The verified admitting direct head records decisions. Once all gates are answered, the same valid assignment resumes with a durable recipient notification; expired or returned attempts require reassignment. Gate waits do not pause deadlines. No common JSON parser or option interpretation is embedded in the shared schema.',
   delivery: 'Acknowledged and fenced deliveries are terminal. Only the verified recipient acknowledges its own oldest outstanding message, using the expected row and consumer generations under the current lease. A head inspecting another member mail does not clear it. Fencing is not acknowledgement. Terminal historical rows remain intact.',
   rebind: 'In one transaction, fence the old consumer generation\'s outstanding deliveries, then increment the Run consumer generation by compare-and-set. Roll back both if the rebind loses or the lease expires. New consumers cannot acknowledge old deliveries. Message replay and redelivery policy are not defined by this foundation.',
   retry: 'SQLite busy/locked and PostgreSQL 40001/40P01 require a bounded whole-transaction retry after rollback, with the same operation identity and freshly read generations. A lost commit response is unknown: reconcile before retrying. A uniqueness violation is a domain conflict, not a transient retry. No retry may duplicate an external effect.',

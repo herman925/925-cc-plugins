@@ -1,10 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, historyGuardsFor, SQL, RULES } from '../contract.mjs';
+import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, historyGuardsFor, gateGuardsFor, SQL, RULES } from '../contract.mjs';
 import { fixture, postgresTestUrl } from './support/engines.mjs';
 import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
 
-const constraint = /constraint|duplicate|not.null|violat/i;
+const constraint = /constraint|duplicate|not.null|violat|STORE_GATE_IMMUTABLE/i;
 const holder = { machine_id: 'machine-A', holder_token: 'process-A', lease_generation: 1, now_ms: 1000, assigned_by_member_id: 'head', pickup_deadline_ms: 2000, task_window_minutes: null };
 const authority = { ...holder, run_id: 'run', consumer_generation: 1, expected_generation: 1 };
 const generation = rows => rows.map(row => Number(row.generation));
@@ -32,10 +32,11 @@ test('one common table source renders explicit collations and equivalent immutab
     const tables = ddlFor(engine);
     assert.ok(tables.includes(messageGuardsFor(engine)));
     assert.ok(tables.includes(historyGuardsFor(engine)));
+    assert.ok(tables.includes(gateGuardsFor(engine)));
     assert.ok(tables.includes(`message_id TEXT COLLATE ${collation} NOT NULL PRIMARY KEY`));
     assert.ok(!tables.includes('{{'));
     const sharedBody = DDL.replaceAll('{{identity_collation}}', collation).split('{{message_guards}}')[0];
-    for (const part of sharedBody.split(/\{\{(?:delivery_message_fk|history_guards)\}\}/)) assert.ok(tables.includes(part));
+    for (const part of sharedBody.split(/\{\{(?:delivery_message_fk|history_guards|gate_guards)\}\}/)) assert.ok(tables.includes(part));
   }
   assert.throws(() => ddlFor('mysql'), /Unsupported/);
   assert.throws(() => ddlFor('toString'), /Unsupported/);
@@ -90,10 +91,19 @@ for (const engine of ['sqlite', 'postgres']) {
       for (const sql of ["status='resolved'", "resolution_json='{}'", "resolved_at_ms=1000", "status='resolved',resolution_json='{}',resolved_at_ms=-1"]) {
         await assert.rejects(db.exec(`UPDATE decision_gates SET ${sql}`), constraint);
       }
-      await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='{}',resolved_at_ms=1000");
-      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'open');
+      await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='{}',resolved_at_ms=1000,generation=generation+1");
+      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'blocked');
     });
 
+    test('independent gate answers have one conditional winner and cannot rewrite its resolution',async t=>{
+      const {db,connect}=await seeded(t,engine),other=await connect();
+      await db.exec("INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES ('race','task','Choose','[\"A\",\"B\"]')");
+      const sql="UPDATE decision_gates SET status='resolved',generation=2,resolution_json=:answer,resolved_at_ms=1000 WHERE gate_id='race' AND status='open' AND generation=1 RETURNING generation";
+      const results=await Promise.all([db,other].map((connection,i)=>connection.query(sql,{answer:JSON.stringify({choice:i?'B':'A'})})));
+      assert.deepEqual(results.map(rows=>rows.length).sort(),[0,1]);
+      await assert.rejects(db.exec("UPDATE decision_gates SET resolution_json='overwrite' WHERE gate_id='race'"),/STORE_GATE_IMMUTABLE/);
+      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status,'blocked');
+    });
     test('schema 3 membership, roles, exemptions and installed writer families have database constraints', async t => {
       const { db } = await seeded(t, engine);
       await assert.rejects(db.exec("UPDATE members SET membership_state='working' WHERE member_id='worker'"), constraint);

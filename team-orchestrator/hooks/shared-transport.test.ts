@@ -1,5 +1,5 @@
 import {expect,test} from 'claude-code/testing'
-import {pumpSharedDeliveries} from './shared-transport'
+import {pumpSharedDeliveries,queueSharedDeliveries} from './shared-transport'
 
 const proof={ok:true as const,root:'C:/fixture',sessionId:'head-conversation',handle:'term-head',contextId:'fixture'}
 const options={node:'node',orca:'orca'}
@@ -13,6 +13,12 @@ function fixture(response:any={}) {
  return {$,commands,sent}
 }
 
+test('native actions schedule transport separately and coalesce pending timers',async()=>{
+ const f=fixture(),timers:any[]=[];const $={...f.$,clock:{after:(ms:number,fn:any)=>{timers.push({ms,fn})}}}
+ queueSharedDeliveries($,proof,options);queueSharedDeliveries($,proof,options)
+ expect(timers.length).toBe(1);expect(f.commands.length).toBe(0)
+ timers[0].fn();await Promise.resolve();await Promise.resolve();expect(f.commands[0].type).toBe('inspectCaller')
+})
 test('unverified caller never starts transport I/O',async()=>{
  const f=fixture();await pumpSharedDeliveries(f.$,{ok:false,reason:'unknown'},options)
  expect(f.commands.length).toBe(0);expect(f.sent.length).toBe(0)
@@ -28,6 +34,7 @@ test('wake sends a durable pointer and never acknowledges a message or assumes p
  await pumpSharedDeliveries(f.$,proof,options)
  expect(f.sent.length).toBe(1);expect(f.sent[0].to.sessionId).toBe('worker-conversation')
  expect(f.sent[0].text).toContain('not acknowledgement');expect(f.sent[0].text).toContain('"deliveryId":"delivery-1"')
+ expect(f.sent[0].text).toContain('shared_inbox_read');expect(f.sent[0].text).toContain('shared_inbox_seen')
  expect(f.commands.some(c=>/read|ack|verifyAssignment/i.test(c.type))).toBe(false)
  expect(f.commands[2].expectedBindingGeneration).toBe(2)
 })

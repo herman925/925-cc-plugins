@@ -73,33 +73,40 @@ export async function enqueueMessage(db,{eventId,runId,teamId,threadId,senderId,
 }
 
 export async function settleAssignmentThread(db,assignmentId,decision,reason) {
- const id=assignmentThreadId(assignmentId);
- const [thread]=await db.query('SELECT * FROM threads WHERE thread_id=:id',{id});
+ const threads=await db.query('SELECT * FROM threads WHERE assignment_id=:id',{id:assignmentId});
  // Older admitted assignments predate the mailbox. Do not fabricate history.
- if(!thread||thread.status!=='open')return;
+ for(const thread of threads) {
+ if(thread.status!=='open')continue;
+ const id=thread.thread_id;
  const generation=nextInteger(databaseInteger(thread.generation,'thread generation'),'thread generation');
  await db.query(`UPDATE threads SET status=:status,answer=:answer,generation=:generation
   WHERE thread_id=:id AND status='open'`,{id,status:decision==='accepted'?'answered':'fenced',answer:decision==='accepted'?reason:null,generation});
+ }
  await db.query(`UPDATE deliveries SET status='fenced',generation=generation+1 WHERE status='outstanding'
-  AND message_id IN (SELECT message_id FROM messages WHERE thread_id=:id)`,{id});
+  AND message_id IN (SELECT m.message_id FROM messages m JOIN threads t ON t.thread_id=m.thread_id WHERE t.assignment_id=:id)`,{id:assignmentId});
 }
 
 export async function expirePickups(db,teamId,now) {
- const expired=await db.query(`SELECT a.*,t.run_id FROM assignments a JOIN tasks t ON t.task_id=a.task_id
-  JOIN runs r ON r.run_id=t.run_id WHERE r.team_id=:team AND t.status='open'
-  AND a.pickup_observed_at_ms IS NULL AND a.pickup_expired_at_ms IS NULL AND a.pickup_deadline_ms<=:now
+ const expired=await db.query(`SELECT a.*,t.run_id FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN assignment_attempts x ON x.assignment_id=a.assignment_id
+  JOIN runs r ON r.run_id=t.run_id WHERE r.team_id=:team AND t.status IN ('open','blocked') AND x.outcome IS NULL
+  AND NOT EXISTS (SELECT 1 FROM assignment_returns z WHERE z.assignment_id=a.assignment_id)
+  AND NOT EXISTS (SELECT 1 FROM assignments n WHERE n.previous_assignment_id=a.assignment_id)
+  AND ((a.pickup_observed_at_ms IS NULL AND a.pickup_expired_at_ms IS NULL AND a.pickup_deadline_ms<=:now)
+   OR (a.pickup_observed_at_ms IS NOT NULL AND a.task_deadline_ms IS NOT NULL AND a.task_deadline_ms<=:now))
   ORDER BY a.admitted_at_ms,a.assignment_id`,{team:teamId,now});
  const returned=[];
  for(const a of expired) {
+  const taskExpired=a.pickup_observed_at_ms!==null;
   const changed=await db.query(`UPDATE assignments SET pickup_expired_at_ms=:now,returned_to_member_id=assigned_by_member_id
-   WHERE assignment_id=:id AND pickup_observed_at_ms IS NULL AND pickup_expired_at_ms IS NULL RETURNING assignment_id`,{id:a.assignment_id,now});
+   WHERE assignment_id=:id AND returned_to_member_id IS NULL RETURNING assignment_id`,{id:a.assignment_id,now:taskExpired?null:now});
   if(!changed.length)continue;
-  await db.query("INSERT INTO assignment_returns (assignment_id,returned_to_member_id,reason,returned_at_ms) VALUES (:id,:head,'pickup_expired',:now)",{id:a.assignment_id,head:a.assigned_by_member_id,now});
+  await db.query('INSERT INTO assignment_returns (assignment_id,returned_to_member_id,reason,returned_at_ms) VALUES (:id,:head,:reason,:now)',{id:a.assignment_id,head:a.assigned_by_member_id,now,reason:taskExpired?'task_expired':'pickup_expired'});
+  if(taskExpired)await db.query("UPDATE tasks SET status='blocked' WHERE task_id=:id",{id:a.task_id});
   await db.query('UPDATE assignment_attempts SET generation=generation+1 WHERE assignment_id=:id',{id:a.assignment_id});
-  await settleAssignmentThread(db,a.assignment_id,'expired','Pickup deadline expired');
+  await settleAssignmentThread(db,a.assignment_id,'expired',taskExpired?'Task deadline expired':'Pickup deadline expired');
   // The shared assignment is the return receipt. Do not forge a message from
   // the worker (or invent a synthetic team member) for an observer's event.
-  returned.push({assignmentId:a.assignment_id,returnedToMemberId:a.assigned_by_member_id,pickupExpiredAtMs:now});
+  returned.push({assignmentId:a.assignment_id,returnedToMemberId:a.assigned_by_member_id,...(taskExpired?{taskExpiredAtMs:now}:{pickupExpiredAtMs:now})});
  }
  return {returned};
 }

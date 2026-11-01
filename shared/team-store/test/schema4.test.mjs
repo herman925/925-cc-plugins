@@ -178,9 +178,9 @@ for (const engine of ['sqlite', 'postgres']) describe(`${engine} schema 4 lifecy
   test('gate JSON remains opaque; client obligations and gate application are explicit', async t => {
     const { db } = await setup(t, engine);
     await db.query('INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES (:id,:task,:question,:options)', { id: 'g', task: 'task', question: 'Choose', options: '{not parsed' });
-    await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='also opaque',resolved_at_ms=1000");
+    await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='also opaque',resolved_at_ms=1000,generation=generation+1");
     assert.equal((await db.query('SELECT options_json FROM decision_gates'))[0].options_json, '{not parsed');
-    assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'open');
+    assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'blocked');
     assert.match(RULES.gates, /client validates JSON syntax, at least two offered strings/);
     assert.match(RULES.gates, /resolution naming an offered option/);
   });
