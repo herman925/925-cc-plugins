@@ -249,3 +249,19 @@ test('long team purpose stays behind explicit team info while subject navigation
  expect(JSON.stringify(await band.drawn())).toContain(f.model.team.function_text)
  expect(f.calls.length).toBe(count)
 })
+
+
+test('new assignment selects its own preview and cannot inherit another tasks unsent review',options,async($:any,on:any)=>{
+ const f=fixture(on),old=f.item();Object.assign(old.attempt,{outcome:'succeeded',summary:'Old result',evidence:'Old evidence'});f.model.work.push(old)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.select({key:'workspace-task-select',value:'assignment'});await band.press({key:'workspace-task-assignment'})
+ await band.input({key:'workspace-reason',text:'Unsent review for old task',kind:'change'})
+ await band.press({key:'workspace-roster-tab'});await band.press({key:'workspace-assign-worker'})
+ await band.input({key:'workspace-instructions',text:'A separate new assignment',kind:'change'});await band.input({key:'workspace-expected',text:'A separate result',kind:'change'});await band.press({key:'workspace-admit'})
+ const admitted=f.calls.find(c=>c.request?.command?.type==='admitAssignment').request.command
+ expect((await band.find({key:'workspace-task-select'})).props.value).toBe(admitted.assignmentId)
+ expect(await band.find({key:`workspace-task-${admitted.assignmentId}`})).toBeDefined()
+ const next=f.model.work.find((w:any)=>w.assignment.assignment_id===admitted.assignmentId);Object.assign(next.attempt,{outcome:'succeeded',summary:'New result',evidence:'New evidence'})
+ await band.press({key:'workspace-refresh'});await band.press({key:'workspace-tasks-tab'});await band.press({key:`workspace-task-${admitted.assignmentId}`})
+ expect((await band.find({key:'workspace-reason'})).props.value).toBe('')
+ expect(f.calls.some(c=>c.request?.command?.type==='acceptTask')).toBe(false)
+})
