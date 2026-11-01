@@ -1,6 +1,6 @@
 # Right-panel default — 0.5.48
 
-All Team Orchestrator views now share one native panel and default to requesting the right side. Setup no longer uses a second pane, and closing the panel no longer changes its preference to stacked. Existing card arrangement is preserved independently. No team/store/configuration/permission migration is performed.
+All Team Orchestrator views now share one native panel and default to requesting the right side. Setup no longer uses a second pane, and closing the panel no longer changes its preference to stacked. Inactive and obsolete panes return a valid empty drawing, avoiding a close-time hook warning. Existing card arrangement is preserved independently. No team/store/configuration/permission migration is performed.
 
 Update the marketplace and plugin:
 
@@ -19,4 +19,4 @@ The normal host **/tui** command changes a user-wide renderer preference and req
 
 ## Validation
 
-Local Mod suite: **402 passed, 0 failed, 42 files**. Validation passed with existing metadata warnings; all 16 packaged store modules remain unchanged. Native validation is recorded separately before publication. This is a layout/navigation increment; it does not establish new schema, PostgreSQL, lifecycle, migration, launcher or scheduler acceptance.
+Local Mod suite: **403 passed, 0 failed, 42 files**. Validation passed with existing metadata warnings; all 16 packaged store modules remain unchanged. Native validation is recorded separately before publication. This is a layout/navigation increment; it does not establish new schema, PostgreSQL, lifecycle, migration, launcher or scheduler acceptance.

@@ -143,3 +143,16 @@ test('host inline placement is explained without changing the right preference',
  expect(JSON.stringify(await pane.find({key:'panel-right'}))).toContain('#ff5440')
  expect(await band.find({key:'panel-right'})).toBeUndefined()
 })
+
+test('closed, explicitly inline and obsolete panes return a valid empty drawing during teardown',async($,on)=>{
+ env(on)
+ const target={plugin:'team-orchestrator',surface:'terminal',component:'Pane',requestId:'team-dock',props:{title:'Team Orchestrator',isFocused:false,bodyColumns:66,placement:'dock'}} as const
+ const pane=await $.ui.mount(target as any)
+ expect((await pane.drawn()).type).toBe('Box');expect(await pane.find({key:'tab-team'})).toBeUndefined()
+ const band=await mountBand($);await band.press({key:'band-settings'})
+ expect(await pane.find({key:'panel-right'})).toBeDefined()
+ await band.press({key:'panel-inline-shortcut'})
+ expect((await pane.drawn()).type).toBe('Box');expect(await pane.find({key:'tab-team'})).toBeUndefined()
+ const obsolete=await $.ui.mount({...target,requestId:'team-setup'} as any)
+ expect((await obsolete.drawn()).type).toBe('Box')
+})

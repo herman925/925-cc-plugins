@@ -3628,16 +3628,16 @@ export const register: Register = (on, options) => {
 
   // Every view uses one pane. The host chooses dock/inline; its placement is not a Mod option.
   on('ui.render',{component:'Pane',requestId:DOCK},async($,e)=>{
-    const v=await read($,view)
-    if(v==='closed'||(await readSettings($)).placement==='inline')return null
     const ui=$.ui.resolve(e),{Box,Text}=ui
+    const v=await read($,view)
+    if(v==='closed'||(await readSettings($)).placement==='inline')return <Box/>
     return <Box flexDirection="column">
       {e.props.placement==='inline'&&<Text dimColor>{rightPanelHint(e.viewport)}</Text>}
       {await panel($,ui,v,e.props.bodyColumns||66,DOCK)}
     </Box>
   })
   // An old setup pane can survive a hooks reload; it never owns a second body.
-  on('ui.render',{component:'Pane',requestId:SETUP},async()=>null)
+  on('ui.render',{component:'Pane',requestId:SETUP},async($,e)=>{const {Box}=$.ui.resolve(e);return <Box/>})
   on('ui.close',{id:DOCK},async($,e,next)=>{
     if(e.origin.kind==='person')await update($,view,()=> 'closed')
     return next(e)
