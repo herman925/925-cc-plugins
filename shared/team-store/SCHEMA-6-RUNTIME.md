@@ -1,8 +1,8 @@
-# Unreleased schema 6 runtime
+# Schema 6 runtime preview
 
-This development branch extends the released schema-5 preview. The Orca plugin still uses its native engine and does not import this runtime. SQLite remains the Mod's configured store; the shared library also supports explicitly configured PostgreSQL. There is no automatic local/hosted mirroring.
+Mod 0.5.51 packages this runtime preview, extending the schema-5 preview. The Orca plugin still uses its native engine and does not import this runtime. SQLite remains the Mod's configured store; the shared library also supports explicitly configured PostgreSQL. There is no automatic local/hosted mirroring. See [update instructions](../../team-orchestrator/docs/RELEASE-RUNTIME-0.5.51.md).
 
-Schema 6 is not released. Earlier development fixtures labelled schema 6 may contain only a prior checkpoint. Keep their frozen source snapshots with their data; do not treat those draft fixtures as release-compatible stores.
+Earlier development fixtures labelled schema 6 may contain only a prior checkpoint. Keep their frozen source snapshots with their data; do not treat those draft fixtures as release-compatible stores. Use a fresh workspace or the explicit schema-5 update path for this preview.
 
 ## Implemented
 

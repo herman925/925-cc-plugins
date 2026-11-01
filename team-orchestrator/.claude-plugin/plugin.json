@@ -1,6 +1,6 @@
 {
   "name": "team-orchestrator",
-  "version": "0.5.50",
+  "version": "0.5.51",
   "description": "Guided team setup and a native workspace for rosters, verified session connections, task assignment and outcome review. Existing classic Orca teams remain available separately.",
   "types": "./types/index.d.ts",
   "userConfig": {
