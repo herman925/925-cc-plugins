@@ -1,10 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, SQL, RULES } from '../contract.mjs';
+import { FORMAT, SCHEMA_VERSION, DDL, ddlFor, messageGuardsFor, historyGuardsFor, gateGuardsFor, SQL, RULES } from '../contract.mjs';
 import { fixture, postgresTestUrl } from './support/engines.mjs';
 import { seedLayout, seedDelivery } from './support/seed-layout.mjs';
 
-const constraint = /constraint|duplicate|not.null|violat/i;
+const constraint = /constraint|duplicate|not.null|violat|STORE_GATE_IMMUTABLE/i;
 const holder = { machine_id: 'machine-A', holder_token: 'process-A', lease_generation: 1, now_ms: 1000, assigned_by_member_id: 'head', pickup_deadline_ms: 2000, task_window_minutes: null };
 const authority = { ...holder, run_id: 'run', consumer_generation: 1, expected_generation: 1 };
 const generation = rows => rows.map(row => Number(row.generation));
@@ -31,10 +31,12 @@ test('one common table source renders explicit collations and equivalent immutab
   for (const [engine, collation] of [['sqlite', 'BINARY'], ['postgres', '"C"']]) {
     const tables = ddlFor(engine);
     assert.ok(tables.includes(messageGuardsFor(engine)));
+    assert.ok(tables.includes(historyGuardsFor(engine)));
+    assert.ok(tables.includes(gateGuardsFor(engine)));
     assert.ok(tables.includes(`message_id TEXT COLLATE ${collation} NOT NULL PRIMARY KEY`));
     assert.ok(!tables.includes('{{'));
     const sharedBody = DDL.replaceAll('{{identity_collation}}', collation).split('{{message_guards}}')[0];
-    for (const part of sharedBody.split('{{delivery_message_fk}}')) assert.ok(tables.includes(part));
+    for (const part of sharedBody.split(/\{\{(?:delivery_message_fk|history_guards|gate_guards)\}\}/)) assert.ok(tables.includes(part));
   }
   assert.throws(() => ddlFor('mysql'), /Unsupported/);
   assert.throws(() => ddlFor('toString'), /Unsupported/);
@@ -89,10 +91,33 @@ for (const engine of ['sqlite', 'postgres']) {
       for (const sql of ["status='resolved'", "resolution_json='{}'", "resolved_at_ms=1000", "status='resolved',resolution_json='{}',resolved_at_ms=-1"]) {
         await assert.rejects(db.exec(`UPDATE decision_gates SET ${sql}`), constraint);
       }
-      await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='{}',resolved_at_ms=1000");
-      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'open');
+      await db.exec("UPDATE decision_gates SET status='resolved',resolution_json='{}',resolved_at_ms=1000,generation=generation+1");
+      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'blocked');
     });
 
+    test('replacement conflicts on every history unique key preserve the original rows',async t=>{
+      const {db}=await seeded(t,engine);
+      await db.exec(`INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('old-a','task','A?'),('old-b','task','B?'),('new','task','New?');
+        INSERT INTO decision_gate_supersessions VALUES ('old-a','new','task','head',1000)`);
+      const replace=engine==='sqlite'?"INSERT OR REPLACE INTO decision_gate_supersessions VALUES ('old-b','new','task','head',1000)":"INSERT INTO decision_gate_supersessions VALUES ('old-b','new','task','head',1000) ON CONFLICT (new_gate_id) DO UPDATE SET old_gate_id=EXCLUDED.old_gate_id";
+      await assert.rejects(db.exec(replace),/STORE_HISTORY_IMMUTABLE/);
+      assert.equal((await db.query('SELECT old_gate_id FROM decision_gate_supersessions'))[0].old_gate_id,'old-a');
+      await db.exec(`INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms) VALUES ('first','other-task','worker',1000,'head',2000);
+        INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,previous_assignment_id) VALUES ('next','other-task','worker',1000,'head',2000,'first');
+        INSERT INTO task_acceptances VALUES ('other-task','first','head','accepted','Original accepted history',1000)`);
+      const acceptance=engine==='sqlite'?"INSERT OR REPLACE INTO task_acceptances VALUES ('other-task','next','head','accepted','Overwrite by partial unique key',1000)":"INSERT INTO task_acceptances VALUES ('other-task','next','head','accepted','Overwrite by partial unique key',1000) ON CONFLICT (task_id) WHERE decision='accepted' DO UPDATE SET assignment_id=EXCLUDED.assignment_id";
+      await assert.rejects(db.exec(acceptance),/STORE_HISTORY_IMMUTABLE/);
+      assert.equal((await db.query('SELECT reason FROM task_acceptances'))[0].reason,'Original accepted history');
+    });
+    test('independent gate answers have one conditional winner and cannot rewrite its resolution',async t=>{
+      const {db,connect}=await seeded(t,engine),other=await connect();
+      await db.exec("INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES ('race','task','Choose','[\"A\",\"B\"]')");
+      const sql="UPDATE decision_gates SET status='resolved',generation=2,resolution_json=:answer,resolved_at_ms=1000 WHERE gate_id='race' AND status='open' AND generation=1 RETURNING generation";
+      const results=await Promise.all([db,other].map((connection,i)=>connection.query(sql,{answer:JSON.stringify({choice:i?'B':'A'})})));
+      assert.deepEqual(results.map(rows=>rows.length).sort(),[0,1]);
+      await assert.rejects(db.exec("UPDATE decision_gates SET resolution_json='overwrite' WHERE gate_id='race'"),/STORE_GATE_IMMUTABLE/);
+      assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status,'blocked');
+    });
     test('schema 3 membership, roles, exemptions and installed writer families have database constraints', async t => {
       const { db } = await seeded(t, engine);
       await assert.rejects(db.exec("UPDATE members SET membership_state='working' WHERE member_id='worker'"), constraint);

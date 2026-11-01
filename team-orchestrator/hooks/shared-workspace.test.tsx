@@ -15,6 +15,8 @@ function fixture(on:any,who='head'){
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
   const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
   const ok=(value:any)=>JSON.stringify({ok:true,result:value})
+  if(envelope.mode==='inboxPoll')return ok({message:null})
+  if(envelope.mode==='inboxAttached')return ok({confirmed:true})
   if(envelope.mode==='listSessions')return control.discoveryFailure?JSON.stringify({ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:'No proof'}}):ok({sessions:[{label:'Verified worker',reference:{projectRoot:'C:/proj',conversationId:ID2,terminalHandle:'term_w',contextId:'r1::C:/proj'}}]})
   const {command,operationId}=envelope.request
   if(envelope.mode==='reconcile')return ok(receipts.get(operationId)??{status:'unknown',operationId})
@@ -22,6 +24,7 @@ function fixture(on:any,who='head'){
   if(command.type==='inspectCaller'&&control.created&&control.reloadFailure)return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Read failed after commit'}})
   if(command.type==='inspectCaller')result={controllerGeneration:who==='worker'?null:1,member:who==='controller'?null:model.members.find((m:any)=>m.member_id===who),binding:who==='controller'?null:binding(who),teams:[model.team]}
   if(command.type==='inspectTeam')result=model
+  if(command.type==='inspectInbox')result={messages:[{message_id:'mail-1',delivery_id:'delivery-1',sender_member_id:'head',recipient_member_id:who,kind:'dispatch',body:'private body hidden until read'}]}
   if(command.type==='createFreshTeam'){
    control.created=true
    model.team={team_id:command.teamId,name:command.name,function_text:command.functionText,config_version:5}
@@ -30,6 +33,7 @@ function fixture(on:any,who='head'){
   }
   if(command.type==='bindMember'){model.bindings=model.bindings.filter((b:any)=>b.member_id!==command.memberId);model.bindings.push({...binding(command.memberId),generation:command.expectedBindingGeneration+1});result={memberId:command.memberId,bindingGeneration:command.expectedBindingGeneration+1}}
   if(command.type==='admitAssignment'){const w=item();w.assignment.assignment_id=command.assignmentId;w.brief={instructions:command.instructions,expected_result:command.expectedResult};model.work.push(w);result={assignmentId:command.assignmentId,attemptGeneration:1}}
+  if(command.type==='retryAssignment'){const previous=model.work.find((w:any)=>w.assignment.assignment_id===command.assignmentId),w:any=item();w.assignment={...w.assignment,assignment_id:command.newAssignmentId,member_id:command.memberId,previous_assignment_id:command.assignmentId};w.brief=previous.brief;model.work.push(w);result={assignmentId:command.newAssignmentId,attemptGeneration:1}}
   if(command.type==='verifyAssignment'){model.work[0].assignment.pickup_observed_at_ms=10;model.work[0].attempt.generation=2;result={attemptGeneration:2,brief:model.work[0].brief,role:model.roles[1]}}
   if(command.type==='reportOutcome'){Object.assign(model.work[0].attempt,{generation:3,outcome:command.outcome,summary:command.summary,evidence:command.evidence});result={attemptGeneration:3,acceptance:'pending'}}
   if(command.type==='acceptTask'){model.work[0].acceptance={decision:command.decision,reason:command.reason};model.work[0].task.status='succeeded';result={decision:command.decision}}
@@ -40,6 +44,66 @@ function fixture(on:any,who='head'){
  return {model,calls,control,files,item,configSets,refuseConfig:()=>{refuseConfig=true}}
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
+test('decision gates use native choices, preserve displayed authority and hide blocked work actions',options,async($:any,on:any)=>{
+ const f=fixture(on),item:any=f.item();item.task.status='blocked';item.gates=[{gate_id:'g1',question:'Choose a route',status:'open',generation:3,options_json:'["Route A","Route B"]',superseded_by_gate_id:null}];f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});
+ expect(JSON.stringify(await band.drawn())).toContain('Decision needed');expect(await band.find({key:'workspace-gate-select'})).toBeDefined()
+ expect((await band.find({key:'workspace-gate-choice-0'})).props.label).toBe('Route A')
+ expect(await band.find({key:'workspace-accepted'})).toBeUndefined()
+ await band.input({key:'workspace-gate-note',text:'Approved for this task',kind:'change'});await band.press({key:'workspace-gate-choice-0'})
+ const command=f.calls.find(c=>c.request?.command?.type==='resolveGate').request.command
+ expect(command.gateId).toBe('g1');expect(command.expectedGateGeneration).toBe(3);expect(command.choice).toBe('Route A');expect(command.note).toBe('Approved for this task');expect(command.expectedConfigVersion).toBe(5)
+})
+test('gate creation and replacement stay drafts until saved and keep each offered option separate',options,async($:any,on:any)=>{
+ const f=fixture(on),item:any=f.item();f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});await band.press({key:'workspace-gate-new'})
+ await band.input({key:'workspace-gate-question',text:'Choose a route',kind:'change'});await band.input({key:'workspace-gate-option-0',text:'A',kind:'change'});await band.input({key:'workspace-gate-option-1',text:'B',kind:'change'});
+ expect(f.calls.some(c=>c.request?.command?.type==='openGate')).toBe(false)
+ await band.press({key:'workspace-gate-save'});const command=f.calls.find(c=>c.request?.command?.type==='openGate').request.command
+ expect(command.options).toEqual(['A','B']);expect(command.question).toBe('Choose a route');expect(command.assignmentId).toBe('assignment');expect(command.expectedAttemptGeneration).toBe(1)
+})
+test('a worker sees the pending decision but cannot answer or report while blocked',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),item:any=f.item();item.task.status='blocked';item.gates=[{gate_id:'g1',question:'Choose a route',status:'open',generation:1,options_json:'["A","B"]'}];f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(await band.find({key:'workspace-gate-choice-0'})).toBeUndefined();expect(await band.find({key:'workspace-gate-new'})).toBeUndefined();expect(await band.find({key:'workspace-pickup'})).toBeUndefined()
+ expect(JSON.stringify(await band.drawn())).toContain('This task stays blocked.')
+})
+test('Inbox uses native controls; preview does not acknowledge or expose a protocol wall',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),prompts:any[]=[];on('prompt.submit',async(_$:any,e:any)=>{prompts.push(e);return {text:e.text}})
+ const band=await open($);await band.press({key:'workspace-inbox-tab'});
+ expect(f.calls.some(c=>c.request?.command?.type==='inspectInbox')).toBe(false)
+ await band.press({key:'workspace-mail-refresh'});
+ const drawn=JSON.stringify(await band.drawn());expect(drawn).toContain('Task assignment');expect(drawn).not.toContain('private body hidden until read')
+ expect(f.calls.some(c=>c.request?.command?.type==='readInbox')).toBe(false)
+ await band.press({key:'workspace-mail-read'});expect(prompts[0].text).toContain('shared_inbox_read')
+ expect(prompts[0].text.length).toBeLessThan(400)
+})
+test('a returned expired assignment is labelled clearly and cannot be picked up from the panel',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker'),item:any=f.item();item.assignment.pickup_expired_at_ms=123;item.assignment.returned_to_member_id='head';f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(JSON.stringify(await band.drawn())).toContain('Returned to head')
+ expect(await band.find({key:'workspace-pickup'})).toBeUndefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='verifyAssignment')).toBe(false)
+})
+test('the head reassigns a returned task as a new attempt with fresh visible authority',options,async($:any,on:any)=>{
+ const f=fixture(on,'head'),item:any=f.item();item.assignment.pickup_expired_at_ms=123;item.assignment.returned_to_member_id='head';item.attempt.generation=2;f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});
+ expect((await band.find({key:'workspace-retry-target'})).props.value).toBe('worker')
+ await band.press({key:'workspace-retry-assignment'})
+ const command=f.calls.find(c=>c.request?.command?.type==='retryAssignment').request.command
+ expect(command.assignmentId).toBe('assignment');expect(command.newAssignmentId).not.toBe('assignment');expect(command.memberId).toBe('worker')
+ expect(command.expectedAttemptGeneration).toBe(2);expect(command.expectedTargetBindingGeneration).toBe(1)
+ expect(f.model.work.length).toBe(2);expect(f.model.work[0].assignment.pickup_expired_at_ms).toBe(123)
+ expect(await band.find({key:'workspace-retry-assignment'})).toBeUndefined()
+})
+test('a rejected attempt retains its review and offers a separate reassignment action',options,async($:any,on:any)=>{
+ const f=fixture(on,'head'),item:any=f.item();item.attempt={generation:3,outcome:'succeeded',summary:'Original',evidence:'Old proof'};item.acceptance={decision:'rejected',reason:'Needs correction'};item.returned={reason:'rejected',returned_to_member_id:'head'};item.task.status='blocked';f.model.work.push(item)
+ const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'})
+ expect(JSON.stringify(await band.drawn())).toContain('Needs correction');expect(await band.find({key:'workspace-retry-assignment'})).toBeDefined()
+ expect(await band.find({key:'workspace-accepted'})).toBeUndefined();await band.press({key:'workspace-retry-assignment'})
+ expect(item.acceptance.reason).toBe('Needs correction');expect(f.model.work.length).toBe(2)
+ expect(f.calls.find(c=>c.request?.command?.type==='retryAssignment').request.command.expectedAttemptGeneration).toBe(3)
+})
 
 test('fresh team creation has editable roles, hierarchy and windows, with no side effect from opening or drafting',options,async($:any,on:any)=>{
  const f=fixture(on,'controller'),band=await open($)

@@ -1,0 +1,2247 @@
+[
+  {
+    "at": 1793546761978,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-c8e87a51fc1afdfafb7098a5c001d8e6",
+      "command": {
+        "type": "inspectCaller"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-c8e87a51fc1afdfafb7098a5c001d8e6",
+        "kind": "api",
+        "result": {
+          "projectId": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+          "controllerGeneration": 1,
+          "member": {
+            "member_id": "head",
+            "team_id": "fixture-team",
+            "name": "head",
+            "boss_member_id": null,
+            "role": "Review evidence and accept separately.",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "home_context_kind": "worktree",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          "binding": {
+            "member_id": "head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+            "execution_host_id": "local",
+            "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+            "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+            "generation": 1
+          },
+          "configVersion": 1,
+          "hasReports": true,
+          "teams": [
+            {
+              "team_id": "fixture-team",
+              "name": "Runtime native fixture",
+              "function_text": "Disposable schema-6 upgrade and native protocol check",
+              "config_version": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546764395,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-36f225d31c0032f8d8a96845ec4900b2",
+      "command": {
+        "type": "inspectTeam",
+        "teamId": "fixture-team"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-36f225d31c0032f8d8a96845ec4900b2",
+        "kind": "api",
+        "result": {
+          "team": {
+            "team_id": "fixture-team",
+            "name": "Runtime native fixture",
+            "function_text": "Disposable schema-6 upgrade and native protocol check",
+            "config_version": 1,
+            "written_by_client": "team-orchestrator",
+            "written_by_version": "0.5.50"
+          },
+          "members": [
+            {
+              "member_id": "head",
+              "team_id": "fixture-team",
+              "name": "head",
+              "boss_member_id": null,
+              "role": "Review evidence and accept separately.",
+              "level": 1,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "team_id": "fixture-team",
+              "name": "worker",
+              "boss_member_id": "head",
+              "role": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "level": 2,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            }
+          ],
+          "bindings": [
+            {
+              "member_id": "head",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+              "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_71a66ecd-18c8-4301-8c89-b140c617a4fd",
+              "incarnation_id": "6acfb3f1-45a8-4ab0-85ec-0dea09f60841",
+              "generation": 1
+            }
+          ],
+          "roles": [
+            {
+              "member_id": "head",
+              "official_text": "Review evidence and accept separately.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            },
+            {
+              "member_id": "worker",
+              "official_text": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            }
+          ],
+          "work": [
+            {
+              "assignment": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1793545590562,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793547390562,
+                "pickup_observed_at_ms": 1793545848692,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": "native-original",
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "generation": 3,
+                "outcome": "succeeded",
+                "summary": "5",
+                "evidence": "Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.",
+                "reported_at_ms": 1793546328931
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "accepted_by_member_id": "head",
+                "decision": "accepted",
+                "reason": "Native test driver checked arithmetic and separate worker outcome.",
+                "decided_at_ms": 1793546461268
+              },
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "native-original",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1000,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 2000,
+                "pickup_observed_at_ms": 1500,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "native-original",
+                "generation": 4,
+                "outcome": "succeeded",
+                "summary": "Original result",
+                "evidence": "Original evidence",
+                "reported_at_ms": 2500
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "native-original",
+                "accepted_by_member_id": "head",
+                "decision": "rejected",
+                "reason": "Original evidence was rejected; preserve this history",
+                "decided_at_ms": 3000
+              },
+              "returned": {
+                "assignment_id": "native-original",
+                "returned_to_member_id": "head",
+                "reason": "rejected",
+                "returned_at_ms": 3000
+              },
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546767029,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-730ba383d6ba48e82c2179c47ba80853",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "admitAssignment",
+        "assignmentId": "gate-cycle-9f74e0614057a761",
+        "taskId": "task-9f74e0614057a761",
+        "runId": "run-9f74e0614057a761",
+        "memberId": "worker",
+        "instructions": "Disposable two-gate native protocol check.",
+        "expectedResult": "Both gates decided before this same assignment resumes.",
+        "expectedTargetGeneration": 1,
+        "expectedTargetBindingGeneration": 1
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-730ba383d6ba48e82c2179c47ba80853",
+        "kind": "api",
+        "result": {
+          "assignmentId": "gate-cycle-9f74e0614057a761",
+          "taskId": "task-9f74e0614057a761",
+          "attemptGeneration": 1,
+          "pickupDeadlineMs": 1793548567007,
+          "delivery": {
+            "messageId": "message-27523813de5b4313bb0f8a8de554d777a8bb539e156f879f87efebb909741c8a",
+            "deliveryId": "delivery-27523813de5b4313bb0f8a8de554d777a8bb539e156f879f87efebb909741c8a",
+            "threadId": "assignment-thread-60fd34907e6d30b48e4d1d8fda119a49a7ca958e7744838685af11916301baa4"
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546770089,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-32e615dc623633b3be0680c514e61efc",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "openGate",
+        "assignmentId": "gate-cycle-9f74e0614057a761",
+        "expectedAttemptGeneration": 1,
+        "gateId": "first-9f74e0614057a761",
+        "question": "Choose for the disposable fixture.",
+        "options": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-32e615dc623633b3be0680c514e61efc",
+        "kind": "api",
+        "result": {
+          "gateId": "first-9f74e0614057a761",
+          "gateGeneration": 1,
+          "assignmentId": "gate-cycle-9f74e0614057a761",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546772458,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-de7b16e3a283470b57e396099d9857b1",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "openGate",
+        "assignmentId": "gate-cycle-9f74e0614057a761",
+        "expectedAttemptGeneration": 1,
+        "gateId": "last-9f74e0614057a761",
+        "question": "Choose for the disposable fixture.",
+        "options": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-de7b16e3a283470b57e396099d9857b1",
+        "kind": "api",
+        "result": {
+          "gateId": "last-9f74e0614057a761",
+          "gateGeneration": 1,
+          "assignmentId": "gate-cycle-9f74e0614057a761",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546774792,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-f99ca39831b89f84bfbcea3e8ae6139c",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "resolveGate",
+        "gateId": "first-9f74e0614057a761",
+        "expectedGateGeneration": 1,
+        "choice": "A",
+        "note": "First of two."
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-f99ca39831b89f84bfbcea3e8ae6139c",
+        "kind": "api",
+        "result": {
+          "gateId": "first-9f74e0614057a761",
+          "gateGeneration": 2,
+          "assignmentId": "gate-cycle-9f74e0614057a761",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+              "resolved_at_ms": 1793546774766,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546777392,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-c089eb8fe4f1c6b7d6d1bb6e3d555b36",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "resolveGate",
+        "gateId": "last-9f74e0614057a761",
+        "expectedGateGeneration": 1,
+        "choice": "B",
+        "note": "Last gate resumes the same valid assignment."
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-c089eb8fe4f1c6b7d6d1bb6e3d555b36",
+        "kind": "api",
+        "result": {
+          "gateId": "last-9f74e0614057a761",
+          "gateGeneration": 2,
+          "assignmentId": "gate-cycle-9f74e0614057a761",
+          "resumed": true,
+          "gates": [
+            {
+              "gate_id": "first-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+              "resolved_at_ms": 1793546774766,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-9f74e0614057a761",
+              "task_id": "task-9f74e0614057a761",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+              "resolved_at_ms": 1793546777366,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            }
+          ],
+          "delivery": {
+            "messageId": "message-0cce3a02b0805a85b941c064c0391f12aa3ba30dacca7497146fedb4903faff1",
+            "deliveryId": "delivery-0cce3a02b0805a85b941c064c0391f12aa3ba30dacca7497146fedb4903faff1",
+            "threadId": "assignment-thread-60fd34907e6d30b48e4d1d8fda119a49a7ca958e7744838685af11916301baa4"
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546780413,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-47caa213da1cab161e70a5882d5fdfbb",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "inspectAssignment",
+        "assignmentId": "gate-cycle-9f74e0614057a761"
+      }
+    },
+    "value": {
+      "ok": false,
+      "error": {
+        "code": "API_INPUT_INVALID",
+        "message": "Unexpected API field or shape.",
+        "details": {}
+      }
+    }
+  },
+  {
+    "at": 1793546780414,
+    "action": "GateCycle",
+    "error": "Error: Unexpected final gate-cycle state"
+  },
+  {
+    "at": 1793546953452,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-ce76bfe9853abb532bcbc5c653727166",
+      "command": {
+        "type": "inspectCaller"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-ce76bfe9853abb532bcbc5c653727166",
+        "kind": "api",
+        "result": {
+          "projectId": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+          "controllerGeneration": 1,
+          "member": {
+            "member_id": "head",
+            "team_id": "fixture-team",
+            "name": "head",
+            "boss_member_id": null,
+            "role": "Review evidence and accept separately.",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "home_context_kind": "worktree",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          "binding": {
+            "member_id": "head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+            "execution_host_id": "local",
+            "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+            "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+            "generation": 1
+          },
+          "configVersion": 1,
+          "hasReports": true,
+          "teams": [
+            {
+              "team_id": "fixture-team",
+              "name": "Runtime native fixture",
+              "function_text": "Disposable schema-6 upgrade and native protocol check",
+              "config_version": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546955573,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-da4c0c8e9d5a0bd1e953b85411b2e6ab",
+      "command": {
+        "type": "inspectTeam",
+        "teamId": "fixture-team"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-da4c0c8e9d5a0bd1e953b85411b2e6ab",
+        "kind": "api",
+        "result": {
+          "team": {
+            "team_id": "fixture-team",
+            "name": "Runtime native fixture",
+            "function_text": "Disposable schema-6 upgrade and native protocol check",
+            "config_version": 1,
+            "written_by_client": "team-orchestrator",
+            "written_by_version": "0.5.50"
+          },
+          "members": [
+            {
+              "member_id": "head",
+              "team_id": "fixture-team",
+              "name": "head",
+              "boss_member_id": null,
+              "role": "Review evidence and accept separately.",
+              "level": 1,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "team_id": "fixture-team",
+              "name": "worker",
+              "boss_member_id": "head",
+              "role": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "level": 2,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            }
+          ],
+          "bindings": [
+            {
+              "member_id": "head",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+              "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_71a66ecd-18c8-4301-8c89-b140c617a4fd",
+              "incarnation_id": "6acfb3f1-45a8-4ab0-85ec-0dea09f60841",
+              "generation": 1
+            }
+          ],
+          "roles": [
+            {
+              "member_id": "head",
+              "official_text": "Review evidence and accept separately.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            },
+            {
+              "member_id": "worker",
+              "official_text": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            }
+          ],
+          "work": [
+            {
+              "assignment": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "task_id": "task-9f74e0614057a761",
+                "member_id": "worker",
+                "admitted_at_ms": 1793546767007,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793548567007,
+                "pickup_observed_at_ms": null,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "task-9f74e0614057a761",
+                "run_id": "run-9f74e0614057a761",
+                "status": "open",
+                "outcome": null
+              },
+              "brief": {
+                "task_id": "task-9f74e0614057a761",
+                "instructions": "Disposable two-gate native protocol check.",
+                "expected_result": "Both gates decided before this same assignment resumes."
+              },
+              "attempt": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "generation": 1,
+                "outcome": null,
+                "summary": null,
+                "evidence": null,
+                "reported_at_ms": null
+              },
+              "acceptance": null,
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "first-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+                  "resolved_at_ms": 1793546774766,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                },
+                {
+                  "gate_id": "last-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+                  "resolved_at_ms": 1793546777366,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1793545590562,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793547390562,
+                "pickup_observed_at_ms": 1793545848692,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": "native-original",
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "generation": 3,
+                "outcome": "succeeded",
+                "summary": "5",
+                "evidence": "Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.",
+                "reported_at_ms": 1793546328931
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "accepted_by_member_id": "head",
+                "decision": "accepted",
+                "reason": "Native test driver checked arithmetic and separate worker outcome.",
+                "decided_at_ms": 1793546461268
+              },
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "native-original",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1000,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 2000,
+                "pickup_observed_at_ms": 1500,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "native-original",
+                "generation": 4,
+                "outcome": "succeeded",
+                "summary": "Original result",
+                "evidence": "Original evidence",
+                "reported_at_ms": 2500
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "native-original",
+                "accepted_by_member_id": "head",
+                "decision": "rejected",
+                "reason": "Original evidence was rejected; preserve this history",
+                "decided_at_ms": 3000
+              },
+              "returned": {
+                "assignment_id": "native-original",
+                "returned_to_member_id": "head",
+                "reason": "rejected",
+                "returned_at_ms": 3000
+              },
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546958444,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-1d48b4eb2080351eda77ef98b0eecc65",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "admitAssignment",
+        "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+        "taskId": "task-3d17e57b8dba7c2e",
+        "runId": "run-3d17e57b8dba7c2e",
+        "memberId": "worker",
+        "instructions": "Disposable two-gate native protocol check.",
+        "expectedResult": "Both gates decided before this same assignment resumes.",
+        "expectedTargetGeneration": 1,
+        "expectedTargetBindingGeneration": 1
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-1d48b4eb2080351eda77ef98b0eecc65",
+        "kind": "api",
+        "result": {
+          "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+          "taskId": "task-3d17e57b8dba7c2e",
+          "attemptGeneration": 1,
+          "pickupDeadlineMs": 1793548758420,
+          "delivery": {
+            "messageId": "message-44e7bfb1825cd0f1d4a2691b463a768f0d530b42e3bf3c0176934ef0ac3191f0",
+            "deliveryId": "delivery-44e7bfb1825cd0f1d4a2691b463a768f0d530b42e3bf3c0176934ef0ac3191f0",
+            "threadId": "assignment-thread-07747c0226dc007d30c4e94d77f5c23d774b6ff11ad8293e3920e26344e1e612"
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546961436,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-8d1078baed056c067118d118f67ba8d7",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "openGate",
+        "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+        "expectedAttemptGeneration": 1,
+        "gateId": "first-3d17e57b8dba7c2e",
+        "question": "Choose for the disposable fixture.",
+        "options": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-8d1078baed056c067118d118f67ba8d7",
+        "kind": "api",
+        "result": {
+          "gateId": "first-3d17e57b8dba7c2e",
+          "gateGeneration": 1,
+          "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546964199,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-b78f4acd4a4cc10c2a29135a2e78564a",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "openGate",
+        "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+        "expectedAttemptGeneration": 1,
+        "gateId": "last-3d17e57b8dba7c2e",
+        "question": "Choose for the disposable fixture.",
+        "options": [
+          "A",
+          "B"
+        ]
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-b78f4acd4a4cc10c2a29135a2e78564a",
+        "kind": "api",
+        "result": {
+          "gateId": "last-3d17e57b8dba7c2e",
+          "gateGeneration": 1,
+          "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546967077,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-f792aaa0307e85690d54b93e9c849e98",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "resolveGate",
+        "gateId": "first-3d17e57b8dba7c2e",
+        "expectedGateGeneration": 1,
+        "choice": "A",
+        "note": "First of two."
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-f792aaa0307e85690d54b93e9c849e98",
+        "kind": "api",
+        "result": {
+          "gateId": "first-3d17e57b8dba7c2e",
+          "gateGeneration": 2,
+          "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+          "resumed": false,
+          "gates": [
+            {
+              "gate_id": "first-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+              "resolved_at_ms": 1793546967054,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "open",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": null,
+              "resolved_at_ms": null,
+              "generation": 1,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546969569,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-4143d00eb739a0c843c1ea096e057c85",
+      "command": {
+        "teamId": "fixture-team",
+        "expectedConfigVersion": 1,
+        "expectedMemberGeneration": 1,
+        "expectedBindingGeneration": 1,
+        "type": "resolveGate",
+        "gateId": "last-3d17e57b8dba7c2e",
+        "expectedGateGeneration": 1,
+        "choice": "B",
+        "note": "Last gate resumes the same valid assignment."
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-4143d00eb739a0c843c1ea096e057c85",
+        "kind": "api",
+        "result": {
+          "gateId": "last-3d17e57b8dba7c2e",
+          "gateGeneration": 2,
+          "assignmentId": "gate-cycle-3d17e57b8dba7c2e",
+          "resumed": true,
+          "gates": [
+            {
+              "gate_id": "first-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+              "resolved_at_ms": 1793546967054,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+              "resolved_at_ms": 1793546969542,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            }
+          ],
+          "delivery": {
+            "messageId": "message-63d074c417d06da7b8eb59e32d53ac2e2aa5eaddb90535df29a07622605f51bd",
+            "deliveryId": "delivery-63d074c417d06da7b8eb59e32d53ac2e2aa5eaddb90535df29a07622605f51bd",
+            "threadId": "assignment-thread-07747c0226dc007d30c4e94d77f5c23d774b6ff11ad8293e3920e26344e1e612"
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 1793546971414,
+    "action": "GateCycle",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-abd431778e6c1078bbb3a2168ed239aa",
+      "command": {
+        "teamId": "fixture-team",
+        "type": "inspectAssignment",
+        "assignmentId": "gate-cycle-3d17e57b8dba7c2e"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-abd431778e6c1078bbb3a2168ed239aa",
+        "kind": "api",
+        "result": {
+          "assignment": {
+            "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+            "task_id": "task-3d17e57b8dba7c2e",
+            "member_id": "worker",
+            "admitted_at_ms": 1793546958420,
+            "assigned_by_member_id": "head",
+            "pickup_deadline_ms": 1793548758420,
+            "pickup_observed_at_ms": null,
+            "pickup_expired_at_ms": null,
+            "returned_to_member_id": null,
+            "previous_assignment_id": null,
+            "task_window_minutes": null,
+            "task_deadline_ms": null
+          },
+          "task": {
+            "task_id": "task-3d17e57b8dba7c2e",
+            "run_id": "run-3d17e57b8dba7c2e",
+            "status": "open",
+            "outcome": null
+          },
+          "brief": {
+            "task_id": "task-3d17e57b8dba7c2e",
+            "instructions": "Disposable two-gate native protocol check.",
+            "expected_result": "Both gates decided before this same assignment resumes."
+          },
+          "attempt": {
+            "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+            "generation": 1,
+            "outcome": null,
+            "summary": null,
+            "evidence": null,
+            "reported_at_ms": null
+          },
+          "acceptance": null,
+          "returned": null,
+          "gates": [
+            {
+              "gate_id": "first-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+              "resolved_at_ms": 1793546967054,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            },
+            {
+              "gate_id": "last-3d17e57b8dba7c2e",
+              "task_id": "task-3d17e57b8dba7c2e",
+              "question": "Choose for the disposable fixture.",
+              "status": "resolved",
+              "options_json": "[\"A\",\"B\"]",
+              "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+              "resolved_at_ms": 1793546969542,
+              "generation": 2,
+              "superseded_by_gate_id": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547014804,
+    "action": "Node22",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-b8252884dbf3aef8211e0cf1922fb720",
+      "command": {
+        "type": "inspectCaller"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-b8252884dbf3aef8211e0cf1922fb720",
+        "kind": "api",
+        "result": {
+          "projectId": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+          "controllerGeneration": 1,
+          "member": {
+            "member_id": "head",
+            "team_id": "fixture-team",
+            "name": "head",
+            "boss_member_id": null,
+            "role": "Review evidence and accept separately.",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "home_context_kind": "worktree",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          "binding": {
+            "member_id": "head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+            "execution_host_id": "local",
+            "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+            "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+            "generation": 1
+          },
+          "configVersion": 1,
+          "hasReports": true,
+          "teams": [
+            {
+              "team_id": "fixture-team",
+              "name": "Runtime native fixture",
+              "function_text": "Disposable schema-6 upgrade and native protocol check",
+              "config_version": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547016939,
+    "action": "Node22",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-f5dc0e1cd0af4a11c6aba0eab4058f8b",
+      "command": {
+        "type": "inspectTeam",
+        "teamId": "fixture-team"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-f5dc0e1cd0af4a11c6aba0eab4058f8b",
+        "kind": "api",
+        "result": {
+          "team": {
+            "team_id": "fixture-team",
+            "name": "Runtime native fixture",
+            "function_text": "Disposable schema-6 upgrade and native protocol check",
+            "config_version": 1,
+            "written_by_client": "team-orchestrator",
+            "written_by_version": "0.5.50"
+          },
+          "members": [
+            {
+              "member_id": "head",
+              "team_id": "fixture-team",
+              "name": "head",
+              "boss_member_id": null,
+              "role": "Review evidence and accept separately.",
+              "level": 1,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "team_id": "fixture-team",
+              "name": "worker",
+              "boss_member_id": "head",
+              "role": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "level": 2,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            }
+          ],
+          "bindings": [
+            {
+              "member_id": "head",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+              "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_71a66ecd-18c8-4301-8c89-b140c617a4fd",
+              "incarnation_id": "6acfb3f1-45a8-4ab0-85ec-0dea09f60841",
+              "generation": 1
+            }
+          ],
+          "roles": [
+            {
+              "member_id": "head",
+              "official_text": "Review evidence and accept separately.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            },
+            {
+              "member_id": "worker",
+              "official_text": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            }
+          ],
+          "work": [
+            {
+              "assignment": {
+                "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+                "task_id": "task-3d17e57b8dba7c2e",
+                "member_id": "worker",
+                "admitted_at_ms": 1793546958420,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793548758420,
+                "pickup_observed_at_ms": null,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "task-3d17e57b8dba7c2e",
+                "run_id": "run-3d17e57b8dba7c2e",
+                "status": "open",
+                "outcome": null
+              },
+              "brief": {
+                "task_id": "task-3d17e57b8dba7c2e",
+                "instructions": "Disposable two-gate native protocol check.",
+                "expected_result": "Both gates decided before this same assignment resumes."
+              },
+              "attempt": {
+                "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+                "generation": 1,
+                "outcome": null,
+                "summary": null,
+                "evidence": null,
+                "reported_at_ms": null
+              },
+              "acceptance": null,
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "first-3d17e57b8dba7c2e",
+                  "task_id": "task-3d17e57b8dba7c2e",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+                  "resolved_at_ms": 1793546967054,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                },
+                {
+                  "gate_id": "last-3d17e57b8dba7c2e",
+                  "task_id": "task-3d17e57b8dba7c2e",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+                  "resolved_at_ms": 1793546969542,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "task_id": "task-9f74e0614057a761",
+                "member_id": "worker",
+                "admitted_at_ms": 1793546767007,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793548567007,
+                "pickup_observed_at_ms": null,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "task-9f74e0614057a761",
+                "run_id": "run-9f74e0614057a761",
+                "status": "open",
+                "outcome": null
+              },
+              "brief": {
+                "task_id": "task-9f74e0614057a761",
+                "instructions": "Disposable two-gate native protocol check.",
+                "expected_result": "Both gates decided before this same assignment resumes."
+              },
+              "attempt": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "generation": 1,
+                "outcome": null,
+                "summary": null,
+                "evidence": null,
+                "reported_at_ms": null
+              },
+              "acceptance": null,
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "first-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+                  "resolved_at_ms": 1793546774766,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                },
+                {
+                  "gate_id": "last-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+                  "resolved_at_ms": 1793546777366,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1793545590562,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793547390562,
+                "pickup_observed_at_ms": 1793545848692,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": "native-original",
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "generation": 3,
+                "outcome": "succeeded",
+                "summary": "5",
+                "evidence": "Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.",
+                "reported_at_ms": 1793546328931
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "accepted_by_member_id": "head",
+                "decision": "accepted",
+                "reason": "Native test driver checked arithmetic and separate worker outcome.",
+                "decided_at_ms": 1793546461268
+              },
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "native-original",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1000,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 2000,
+                "pickup_observed_at_ms": 1500,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "native-original",
+                "generation": 4,
+                "outcome": "succeeded",
+                "summary": "Original result",
+                "evidence": "Original evidence",
+                "reported_at_ms": 2500
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "native-original",
+                "accepted_by_member_id": "head",
+                "decision": "rejected",
+                "reason": "Original evidence was rejected; preserve this history",
+                "decided_at_ms": 3000
+              },
+              "returned": {
+                "assignment_id": "native-original",
+                "returned_to_member_id": "head",
+                "reason": "rejected",
+                "returned_at_ms": 3000
+              },
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547018495,
+    "action": "Node22",
+    "tool": "node22-private-bridge",
+    "driver": "private process probe; not a model tool",
+    "version": "v22.13.0",
+    "exitCode": 0,
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-node22-1793547017172",
+        "kind": "api",
+        "result": {
+          "projectId": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+          "controllerGeneration": 1,
+          "member": {
+            "member_id": "head",
+            "team_id": "fixture-team",
+            "name": "head",
+            "boss_member_id": null,
+            "role": "Review evidence and accept separately.",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "home_context_kind": "worktree",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          "binding": {
+            "member_id": "head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+            "execution_host_id": "local",
+            "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+            "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+            "generation": 1
+          },
+          "configVersion": 1,
+          "hasReports": true,
+          "teams": [
+            {
+              "team_id": "fixture-team",
+              "name": "Runtime native fixture",
+              "function_text": "Disposable schema-6 upgrade and native protocol check",
+              "config_version": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547191450,
+    "action": "Target",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-05263d8d7bdd6ba7b0275486173d392f",
+      "command": {
+        "type": "inspectCaller"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-05263d8d7bdd6ba7b0275486173d392f",
+        "kind": "api",
+        "result": {
+          "projectId": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+          "controllerGeneration": 1,
+          "member": {
+            "member_id": "head",
+            "team_id": "fixture-team",
+            "name": "head",
+            "boss_member_id": null,
+            "role": "Review evidence and accept separately.",
+            "level": 1,
+            "model": "default",
+            "effort": "default",
+            "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "home_context_kind": "worktree",
+            "home_execution_host_id": "local",
+            "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+            "machine_id": "Herman-5090",
+            "location": "local",
+            "membership_state": "active",
+            "address": null,
+            "short_name": null,
+            "cli": "claude",
+            "allow_agent": 0,
+            "allow_write": 0,
+            "generation": 1
+          },
+          "binding": {
+            "member_id": "head",
+            "machine_id": "Herman-5090",
+            "provider": "claude",
+            "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+            "execution_host_id": "local",
+            "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+            "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+            "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+            "generation": 1
+          },
+          "configVersion": 1,
+          "hasReports": true,
+          "teams": [
+            {
+              "team_id": "fixture-team",
+              "name": "Runtime native fixture",
+              "function_text": "Disposable schema-6 upgrade and native protocol check",
+              "config_version": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547195244,
+    "action": "Target",
+    "tool": "mcp__team-orchestrator__shared_team",
+    "input": {
+      "operationId": "native-fa142d6951d24c426bbcd2009943cecb",
+      "command": {
+        "type": "inspectTeam",
+        "teamId": "fixture-team"
+      }
+    },
+    "value": {
+      "ok": true,
+      "result": {
+        "operationId": "native-fa142d6951d24c426bbcd2009943cecb",
+        "kind": "api",
+        "result": {
+          "team": {
+            "team_id": "fixture-team",
+            "name": "Runtime native fixture",
+            "function_text": "Disposable schema-6 upgrade and native protocol check",
+            "config_version": 1,
+            "written_by_client": "team-orchestrator",
+            "written_by_version": "0.5.50"
+          },
+          "members": [
+            {
+              "member_id": "head",
+              "team_id": "fixture-team",
+              "name": "head",
+              "boss_member_id": null,
+              "role": "Review evidence and accept separately.",
+              "level": 1,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "team_id": "fixture-team",
+              "name": "worker",
+              "boss_member_id": "head",
+              "role": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "level": 2,
+              "model": "default",
+              "effort": "default",
+              "worktree": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "home_context_kind": "worktree",
+              "home_execution_host_id": "local",
+              "home_original_path": "C:\\Users\\Herman\\orca\\workspaces\\925-cc-plugins\\runtime-gates-20261101",
+              "machine_id": "Herman-5090",
+              "location": "local",
+              "membership_state": "active",
+              "address": null,
+              "short_name": null,
+              "cli": "claude",
+              "allow_agent": 0,
+              "allow_write": 0,
+              "generation": 1
+            }
+          ],
+          "bindings": [
+            {
+              "member_id": "head",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+              "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+              "generation": 1
+            },
+            {
+              "member_id": "worker",
+              "machine_id": "Herman-5090",
+              "provider": "claude",
+              "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+              "execution_host_id": "local",
+              "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+              "terminal_handle": "term_71a66ecd-18c8-4301-8c89-b140c617a4fd",
+              "incarnation_id": "6acfb3f1-45a8-4ab0-85ec-0dea09f60841",
+              "generation": 1
+            }
+          ],
+          "roles": [
+            {
+              "member_id": "head",
+              "official_text": "Review evidence and accept separately.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            },
+            {
+              "member_id": "worker",
+              "official_text": "Read this official role and verify the admitted brief before reporting the arithmetic fixture.",
+              "advisory_notes": "",
+              "official_generation": 1,
+              "notes_generation": 1
+            }
+          ],
+          "work": [
+            {
+              "assignment": {
+                "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+                "task_id": "task-3d17e57b8dba7c2e",
+                "member_id": "worker",
+                "admitted_at_ms": 1793546958420,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793548758420,
+                "pickup_observed_at_ms": null,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "task-3d17e57b8dba7c2e",
+                "run_id": "run-3d17e57b8dba7c2e",
+                "status": "open",
+                "outcome": null
+              },
+              "brief": {
+                "task_id": "task-3d17e57b8dba7c2e",
+                "instructions": "Disposable two-gate native protocol check.",
+                "expected_result": "Both gates decided before this same assignment resumes."
+              },
+              "attempt": {
+                "assignment_id": "gate-cycle-3d17e57b8dba7c2e",
+                "generation": 1,
+                "outcome": null,
+                "summary": null,
+                "evidence": null,
+                "reported_at_ms": null
+              },
+              "acceptance": null,
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "first-3d17e57b8dba7c2e",
+                  "task_id": "task-3d17e57b8dba7c2e",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+                  "resolved_at_ms": 1793546967054,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                },
+                {
+                  "gate_id": "last-3d17e57b8dba7c2e",
+                  "task_id": "task-3d17e57b8dba7c2e",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+                  "resolved_at_ms": 1793546969542,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "task_id": "task-9f74e0614057a761",
+                "member_id": "worker",
+                "admitted_at_ms": 1793546767007,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793548567007,
+                "pickup_observed_at_ms": null,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "task-9f74e0614057a761",
+                "run_id": "run-9f74e0614057a761",
+                "status": "open",
+                "outcome": null
+              },
+              "brief": {
+                "task_id": "task-9f74e0614057a761",
+                "instructions": "Disposable two-gate native protocol check.",
+                "expected_result": "Both gates decided before this same assignment resumes."
+              },
+              "attempt": {
+                "assignment_id": "gate-cycle-9f74e0614057a761",
+                "generation": 1,
+                "outcome": null,
+                "summary": null,
+                "evidence": null,
+                "reported_at_ms": null
+              },
+              "acceptance": null,
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "first-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"A\",\"note\":\"First of two.\"}",
+                  "resolved_at_ms": 1793546774766,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                },
+                {
+                  "gate_id": "last-9f74e0614057a761",
+                  "task_id": "task-9f74e0614057a761",
+                  "question": "Choose for the disposable fixture.",
+                  "status": "resolved",
+                  "options_json": "[\"A\",\"B\"]",
+                  "resolution_json": "{\"choice\":\"B\",\"note\":\"Last gate resumes the same valid assignment.\"}",
+                  "resolved_at_ms": 1793546777366,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1793545590562,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 1793547390562,
+                "pickup_observed_at_ms": 1793545848692,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": "native-original",
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "generation": 3,
+                "outcome": "succeeded",
+                "summary": "5",
+                "evidence": "Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.",
+                "reported_at_ms": 1793546328931
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+                "accepted_by_member_id": "head",
+                "decision": "accepted",
+                "reason": "Native test driver checked arithmetic and separate worker outcome.",
+                "decided_at_ms": 1793546461268
+              },
+              "returned": null,
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            },
+            {
+              "assignment": {
+                "assignment_id": "native-original",
+                "task_id": "native-task",
+                "member_id": "worker",
+                "admitted_at_ms": 1000,
+                "assigned_by_member_id": "head",
+                "pickup_deadline_ms": 2000,
+                "pickup_observed_at_ms": 1500,
+                "pickup_expired_at_ms": null,
+                "returned_to_member_id": null,
+                "previous_assignment_id": null,
+                "task_window_minutes": null,
+                "task_deadline_ms": null
+              },
+              "task": {
+                "task_id": "native-task",
+                "run_id": "native-run",
+                "status": "succeeded",
+                "outcome": "succeeded"
+              },
+              "brief": {
+                "task_id": "native-task",
+                "instructions": "Return 2 + 3.",
+                "expected_result": "5 with arithmetic evidence"
+              },
+              "attempt": {
+                "assignment_id": "native-original",
+                "generation": 4,
+                "outcome": "succeeded",
+                "summary": "Original result",
+                "evidence": "Original evidence",
+                "reported_at_ms": 2500
+              },
+              "acceptance": {
+                "task_id": "native-task",
+                "assignment_id": "native-original",
+                "accepted_by_member_id": "head",
+                "decision": "rejected",
+                "reason": "Original evidence was rejected; preserve this history",
+                "decided_at_ms": 3000
+              },
+              "returned": {
+                "assignment_id": "native-original",
+                "returned_to_member_id": "head",
+                "reason": "rejected",
+                "returned_at_ms": 3000
+              },
+              "gates": [
+                {
+                  "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+                  "task_id": "native-task",
+                  "question": "Which arithmetic route?",
+                  "status": "resolved",
+                  "options_json": "[\"Add directly\",\"Count objects\"]",
+                  "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+                  "resolved_at_ms": 1793545994524,
+                  "generation": 2,
+                  "superseded_by_gate_id": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "at": 1793547196656,
+    "action": "Target",
+    "tool": "native-target-check",
+    "driver": "read-only private native verification",
+    "exitCode": 0,
+    "value": {
+      "ok": true,
+      "callerConversationId": "89d78ec7-9017-4582-85bd-8ca372456697",
+      "targetConversationId": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+      "verification": {
+        "ok": false,
+        "code": "API_NATIVE_UNVERIFIED",
+        "message": "Target binding requires an explicit native Claude conversation association."
+      }
+    }
+  }
+]

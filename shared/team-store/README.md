@@ -1,5 +1,7 @@
 # Shared team-store contract and adapter
 
+**Mod 0.5.51 runtime preview:** see [the schema-6 runtime](SCHEMA-6-RUNTIME.md) for durable inbox, retry history, explicit update, gates and deadline behavior. The schema-5 and earlier descriptions below describe their historical foundation; they do not establish acceptance of the newer runtime.
+
 This is the **unreleased** contract foundation and store-adapter increment of [Shared team store: one schema, one lifecycle contract, two engines](https://github.com/herman925/925-cc-plugins/issues/154).
 The adapter opens the shared schema, enforces write transactions and authority checks, and records durable operation receipts. Mod 0.5.43 packages it for an explicitly opted-in fresh-team API preview; the standalone package remains private. The Orca plugin is not integrated. Existing data is not moved and this API does not launch sessions. See [the typed API boundary](API-BOUNDARY.md), [schema 5](SCHEMA-5.md), and [update/testing instructions](RELEASE-SCHEMA-5.md).
 

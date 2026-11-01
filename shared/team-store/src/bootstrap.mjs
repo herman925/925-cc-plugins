@@ -35,14 +35,18 @@ export async function inspectSchema(db, definition = SHARED_SCHEMA, expectedIden
   const requiredTables = [...definition.ddl.matchAll(/CREATE TABLE ([a-z_]+)\s*\(/g)].map(match => match[1]);
   const missing = requiredTables.filter(name => !objects.some(row => row.name === name));
   if (missing.length) throw refusal('STORE_SCHEMA_INCOMPLETE', `Team store schema is incomplete: missing ${missing.join(', ')}. No schema was installed.`, { missing });
-  if (definition === SHARED_SCHEMA) {
+  if (definition.format === FORMAT) {
     const guards = db.engine === 'sqlite' ? objects : await db.query(`SELECT t.tgname AS name FROM pg_catalog.pg_trigger t
       JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-      WHERE c.relname='messages' AND n.nspname=current_schema() AND NOT t.tgisinternal`);
+      WHERE c.relname IN ('messages','task_acceptances','assignment_returns','decision_gate_supersessions','decision_gates','tasks') AND n.nspname=current_schema() AND NOT t.tgisinternal`);
     const required = db.engine === 'sqlite' ? ['messages_immutable_update', 'messages_immutable_delete', 'messages_immutable_replace']
       : ['messages_immutable_update', 'messages_immutable_truncate'];
+    if(definition.version>=6){
+      for(const name of ['task_acceptances','assignment_returns','decision_gate_supersessions'])required.push(`${name}_immutable_update`,`${name}_immutable_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${name}_immutable_replace`]:[]));
+      required.push('gate_task_blocked','gate_live_task','gate_insert_block','gate_resolution_once','gate_no_delete','gate_supersession_forward',db.engine==='sqlite'?'gate_no_replace':'gate_no_truncate');
+    }
     const absent = required.filter(name => !guards.some(row => row.name === name));
-    if (absent.length) throw refusal('STORE_SCHEMA_INCOMPLETE', `Message immutability guards are missing: ${absent.join(', ')}. No write was authorized.`, { missing: absent });
+    if (absent.length) throw refusal('STORE_SCHEMA_INCOMPLETE', `Immutability guards are missing: ${absent.join(', ')}. No write was authorized.`, { missing: absent });
   }
   const [identity] = await db.query(definition === MACHINE_SCHEMA
     ? 'SELECT * FROM machine_identity WHERE singleton = 1' : SQL.readProjectIdentity);
@@ -138,7 +142,7 @@ async function localPath(projectRoot, create) {
 }
 
 // Internal connection bootstrap. The public store must authorize before create=true.
-export async function openBackend(options) {
+export async function openBackend(options,definition=SHARED_SCHEMA) {
   const create = options.create === true;
   let db, connect, localDatabasePath;
   if (options.postgres !== undefined) {
@@ -148,20 +152,20 @@ export async function openBackend(options) {
   } else {
     const path = await localPath(options.projectRoot, create);
     localDatabasePath = path;
-    return openSqliteBackend({ path, create, busyTimeoutMs: options.busyTimeoutMs });
+    return openSqliteBackend({ path, create, busyTimeoutMs: options.busyTimeoutMs,definition });
   }
   try {
-    const schema = await inspectSchema(db);
+    const schema = await inspectSchema(db,definition);
     if (schema.empty) {
       if (!create) throw refusal('STORE_EMPTY', 'Team store is empty. Explicit creation is required.');
-      await installSchema(db);
+      await installSchema(db,{definition});
       if (localDatabasePath) {
         // The DDL transaction has committed. This filesystem effect never runs
         // before version validation and never holds a database write lock.
         await writeStoreIgnore(localDatabasePath);
       }
     }
-    await inspectSchema(db);
+    await inspectSchema(db,definition);
     return { db, connect };
   } catch (error) { await db.close(); throw error; }
 }

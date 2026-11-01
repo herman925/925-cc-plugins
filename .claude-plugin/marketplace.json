@@ -15,7 +15,7 @@
     {
       "name": "team-orchestrator",
       "source": "./team-orchestrator",
-      "description": "Team Orchestrator: welcome screen, quick starts (Squad, All-Purpose Team, Tech Team), a table-style team form, and a live roster to spawn and manage teams of Claude Code sessions as Orca tabs."
+      "description": "Team Orchestrator: guided team setup, native right panel, verified session connections, durable shared inbox, task history and decision gates. Classic Orca teams remain available separately."
     },
     {
       "name": "session-panel",

@@ -11,9 +11,18 @@ export interface Settings {
 interface MemberAuthority { teamId:string; expectedConfigVersion:number; expectedMemberGeneration:number; expectedBindingGeneration:number }
 interface AttemptAuthority extends MemberAuthority { assignmentId:string; expectedAttemptGeneration:number }
 export type Command =
+  | (AttemptAuthority & {type:'openGate';gateId:string;question:string;options:string[]})
+  | (MemberAuthority & {type:'replaceGate';gateId:string;newGateId:string;expectedGateGeneration:number;question:string;options:string[]})
+  | (MemberAuthority & {type:'resolveGate';gateId:string;expectedGateGeneration:number;choice:string;note?:string})
   | {type:'inspectCaller'}
   | {type:'inspectTeam';teamId:string}
   | {type:'inspectAssignment';teamId:string;assignmentId:string}
+  | {type:'inspectInbox';teamId:string;recipientMemberId:string}
+  | {type:'inspectDelivery';teamId:string;deliveryId:string}
+  | (MemberAuthority & {type:'readInbox';deliveryId:string;expectedDeliveryGeneration:number})
+  | (MemberAuthority & {type:'prepareDeliveries'})
+  | (MemberAuthority & {type:'observePickupDeadlines'})
+  | (AttemptAuthority & {type:'retryAssignment';newAssignmentId:string;memberId:string;expectedTargetGeneration:number;expectedTargetBindingGeneration:number})
   | {type:'createFreshTeam';teamId:string;name:string;functionText:string;settings:Settings;expectedControllerGeneration:number;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[]}
   | (MemberAuthority & {type:'bindMember';memberId:string;expectedControllerGeneration:number})
   | (MemberAuthority & {type:'admitAssignment';runId:string;taskId:string;assignmentId:string;memberId:string;instructions:string;expectedResult:string;expectedTargetGeneration:number;expectedTargetBindingGeneration:number})

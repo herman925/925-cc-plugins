@@ -1,0 +1,241 @@
+{
+  "store_metadata": [
+    {
+      "singleton": 1,
+      "format": "team-orchestrator-shared",
+      "schema_version": 6
+    }
+  ],
+  "project_identity": [
+    {
+      "singleton": 1,
+      "project_id": "1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8",
+      "minimum_writer_protocol": 1
+    }
+  ],
+  "controller_approvals": [
+    {
+      "controller_id": "ee8d691041afe6119b426055c650a5dd647ffeba9e982c58fc502b7538afbb15",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+      "generation": 1,
+      "approved_at_ms": 1793545488463,
+      "revoked": 0
+    },
+    {
+      "controller_id": "c2038daa6d6e30788ee7af44d31254094c5504c3c1efb67c8df67eac89499a61",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+      "generation": 1,
+      "approved_at_ms": 1793545532968,
+      "revoked": 0
+    }
+  ],
+  "member_bindings": [
+    {
+      "member_id": "head",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "89d78ec7-9017-4582-85bd-8ca372456697",
+      "execution_host_id": "local",
+      "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+      "terminal_handle": "term_3ca61dcb-6519-47cc-a41b-e18dd9f00756",
+      "incarnation_id": "8598c88c-c233-4adf-8bdd-3c3b3db933d0",
+      "generation": 1
+    },
+    {
+      "member_id": "worker",
+      "machine_id": "Herman-5090",
+      "provider": "claude",
+      "conversation_id": "ce8aeb79-e881-4aa8-a5d9-9639b9b02355",
+      "execution_host_id": "local",
+      "context_id": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/orca/workspaces/925-cc-plugins/runtime-gates-20261101",
+      "terminal_handle": "term_71a66ecd-18c8-4301-8c89-b140c617a4fd",
+      "incarnation_id": "6acfb3f1-45a8-4ab0-85ec-0dea09f60841",
+      "generation": 1
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "native-task",
+      "run_id": "native-run",
+      "status": "succeeded",
+      "outcome": "succeeded"
+    }
+  ],
+  "assignments": [
+    {
+      "assignment_id": "native-original",
+      "task_id": "native-task",
+      "member_id": "worker",
+      "admitted_at_ms": 1000,
+      "assigned_by_member_id": "head",
+      "pickup_deadline_ms": 2000,
+      "pickup_observed_at_ms": 1500,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": null,
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    },
+    {
+      "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+      "task_id": "native-task",
+      "member_id": "worker",
+      "admitted_at_ms": 1793545590562,
+      "assigned_by_member_id": "head",
+      "pickup_deadline_ms": 1793547390562,
+      "pickup_observed_at_ms": 1793545848692,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": "native-original",
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    }
+  ],
+  "assignment_attempts": [
+    {
+      "assignment_id": "native-original",
+      "generation": 4,
+      "outcome": "succeeded",
+      "summary": "Original result",
+      "evidence": "Original evidence",
+      "reported_at_ms": 2500
+    },
+    {
+      "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "5",
+      "evidence": "Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.",
+      "reported_at_ms": 1793546328931
+    }
+  ],
+  "task_acceptances": [
+    {
+      "task_id": "native-task",
+      "assignment_id": "native-original",
+      "accepted_by_member_id": "head",
+      "decision": "rejected",
+      "reason": "Original evidence was rejected; preserve this history",
+      "decided_at_ms": 3000
+    },
+    {
+      "task_id": "native-task",
+      "assignment_id": "e0c3d8f7a214b2c095b304e698f02e2c",
+      "accepted_by_member_id": "head",
+      "decision": "accepted",
+      "reason": "Native test driver checked arithmetic and separate worker outcome.",
+      "decided_at_ms": 1793546461268
+    }
+  ],
+  "assignment_returns": [
+    {
+      "assignment_id": "native-original",
+      "returned_to_member_id": "head",
+      "reason": "rejected",
+      "returned_at_ms": 3000
+    }
+  ],
+  "schema_migrations": [
+    {
+      "operation_id": "upgrade-42a0e3b0df08daefc9b7057f84b7a3b2",
+      "from_version": 5,
+      "to_version": 6,
+      "backup_machine_id": "Herman-5090",
+      "backup_path": "C:\\Users\\Herman\\.claude\\team-orchestrator\\1ca7e5a4-82e1-4b8a-bf02-5acdb44b00e8\\backups\\schema-5-2f03f1db-9a9e-4343-b146-61cb978a277b.json",
+      "applied_at_ms": 1793545472372
+    }
+  ],
+  "messages": [
+    {
+      "message_id": "message-d87ce80af2681d3ec0e2cd01e92779fd32f9186ec509d1024fde69813e54d112",
+      "delivery_id": "delivery-d87ce80af2681d3ec0e2cd01e92779fd32f9186ec509d1024fde69813e54d112",
+      "team_id": "fixture-team",
+      "thread_id": "assignment-thread-db716451f7a2b78f43c6d82a9d5ff172898378eb94580213752a8ce8f76c9e57",
+      "sender_member_id": "head",
+      "recipient_member_id": "worker",
+      "body": "{\"assignmentId\":\"e0c3d8f7a214b2c095b304e698f02e2c\",\"taskId\":\"native-task\",\"instructions\":\"Return 2 + 3.\",\"expectedResult\":\"5 with arithmetic evidence\"}",
+      "kind": "dispatch",
+      "created_at_ms": 1793545590562,
+      "endpoint_a_member_id": "head",
+      "endpoint_b_member_id": "worker"
+    },
+    {
+      "message_id": "message-a5c21e586e4938cbffb5bd94f4aa8cb1a8752767decde15af744eba8b6d3b22a",
+      "delivery_id": "delivery-a5c21e586e4938cbffb5bd94f4aa8cb1a8752767decde15af744eba8b6d3b22a",
+      "team_id": "fixture-team",
+      "thread_id": "assignment-thread-db716451f7a2b78f43c6d82a9d5ff172898378eb94580213752a8ce8f76c9e57",
+      "sender_member_id": "head",
+      "recipient_member_id": "worker",
+      "body": "{\"event\":\"task_resumed\",\"assignmentId\":\"e0c3d8f7a214b2c095b304e698f02e2c\",\"taskId\":\"native-task\",\"decisions\":[{\"question\":\"Which arithmetic route?\",\"resolution\":\"{\\\"choice\\\":\\\"Add directly\\\",\\\"note\\\":\\\"Use direct addition for this fixture.\\\"}\"}]}",
+      "kind": "status",
+      "created_at_ms": 1793545994524,
+      "endpoint_a_member_id": "head",
+      "endpoint_b_member_id": "worker"
+    },
+    {
+      "message_id": "message-c1d71c4db57db8c1598842d5ef001ed7e786c20344b4ba279136aa22070e02d3",
+      "delivery_id": "delivery-c1d71c4db57db8c1598842d5ef001ed7e786c20344b4ba279136aa22070e02d3",
+      "team_id": "fixture-team",
+      "thread_id": "assignment-thread-db716451f7a2b78f43c6d82a9d5ff172898378eb94580213752a8ce8f76c9e57",
+      "sender_member_id": "worker",
+      "recipient_member_id": "head",
+      "body": "{\"assignmentId\":\"e0c3d8f7a214b2c095b304e698f02e2c\",\"taskId\":\"native-task\",\"outcome\":\"succeeded\",\"summary\":\"5\",\"evidence\":\"Native harness fixture arithmetic: 2 + 3 = 5; no model reasoning claimed.\"}",
+      "kind": "worker_done",
+      "created_at_ms": 1793546328931,
+      "endpoint_a_member_id": "head",
+      "endpoint_b_member_id": "worker"
+    }
+  ],
+  "deliveries": [
+    {
+      "delivery_id": "delivery-d87ce80af2681d3ec0e2cd01e92779fd32f9186ec509d1024fde69813e54d112",
+      "run_id": "native-run",
+      "consumer_generation": 1,
+      "status": "acknowledged",
+      "generation": 20,
+      "team_id": "fixture-team",
+      "message_id": "message-d87ce80af2681d3ec0e2cd01e92779fd32f9186ec509d1024fde69813e54d112",
+      "replay_count": 18,
+      "last_replayed_at_ms": 1793546105839
+    },
+    {
+      "delivery_id": "delivery-a5c21e586e4938cbffb5bd94f4aa8cb1a8752767decde15af744eba8b6d3b22a",
+      "run_id": "native-run",
+      "consumer_generation": 1,
+      "status": "acknowledged",
+      "generation": 7,
+      "team_id": "fixture-team",
+      "message_id": "message-a5c21e586e4938cbffb5bd94f4aa8cb1a8752767decde15af744eba8b6d3b22a",
+      "replay_count": 5,
+      "last_replayed_at_ms": 1793546256311
+    },
+    {
+      "delivery_id": "delivery-c1d71c4db57db8c1598842d5ef001ed7e786c20344b4ba279136aa22070e02d3",
+      "run_id": "native-run",
+      "consumer_generation": 1,
+      "status": "acknowledged",
+      "generation": 5,
+      "team_id": "fixture-team",
+      "message_id": "message-c1d71c4db57db8c1598842d5ef001ed7e786c20344b4ba279136aa22070e02d3",
+      "replay_count": 3,
+      "last_replayed_at_ms": 1793546355106
+    }
+  ],
+  "decision_gates": [
+    {
+      "gate_id": "320e5ec894ea1c16c17adc4f96e6da5d",
+      "task_id": "native-task",
+      "question": "Which arithmetic route?",
+      "status": "resolved",
+      "options_json": "[\"Add directly\",\"Count objects\"]",
+      "resolution_json": "{\"choice\":\"Add directly\",\"note\":\"Use direct addition for this fixture.\"}",
+      "resolved_at_ms": 1793545994524,
+      "generation": 2
+    }
+  ],
+  "decision_gate_supersessions": []
+}

@@ -9,7 +9,7 @@ import { isConfigurationType, normalizeConfigurationMutation, applyConfiguration
 import { openBackend, inspectSchema } from './bootstrap.mjs';
 import { text, integer, databaseInteger, nextInteger, snapshot } from './validation.mjs';
 import { StoreError, refusal, isRetryable, isConstraint } from './errors.mjs';
-import { normalizeApiCommand, normalizeActor, applyApiCommand, assertApiCaller, apiResult } from './api-domain.mjs';
+import { normalizeApiCommand, normalizeActor, applyApiCommand, assertApiCaller, assertApiReceipt, apiResult } from './api-domain.mjs';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -135,11 +135,13 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
     const [row] = await db.query(SQL.readOperation, { operation_id: request.operationId });
     if (!row) return null;
     if (row.request_fingerprint !== request.fingerprint) throw refusal('STORE_IDEMPOTENCY_CONFLICT', `Operation id ${JSON.stringify(request.operationId)} was already used with a different request.`, { operationId: request.operationId });
+    let result;
     try {
-      const result = JSON.parse(row.result);
+      result = JSON.parse(row.result);
       if (result.operationId !== request.operationId || result.kind !== request.kind) throw new Error('Receipt identity mismatch');
-      return snapshot(result);
     } catch (error) { throw refusal('STORE_RECEIPT_INVALID', 'Stored operation receipt is invalid. It was not overwritten or retried.', { operationId: request.operationId }, error); }
+    if(request.kind==='api')await assertApiReceipt(db,request.identity.command,normalizeActor(request.caller.actor),result);
+    return snapshot(result);
   };
   const save = async (request, value, now) => {
     const result = { operationId: request.operationId, kind: request.kind, result: value };

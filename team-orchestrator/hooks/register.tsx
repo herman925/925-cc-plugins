@@ -22,6 +22,8 @@ import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from 
 import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
 import type { SharedControls } from './shared-store'
+import {pumpSharedDeliveries} from './shared-transport'
+import {sharedInboxContext,sharedInboxSeen,readSharedInbox} from './shared-inbox'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
 import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview,readTeamInterview} from './team-setup'
 import {TEAM_TEMPLATES as PRESETS} from './team-templates'
@@ -2276,6 +2278,7 @@ async function reconcile($: any, list: Member[], statuses: Map<string, Status>, 
 async function refresh($: any) {
   const scope = await preflight($)
   if (!scope.ok) return
+  if(await sharedEnabled($))void pumpSharedDeliveries($,scope,{node:sharedConfig.node,orca:await orcaBin($)}).catch(()=>undefined)
   await pull($)
   if ((await readMembers($)).length === 0) return
   // who this session is, worked out afresh once per refresh (tool calls reuse the answer); it may update the roster
@@ -2963,6 +2966,8 @@ export const register: Register = (on, options) => {
     }catch(error){return {result:JSON.stringify({ok:false,error:{code:'DRAFT_REFUSED',message:error instanceof Error?error.message:String(error)}})}}
   })
   on('tool.call',{tool:'mcp__team-orchestrator__shared_team'} as any,async($,e)=>safely(async()=>{if(sharedConfig.projectModesError)return {deny:sharedConfig.projectModesError};return callSharedStore($,e,await sharedEnabled($),{proof:await preflight($),node:sharedConfig.node,orca:await orcaBin($)})}))
+  on('tool.call',{tool:'mcp__team-orchestrator__shared_inbox_seen'} as any,async($,e)=>safely(async()=>sharedInboxSeen($,await sharedEnabled($),await preflight($),e.readReceiptId,{node:sharedConfig.node,orca:await orcaBin($)})))
+  on('tool.call',{tool:'mcp__team-orchestrator__shared_inbox_read'} as any,async($)=>safely(async()=>readSharedInbox($,await sharedEnabled($),await preflight($),{node:sharedConfig.node,orca:await orcaBin($)})))
   // what one load knew about the roster and has said: a fresh load starts over (the version too, read again)
   cfg.versionRead = false
   seenRoster.base = undefined
@@ -3498,13 +3503,14 @@ export const register: Register = (on, options) => {
     // prompt of the person's replaces the grants, so one without the words takes them back.
     const g = grantsFrom(e.origin, e.text)
     if (g) turn = g
+    const inbox=await sharedEnabled($)?await sharedInboxContext($,await preflight($),{node:sharedConfig.node,orca:await orcaBin($)}).catch(()=>undefined):undefined
     // a one-time note for this session (re-attached to its member: the role-file pointer; or on hold) rides along
     // with its next prompt
     await identity($)
     const sid = String(await $.session.id().catch(() => ''))
     const once = pendingNote && pendingNote.id === sid ? pendingNote.text : undefined
     if (once) pendingNote = undefined
-    const withOnce = (x: typeof e) => (once ? { ...x, context: [...(x.context ?? []), once] } : x)
+    const withOnce = (x: typeof e) => (once||inbox ? { ...x, context: [...(x.context ?? []), ...(once?[once]:[]), ...(inbox?[inbox]:[])] } : x)
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
     // A peer report/acknowledgement never asks the head to scan or rearms this member's cleanup generation.
@@ -3523,7 +3529,7 @@ export const register: Register = (on, options) => {
       const mention = new RegExp(`(^|\\s)@${team}(?=\\s|$)`, 'i')
       if (!mention.test(e.text)) continue
       const head = list.find(m => m.team === team && !list.some(x => x.team === team && x.name === m.boss) && m.handle !== '')
-      if (!head) return next(e)
+      if (!head) return next(withOnce(e))
       const rest = e.text.replace(mention, ' ').trim()
       const body = `[user -> team @${team}] ${rest}`
       // a head of another CLI is not messaged (#69); the prompt goes nowhere, with the reason

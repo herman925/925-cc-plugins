@@ -6,6 +6,8 @@ declare const setTimeout:(fn:()=>void,ms:number)=>unknown
 test('the shared store blocks raw state and private approval access even for a controller',()=>{
  for(const tool of ['Write','Edit','NotebookEdit'])expect(sharedStoreProtection(tool,'C:/proj/.team-orchestrator/team.sqlite','')).toBeDefined()
  expect(sharedStoreProtection('Read','C:/home/.claude/team-orchestrator/controller-actions/secret.json','')).toBeDefined()
+ expect(sharedStoreProtection('Read','C:/home/.claude/team-orchestrator/project-uuid/machine.sqlite','')).toBeDefined()
+ expect(sharedStoreProtection('Bash','','sqlite3 ~/.claude/team-orchestrator/project-uuid/machine.sqlite "SELECT * FROM local_operations"')).toBeDefined()
  expect(sharedStoreProtection('Bash','','node store/mod-bridge.mjs')).toBeDefined()
  expect(sharedStoreProtection('Bash','','sqlite3 .team-orchestrator/team.sqlite "UPDATE members SET allow_write=1"')).toBeDefined()
  expect(sharedStoreProtection('Read','C:/proj/README.md','')).toBeUndefined()
@@ -15,6 +17,25 @@ test('the disabled preview cannot invoke its private bridge',async($,on)=>{
  const calls:any[]=[];world(on,[],[],e=>{if(String(e.argv[1]).endsWith('mod-bridge.mjs'))calls.push(e)})
  const r:any=await $.tool.call({tool:'mcp__team-orchestrator__shared_team',operationId:'op',command:{type:'inspectCaller'}} as any)
  expect(r.deny).toContain('disabled');expect(calls.length).toBe(0)
+})
+test('an older workspace updates only after a scoped native click and does not grant management',{options:{sharedStorePreview:true,orcaCommand:'orca'}} as any,async($:any,on:any)=>{
+ let version=5;const calls:any[]=[]
+ const files=world(on,[],[],e=>{
+  if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
+  const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
+  if(envelope.mode==='upgradeStore'){version=6;return JSON.stringify({ok:true,result:{status:'upgraded',fromVersion:5,toVersion:6,backupPath:'fixture-backup'}})}
+  if(version===5)return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Old version',details:{version:5,supported:6}}})
+  return JSON.stringify({ok:true,result:{result:{controllerGeneration:null,member:null,teams:[]}}})
+ });sessionAs(on,ID1)
+ const band=await mountBand($,57);await band.press({key:'main'});await band.press({key:'tab-shared'})
+ expect(await band.find({key:'shared-upgrade-store'})).toBeDefined();expect(calls.some(c=>c.mode==='upgradeStore')).toBe(false)
+ expect([...files.keys()].some(k=>k.includes('controller-actions/'))).toBe(false)
+ await band.press({key:'shared-upgrade-store'})
+ const upgrade=calls.find(c=>c.mode==='upgradeStore'),ticket=JSON.parse(files.get(`C:/home/.claude/team-orchestrator/controller-actions/${upgrade.uiApprovalId}.json`)!)
+ expect(ticket.action).toBe('upgradeStore');expect(ticket.fromVersion).toBe(5);expect(ticket.toVersion).toBe(6)
+ expect(ticket.conversationId).toBe(ID1);expect(upgrade.proof.conversationId).toBe(ID1)
+ expect(calls.some(c=>c.mode==='approveController')).toBe(false);expect(await band.find({key:'shared-approve-controller'})).toBeDefined()
+ expect(await band.find({key:'shared-upgrade-store'})).toBeUndefined()
 })
 
 test('a specific approval panel click mints scoped evidence; opening the panel does not approve', {options:{sharedStorePreview:true,orcaCommand:'orca'}} as any, async($:any,on:any)=>{

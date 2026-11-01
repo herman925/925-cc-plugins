@@ -254,6 +254,19 @@ export async function createMachineRuntime(options = {}, dependencies = {}) {
       text(receiptId, 'receiptId'); await reconnect(); authorize(options.authorize, caller, 'readMachine', scope, { receiptId }, writer); await inspect();
       return snapshot(rowNumber((await db.query('SELECT * FROM local_observation_receipts WHERE receipt_id=:id', { id: receiptId }))[0])) ?? null;
     }),
+    readPendingInbox: ({memberId,sessionId,bindingGeneration,caller})=>enqueue(async()=>{
+      text(memberId,'memberId');text(sessionId,'sessionId');integer(bindingGeneration,'bindingGeneration',{min:1});
+      await reconnect();authorize(options.authorize,caller,'readMachine',scope,{memberId,sessionId,bindingGeneration,inbox:true},writer);await inspect();
+      await bound({memberId,sessionId,bindingGeneration});
+      // A verified resume of the same conversation/member may recover a read
+      // staged under its previous binding generation. Another member cannot.
+      const [row]=await db.query(`SELECT r.* FROM local_observation_receipts r
+        WHERE r.member_id=:member AND r.session_id=:session AND r.observation_kind='read'
+        AND r.receipt_id LIKE 'inbox-read-%' AND NOT EXISTS
+         (SELECT 1 FROM local_observation_receipts c WHERE c.receipt_id='context-'||r.receipt_id)
+        ORDER BY r.observed_at_ms,r.receipt_id LIMIT 1`,{member:memberId,session:sessionId});
+      return snapshot(rowNumber(row))??null;
+    }),
     getIdentity: ({ caller }) => enqueue(async () => { await reconnect(); authorize(options.authorize, caller, 'readMachine', scope, { identity: true }, writer); await inspect(); return identity; }),
     close: () => { const result = tail.then(async () => { if (!closed) { closed = true; await db.close(); } }); tail = result.catch(() => {}); return result; },
   });

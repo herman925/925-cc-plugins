@@ -1,0 +1,31 @@
+{
+  "node": "v22.13.0",
+  "sqlite": "3.47.2",
+  "schemaVersion": 6,
+  "projectId": "6f786293-1554-41bf-8ec9-c2df27037fb7",
+  "controllerCount": 0,
+  "backupVerified": true,
+  "originalRejectionPreserved": true,
+  "results": [
+    {
+      "label": "supersession second unique key",
+      "refused": true,
+      "message": "STORE_HISTORY_IMMUTABLE: Recorded task decisions and assignment returns are immutable."
+    },
+    {
+      "label": "accepted-task partial unique key",
+      "refused": true,
+      "message": "STORE_HISTORY_IMMUTABLE: Recorded task decisions and assignment returns are immutable."
+    }
+  ],
+  "guards": [
+    {
+      "name": "decision_gate_supersessions_immutable_replace",
+      "sql": "CREATE TRIGGER decision_gate_supersessions_immutable_replace BEFORE INSERT ON decision_gate_supersessions\nWHEN EXISTS (SELECT 1 FROM decision_gate_supersessions WHERE old_gate_id=NEW.old_gate_id OR new_gate_id=NEW.new_gate_id)\nBEGIN SELECT RAISE(ABORT, 'STORE_HISTORY_IMMUTABLE: Recorded task decisions and assignment returns are immutable.'); END"
+    },
+    {
+      "name": "task_acceptances_immutable_replace",
+      "sql": "CREATE TRIGGER task_acceptances_immutable_replace BEFORE INSERT ON task_acceptances\nWHEN EXISTS (SELECT 1 FROM task_acceptances WHERE assignment_id=NEW.assignment_id OR (task_id=NEW.task_id AND decision='accepted' AND NEW.decision='accepted'))\nBEGIN SELECT RAISE(ABORT, 'STORE_HISTORY_IMMUTABLE: Recorded task decisions and assignment returns are immutable.'); END"
+    }
+  ]
+}
