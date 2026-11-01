@@ -6,6 +6,20 @@ import { parseEnhanced, enhancePrompt, enhanceKeyEdit, actionLabel, asksUser, ba
 
 const SURFACES = ['terminal', 'desktop'] as const
 
+for(const bodyColumns of [undefined,NaN,Infinity,-1,0,16,33,80,10001])test(`render widths stay valid with bodyColumns=${String(bodyColumns)}`,async($,on)=>{
+ world(on)
+ await begin($)
+ await $.command.run(RUN('bars'))
+ await $.tool.call({tool:PLAN,steps:['A long progress label that fills the stage pill']})
+ const ui=await $.ui.mount({...BAND,surface:'terminal',props:{...BAND.props,bodyColumns}} as any)
+ expect(JSON.stringify(await ui.drawn())).toContain('Session Panel')
+ const check=async()=>{for(const box of await ui.findAll({type:'Box'})){const w=box.props.width;if(typeof w==='number'){expect(Number.isFinite(w)).toBe(true);expect(w).toBeGreaterThanOrEqual(0);expect(w).toBeLessThanOrEqual(10000)}}}
+ await check()
+ await ui.press({key:'settings'})
+ await check()
+ await ui.unmount()
+})
+
 const BAND = {
   plugin: 'session-panel',
   component: 'AbovePrompt',

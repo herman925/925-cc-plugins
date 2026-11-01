@@ -2,7 +2,7 @@
 
 Session Panel hides tool calls, diffs and command output while Claude works, and shows a calm step checklist above the prompt, with a Hide details / Show details button. It also holds a prompt enhancer, a list of the assumptions Claude states, and grouped settings. Made for people who do not read code.
 
-Version 0.3.65. The version is shown dim beside the band title, as ` v0.3.65`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails. This update recognizes available native question tools and keeps asynchronous questions pending until an answer, cancellation or closure.
+Version 0.3.66. The version is shown dim beside the band title, as ` v0.3.66`. It is read once per load from the plugin's own manifest, and nothing is shown if that read fails. This update keeps frame and progress widths valid when the host omits its column count or uses a narrow terminal. It uses the host viewport when available, otherwise a bounded fallback; a long progress label cannot create a negative name-column width. Native question-tool guidance and pending asynchronous questions are unchanged.
 
 Check it: `claude plugin validate session-panel` and `claude plugin test session-panel`.
 

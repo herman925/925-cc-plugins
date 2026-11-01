@@ -1252,7 +1252,8 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
     const color = (c: string): string | undefined => (isPlain ? undefined : c)
     // The whole mod sits in one rounded frame so it never blends into another mod's band. Inside it, `width` is the
     // room left after the two border cells and one cell of padding on each side.
-    const outer = e.props.bodyColumns
+    const reported = [e.props.bodyColumns,e.viewport?.columns].find(n=>typeof n==='number'&&Number.isFinite(n)&&n>=1)
+    const outer = reported===undefined?80:Math.min(10000,Math.floor(reported))
     const width = Math.max(20, outer - 4)
     const files = cl.changedFiles.length
     const elapsed = formatDuration((cl.finishedAt > 0 ? cl.finishedAt : now) - cl.startedAt)
@@ -1781,7 +1782,7 @@ export function registerSessionPanel(on: On, options: Record<string, unknown> = 
       const barW = Math.max(10, width - textBlock - (6 + 5) - 2)
       const rows: RenderChildren[] = items.map(it => (
         <Box key={`bar-${it.id}`} flexDirection="row">
-          <Box width={textBlock - pillW} flexShrink={0} flexDirection="row">
+          <Box width={Math.max(2,textBlock - pillW)} flexShrink={0} flexDirection="row">
             <Text color={color(it.bg)}>● </Text>
             <Text weight={(it.isLive) ? 'bold' : undefined} wrap="truncate">{shortName(it.name, Math.max(8, textBlock - 3 - pillW))}</Text>
           </Box>
