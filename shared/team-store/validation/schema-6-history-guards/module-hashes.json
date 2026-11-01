@@ -1,0 +1,128 @@
+[
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/api.mjs",
+    "sha256": "E10FE327EE70ED85B82AA2F1988F978F58156C4EDEFF1CE07D6605ABB1C9C19F",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/index.mjs",
+    "sha256": "8E06853CC12C5EB24A54A57A8C6B14686E2DC54F0E0F9E5003DF44147C3A8A3B",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/contract.mjs",
+    "sha256": "9D7A8321E68A2BDD840BA5B4E285EB5668B293219F2BB39CF4D57BAD2A308AA2",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/mod-native.mjs",
+    "sha256": "9E1824765DC072905D337257BAA0CD9F4C0C115E406E81E3169C574C511E5AEE",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/mod-bridge.mjs",
+    "sha256": "3D14DA775F651AF950B28D25BFA717C51F63A3AF5AE80983B149B0984546F3D5",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/api-domain.mjs",
+    "sha256": "4C3FFD2B8B1659219499253A7D32C3980E77D58DF915AD216F334BDBAE474612",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/authority.mjs",
+    "sha256": "B5603D07DCAEC5A8B0321C4FB07B3B3C6AB5C6FE657CE1C586F5CB56A30A3866",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/bootstrap.mjs",
+    "sha256": "CFDF9A82CC3C0C8436A5AF4A76D9AEB79101A7B12DBF8D00984CC6D9614A19CE",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/configuration.mjs",
+    "sha256": "53FDF0B2C7926AB078818912D6006D1022ADD94FAECC341F224866C80B3F7C8E",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/engines.mjs",
+    "sha256": "46112ED37D3C1599F29C393ECD4BE36F392165E5FC993196EE6E8E20976005E7",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/errors.mjs",
+    "sha256": "F527D6566EA73FFE0427C1C3CC9D0CEB21314F78534B012EDA50483DD6056741",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/gates.mjs",
+    "sha256": "867AB6C6ACA64D04DB6B71D48C2A31BD43522AE39D6F1EADBA0458A655064D71",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/inbox-journal.mjs",
+    "sha256": "C869633551BE747868BA70A29E782E32E25C92201507FD6DB621A82CDE42AD3B",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/machine-store.mjs",
+    "sha256": "2C8647878F67DFE3925F14FA451DCFE09098CFDA3D8A1DA041D46D538A8D68E5",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/mailbox.mjs",
+    "sha256": "435DCB4AC30E2090ADCACB8AC5DDB8F216C0E942B3F5719928DED0BCBDB96DEB",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/schema5-contract.mjs",
+    "sha256": "A77E2BD1F8D679D3E3A80F9B3EB33D37D1FB00047EC6FF838E86E1E06429ABF4",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/sqlite-worker.mjs",
+    "sha256": "30DC8E9EDB2DEA8C2809544F5AD1CA0B38A70DCD4DC4C698067363A7A5CB0BA8",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/store.mjs",
+    "sha256": "E11F1345C89C3E53260F6B55F397050936C66AFD6C2A0B76B692D70466B834A7",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/upgrade.mjs",
+    "sha256": "722F27E64654C32254C87CED4D480BBC8B4450DE9FCE68E331F6877E129D1129",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/validation.mjs",
+    "sha256": "2FE8A572918A699A2478AD93908D65820954D132A326EB7668527D99308B5019",
+    "packagedMatches": true
+  },
+  {
+    "nativeHistoryFixtureMatches": true,
+    "source": "shared/team-store/src/writers.mjs",
+    "sha256": "19E4509E9A7506328630D83A0E1AED87AAF5D686B6C534E5B364DD80CDEB9047",
+    "packagedMatches": true
+  }
+]

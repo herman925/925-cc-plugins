@@ -30,4 +30,4 @@ Inspect the assignment/team to obtain gate generations and current status. Prese
 
 ## Still outstanding
 
-Question/answer deadline transitions, broader scheduling, legacy file migration, hosted Mod configuration, and Orca-plugin integration remain separate work. No whole-app restart, Docker or autonomous model acceptance is established by the current bounded native fixture. Node 22.13 has separate two-engine and authenticated bridge evidence in [the gate validation report](VALIDATION-GATES.md). Historical validation reports describe their exact checkpoint, not future changes.
+Question/answer deadline transitions, broader scheduling, legacy file migration, hosted Mod configuration, and Orca-plugin integration remain separate work. No whole-app restart, Docker or autonomous model acceptance is established by the current bounded native fixture. Node 22.13 has two-engine, authenticated bridge and fresh native-upgrade evidence in [the gate report](VALIDATION-GATES.md) and [the final history-guard follow-up](VALIDATION-HISTORY-GUARDS.md). Historical validation reports describe their exact checkpoint, not future changes.

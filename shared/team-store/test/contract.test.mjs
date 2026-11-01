@@ -95,6 +95,20 @@ for (const engine of ['sqlite', 'postgres']) {
       assert.equal((await db.query("SELECT status FROM tasks WHERE task_id='task'"))[0].status, 'blocked');
     });
 
+    test('replacement conflicts on every history unique key preserve the original rows',async t=>{
+      const {db}=await seeded(t,engine);
+      await db.exec(`INSERT INTO decision_gates (gate_id,task_id,question) VALUES ('old-a','task','A?'),('old-b','task','B?'),('new','task','New?');
+        INSERT INTO decision_gate_supersessions VALUES ('old-a','new','task','head',1000)`);
+      const replace=engine==='sqlite'?"INSERT OR REPLACE INTO decision_gate_supersessions VALUES ('old-b','new','task','head',1000)":"INSERT INTO decision_gate_supersessions VALUES ('old-b','new','task','head',1000) ON CONFLICT (new_gate_id) DO UPDATE SET old_gate_id=EXCLUDED.old_gate_id";
+      await assert.rejects(db.exec(replace),/STORE_HISTORY_IMMUTABLE/);
+      assert.equal((await db.query('SELECT old_gate_id FROM decision_gate_supersessions'))[0].old_gate_id,'old-a');
+      await db.exec(`INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms) VALUES ('first','other-task','worker',1000,'head',2000);
+        INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,previous_assignment_id) VALUES ('next','other-task','worker',1000,'head',2000,'first');
+        INSERT INTO task_acceptances VALUES ('other-task','first','head','accepted','Original accepted history',1000)`);
+      const acceptance=engine==='sqlite'?"INSERT OR REPLACE INTO task_acceptances VALUES ('other-task','next','head','accepted','Overwrite by partial unique key',1000)":"INSERT INTO task_acceptances VALUES ('other-task','next','head','accepted','Overwrite by partial unique key',1000) ON CONFLICT (task_id) WHERE decision='accepted' DO UPDATE SET assignment_id=EXCLUDED.assignment_id";
+      await assert.rejects(db.exec(acceptance),/STORE_HISTORY_IMMUTABLE/);
+      assert.equal((await db.query('SELECT reason FROM task_acceptances'))[0].reason,'Original accepted history');
+    });
     test('independent gate answers have one conditional winner and cannot rewrite its resolution',async t=>{
       const {db,connect}=await seeded(t,engine),other=await connect();
       await db.exec("INSERT INTO decision_gates (gate_id,task_id,question,options_json) VALUES ('race','task','Choose','[\"A\",\"B\"]')");

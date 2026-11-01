@@ -396,12 +396,18 @@ CREATE TRIGGER messages_immutable_truncate BEFORE TRUNCATE ON messages FOR EACH 
 }
 
 export function historyGuardsFor(engine) {
- const tables=[['task_acceptances','assignment_id'],['assignment_returns','assignment_id'],['decision_gate_supersessions','old_gate_id']];
+ // SQLite REPLACE may evict a conflicting row without running its DELETE
+ // trigger. Cover every unique key, including the accepted-task partial index.
+ const tables=[
+  ['task_acceptances',"assignment_id=NEW.assignment_id OR (task_id=NEW.task_id AND decision='accepted' AND NEW.decision='accepted')"],
+  ['assignment_returns','assignment_id=NEW.assignment_id'],
+  ['decision_gate_supersessions','old_gate_id=NEW.old_gate_id OR new_gate_id=NEW.new_gate_id'],
+ ];
  if(engine==='sqlite')return tables.map(([name,key])=>`
 CREATE TRIGGER ${name}_immutable_update BEFORE UPDATE ON ${name} BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;
 CREATE TRIGGER ${name}_immutable_delete BEFORE DELETE ON ${name} BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;
 CREATE TRIGGER ${name}_immutable_replace BEFORE INSERT ON ${name}
-WHEN EXISTS (SELECT 1 FROM ${name} WHERE ${key}=NEW.${key})
+WHEN EXISTS (SELECT 1 FROM ${name} WHERE ${key})
 BEGIN SELECT RAISE(ABORT, '${HISTORY_IMMUTABLE}'); END;`).join('\n');
  if(engine==='postgres')return `
 CREATE FUNCTION reject_lifecycle_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $guard$

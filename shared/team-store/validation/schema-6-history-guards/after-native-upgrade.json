@@ -1,0 +1,84 @@
+{
+  "store_metadata": [
+    {
+      "singleton": 1,
+      "format": "team-orchestrator-shared",
+      "schema_version": 6
+    }
+  ],
+  "project_identity": [
+    {
+      "singleton": 1,
+      "project_id": "6f786293-1554-41bf-8ec9-c2df27037fb7",
+      "minimum_writer_protocol": 1
+    }
+  ],
+  "controller_approvals": [],
+  "member_bindings": [],
+  "tasks": [
+    {
+      "task_id": "native-task",
+      "run_id": "native-run",
+      "status": "blocked",
+      "outcome": null
+    }
+  ],
+  "assignments": [
+    {
+      "assignment_id": "native-original",
+      "task_id": "native-task",
+      "member_id": "worker",
+      "admitted_at_ms": 1000,
+      "assigned_by_member_id": "head",
+      "pickup_deadline_ms": 2000,
+      "pickup_observed_at_ms": 1500,
+      "pickup_expired_at_ms": null,
+      "returned_to_member_id": null,
+      "previous_assignment_id": null,
+      "task_window_minutes": null,
+      "task_deadline_ms": null
+    }
+  ],
+  "assignment_attempts": [
+    {
+      "assignment_id": "native-original",
+      "generation": 3,
+      "outcome": "succeeded",
+      "summary": "Original result",
+      "evidence": "Original evidence",
+      "reported_at_ms": 2500
+    }
+  ],
+  "task_acceptances": [
+    {
+      "task_id": "native-task",
+      "assignment_id": "native-original",
+      "accepted_by_member_id": "head",
+      "decision": "rejected",
+      "reason": "Original evidence was rejected; preserve this history",
+      "decided_at_ms": 3000
+    }
+  ],
+  "assignment_returns": [
+    {
+      "assignment_id": "native-original",
+      "returned_to_member_id": "head",
+      "reason": "rejected",
+      "returned_at_ms": 3000
+    }
+  ],
+  "schema_migrations": [
+    {
+      "operation_id": "upgrade-58f0c98b5a14b89ece49f24ac9d40732",
+      "from_version": 5,
+      "to_version": 6,
+      "backup_machine_id": "Herman-5090",
+      "backup_path": "C:\\Users\\Herman\\.claude\\team-orchestrator\\6f786293-1554-41bf-8ec9-c2df27037fb7\\backups\\schema-5-0224dc06-81c6-4da5-a5d4-18ac3ee23ffc.json",
+      "applied_at_ms": 1793547877923
+    }
+  ],
+  "messages": [],
+  "deliveries": [],
+  "decision_gates": [],
+  "decision_gate_supersessions": []
+}

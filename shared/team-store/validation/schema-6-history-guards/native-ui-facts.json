@@ -1,0 +1,18 @@
+[
+  "2026-11-01T15:44:02.298Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:44:02.660Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:44:32.714Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:44:32.742Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"close\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:33.124Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"tab-team\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:33.520Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"tab-settings\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:33.874Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"shared-preview-on\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:34.477Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"shared-preview-off\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:34.736Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"shared-refresh\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:35.131Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_FOCUS {\"element\":\"shared-upgrade-store\",\"plugin\":\"team-orchestrator\",\"origin\":{\"kind\":\"person\"}}",
+  "2026-11-01T15:44:37.418Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:44:38.923Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:45:01.949Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:45:31.949Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:46:01.767Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}",
+  "2026-11-01T15:46:31.696Z [DEBUG] [runtime-verifier] $.ui.log (to debug): NATIVE_BRIDGE_EXE {\"exe\":\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-node2213-c06b4180a1e54339b4dbd103b2417bb0\\\\node-v22.13.0-win-x64\\\\node.exe\"}"
+]
