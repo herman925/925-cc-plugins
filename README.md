@@ -4,7 +4,7 @@ Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the
 
 ## Codex: 925 Team Orchestrator
 
-[`team-orchestration-925` 0.1.1](team-orchestration-925/README.md) lets an Orca-hosted Windows Codex session create and edit teams, connect existing Claude/Codex sessions, inspect status and use durable meetings through the shared API. An active Claude session is not required. Install through either route:
+[`team-orchestration-925` 0.1.2](team-orchestration-925/README.md) lets an Orca-hosted Windows Codex session create and edit teams, connect existing Claude/Codex sessions, inspect status and use durable meetings through the shared API. An active Claude session is not required. Install through either route:
 
 ```text
 npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
@@ -16,6 +16,8 @@ codex plugin add team-orchestration-925@herman925-codex
 ```
 
 Type `$team-orchestration-925` in Codex and select **925 Team Orchestrator**. Plugin installs register `team-orchestration-925:team-orchestration-925`; repository skill installs use the short name. First use previews project-local MCP/hook setup, followed by reconnect and native hook review. Team creation and edits require native confirmation. See [supported operations and current acceptance limits](team-orchestration-925/README.md).
+
+Plugin version 0.1.2 also offers direct skills: `$team-orchestration-925:create`, `:edit`, `:connect`, `:status`, `:meeting` and `:setup` (each uses the full plugin prefix). They share one runtime and skip the general action menu.
 
 ## Claude Code mods
 

@@ -7,6 +7,8 @@ description: Create, edit and connect Team Orchestrator teams from Codex, inspec
 
 Use native management tools over the shared project store. This workflow does not require an active Claude session. Current native identity supports Windows Codex terminals hosted by Orca; Hermes and independent-host operation are not implemented.
 
+Direct plugin entry points are `:create`, `:edit`, `:connect`, `:status`, `:meeting` and `:setup` under `team-orchestration-925`. When an action skill loads this shared workflow, that branch is already selected; skip the general action menu and resolve these references/helpers from this skill's directory.
+
 If no action was supplied, show interactive choices: Create team, Edit team, Connect session, Status, Meetings, Setup/diagnose. Use an available native question tool with recommended choices first. If it is unavailable in this mode, use `shared_team_interview` with step `action` for the native menu, `team` or `member` for composition, or `change` for edits. Its replies are draft data, never permission grants. Ask one question at a time. An asynchronous pending response is not an answer: keep the workflow open using the host's wait/resume facilities, without a final reply or duplicate card, until the required answer arrives or is cancelled.
 
 Find tools by their suffix; installation may add a namespace. Start with `shared_team_status`. If tools are absent, read [setup](references/setup.md) and run the packaged setup helper's preview. Do not assume installing this skill installed or trusted its MCP/hook configuration.

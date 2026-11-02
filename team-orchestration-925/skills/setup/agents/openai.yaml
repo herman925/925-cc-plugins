@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Setup team connection"
+  short_description: "Set up or repair the project-local Team Orchestrator MCP con"
+  default_prompt: "Use $team-orchestration-925:setup to set up my project connection in this project."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Create team"
+  short_description: "Create a Team Orchestrator team from Codex. Use for team com"
+  default_prompt: "Use $team-orchestration-925:create to create my team in this project."

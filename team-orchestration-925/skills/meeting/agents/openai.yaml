@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Team meeting"
+  short_description: "Inspect or manage a durable Team Orchestrator meeting from C"
+  default_prompt: "Use $team-orchestration-925:meeting to work with my team meeting in this project."

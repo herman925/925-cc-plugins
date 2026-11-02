@@ -1,0 +1,60 @@
+{
+  "asset": "C:/Users/Herman/AppData/Local/Programs/orca/resources/app.asar.unpacked/out/renderer/assets/OnboardingInlineCommandTerminal-DbQHS2Nv.js",
+  "assetSha256": "d8a83fe09a520f7b9fac33e4d1324258d04a39d0fa9773310249ebae5992b4b5",
+  "parserName": "NF",
+  "parser": "function NF(e){let t=e.match(jF)?.[1]??null;if(!t)return t;let n=t.match(/^[\\w:-]*/)?.[0]??``;return n===``||n===`_`||/^[-\\d]/.test(n)||!/[a-z]/.test(n)&&MF.has(n.toUpperCase())?null:t}",
+  "cases": [
+    {
+      "input": "$925-to",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "input": "$925-to:925-to",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "input": "$team-orchestration-925",
+      "expected": "team-orchestration-925",
+      "actual": "team-orchestration-925"
+    },
+    {
+      "input": "$team-orchestration-925:team-orchestration-925",
+      "expected": "team-orchestration-925:team-orchestration-925",
+      "actual": "team-orchestration-925:team-orchestration-925"
+    },
+    {
+      "input": "$team-orchestration-925:create",
+      "expected": "team-orchestration-925:create",
+      "actual": "team-orchestration-925:create"
+    },
+    {
+      "input": "$team-orchestration-925:edit",
+      "expected": "team-orchestration-925:edit",
+      "actual": "team-orchestration-925:edit"
+    },
+    {
+      "input": "$team-orchestration-925:connect",
+      "expected": "team-orchestration-925:connect",
+      "actual": "team-orchestration-925:connect"
+    },
+    {
+      "input": "$team-orchestration-925:status",
+      "expected": "team-orchestration-925:status",
+      "actual": "team-orchestration-925:status"
+    },
+    {
+      "input": "$team-orchestration-925:meeting",
+      "expected": "team-orchestration-925:meeting",
+      "actual": "team-orchestration-925:meeting"
+    },
+    {
+      "input": "$team-orchestration-925:setup",
+      "expected": "team-orchestration-925:setup",
+      "actual": "team-orchestration-925:setup"
+    }
+  ],
+  "modelTurnsStarted": 0,
+  "passed": true
+}
