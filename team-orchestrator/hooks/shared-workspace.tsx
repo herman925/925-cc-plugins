@@ -1,3 +1,4 @@
+import {sharedMeetingsView} from './shared-meetings'
 import {atom,read,update} from 'claude-code'
 import {sharedCall} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
@@ -6,7 +7,7 @@ import {sharedQuestionsView} from './shared-questions'
 import {sharedMailView} from './shared-mail'
 import {USER_QUESTION_GUIDANCE} from './question-guidance'
 
-export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}
+export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string;cli?:'claude'|'codex'}
 type Pending={request:any;label:string}
 export type Workspace={scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:MemberDraft[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;memberChoice:string;taskChoice:string;about:boolean;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:Pending|null;retry:boolean;gateChoice:string;gateNote:string;gateDraft:{replaceId:string;question:string;options:string[]}|null}
 export type WorkspaceDependencies={enabled:boolean;node:string;orca:string;proof:Extract<SharedProof,{ok:true}>;controllerGeneration:number|null;revalidate:()=>Promise<SharedProof>;onNewTeam?:()=>Promise<void>}
@@ -55,7 +56,7 @@ async function action($:any,work:()=>Promise<void>){
 }
 async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  const command=pending.request.command
- const notify=['admitAssignment','retryAssignment','reportOutcome','resolveGate','askQuestion','answerQuestion'].includes(command.type)
+ const notify=/Meeting/.test(command.type)||['admitAssignment','retryAssignment','reportOutcome','resolveGate','askQuestion','answerQuestion'].includes(command.type)
  const patch:Partial<Workspace>={pending:null,retry:false,page:'home',notice:`${pending.label} confirmed.`,error:false}
  if(command.type==='createFreshTeam'){patch.teamId=command.teamId;patch.createdTeamId=command.teamId;patch.memberChoice='';patch.taskChoice='';patch.selectedAssignment='';patch.about=false;patch.notice='Team created. Launch a member or connect an existing session to start using tasks.'}
  if(command.type==='admitAssignment'){patch.selectedAssignment=command.assignmentId;patch.taskChoice=command.assignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null}
@@ -155,7 +156,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
    {snapshot&&<Box flexDirection="column">
     <Text dimColor>{members.length} members · {bindings.length} connected · {new Set(work.map((item:any)=>item.task.task_id)).size} tasks · {work.length} attempts</Text>
     {s.about&&snapshot.team.function_text&&<Text>{snapshot.team.function_text}</Text>}
-    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}{me&&button('workspace-inbox-tab',s.page==='inbox'?'● Inbox':'Inbox',async()=>edit('page','inbox'))}</Box>
+    <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}{me&&button('workspace-meetings-tab',s.page==='meetings'?'● Meetings':'Meetings',async()=>edit('page','meetings'))}{me&&button('workspace-inbox-tab',s.page==='inbox'?'● Inbox':'Inbox',async()=>edit('page','inbox'))}</Box>
+    {s.page==='meetings'&&me&&!pending&&await sharedMeetingsView($,ui,{scope:`${scope}:${s.teamId}`,me,snapshot,onRead:async(command:any)=>{const response=await request($,deps,{teamId:s.teamId,...command});if(!response.ok)throw Error(failure(response));return valueOf(response)},onCommand:async(command:any)=>{let failed:any,confirmed=false;await action($,async()=>{try{const current=await read($,state);await mutate($,deps,{...authority(current),...command},'Meeting');if((await read($,state)).pending)throw Error('Meeting change is unconfirmed. Check its receipt before continuing.');confirmed=true;await edit('page','meetings')}catch(error){failed=error;throw error}});if(failed)throw failed;if(!confirmed)throw Error('Another workspace action is still running. Try again when it finishes.')}})}
     {s.page==='inbox'&&me&&!pending&&<Box flexDirection="column">{await sharedMailView($,ui,deps,members)}{await sharedQuestionsView($,ui,{scope,me,snapshot,onCommand:async(command:any)=>action($,async()=>{const current=await read($,state);await mutate($,deps,{...authority(current),...command},command.type==='askQuestion'?'Question':command.type==='answerQuestion'?'Answer':'Notice');await edit('page','inbox')})})}</Box>}
     {s.page==='home'&&members.length>0&&<Box flexDirection="column">
      {memberMissing&&<Text color="yellow">The selected member is no longer visible. Refresh or choose a member to continue.</Text>}
@@ -166,7 +168,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
        <Text weight="bold">{m.name}{me?.member_id===m.member_id?' · You':''} · {m.role}</Text>
        <Text dimColor>{boss?`Reports to ${boss.name}`:'Team head'} · {binding?'Session linked':'Not connected'}</Text>
        <Box flexWrap="wrap" columnGap={1}>
-        {!!controller&&!binding&&!pending&&button(`workspace-launch-${m.member_id}`,(snapshot.launches??[]).some((l:any)=>l.member_id===m.member_id)?'Check launch':'Launch session',()=>action($,async()=>{
+        {!!controller&&m.cli!=='codex'&&!binding&&!pending&&button(`workspace-launch-${m.member_id}`,(snapshot.launches??[]).some((l:any)=>l.member_id===m.member_id)?'Check launch':'Launch session',()=>action($,async()=>{
          const current=await read($,state),member=current.snapshot.members.find((x:any)=>x.member_id===m.member_id)
          const response=await sharedCall($,await proofNow(deps),{operationId:`launch-reserve-${uid()}`,command:{type:'reserveLaunch',teamId:current.teamId,memberId:member.member_id,launchId:uid(),expectedConfigVersion:current.snapshot.team.config_version,expectedMemberGeneration:member.generation,expectedControllerGeneration:controller}},{...deps,mode:'launchMember'})
          if(!response.ok)throw Error(failure(response))
@@ -179,7 +181,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
          await set($,{memberChoice:m.member_id,bindingMember:m.member_id,sessions:[],sessionChoice:'0',page:'bind'})
          const response=await sharedCall($,await proofNow(deps),{},{...deps,mode:'listSessions'})
          if(!response.ok)throw Error(failure(response))
-         await set($,{sessions:response.result?.sessions??[]})
+         const member=(await read($,state)).snapshot?.members.find((x:any)=>x.member_id===m.member_id)
+         await set($,{sessions:(response.result?.sessions??[]).filter((candidate:any)=>(candidate.provider||'claude')===(member?.cli||'claude'))})
         }),!binding)}
         {!pending&&binding&&direct.some((d:any)=>d.member_id===m.member_id)&&button(`workspace-assign-${m.member_id}`,'Assign task',async()=>set($,{memberChoice:m.member_id,page:'assign',assignmentMember:m.member_id,instructions:'',expectedResult:''}),true)}
        </Box>
@@ -189,8 +192,9 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
     {s.page==='bind'&&!pending&&!members.some((m:any)=>m.member_id===s.bindingMember)&&<Box flexDirection="column"><Text color="yellow">The selected member is no longer visible.</Text>{button('workspace-bind-cancel','Back to Members',async()=>edit('page','home'))}</Box>}
     {s.page==='bind'&&!pending&&members.some((m:any)=>m.member_id===s.bindingMember)&&<Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
      <Text weight="bold">Bind {members.find((m:any)=>m.member_id===s.bindingMember)?.name}</Text>
-     <Text dimColor>Choose a verified local Claude session, then Connect selected session. No session is launched or messaged.</Text>
-     {!s.sessions.length&&<Text color="yellow">No eligible sessions found. The session needs an explicit native Claude conversation association. Refresh the workspace and try again after it is available.</Text>}
+     {members.find((m:any)=>m.member_id===s.bindingMember)?.cli==='codex'&&<Text color="yellow">Codex preview: configure and trust its team permission hook before connecting.</Text>}
+     <Text dimColor>Choose a verified local Claude or Codex session, then Connect selected session. No session is launched or messaged.</Text>
+     {!s.sessions.length&&<Text color="yellow">No eligible sessions found. The session needs an explicit native provider conversation association. Refresh the workspace and try again after it is available.</Text>}
      {s.sessions.length>0&&<Box flexDirection="column">
       <Select key="workspace-session-select" label="Session " value={s.sessionChoice||'0'} options={s.sessions.map((session:any,i:number)=>({value:String(i),label:workspaceLine(session.label||`Session ${i+1}`)}))} onSelect={async(value:string)=>set($,{sessionChoice:value})}/>
       {button('workspace-session-0','Connect selected session',()=>action($,async()=>{

@@ -52,19 +52,24 @@ export async function createModNative({orcaCommand=process.env.ORCA_CLI_COMMAND|
   // Only the privately supplied exact caller reference may use caller proof.
   // Reverify now; picker display state never becomes binding authority.
   const current=await verify(callerReference,true);
-  return referenceKeys.every(key=>input[key]===callerReference[key])?current:verify(input);
+  if(referenceKeys.every(key=>input[key]===callerReference[key]))return current;
+  try{return await verify(input);}catch(error){
+   // The API still checks the configured member CLI. The host must explicitly
+   // prove a Codex conversation; a failed Claude proof is never an assumed match.
+   try{return (await host.verifyTerminal(input,'codex')).actor;}catch{throw error;}
+  }
  };
  const listTargets=async input=>{
   const caller=await verify(input,true);
   const response=await rpc('session.tabs.list',{worktree:caller.contextId.startsWith('folder:')?caller.contextId:`id:${caller.contextId}`});
-  const sessions=[{reference:Object.fromEntries(referenceKeys.map(key=>[key,input[key]])),label:'This verified conversation'}];
+  const sessions=[{reference:Object.fromEntries(referenceKeys.map(key=>[key,input[key]])),provider:'claude',label:'This verified conversation'}];
   const seen=new Set([JSON.stringify(referenceKeys.map(key=>input[key]))]);
   for(const tab of response.tabs??[]) {
    const status=tab.agentStatus;
-   if(tab.type!=='terminal'||status?.agentType!=='claude'||typeof status.providerSession?.id!=='string'||typeof status.terminalHandle!=='string')continue;
+   if(tab.type!=='terminal'||!['claude','codex'].includes(status?.agentType)||typeof status.providerSession?.id!=='string'||typeof status.terminalHandle!=='string')continue;
    const reference={projectRoot:input.projectRoot,conversationId:status.providerSession.id,terminalHandle:status.terminalHandle,contextId:caller.contextId};
    const key=JSON.stringify(referenceKeys.map(field=>reference[field]));if(seen.has(key))continue;
-   try{await verify(reference);sessions.push({reference,label:typeof tab.title==='string'?tab.title:status.terminalHandle});seen.add(key);}catch{/* An unverifiable candidate is not a binding choice. */}
+   try{if(status.agentType==='claude')await verify(reference);else await host.verifyTerminal(reference,'codex');sessions.push({reference,provider:status.agentType,label:typeof tab.title==='string'?tab.title:status.terminalHandle});seen.add(key);}catch{/* An unverifiable candidate is not a binding choice. */}
   }
   return sessions;
  };

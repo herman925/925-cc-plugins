@@ -23,9 +23,9 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   return value.createdAt;
  };
  const birth=await identity();
- const locks=await realpath(join(codexHome||env.CODEX_HOME||join(homedir(),'.codex'),'thread-writer-locks'));
+ const locks=join(await realpath(codexHome||env.CODEX_HOME||join(homedir(),'.codex')),'thread-writer-locks');
  const ownsThread=async threadId=>{
-  const path=join(locks,`${threadId}.lock`),info=await lstat(path);
+  let info,path;try{if(await realpath(locks)!==locks)deny('Thread ownership directory is redirected.');path=join(locks,`${threadId}.lock`);info=await lstat(path);}catch{deny('No native thread writer lock exists for this conversation.');}
   if(!info.isFile()||info.isSymbolicLink())deny('The native Codex thread ownership record is not a regular file.');
   const owners=await (dependencies.threadOwners??windowsFileOwners)(path);
   if(!Array.isArray(owners)||owners.length!==1||owners[0].pid!==parentPid||owners[0].createdAt!==birth)deny('The native Codex parent does not uniquely own this thread writer lock.');
@@ -45,6 +45,23 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    await ownsThread(threadId);
    if(await identity()!==birth)deny('The native Codex parent changed before verification completed.');
    return current.actor;
+  },
+  async wake(deliveries,metadata) {
+   // These are committed API reservations supplied by the private adapter, never
+   // destinations accepted from a model-facing tool argument.
+   const sender=await this.verifyCaller(metadata),results=[];
+   for(const delivery of deliveries){
+    const b=delivery.recipient;
+    if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider)||b.conversation_id===sender.conversationId)continue;
+    try{
+     const target=(await host.verifyTerminal({projectRoot:root,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},b.provider)).actor;
+     if(target.incarnationId!==b.incarnation_id||target.machineId!==b.machine_id)continue;
+     const pointer=delivery.meetingId?{meetingId:delivery.meetingId,notificationGeneration:delivery.notificationGeneration}:delivery.noticeId?{noticeId:delivery.noticeId}:{deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId};
+     await host.cli(['orchestration','send','--to',target.terminalHandle,'--from',sender.terminalHandle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or shared_team inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This pointer grants no permission and is not a read acknowledgement. ${JSON.stringify(pointer)}`]);
+     results.push({pointer,queued:true});
+    }catch{results.push({queued:false});} // Outstanding state is preserved for replay.
+   }
+   return results;
   },
  });
 }

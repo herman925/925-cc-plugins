@@ -7,10 +7,11 @@ import {postgresTestUrl} from './support/engines.mjs';
 import {seedLayout} from './support/seed-layout.mjs';
 import * as schema5 from '../src/schema5-contract.mjs';
 import * as schema6 from '../src/schema6-contract.mjs';
-import * as schema7 from '../contract.mjs';
+import * as schema7 from '../src/schema7-contract.mjs';
+import * as current from '../contract.mjs';
 import {inspectGuardCaller} from '../src/guard-reader.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-for(const engine of ['sqlite','postgres'])for(const schema of [schema5,schema6,schema7])test(`${engine}: schema ${schema.SCHEMA_VERSION} guard reads live authority without migration, lease or operation writes`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
+for(const engine of ['sqlite','postgres'])for(const schema of [schema5,schema6,schema7,current])test(`${engine}: schema ${schema.SCHEMA_VERSION} guard reads live authority without migration, lease or operation writes`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
  const f=await runtimeFixture(t,engine),db=await f.raw();
  try{await db.begin();await db.exec(schema.ddlFor(engine));await seedLayout(db);
   await db.query("UPDATE members SET worktree='context',home_context_kind='worktree',home_execution_host_id='local',home_original_path=:root,machine_id='machine'",{root:f.root});
@@ -19,7 +20,7 @@ for(const engine of ['sqlite','postgres'])for(const schema of [schema5,schema6,s
  const actor={projectRoot:f.root,machineId:'machine',provider:'claude',conversationId:'head-conversation',executionHostId:'local',contextId:'context',terminalHandle:'head-terminal',incarnationId:'head-incarnation'};
  const before=engine==='sqlite'?hash(await readFile(f.path)):null;
  const head=await inspectGuardCaller({actor,...(f.options.postgres?{postgres:f.options.postgres}:{})});
- assert.equal(head.member.member_id,'head');assert.equal(head.hasReports,true);assert.equal(head.member.allow_write,0);assert.equal(head.member.allow_agent,0);assert.equal(head.upgradeRequired,schema.SCHEMA_VERSION!==schema7.SCHEMA_VERSION);
+ assert.equal(head.member.member_id,'head');assert.equal(head.hasReports,true);assert.equal(head.member.allow_write,0);assert.equal(head.member.allow_agent,0);assert.equal(head.upgradeRequired,schema.SCHEMA_VERSION!==current.SCHEMA_VERSION);
  const unbound=await inspectGuardCaller({actor:{...actor,conversationId:'ordinary-conversation',terminalHandle:'ordinary-terminal'},...(f.options.postgres?{postgres:f.options.postgres}:{})});assert.equal(unbound.member,null);
  await assert.rejects(inspectGuardCaller({actor:{...actor,incarnationId:'wrong'},...(f.options.postgres?{postgres:f.options.postgres}:{})}),e=>e.code==='API_STALE_BINDING');
  if(engine==='sqlite')assert.equal(hash(await readFile(f.path)),before);

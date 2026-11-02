@@ -12,11 +12,11 @@ for(const engine of ['sqlite','postgres'])test(`${engine}: explicit schema 6 upd
  try{await db.begin();await db.exec(legacy.ddlFor(engine));await seedLayout(db);await db.commit();}finally{await db.close();}
  const options={...f.options,projectRoot:f.root,machineId:'machine',writer:{client:'team-orchestrator',version:'0.5.52'},operationId:'upgrade6',backupRoot:join(f.root,'backups'),caller:{principalId:'user-action'},authorize:()=>true};
  await assert.rejects(openTeamStore({...options,create:false}),e=>e.code==='STORE_VERSION_UNSUPPORTED');
- const receipt=await upgradeTeamStore(options);assert.equal(receipt.fromVersion,6);assert.equal(receipt.toVersion,7);
+ const receipt=await upgradeTeamStore(options);assert.equal(receipt.fromVersion,6);assert.equal(receipt.toVersion,8);
  const backup=JSON.parse(await readFile(receipt.backupPath,'utf8'));assert.equal(backup.schemaVersion,6);assert.equal(backup.schemaSql,legacy.ddlFor(engine));assert.equal(backup.tables.members.length,6);
  assert.deepEqual(await upgradeTeamStore(options),receipt);
  const check=await f.raw();try{
-  assert.equal(Number((await check.query('SELECT schema_version FROM store_metadata'))[0].schema_version),7);
+  assert.equal(Number((await check.query('SELECT schema_version FROM store_metadata'))[0].schema_version),8);
   assert.equal((await check.query('SELECT * FROM members')).length,6);
   await check.begin();
   await check.query("INSERT INTO controller_approvals VALUES ('c','machine','claude','conversation',1,1,0)");

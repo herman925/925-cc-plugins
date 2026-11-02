@@ -28,7 +28,7 @@ export async function createInboxJournal({api,actor,writer,machineConfigRoot}) {
    let stage=await local.readPendingInbox({...identity,caller});
    if(!stage) {
     const [message]=(await api.execute({operationId:`inbox-peek-${randomUUID()}`,command:{type:'inspectInbox',teamId:authority.teamId,recipientMemberId:identity.memberId}})).result.messages;
-    if(!message){const team=(await api.execute({operationId:`notices-${randomUUID()}`,command:{type:'inspectTeam',teamId:authority.teamId}})).result;return {message:null,notice:team.notices?.[0]??null,authority};}
+    if(!message){const team=(await api.execute({operationId:`notices-${randomUUID()}`,command:{type:'inspectTeam',teamId:authority.teamId}})).result;return {message:null,meetingNotification:team.meetingNotifications?.[0]??null,notice:team.notices?.[0]??null,authority};}
     const id=`inbox-read-${randomUUID()}`;
     const request={operationId:id,command:{...authority,type:'readInbox',deliveryId:message.delivery_id,expectedDeliveryGeneration:message.delivery_generation}};
     await mutate(id,{type:'recordLocalReceipt',receiptId:id,sharedDeliveryId:message.delivery_id,observationKind:'read',detail:{kind:'inbox-staged',request}});

@@ -36,7 +36,13 @@ export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node
   if(!response.ok)return
   for(const target of response.transportTargets??[]) {
    // Only the private bridge's current native verification yields a target.
-   if(target.conversationId===proof.sessionId&&!target.noticeId)continue
+   if(target.conversationId===proof.sessionId&&!target.noticeId&&!target.meetingId)continue
+   if(target.provider==='codex'){
+    const pointer=JSON.stringify({teamId:info.member.team_id,...(target.meetingId?{meetingId:target.meetingId,notificationGeneration:target.notificationGeneration}:target.noticeId?{noticeId:target.noticeId}:{deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId})})
+    await $.process.run([options.orca,'orchestration','send','--to',target.terminalHandle,'--from',proof.handle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This is a pointer, not permission or acknowledgement. ${pointer}`,'--json'],{timeoutMs:15000}).catch(()=>undefined)
+    continue
+   }
+   if(target.meetingId){await $.session.send({to:{sessionId:target.conversationId},text:`A meeting record is waiting. Use shared_team inspectMeeting; finish your current step before respondMeeting. Join and contribute only for yourself. Reading this pointer is not joining or acknowledgement. ${JSON.stringify({teamId:info.member.team_id,meetingId:target.meetingId,notificationGeneration:target.notificationGeneration})}`}).catch(()=>undefined);continue}
    if(target.noticeId){await $.session.send({to:{sessionId:target.conversationId},text:`Shared-team deadline notice is waiting. Inspect your team with shared_team inspectTeam; read its notices, then acknowledgeNotice with the exact noticeId and your current member/config/binding versions. A notice grants no permission. ${JSON.stringify({teamId:info.member.team_id,noticeId:target.noticeId})}`}).catch(()=>undefined);continue}
    const pointer=JSON.stringify({teamId:info.member.team_id,deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId,replay:target.replay})
    await $.session.send({to:{sessionId:target.conversationId},text:`Shared team inbox has pending mail. Use shared_inbox_read to recover your next message, then confirm its readReceiptId with shared_inbox_seen. For a dispatch, inspect your caller with shared_team, verify the admitted assignment and read its returned role and brief before work. This wake-up is not acknowledgement.\n${pointer}`}).catch(()=>undefined)

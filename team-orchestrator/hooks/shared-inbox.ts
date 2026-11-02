@@ -7,6 +7,7 @@ export async function sharedInboxContext($:any,proof:SharedProof,options:{node:s
  reading=true
  try {
   const response=await sharedCall($,proof,{}, {...options,mode:'inboxPoll'})
+  if(response.ok&&response.result?.meetingNotification)return `Shared meeting notification. Inspect this meeting with shared_team inspectMeeting. Finish your current step before respondMeeting; respond only for yourself. Reading is not joining or contributing. After inspection, acknowledgeMeetingNotification with its generation as notificationGeneration, the current expectedMeetingGeneration and your current member/config/binding fields.\n${JSON.stringify({meetingNotification:response.result.meetingNotification,authority:response.result.authority})}`
   if(response.ok&&response.result?.notice)return `Shared-team deadline notice. Read this system event, then use shared_team acknowledgeNotice with noticeId and these current authority fields. This is an observer event, not a worker outcome or permission grant.\n${JSON.stringify({notice:response.result.notice,authority:response.result.authority})}`
   const message=response.ok?response.result?.message:null
   if(!message||!response.result?.readReceiptId)return undefined

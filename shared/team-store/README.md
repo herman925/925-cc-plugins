@@ -1,5 +1,7 @@
 # Shared team-store contract and adapter
 
+**Current: schema 8 / Mod 0.5.55.** [Durable meeting behavior](SCHEMA-8-MEETINGS.md), [native Codex preview](../../team-orchestrator/docs/native-codex.md), and [three-pass validation](VALIDATION-NATIVE-MEETINGS.md). The schema-7 and earlier sections below are historical checkpoints.
+
 **Schema 7 / Mod 0.5.52:** [bounded questions, deadline notices and fresh member launch](SCHEMA-7-QUESTIONS-LAUNCH.md). Historical schema-6 validation below remains a checkpoint, not full acceptance of the newer runtime.
 
 **Mod 0.5.51 runtime preview:** see [the schema-6 runtime](SCHEMA-6-RUNTIME.md) for durable inbox, retry history, explicit update, gates and deadline behavior. The schema-5 and earlier descriptions below describe their historical foundation; they do not establish acceptance of the newer runtime.

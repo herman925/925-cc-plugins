@@ -1,0 +1,158 @@
+[
+  {
+    "path": "api.mjs",
+    "sha256": "641bb907722f06d56c36363b8fddef79032b7c6720145f0b300b96085a390cf3"
+  },
+  {
+    "path": "codex-mcp.mjs",
+    "sha256": "fcdcb4d770b16b0fa53b9305f801095225cc307b309c9b746cfabb8d34fece22"
+  },
+  {
+    "path": "codex-native.mjs",
+    "sha256": "c02c923b6bb660dd2faa40c14851a96b949d0262145028e015eda53e9bbc7a4f"
+  },
+  {
+    "path": "codex-setup.mjs",
+    "sha256": "90a9f509a782e199688e5dcdb7d7f3ff76240137bca11ab53c9d6989df4e18ca"
+  },
+  {
+    "path": "contract.mjs",
+    "sha256": "4dd6a29cf8a68139355b88227bf357d91150d99093d10f31f2bf60610ead3cf8"
+  },
+  {
+    "path": "index.mjs",
+    "sha256": "8e06853cc12c5eb24a54a57a8c6b14686e2dc54f0e0f9e5003df44147c3a8a3b"
+  },
+  {
+    "path": "mod-bridge.mjs",
+    "sha256": "8a9a8bc53e7564d3c23984b3de00121abaadc9ae0e20f7e381290d30709c51dd"
+  },
+  {
+    "path": "mod-native.mjs",
+    "sha256": "2a7ef745b589889d7331057f95e692539f19103241b1061184bcd63952b2f7ef"
+  },
+  {
+    "path": "src/api-catalogue.mjs",
+    "sha256": "006068b10853ffd2d76f8c03cbbf1da7c44cd3aa71e4699ee1b65585a3106262"
+  },
+  {
+    "path": "src/api-domain.mjs",
+    "sha256": "60a7c5598a28df85811af1592b7e6dd8ba25edd2a8cb5adca0920ead1fd9c608"
+  },
+  {
+    "path": "src/api-schema.mjs",
+    "sha256": "041a2ca3838c0e4f0f975e7b1cc28b81fdb879cb97699865e5b8253c60ccbc8b"
+  },
+  {
+    "path": "src/authority.mjs",
+    "sha256": "b5603d07dcaec5a8b0321c4fb07b3b3c6ab5c6fe657ce1c586f5cb56a30a3866"
+  },
+  {
+    "path": "src/bootstrap.mjs",
+    "sha256": "979fbef9cb23575d8ae58615e5a138c9ff69629fa71611727c908c7cd9861493"
+  },
+  {
+    "path": "src/codex-guard.mjs",
+    "sha256": "fee6dfc5186ed7ab63a273818517aec9fd1798834c31a9e226cc6bd5093011d9"
+  },
+  {
+    "path": "src/configuration.mjs",
+    "sha256": "53fdf0b2c7926ab078818912d6006d1022add94faecc341f224866c80b3f7c8e"
+  },
+  {
+    "path": "src/engines.mjs",
+    "sha256": "46112ed37d3c1599f29c393ecd4be36f392165e5fc993196ee6e8e20976005e7"
+  },
+  {
+    "path": "src/errors.mjs",
+    "sha256": "f527d6566ea73ffe0427c1c3cc9d0ceb21314f78534b012eda50483dd6056741"
+  },
+  {
+    "path": "src/gates.mjs",
+    "sha256": "38da61b0fcd0881aa1fd79b90f6cccdf5fbf943757926a71c03ac406e8de7a5c"
+  },
+  {
+    "path": "src/guard-reader.mjs",
+    "sha256": "0a1fc230d18bae743596e7d15bc1ad4af4be76f7b23e15da863e6ec3b851c8a9"
+  },
+  {
+    "path": "src/inbox-journal.mjs",
+    "sha256": "0a6cd7b264d3c902f60e97f9f9f8aad33d58b10dcd628805342988fce7f15102"
+  },
+  {
+    "path": "src/launches.mjs",
+    "sha256": "38db37e2c7ce78a98a5c7e1cb351ed4f47660d738eca0cd7d9b97d53f643a491"
+  },
+  {
+    "path": "src/machine-store.mjs",
+    "sha256": "2c8647878f67dfe3925f14fa451dcfe09098cfda3d8a1da041d46d538a8d68e5"
+  },
+  {
+    "path": "src/mailbox.mjs",
+    "sha256": "7d3240ed9c9ee4d3e3f64ad7932a89d9a296a70381de67a7639cd6a89b992d02"
+  },
+  {
+    "path": "src/meeting-contract.mjs",
+    "sha256": "d48dc738d501acc99057e774a2964c0d00351cdb0c40284bb323017e38dfa3a0"
+  },
+  {
+    "path": "src/meeting-schema.mjs",
+    "sha256": "686db1801e5791a9910721300387e9409952abe7dbf3683642994bbda8bb6ba1"
+  },
+  {
+    "path": "src/meetings.mjs",
+    "sha256": "0f398df86189e46b6f47fb2b7ae2a1d919eecaa158d5a4103a0b9869b4e8b103"
+  },
+  {
+    "path": "src/mod-launch.mjs",
+    "sha256": "b02a6cdbb6f93f353bfd69c8c3b6f9602e9f5e54ca847cb15c4598ad84a01be1"
+  },
+  {
+    "path": "src/orca-host.mjs",
+    "sha256": "d49f5f75d6abb61eb42f26fcecc71e40af21d61890b26e6081f5f629a3519da7"
+  },
+  {
+    "path": "src/questions.mjs",
+    "sha256": "ed63da69df0a43672ac78320ae2bf756dc51d4a6695d5d07f34b5353c7e15ae1"
+  },
+  {
+    "path": "src/schema5-contract.mjs",
+    "sha256": "a77e2bd1f8d679d3e3a80f9b3eb33d37d1fb00047ec6ff838e86e1e06429abf4"
+  },
+  {
+    "path": "src/schema6-contract.mjs",
+    "sha256": "6a2c890ee716fcb7156e01358515e04cf4d7fe74975cb3f0eae3b2fd560cbae9"
+  },
+  {
+    "path": "src/schema7-contract.mjs",
+    "sha256": "36c8e5049bebaddbb919061b41040fcad9ffb52bcb1622a6d08a4b522bdbaa45"
+  },
+  {
+    "path": "src/sqlite-worker.mjs",
+    "sha256": "30dc8e9edb2dea8c2809544f5ad1ca0b38a70dcd4dc4c698067363a7a5cb0ba8"
+  },
+  {
+    "path": "src/store.mjs",
+    "sha256": "e11f1345c89c3e53260f6b55f397050936c66afd6c2a0b76b692d70466b834a7"
+  },
+  {
+    "path": "src/upgrade.mjs",
+    "sha256": "04e4641351a795bb1b9d538f2b0ac3cca0c3f1105d30367943e5efd0243f526a"
+  },
+  {
+    "path": "src/validation.mjs",
+    "sha256": "2fe8a572918a699a2478ad93908d65820954d132a326eb7668527d99308b5019"
+  },
+  {
+    "path": "src/windows-native.mjs",
+    "sha256": "7e900272f2d4cd2d52acdfee42dbcde6b5a654b1de8921cc3654b6889571f5f3"
+  },
+  {
+    "path": "src/windows-thread-owner.ps1",
+    "sha256": "63af3cbc60088ff7fb4d44a4a15ae25a2e7c73dadfd731ca2e9734f21e94cee2"
+  },
+  {
+    "path": "src/writers.mjs",
+    "sha256": "19e4509e9a7506328630d83a0e1aed87aaf5d686b6c534e5b364dd80cdeb9047"
+  }
+]
