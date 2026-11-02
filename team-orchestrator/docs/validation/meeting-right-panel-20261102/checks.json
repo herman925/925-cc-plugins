@@ -1,0 +1,52 @@
+{
+  "kind": "memory-only meeting prototype checks",
+  "productionMeeting": false,
+  "checks": [
+    {
+      "name": "A no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "B no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "C no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "review does not send invitations",
+      "passed": true
+    },
+    {
+      "name": "start with everyone waits for safe checkpoint",
+      "passed": true
+    },
+    {
+      "name": "required contribution blocks next topic",
+      "passed": true
+    },
+    {
+      "name": "outputs remain unpublished drafts",
+      "passed": true
+    },
+    {
+      "name": "deferred topic remains unresolved",
+      "passed": true
+    },
+    {
+      "name": "360px no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "no page errors",
+      "passed": true
+    },
+    {
+      "name": "no external requests or transports",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "network": []
+}

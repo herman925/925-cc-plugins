@@ -1,0 +1,29 @@
+✖ a delivered complete frame cannot lose to close while the final epoch read is pending (6.499ms)
+✔ complete native replies wait for post-response epoch validation even after the peer closes (305.4252ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 363.3611
+
+✖ failing tests:
+
+test at shared\team-store\test\orca-host.test.mjs:11:1
+✖ a delivered complete frame cannot lose to close while the final epoch read is pending (6.499ms)
+  Error [StoreError]: Native identity connection closed.
+      at refusal (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/errors.mjs:10:59)
+      at EventEmitter.<anonymous> (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/orca-host.mjs:38:40)
+      at EventEmitter.emit (node:events:514:20)
+      at socket.write (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/test/orca-host.test.mjs:17:165)
+      at EventEmitter.<anonymous> (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/orca-host.mjs:39:35)
+      at EventEmitter.emit (node:events:514:20)
+      at file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/test/orca-host.test.mjs:18:29
+      at node:internal/process/task_queues:158:7
+      at AsyncResource.runInAsyncScope (node:async_hooks:226:14)
+      at AsyncResource.runMicrotask (node:internal/process/task_queues:155:8) {
+    code: 'API_NATIVE_UNVERIFIED',
+    details: {}
+  }

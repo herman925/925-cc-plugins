@@ -47,7 +47,7 @@ const commandSchema={type:'object',additionalProperties:false,properties:{
  assignmentId:{type:['string','null']},
  options:{type:'array',minItems:2,uniqueItems:true,items:stringField},
  expectedBindingGeneration:{type:'integer',minimum:0},outcome:{type:'string',enum:['succeeded','failed']},decision:{type:'string',enum:['accepted','rejected']},
- members:{type:'array',items:{type:'object',additionalProperties:false,properties:{memberId:stringField,name:stringField,bossMemberId:{type:['string','null']},role:stringField,officialText:stringField},required:['memberId','name','bossMemberId','role','officialText']}},
+ members:{type:'array',items:{type:'object',additionalProperties:false,properties:{memberId:stringField,name:stringField,bossMemberId:{type:['string','null']},role:stringField,officialText:stringField,cli:{type:'string',enum:['claude','codex']}},required:['memberId','name','bossMemberId','role','officialText']}},
  settings:{type:'object',additionalProperties:false,properties:{autoClose:{type:'boolean'},idleMinutes:{type:'integer',minimum:0},reopen:{type:'string',enum:['resume','fresh']},maxOpen:{type:'integer',minimum:0},launch:{type:'string',enum:['demand','all']},batch:versionField,autoScratch:{type:'boolean'},assumptions:{type:'boolean'},scratchDir:stringField,pickupWindowMinutes:versionField,answerWindowMinutes:versionField,taskWindowMinutes:{type:['integer','null'],minimum:1},replayIntervalMs:versionField,exemptMemberIds:{type:'array',items:stringField}},required:['autoClose','idleMinutes','reopen','maxOpen','launch','batch','autoScratch','assumptions','scratchDir','pickupWindowMinutes','answerWindowMinutes','taskWindowMinutes','replayIntervalMs','exemptMemberIds']}
 },required:['type']}
 

@@ -1,0 +1,126 @@
+{
+  "files": [
+    {
+      "path": "api.mjs",
+      "sha256": "641bb907722f06d56c36363b8fddef79032b7c6720145f0b300b96085a390cf3"
+    },
+    {
+      "path": "index.mjs",
+      "sha256": "8e06853cc12c5eb24a54a57a8c6b14686e2dc54f0e0f9e5003df44147c3a8a3b"
+    },
+    {
+      "path": "contract.mjs",
+      "sha256": "4b40b839ec02c28fcb48decd8c128f65b2f560af6760c58b267cdf7b242a4c89"
+    },
+    {
+      "path": "mod-native.mjs",
+      "sha256": "4f799438badfa4e51277b7410adc472b61a7bcffbfbdad96a9fbdae3136e5742"
+    },
+    {
+      "path": "mod-bridge.mjs",
+      "sha256": "e94574ced9beef66ca7cacd02ab0da0357d28d0f735de03bfbec9d959226641e"
+    },
+    {
+      "path": "codex-native.mjs",
+      "sha256": "21e9bf06a0dabe22a1696d980e2ecc51125cdff20ea03bf1e9931154aba5b6f7"
+    },
+    {
+      "path": "src/api-domain.mjs",
+      "sha256": "87cc5692feda9550ed0bcb4f726961785534c8971e04bf0fbf34f9bb5e7ed4a7"
+    },
+    {
+      "path": "src/authority.mjs",
+      "sha256": "b5603d07dcaec5a8b0321c4fb07b3b3c6ab5c6fe657ce1c586f5cb56a30a3866"
+    },
+    {
+      "path": "src/bootstrap.mjs",
+      "sha256": "979fbef9cb23575d8ae58615e5a138c9ff69629fa71611727c908c7cd9861493"
+    },
+    {
+      "path": "src/configuration.mjs",
+      "sha256": "53fdf0b2c7926ab078818912d6006d1022add94faecc341f224866c80b3f7c8e"
+    },
+    {
+      "path": "src/engines.mjs",
+      "sha256": "46112ed37d3c1599f29c393ecd4be36f392165e5fc993196ee6e8e20976005e7"
+    },
+    {
+      "path": "src/errors.mjs",
+      "sha256": "f527d6566ea73ffe0427c1c3cc9d0ceb21314f78534b012eda50483dd6056741"
+    },
+    {
+      "path": "src/gates.mjs",
+      "sha256": "38da61b0fcd0881aa1fd79b90f6cccdf5fbf943757926a71c03ac406e8de7a5c"
+    },
+    {
+      "path": "src/guard-reader.mjs",
+      "sha256": "1f3c81c39a409af3deee710952fd4f395b621f6eb1622de93de48fe36182511e"
+    },
+    {
+      "path": "src/inbox-journal.mjs",
+      "sha256": "f1c5b6462451e49ea9a9fdd561b4f1928c1634d4ff6b9ab0fa819311319d4c39"
+    },
+    {
+      "path": "src/launches.mjs",
+      "sha256": "38db37e2c7ce78a98a5c7e1cb351ed4f47660d738eca0cd7d9b97d53f643a491"
+    },
+    {
+      "path": "src/machine-store.mjs",
+      "sha256": "2c8647878f67dfe3925f14fa451dcfe09098cfda3d8a1da041d46d538a8d68e5"
+    },
+    {
+      "path": "src/mailbox.mjs",
+      "sha256": "e5acff1f56b34a9b550c39159c59e68247212dd6755e73bf314ea61adbcd7db6"
+    },
+    {
+      "path": "src/mod-launch.mjs",
+      "sha256": "b02a6cdbb6f93f353bfd69c8c3b6f9602e9f5e54ca847cb15c4598ad84a01be1"
+    },
+    {
+      "path": "src/orca-host.mjs",
+      "sha256": "af5acc754460a28d8640236ce65a393a321b757b4706e2dcf053ad8eb00f4b34"
+    },
+    {
+      "path": "src/questions.mjs",
+      "sha256": "ed63da69df0a43672ac78320ae2bf756dc51d4a6695d5d07f34b5353c7e15ae1"
+    },
+    {
+      "path": "src/schema5-contract.mjs",
+      "sha256": "a77e2bd1f8d679d3e3a80f9b3eb33d37d1fb00047ec6ff838e86e1e06429abf4"
+    },
+    {
+      "path": "src/schema6-contract.mjs",
+      "sha256": "6a2c890ee716fcb7156e01358515e04cf4d7fe74975cb3f0eae3b2fd560cbae9"
+    },
+    {
+      "path": "src/sqlite-worker.mjs",
+      "sha256": "30dc8e9edb2dea8c2809544f5ad1ca0b38a70dcd4dc4c698067363a7a5cb0ba8"
+    },
+    {
+      "path": "src/store.mjs",
+      "sha256": "e11f1345c89c3e53260f6b55f397050936c66afd6c2a0b76b692d70466b834a7"
+    },
+    {
+      "path": "src/upgrade.mjs",
+      "sha256": "c7f100a5a5f493c02544823c0c187111a8aed7ac7172b07510b5e9a67783f049"
+    },
+    {
+      "path": "src/validation.mjs",
+      "sha256": "2fe8a572918a699a2478ad93908d65820954d132a326eb7668527d99308b5019"
+    },
+    {
+      "path": "src/windows-native.mjs",
+      "sha256": "40b741c4ced354eee70c6b45cbbcec0efae80f9667bec92bf72adea5a36978ca"
+    },
+    {
+      "path": "src/windows-thread-owner.ps1",
+      "sha256": "b19b0e176673e91d601ce1f065cb3ce88b439eaaa1cb1928a47567c84150123d"
+    },
+    {
+      "path": "src/writers.mjs",
+      "sha256": "19e4509e9a7506328630d83a0e1aed87aaf5d686b6c534e5b364dd80cdeb9047"
+    }
+  ],
+  "allMatch": true,
+  "count": 30
+}
