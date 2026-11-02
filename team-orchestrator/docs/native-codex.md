@@ -1,8 +1,8 @@
 # Native Codex with the Claude Mod
 
-## Current setup: 925-to 0.1.0 / Mod 0.5.56
+## Current setup: team-orchestration-925 0.1.1 / Mod 0.5.56
 
-Install the [925-to skill or Codex repository plugin](../../925-to/README.md), then invoke `$925-to`. Its Create team, Edit team, Connect session, Status and Meetings workflows use this same shared runtime. An active Claude session is no longer needed to approve/configure a new team. Windows Orca-hosted native Codex remains the supported host; the Orca plugin's separate store is not selected automatically.
+Install the [team-orchestration-925 skill or Codex repository plugin](../../team-orchestration-925/README.md), then type `$team-orchestration-925` and select the skill. Plugin installation registers `team-orchestration-925:team-orchestration-925`; repository skill installation uses the short name. The former `925-to` name was replaced because Orca's mention picker rejects a digit as the first character. Its Create team, Edit team, Connect session, Status and Meetings workflows use this same shared runtime. An active Claude session is no longer needed to approve/configure a new team. Windows Orca-hosted native Codex remains the supported host; the Orca plugin's separate store is not selected automatically.
 
 When MCP tools are missing, the packaged setup helper previews project-local configuration using the actual native Codex config parser. It discovers the verified Orca project/session, preserves unrelated configuration and records ownership/recovery receipts. Apply the preview, reconnect and use Codex's native hook review. Installing a skill is not hook trust or controller approval. Updates/removal touch only owned configuration; interrupted changes have explicit recovery.
 

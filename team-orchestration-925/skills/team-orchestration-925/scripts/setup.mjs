@@ -1,3 +1,4 @@
+// Keep legacy 925-to receipt/recovery names stable across the package rename.
 // Project-local setup. Codex's native TOML writer/parser runs only in disposable
 // staging; no home/global configuration is ever passed as its writable target.
 import {readFile,writeFile,mkdir,mkdtemp,realpath,lstat,rename,unlink,rm,open} from 'node:fs/promises';
@@ -8,7 +9,7 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {createOrcaHost} from './runtime/src/orca-host.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.0';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.1';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));

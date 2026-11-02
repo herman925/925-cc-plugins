@@ -1,6 +1,6 @@
 # team-orchestrator
 
-**0.5.56** shares its management API with [`925-to` 0.1.0](../925-to/README.md): Codex can create a team, review atomic configuration edits and connect existing sessions without an active Claude controller. The installable Codex skill includes project-local setup and native draft/confirmation forms. Schema 8 is unchanged. See [validation and live acceptance limits](../shared/team-store/VALIDATION-925-TO.md).
+**0.5.56** shares its management API with [`team-orchestration-925` 0.1.1](../team-orchestration-925/README.md): Codex can create a team, review atomic configuration edits and connect existing sessions without an active Claude controller. The installable Codex skill includes project-local setup and native draft/confirmation forms. Schema 8 is unchanged. See [validation and live acceptance limits](../shared/team-store/VALIDATION-925-TO.md).
 
 **0.5.55** implements [durable meetings](../shared/team-store/SCHEMA-8-MEETINGS.md) in the native right-panel workspace: reviewed invitations, safe self-joining, Agenda/Discussion/Outputs tabs, bounded contributions, explicit deferrals and separately reviewed minutes. It also adds the [native Codex adapter preview](docs/native-codex.md), a per-member CLI picker and existing-session mixed-provider binding. Shared schema 8 requires an explicit backed-up update from schemas 5–7. A live Codex hook/meeting acceptance run remains outstanding; see [three-pass validation](../shared/team-store/VALIDATION-NATIVE-MEETINGS.md).
 

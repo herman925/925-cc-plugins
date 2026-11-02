@@ -1,6 +1,6 @@
 # 925 Team Orchestrator
 
-`925-to` gives Codex native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
+`team-orchestration-925` gives Codex native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
 
 This first release supports native Windows Codex terminals hosted by Orca. It does not require the Team Orchestrator Orca plugin. Automatic Codex launch, Hermes admission, independent hosts and the Orca plugin's separate store convergence remain later work.
 
@@ -11,26 +11,34 @@ Choose one route; both contain the same self-contained skill and matching runtim
 Repository skill installation, with the tested installer version:
 
 ```text
-npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/925-to --skill 925-to --agent codex
+npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
 ```
 
 Codex repository marketplace:
 
 ```text
 codex plugin marketplace add herman925/925-cc-plugins
-codex plugin add 925-to@herman925-codex
+codex plugin add team-orchestration-925@herman925-codex
 ```
 
-Start a fresh Codex session in the project, then invoke:
+Start a fresh Codex session in the project. Type `$team-orchestration-925` and select **925 Team Orchestrator** from the skill picker. A repository skill installation uses the short name:
 
 ```text
-$925-to
-$925-to create-team
-$925-to edit-team
-$925-to connect-session
-$925-to status
-$925-to meeting
+$team-orchestration-925
+$team-orchestration-925 create-team
+$team-orchestration-925 edit-team
+$team-orchestration-925 connect-session
+$team-orchestration-925 status
+$team-orchestration-925 meeting
 ```
+
+The plugin route registers the namespaced skill **`team-orchestration-925:team-orchestration-925`**. Its explicit invocation is:
+
+```text
+$team-orchestration-925:team-orchestration-925 create-team
+```
+
+Version 0.1.1 replaces the original `925-to` package name because Orca's `$` picker rejects names beginning with a digit. Both plugin and skill names now start with a letter. After installing the replacement, remove the old plugin with `codex plugin remove 925-to@herman925-codex` once any project connection has been updated through the new skill's setup workflow. Existing team data, MCP server name and owned setup/recovery records keep their identities. Do not install both a standalone skill and plugin merely to get a second invocation alias.
 
 The skill's first setup pass previews a project-local MCP connection and permission hook. It discovers the actual Orca project/session instead of asking for terminal IDs or a JSON settings file. Apply the reviewed setup, reconnect/restart as instructed, and review/trust the exact hook through Codex's native controls. Installing the skill alone does not activate MCP tools or grant hook trust.
 
@@ -50,4 +58,4 @@ Update the installed skill through its installer or refresh/reinstall the reposi
 
 Before removing the skill/plugin, run its project setup `remove` workflow so the owned MCP/hook entries are removed first. Removal preserves teams, other configuration and private recovery backups. Resolve active work/binding ownership with the head first; uninstalling configuration is not a team-member transfer or retirement operation. If setup is interrupted, use `recover`; a native OS lock is released when the installer dies, and recovery refuses independently changed files.
 
-See [validation and current acceptance limits](../shared/team-store/VALIDATION-925-TO.md). Automated/native transport fixtures do not establish a real multi-model guard/lifecycle acceptance run. The runtime reports hook trust as unverified until it is checked in the actual client.
+See [invocation repair validation](../shared/team-store/VALIDATION-SKILL-INVOCATION.md) and [the earlier integration evidence and live limits](../shared/team-store/VALIDATION-925-TO.md). Automated/native transport fixtures do not establish a real multi-model guard/lifecycle acceptance run. The runtime reports hook trust as unverified until it is checked in the actual client.
