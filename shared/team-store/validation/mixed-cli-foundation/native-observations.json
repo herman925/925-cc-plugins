@@ -1,0 +1,18 @@
+{
+  "kind": "read-only native Orca and Windows thread-owner observations",
+  "codexVersion": "0.166.0",
+  "actorProvider": "codex",
+  "threadId": "01a18fc1-a164-76b0-b83d-5421ca7db4a9",
+  "terminalHandle": "term_2102bfeb-b7b6-4503-925c-5913b9c7990c",
+  "incarnationId": "646c0720-90cd-4178-8d05-fbee28f17f27",
+  "runtimeId": "fbc6a95a-5e2c-42d4-bdb4-66eb5dba3fd3",
+  "owner": {
+    "creationFileTime": "134380872687082708",
+    "pid": 51440,
+    "executableBasename": "codex.exe"
+  },
+  "ownerMatchesActualOsProcess": true,
+  "endToEndMcpCallerAcceptance": false,
+  "teamStoreOpened": false,
+  "limitation": "Native host and OS ownership facts, not a connected Codex team/guard/MCP lifecycle acceptance"
+}

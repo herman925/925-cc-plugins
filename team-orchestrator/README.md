@@ -1,5 +1,7 @@
 # team-orchestrator
 
+**0.5.54** adds the first Orca-hosted mixed-CLI foundations: shared read-only host verification, a private Windows Codex identity component, explicit CLI selection in fresh typed roster requests and refusal of mismatched-provider binding. Existing Claude behavior remains covered. Codex tool/guard installation, cross-provider wake-up and live mixed-team acceptance are still pending; this does **not** enable managed Codex membership yet. The new [meeting right-panel prototype](prototypes/meeting-right-panel.prototype.html) offers all three layouts with sample-only interactions. The user selected **B**, a dedicated workspace with Agenda, Discussion and Outputs tabs; native production controls and the durable meeting runtime remain to build. See [validation and remaining work](../shared/team-store/VALIDATION-MIXED-CLI-FOUNDATION.md).
+
 **0.5.53** fixes permission checks against older supported shared stores: ordinary nonmember file work continues while existing member guards remain enforced. The compatibility reader is read-only; workspace updates stay explicit. See [the guard validation](../shared/team-store/VALIDATION-GUARD-COMPATIBILITY.md).
 
 **0.5.52** adds timed question/answer threads, durable deadline notices and fresh shared-member launch from the right panel. Existing schema-5/6 workspaces update explicitly with a backup. See [the release guide](docs/RELEASE-QUESTIONS-LAUNCH-0.5.52.md) for capacity, recovery and acceptance limits.
@@ -16,7 +18,7 @@ nobody starts subagents unless you allow it.
 
 The highest supervisor's generated role includes interactive question guidance independently of Session Panel or `/grill-me`: Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` or `request_user_input_async`, and Hermes Agent uses `clarify`, subject to actual availability and permissions. If names differ, use an exposed native/MCP equivalent that shows choices and returns the user's answer in the same conversation; use prose numbered choices only when no permitted interactive tool exists. An async accepted/pending result is not an answer: keep the turn open with the available wait/resume mechanism until the user answers, cancels or the tool closes, without sending a final reply or opening a duplicate card. Lower members still relay decisions through their boss. This guidance does not add another CLI's launch support or bypass existing approval checks.
 
-Version 0.5.51. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.54. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 
@@ -807,6 +809,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.54 | Shared Orca host verifier and private Windows Codex identity groundwork; explicit mixed roster CLI and provider-consistent binding. Codex admission/transport remain pending. Three-direction right-panel meeting prototype, sample data only. |
 | 0.5.53 | Read-only permission inspection for schemas 5, 6 and 7; prevents schema mismatch from blocking ordinary nonmember Write/Edit while retaining member and state guards. |
 | 0.5.52 | Bounded questions, recipient-owned deadline notices, active-client scheduling and durable fresh-member launch with verified self-binding. Explicit backed-up schema-5/6 update. |
 | 0.5.51 | Durable shared inbox and recipient read recovery; immutable retry/acceptance history; explicit schema-5 update with backup; pickup/task deadline returns; native gate choices and same-assignment resume. Transport runs outside the short UI callback budget. |

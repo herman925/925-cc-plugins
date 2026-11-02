@@ -23,7 +23,7 @@ export type Command =
   | (MemberAuthority & {type:'prepareDeliveries'})
   | (MemberAuthority & {type:'observePickupDeadlines'})
   | (AttemptAuthority & {type:'retryAssignment';newAssignmentId:string;memberId:string;expectedTargetGeneration:number;expectedTargetBindingGeneration:number})
-  | {type:'createFreshTeam';teamId:string;name:string;functionText:string;settings:Settings;expectedControllerGeneration:number;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string}[]}
+  | {type:'createFreshTeam';teamId:string;name:string;functionText:string;settings:Settings;expectedControllerGeneration:number;members:{memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string;cli?:'claude'|'codex'}[]}
   | (MemberAuthority & {type:'bindMember';memberId:string;expectedControllerGeneration:number})
   | (MemberAuthority & {type:'admitAssignment';runId:string;taskId:string;assignmentId:string;memberId:string;instructions:string;expectedResult:string;expectedTargetGeneration:number;expectedTargetBindingGeneration:number})
   | (AttemptAuthority & {type:'verifyAssignment'})

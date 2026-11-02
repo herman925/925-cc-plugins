@@ -75,8 +75,9 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
     if (!Array.isArray(input.members) || !input.members.length || input.members.length > 30) fail('INPUT_INVALID', 'Supply 1–30 fresh members ordered boss-first.');
     const seen = new Map();
     out.members = input.members.map(m => {
-      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText']);
-      const value = { memberId: text(m.memberId, 'memberId'), name: text(m.name, 'name'), bossMemberId: m.bossMemberId === null ? null : text(m.bossMemberId, 'bossMemberId'), role: text(m.role, 'role'), officialText: text(m.officialText, 'officialText') };
+      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText', 'cli']);
+      if(m.cli!==undefined&&!['claude','codex'].includes(m.cli))fail('INPUT_INVALID','Fresh mixed members currently support only claude or codex.');
+      const value = { memberId: text(m.memberId, 'memberId'), name: text(m.name, 'name'), bossMemberId: m.bossMemberId === null ? null : text(m.bossMemberId, 'bossMemberId'), role: text(m.role, 'role'), officialText: text(m.officialText, 'officialText'),...(m.cli!==undefined?{cli:m.cli}:{}) };
       if (seen.has(value.memberId) || (value.bossMemberId !== null && !seen.has(value.bossMemberId))) fail('INPUT_INVALID', 'Fresh members must be unique and ordered boss-first.');
       seen.set(value.memberId, value); return value;
     });
@@ -245,7 +246,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
       const level = m.bossMemberId === null ? 1 : levels.get(m.bossMemberId) + 1;
       levels.set(m.memberId,level);
       await applyConfigurationMutation(db, { type:'putMember', teamId:command.teamId, expectedConfigVersion:configVersion++, expectedGeneration:0,
-        member: { ...m, level, model:'default', effort:'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:actor.provider, allowAgent:false, allowWrite:false } }, writer);
+        member: { ...m, level, model:'default', effort:'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
       await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:'' }, writer);
     }
     return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId) };
@@ -309,6 +310,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if (m.team_id !== command.teamId || m.membership_state !== 'active') fail('MEMBER_SCOPE','Only an active member of this team can be bound.');
     expected(command.expectedMemberGeneration,m.generation,'member generation');
     if (!target || target.projectRoot !== actor.projectRoot || target.machineId !== actor.machineId || target.executionHostId !== actor.executionHostId || target.contextId !== m.worktree || target.projectRoot !== m.home_original_path || target.executionHostId !== m.home_execution_host_id) fail('TARGET_UNVERIFIED','Target native project, context, machine and home must agree.');
+    if(m.cli!==target.provider)fail('PROVIDER_MISMATCH','The verified session provider differs from this member’s configured CLI. Binding does not silently convert a member to another CLI.');
     const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});
     if ((old ? gen(old.generation,'binding generation') : 0) !== command.expectedBindingGeneration) fail('STALE_AUTHORITY','Binding generation changed.');
     const generation = nextInteger(command.expectedBindingGeneration,'binding generation');

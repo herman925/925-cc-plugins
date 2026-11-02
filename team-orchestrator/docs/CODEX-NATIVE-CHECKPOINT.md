@@ -1,5 +1,7 @@
 # Codex native integration checkpoint — 2026-11-02
 
+Follow-up: [Mod 0.5.54 mixed-CLI foundation](../../shared/team-store/VALIDATION-MIXED-CLI-FOUNDATION.md) adds shared host verification, a private Windows Codex identity component and mixed-provider API tests. Guard/tool activation and live mixed-model acceptance remain pending. The probe below is the earlier technical checkpoint, not the current implementation inventory.
+
 The user selected native Codex–Claude coordination with Orca hosting the first increment, without an Orca plugin panel dependency. Keep independent operation as another host-adapter route. The accepted direction and unresolved details are in [host-adaptive coordination #179](https://github.com/herman925/925-cc-plugins/issues/179). This checkpoint is technical reconnaissance, not completed mixed-team integration.
 
 ## Verified locally
