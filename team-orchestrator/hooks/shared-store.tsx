@@ -1,3 +1,4 @@
+import {commandSchema} from '../store/src/api-schema.mjs'
 import { atom, read, update } from 'claude-code'
 import { notReadOnly } from './guard'
 import {sharedCall} from './shared-bridge'
@@ -38,18 +39,7 @@ async function beginSharedAction($:any,action:string) {
 async function sharedFeedback($:any,notice:string,tone='gray') { await update($,uiState,old=>({...old,notice,tone})) }
 const id = () => Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')
 const proofOf = (proof: Extract<SharedProof,{ok:true}>) => ({projectRoot:proof.root,conversationId:proof.sessionId,terminalHandle:proof.handle,contextId:proof.contextId})
-const stringField={type:'string'}
-const versionField={type:'integer',minimum:1}
-const commandSchema={type:'object',additionalProperties:false,properties:{
- type:{type:'string',enum:['createFreshTeam','bindMember','inspectTeam','inspectCaller','inspectAssignment','inspectInbox','inspectDelivery','readInbox','admitAssignment','retryAssignment','verifyAssignment','reportOutcome','acceptTask','openGate','replaceGate','resolveGate','revokeController','askQuestion','answerQuestion','inspectQuestion','acknowledgeNotice']},
- ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','newAssignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId','gateId','newGateId','question','choice','note','threadId','answer','noticeId'].map(k=>[k,stringField])),
- ...Object.fromEntries(['expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedAttemptGeneration','expectedDeliveryGeneration','expectedGateGeneration','expectedThreadGeneration'].map(k=>[k,versionField])),
- assignmentId:{type:['string','null']},
- options:{type:'array',minItems:2,uniqueItems:true,items:stringField},
- expectedBindingGeneration:{type:'integer',minimum:0},outcome:{type:'string',enum:['succeeded','failed']},decision:{type:'string',enum:['accepted','rejected']},
- members:{type:'array',items:{type:'object',additionalProperties:false,properties:{memberId:stringField,name:stringField,bossMemberId:{type:['string','null']},role:stringField,officialText:stringField,cli:{type:'string',enum:['claude','codex']}},required:['memberId','name','bossMemberId','role','officialText']}},
- settings:{type:'object',additionalProperties:false,properties:{autoClose:{type:'boolean'},idleMinutes:{type:'integer',minimum:0},reopen:{type:'string',enum:['resume','fresh']},maxOpen:{type:'integer',minimum:0},launch:{type:'string',enum:['demand','all']},batch:versionField,autoScratch:{type:'boolean'},assumptions:{type:'boolean'},scratchDir:stringField,pickupWindowMinutes:versionField,answerWindowMinutes:versionField,taskWindowMinutes:{type:['integer','null'],minimum:1},replayIntervalMs:versionField,exemptMemberIds:{type:'array',items:stringField}},required:['autoClose','idleMinutes','reopen','maxOpen','launch','batch','autoScratch','assumptions','scratchDir','pickupWindowMinutes','answerWindowMinutes','taskWindowMinutes','replayIntervalMs','exemptMemberIds']}
-},required:['type']}
+
 
 
 export async function startSharedStore($:any,_enabled:boolean) {
@@ -65,7 +55,7 @@ export async function callSharedStore($:any,e:any,enabled:boolean,dependencies:{
   // freshly derived below and never read from model tool arguments.
   const request={operationId:e.operationId,command:e.command,...(e.target!==undefined?{target:e.target}:{})}
   const value=await sharedCall($,dependencies.proof,request,{node:dependencies.node,orca:dependencies.orca,mode:e.reconcile===true?'reconcile':'execute'})
-  if(value.ok&&['admitAssignment','retryAssignment','reportOutcome','readInbox','resolveGate','askQuestion','answerQuestion'].includes(e.command?.type))queueSharedDeliveries($,dependencies.proof,dependencies)
+  if(value.ok&&(/Meeting/.test(e.command?.type)||['admitAssignment','retryAssignment','reportOutcome','readInbox','resolveGate','askQuestion','answerQuestion'].includes(e.command?.type)))queueSharedDeliveries($,dependencies.proof,dependencies)
   return {result:JSON.stringify(value),...(!value.ok?{isError:true}:{})}
 }
 
@@ -82,7 +72,7 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
    await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
-  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6].includes(result.error.details?.version)&&result.error.details?.supported===7) {
+  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7].includes(result.error.details?.version)&&result.error.details?.supported===8) {
    await update($,uiState,old=>({...old,upgrade:true,upgradeFrom:result.error.details.version}));await sharedFeedback($,'Update this workspace to continue. A backup will be kept before its data changes.','yellow')
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
@@ -98,7 +88,7 @@ export async function upgradeSharedWorkspace($:any,dependencies:SharedAccess) {
   if(!current.ok||JSON.stringify(proofOf(current))!==JSON.stringify(proofOf(proof)))throw Error('This conversation changed. Check access before updating.')
   const token=id(),config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
   if(!config||config==='/.claude')throw Error('Local configuration folder could not be verified.')
-  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:7,...proofOf(current)}))
+  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:8,...proofOf(current)}))
   const result=await sharedCall($,current,{operationId:`upgrade-${token}`},{...dependencies,mode:'upgradeStore',uiApprovalId:token})
   await update($,status,()=>JSON.stringify(result));updated=result.ok===true
   if(updated){await update($,uiState,old=>({...old,upgrade:false,checked:false,approved:null,member:false}));await sharedFeedback($,'Workspace updated. Existing approvals and history are kept.','green')}

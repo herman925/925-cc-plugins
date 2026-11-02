@@ -29,7 +29,7 @@ try {
   const ticketPath=join(process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),'team-orchestrator','controller-actions',`${envelope.uiApprovalId}.json`);
   const info=await lstat(ticketPath);if(!info.isFile()||info.isSymbolicLink()||info.size>8192)return false;
   const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
-  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||[5,6].includes(ticket.fromVersion)&&ticket.toVersion===7);
+  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||[5,6,7].includes(ticket.fromVersion)&&ticket.toVersion===8);
   }catch{return false;}
  };
  if(envelope.mode==='guardInspect'){
@@ -69,11 +69,11 @@ try {
   // Reservation committed above. Native I/O is deliberately outside the lease.
   for(const delivery of result.result.deliveries) {
    const b=delivery.recipient;
-   if(b.machine_id!==actor.machineId||b.provider!==actor.provider||b.execution_host_id!==actor.executionHostId)continue;
+   if(b.machine_id!==actor.machineId||!['claude','codex'].includes(b.provider)||b.execution_host_id!==actor.executionHostId)continue;
    try {
     const verified=await native.verifyBinding({projectRoot:actor.projectRoot,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},envelope.proof);
     if(verified.incarnationId===b.incarnation_id && verified.machineId===b.machine_id && verified.provider===b.provider && verified.executionHostId===b.execution_host_id)
-     transportTargets.push({...(delivery.noticeId?{noticeId:delivery.noticeId}:{}),deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId,replay:delivery.replay,conversationId:verified.conversationId});
+     transportTargets.push({provider:verified.provider,terminalHandle:verified.terminalHandle,...(delivery.meetingId?{meetingId:delivery.meetingId,notificationGeneration:delivery.notificationGeneration}:{}),...(delivery.noticeId?{noticeId:delivery.noticeId}:{}),deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId,replay:delivery.replay,conversationId:verified.conversationId});
    } catch {/* Stale or unavailable targets remain outstanding. Never retarget by title. */}
   }
  }

@@ -1,7 +1,8 @@
+import {MEETING_DDL,meetingGuardsFor} from './src/meeting-contract.mjs';
 // Shared contract for issue #154, consumed by the Mod's typed adapter.
 // One shared table source; dialect fragments only implement equivalent constraints.
 export const FORMAT = 'team-orchestrator-shared';
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const WRITER_PROTOCOL_VERSION = 1;
 export const KNOWN_WRITER_FAMILIES = Object.freeze(['team-orchestrator', 'team-orchestrator-orca']);
 export const MACHINE_FORMAT = 'team-orchestrator-machine';
@@ -332,7 +333,9 @@ CREATE TABLE operations (
   result TEXT NOT NULL,
   committed_at_ms BIGINT NOT NULL CHECK (committed_at_ms >= 0 AND committed_at_ms <= 9007199254740991)
 );
-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 7);
+${MEETING_DDL}
+{{meeting_guards}}
+INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 8);
 INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
 VALUES (1, NULL, NULL, 0, 0);
 `;
@@ -499,6 +502,7 @@ export function ddlFor(engine) {
     .replaceAll('{{history_guards}}',historyGuardsFor(engine))
     .replaceAll('{{gate_guards}}',gateGuardsFor(engine))
     .replaceAll('{{runtime_guards}}',runtimeGuardsFor(engine))
+    .replaceAll('{{meeting_guards}}',meetingGuardsFor(engine))
     .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
     .replace('{{message_guards}}', messageGuardsFor(engine));
 }

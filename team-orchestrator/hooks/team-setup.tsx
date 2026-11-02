@@ -141,6 +141,7 @@ export async function teamSetupView($:any,ui:any,deps:SetupDependencies){
     {field(`workspace-member-name-${mi}`,'Name',member.name,value=>editSharedMember($,member.memberId,{name:value}))}
     {field(`workspace-member-role-${mi}`,'Role',member.role,value=>editSharedMember($,member.memberId,{role:value}))}
     {mi>0&&<Select key={`workspace-member-boss-${mi}`} label="Reports to " value={member.bossMemberId??undefined} options={w.members.slice(0,mi).map(m=>({value:m.memberId,label:workspaceLine(m.name)}))} onSelect={async(value:string)=>{if(!busy)await editSharedMember($,member.memberId,{bossMemberId:value})}}/>}
+    <Select key={`workspace-member-cli-${mi}`} label="CLI " value={member.cli||'claude'} options={[{value:'claude',label:'Claude Code'},{value:'codex',label:'Codex · connect existing session'}]} onSelect={async(value:string)=>editSharedMember($,member.memberId,{cli:value as 'claude'|'codex'})}/>
     {field(`workspace-member-official-${mi}`,'Official instructions',member.officialText,value=>editSharedMember($,member.memberId,{officialText:value}),3)}
     <Box flexWrap="wrap" columnGap={1}>
      {w.members.length<30&&<Button key="workspace-member-add" label="＋ Add member" onPress={async()=>{if(!busy){await addSharedMember($);await set($,{member:w.members.length,memberOpen:false})}}}/>}

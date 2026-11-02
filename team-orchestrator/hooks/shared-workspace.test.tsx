@@ -25,6 +25,7 @@ function fixture(on:any,who='head'){
   if(command.type==='inspectCaller'&&control.created&&control.reloadFailure)return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Read failed after commit'}})
   if(command.type==='inspectCaller')result={controllerGeneration:who==='worker'?null:1,member:who==='controller'?null:model.members.find((m:any)=>m.member_id===who),binding:who==='controller'?null:binding(who),teams:[model.team]}
   if(command.type==='inspectTeam')result=model
+  if(command.type==='inspectMeeting')result=model.meetingDetail
   if(command.type==='inspectInbox')result={messages:[{message_id:'mail-1',delivery_id:'delivery-1',sender_member_id:'head',recipient_member_id:who,kind:'dispatch',body:'private body hidden until read'}]}
   if(command.type==='createFreshTeam'){
    control.created=true
@@ -359,3 +360,29 @@ test('inbox question form sends a typed question without acknowledging or changi
  const q=f.calls.find(c=>c.request?.command?.type==='askQuestion').request.command;expect(q.recipientMemberId).toBe('worker');expect(q.assignmentId).toBe(null);expect(q.question).toBe('Which approach should I use?');expect(q.expectedConfigVersion).toBe(5);
  expect(f.calls.some(c=>c.request?.command?.type==='readInbox')).toBe(false);
 });
+
+
+test('meeting invitations require a reviewed draft and an explicit start rule in the native panel',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($)
+ await band.press({key:'workspace-meetings-tab'});await band.press({key:'meeting-new'})
+ await band.input({key:'meeting-title',text:'Weekly review',kind:'change'})
+ await band.press({key:'meeting-invite-worker'})
+ await band.select({key:'meeting-policy',value:'joined'})
+ await band.input({key:'meeting-topic',text:'Review evidence',kind:'change'});await band.press({key:'meeting-topic-add'})
+ expect(f.calls.some(c=>c.request?.command?.type==='createMeeting')).toBe(false)
+ await band.press({key:'meeting-review-invitations'})
+ expect(f.calls.some(c=>c.request?.command?.type==='createMeeting')).toBe(false)
+ await band.press({key:'meeting-send-invitations'})
+ const command=f.calls.find(c=>c.request?.command?.type==='createMeeting').request.command
+ expect(command.startPolicy).toBe('joined');expect(command.participantIds).toEqual(['head','worker']);expect(command.topics[0].requiredMemberIds).toEqual(['head','worker'])
+ expect(command.lineLimit).toBe(25);expect(command.roundLimit).toBe(2)
+})
+
+test('meeting workspace uses native Agenda Discussion Outputs tabs and browsing never joins another member',options,async($:any,on:any)=>{
+ const f=fixture(on),meeting={meeting_id:'meeting',title:'Durable review',status:'active',chair_member_id:'head',generation:4,current_topic:0,extended:0};f.model.meetings=[meeting]
+ f.model.meetingDetail={meeting,participants:[{member_id:'head',state:'joined'},{member_id:'worker',state:'invited'}],topics:[{topic_index:0,title:'Evidence',state:'pending'}],required:[{topic_index:0,member_id:'worker'}],contributions:[],outputs:[{output_id:'out',kind:'action',state:'proposed',owner_member_id:'worker',body:'Follow up'}]}
+ const band=await open($);await band.press({key:'workspace-meetings-tab'});await band.select({key:'meeting-select',value:'meeting'})
+ for(const tab of ['agenda','discussion','outputs']){await band.press({key:`meeting-tab-${tab}`});expect(await band.find({key:`meeting-tab-${tab}`})).toBeDefined()}
+ expect(f.calls.some(c=>c.request?.command?.type==='respondMeeting')).toBe(false)
+ expect(JSON.stringify(await band.drawn())).toContain('Follow up')
+})

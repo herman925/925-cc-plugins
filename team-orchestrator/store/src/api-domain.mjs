@@ -1,3 +1,4 @@
+import {meetingFields,normalizeMeeting,meetingAccess,inspectMeeting,applyMeeting} from './meetings.mjs';
 // Private transaction implementation. Only the trusted API adapter supplies actor
 // facts; no model-facing request accepts an actor, policy, path or SQL.
 import { createHash } from 'node:crypto';
@@ -23,47 +24,21 @@ export function apiResult(value) {
 }
 const expected = (value, actual, field) => { if (value !== gen(actual, field)) fail('STALE_AUTHORITY', `${field} changed; inspect the current state before a new operation.`); };
 const launchTypes=['reserveLaunch','claimLaunch','attachLaunch'];
-const fields = {
-  acknowledgeNotice:['teamId','noticeId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  reserveLaunch:['teamId','memberId','launchId','expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration'],
-  claimLaunch:['teamId','launchId','expectedConfigVersion','expectedControllerGeneration'],
-  attachLaunch:[],
-  askQuestion:['teamId','threadId','runId','assignmentId','recipientMemberId','question','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  answerQuestion:['teamId','threadId','answer','expectedThreadGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  inspectQuestion:['teamId','threadId'],
-  observeDeadlines:['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  openGate: ['teamId','assignmentId','gateId','question','options','expectedAttemptGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  replaceGate: ['teamId','gateId','newGateId','question','options','expectedGateGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  resolveGate: ['teamId','gateId','choice','note','expectedGateGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  approveController: [], revokeController: ['controllerId', 'expectedControllerGeneration'],
-  createFreshTeam: ['teamId', 'name', 'functionText', 'settings', 'members', 'expectedControllerGeneration'],
-  bindMember: ['teamId', 'memberId', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedControllerGeneration'],
-  inspectTeam: ['teamId'],
-  inspectCaller: [],
-  inspectAssignment: ['teamId','assignmentId'],
-  inspectInbox: ['teamId','recipientMemberId'],
-  inspectDelivery: ['teamId','deliveryId'],
-  readInbox: ['teamId','deliveryId','expectedDeliveryGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  prepareDeliveries: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  observePickupDeadlines: ['teamId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  retryAssignment: ['teamId','assignmentId','newAssignmentId','memberId','expectedAttemptGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
-  admitAssignment: ['teamId', 'runId', 'taskId', 'assignmentId', 'memberId', 'instructions', 'expectedResult', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedTargetGeneration', 'expectedTargetBindingGeneration'],
-  verifyAssignment: ['teamId', 'assignmentId', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedAttemptGeneration'],
-  reportOutcome: ['teamId', 'assignmentId', 'outcome', 'summary', 'evidence', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedAttemptGeneration'],
-  acceptTask: ['teamId', 'assignmentId', 'decision', 'reason', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedAttemptGeneration'],
-};
+import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
+export {API_COMMAND_FIELDS};
 
 export function normalizeApiCommand(input, { privileged = false } = {}) {
-  if (!Object.hasOwn(fields, input?.type) || (['approveController',...launchTypes].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
-  const names = fields[input.type];
+  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['approveController',...launchTypes].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
+  const names = API_COMMAND_FIELDS[input.type];
   exact(input, ['type', ...names]);
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
-    if (k === 'settings' || k === 'members' || k === 'options') continue;
+    if (k === 'settings' || k === 'members' || k === 'options' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
       : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note' });
   }
+  if(input.type==='createMeeting')Object.assign(out,normalizeMeeting(input));
   if(names.includes('options')) {
     if(!Array.isArray(input.options)||input.options.length<2)fail('INPUT_INVALID','Offer at least two distinct string options.');
     out.options=input.options.map(v=>text(v,'option'));
@@ -149,6 +124,7 @@ export async function assertApiCaller(db, command, actor) {
 // A conversation may have been rebound to another member since that effect.
 export async function assertApiReceipt(db,command,actor,receipt) {
  const type=command.type,value=receipt.result;
+ if(Object.hasOwn(meetingFields,type)){const {member}=await memberActor(db,actor,command,false);await meetingAccess(db,command,member.member_id);return;}
  if(launchTypes.includes(type)){if(type!=='attachLaunch')await controller(db,actor);return;}
  if(['askQuestion','answerQuestion','inspectQuestion'].includes(type)){const {member}=await memberActor(db,actor,command,false);await questionAccess(db,command.teamId,command.threadId,member.member_id);return;}
  if(type==='approveController'){await controller(db,actor);return;}
@@ -162,7 +138,7 @@ export async function assertApiReceipt(db,command,actor,receipt) {
   return;
  }
  const {member}=await memberActor(db,actor,command,false).catch(async error=>{
-  if(type==='inspectTeam'&&!value.work?.length){await controller(db,actor);return {member:null};}
+  if(type==='inspectTeam'&&![value.work,value.questions,value.notices,value.meetings,value.meetingNotifications].some(items=>items?.length)){await controller(db,actor);return {member:null};}
   throw error;
  });
  if(!member)return;
@@ -176,6 +152,7 @@ export async function assertApiReceipt(db,command,actor,receipt) {
   return assignment.assigned_by_member_id===member.member_id && report.boss_member_id===member.member_id;
  };
  if(type==='inspectTeam') {
+  for(const item of value.meetings??[])await meetingAccess(db,{teamId:command.teamId,meetingId:item.meeting_id},member.member_id);
   for(const item of value.notices??[])if(item.recipient_member_id!==member.member_id)fail('ASSIGNEE_REQUIRED','Notice receipt belongs to another member.');
   for(const item of value.questions??[])await questionAccess(db,command.teamId,item.thread_id,member.member_id);
   for(const item of value.work??[])if(!await canInspect(item.assignment))fail('ASSIGNEE_REQUIRED','Task evidence in this receipt is outside the current member scope.');
@@ -189,6 +166,7 @@ export async function assertApiReceipt(db,command,actor,receipt) {
   if(command.recipientMemberId!==member.member_id&&member.boss_member_id!==null)fail('HEAD_REQUIRED','Only the current top head may inspect another recipient.');
  } else if(type==='prepareDeliveries') {
   for(const item of value.deliveries??[]) {
+   if(item.meetingId){await meetingAccess(db,{teamId:command.teamId,meetingId:item.meetingId},member.member_id);continue;}
    if(item.noticeId){const n=await reference(db,'deadline_notices','notice_id',item.noticeId);if(n.team_id!==command.teamId)fail('MEMBER_SCOPE','Notice belongs to another team.');continue;}
    const message=await reference(db,'messages','message_id',item.messageId);
    if(member.boss_member_id!==null&&message.sender_member_id!==member.member_id)fail('ASSIGNEE_REQUIRED','This wake reservation belongs to another sender.');
@@ -216,6 +194,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   }
   if(type==='attachLaunch')return attachLaunch(db,actor);
   if(['reserveLaunch','claimLaunch'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='reserveLaunch'?reserveLaunch(db,command,actor,controllerId(actor),now):claimLaunch(db,command,actor,controllerId(actor));}
+  if(type==='inspectMeeting'){const {member}=await memberActor(db,actor,command,false);return inspectMeeting(db,command,member.member_id);}
   if(type==='inspectQuestion'){const {member}=await memberActor(db,actor,command,false);return questionAccess(db,command.teamId,command.threadId,member.member_id);}
   if (type === 'inspectCaller') {
     const [identity]=await db.query('SELECT project_id FROM project_identity WHERE singleton=1');
@@ -260,11 +239,13 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     // Match inspectAssignment's current member/head boundary, including native
     // incarnation checks. The UI projection is bounded, newest first.
     const [bound] = await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
-    const work=[],questions=[],notices=[];
+    const work=[],questions=[],notices=[],meetings=[],meetingNotifications=[];
     if (bound) {
       const m=await reference(db,'members','member_id',bound.member_id);
       if(m.team_id===command.teamId) {
         const {member}=await memberActor(db,actor,command,false);
+        meetingNotifications.push(...await db.query('SELECT n.* FROM meeting_notifications n JOIN meetings m ON m.meeting_id=n.meeting_id WHERE m.team_id=:team AND n.recipient_member_id=:member AND n.read_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM meeting_notifications newer WHERE newer.meeting_id=n.meeting_id AND newer.recipient_member_id=n.recipient_member_id AND newer.generation>n.generation) ORDER BY n.created_at_ms,n.meeting_id LIMIT 50',{team:command.teamId,member:member.member_id}));
+        meetings.push(...await db.query('SELECT m.* FROM meetings m JOIN meeting_participants p ON p.meeting_id=m.meeting_id WHERE m.team_id=:team AND p.member_id=:member ORDER BY m.created_at_ms DESC LIMIT 50',{team:command.teamId,member:member.member_id}));
         const visible=await db.query(`SELECT a.* FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN runs r ON r.run_id=t.run_id JOIN members m ON m.member_id=a.member_id
           WHERE r.team_id=:team AND (a.member_id=:member OR (a.assigned_by_member_id=:member AND m.boss_member_id=:member)) ORDER BY a.admitted_at_ms DESC,a.assignment_id LIMIT 100`,{team:command.teamId,member:member.member_id});
         notices.push(...await db.query('SELECT * FROM deadline_notices WHERE team_id=:team AND recipient_member_id=:member AND read_at_ms IS NULL ORDER BY created_at_ms,notice_id LIMIT 100',{team:command.teamId,member:member.member_id}));
@@ -276,7 +257,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
         }
       }
     }
-    return { team, questions, notices, members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id:command.teamId}), bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}), launches:await db.query('SELECT l.* FROM member_launches l JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id:command.teamId}), roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id:command.teamId}),work };
+    return { team, questions, notices, meetings, meetingNotifications, members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id:command.teamId}), bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}), launches:await db.query('SELECT l.* FROM member_launches l JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id:command.teamId}), roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id:command.teamId}),work };
   }
   if (type === 'inspectAssignment') {
     const {member} = await memberActor(db,actor,command,false);
@@ -322,6 +303,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   const {member} = await memberActor(db,actor,command);
   if(['openGate','replaceGate','resolveGate'].includes(type))return applyGateCommand(db,command,member,now);
   if(type==='acknowledgeNotice'){const n=await reference(db,'deadline_notices','notice_id',command.noticeId);if(n.team_id!==command.teamId||n.recipient_member_id!==member.member_id)fail('ASSIGNEE_REQUIRED','Only the addressed member may acknowledge a notice.');await db.query('UPDATE deadline_notices SET read_at_ms=:now WHERE notice_id=:id AND read_at_ms IS NULL',{id:command.noticeId,now});return {noticeId:command.noticeId,acknowledged:true};}
+  if(Object.hasOwn(meetingFields,type))return applyMeeting(db,command,member,now);
   if(type==='askQuestion')return askQuestion(db,command,member,now);
   if(type==='answerQuestion')return answerQuestion(db,command,member,now);
   if(type==='observeDeadlines')return {...await expireQuestions(db,command.teamId,now,member.member_id),...await expirePickups(db,command.teamId,now)};

@@ -5,7 +5,7 @@ import {join} from 'node:path';
 const source=fileURLToPath(new URL('../../shared/team-store/',import.meta.url));
 const target=fileURLToPath(new URL('../store/',import.meta.url));
 const check=process.argv.includes('--check');
-const files=['api.mjs','index.mjs','contract.mjs','mod-native.mjs','mod-bridge.mjs','codex-native.mjs',...(await readdir(join(source,'src'))).filter(n=>n.endsWith('.mjs')||n==='windows-thread-owner.ps1').map(n=>`src/${n}`)];
+const files=['api.mjs','index.mjs','contract.mjs','mod-native.mjs','mod-bridge.mjs','codex-native.mjs','codex-mcp.mjs','codex-setup.mjs',...(await readdir(join(source,'src'))).filter(n=>n.endsWith('.mjs')||n==='windows-thread-owner.ps1').map(n=>`src/${n}`)];
 for(const name of files){
  const bytes=await readFile(join(source,name));
  if(check){if(!bytes.equals(await readFile(join(target,name))))throw Error(`Stale packaged store: ${name}`);}

@@ -58,6 +58,16 @@ export async function prepareDeliveries(db,{teamId,member,now}) {
   await db.query('UPDATE deadline_notices SET last_notified_at_ms=:now WHERE notice_id=:id',{id:n.notice_id,now});
   claims.push({noticeId:n.notice_id,recipient:binding});
  }
+ const meetings=await db.query(`SELECT n.* FROM meeting_notifications n JOIN meetings m ON m.meeting_id=n.meeting_id
+  WHERE m.team_id=:team AND n.read_at_ms IS NULL AND (n.last_notified_at_ms IS NULL OR n.last_notified_at_ms<=:cutoff)
+  AND NOT EXISTS (SELECT 1 FROM meeting_notifications newer WHERE newer.meeting_id=n.meeting_id AND newer.recipient_member_id=n.recipient_member_id AND newer.generation>n.generation)
+  AND EXISTS (SELECT 1 FROM meeting_participants p WHERE p.meeting_id=n.meeting_id AND p.member_id=:member) AND (:top=1 OR m.chair_member_id=:member OR n.recipient_member_id=m.chair_member_id) ORDER BY n.created_at_ms,n.meeting_id`,{team:teamId,cutoff:now-interval,top:member.boss_member_id===null?1:0,member:member.member_id});
+ for(const n of meetings){
+  const [binding]=await db.query("SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE b.member_id=:id AND m.membership_state='active'",{id:n.recipient_member_id});
+  if(!binding)continue;
+  await db.query('UPDATE meeting_notifications SET last_notified_at_ms=:now WHERE meeting_id=:id AND generation=:generation AND recipient_member_id=:recipient',{id:n.meeting_id,generation:n.generation,recipient:n.recipient_member_id,now});
+  claims.push({meetingId:n.meeting_id,notificationGeneration:Number(n.generation),recipient:binding});
+ }
  return {deliveries:claims};
 }
 

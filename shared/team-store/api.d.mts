@@ -10,7 +10,22 @@ export interface Settings {
 }
 interface MemberAuthority { teamId:string; expectedConfigVersion:number; expectedMemberGeneration:number; expectedBindingGeneration:number }
 interface AttemptAuthority extends MemberAuthority { assignmentId:string; expectedAttemptGeneration:number }
+interface MeetingAuthority extends MemberAuthority {meetingId:string;expectedMeetingGeneration:number}
 export type Command =
+  | {type:'inspectMeeting';teamId:string;meetingId:string}
+  | (MemberAuthority & {type:'createMeeting';meetingId:string;title:string;startPolicy:'all'|'joined';participantIds:string[];topics:{title:string;requiredMemberIds:string[]}[];lineLimit:number;roundLimit:number})
+  | (MeetingAuthority & {type:'respondMeeting';response:'joined'|'declined';checkpoint:string})
+  | (MeetingAuthority & {type:'startMeeting'|'extendMeeting'|'closeMeeting'|'cancelMeeting'})
+  | (MeetingAuthority & {type:'contributeMeeting';contributionId:string;body:string})
+  | (MeetingAuthority & {type:'advanceMeeting';disposition:'discussed'|'deferred';resolution:string})
+  | (MeetingAuthority & {type:'proposeMeetingOutput';outputId:string;ownerMemberId:string;outputKind:'minutes'|'action'|'profile'|'handbook'|'role';body:string})
+  | (MeetingAuthority & {type:'reviewMeetingOutput';outputId:string;decision:'accepted'|'rejected';note:string})
+  | (MeetingAuthority & {type:'acknowledgeMeetingNotification';notificationGeneration:number})
+  | (MemberAuthority & {type:'askQuestion';threadId:string;runId:string;assignmentId:string|null;recipientMemberId:string;question:string})
+  | (MemberAuthority & {type:'answerQuestion';threadId:string;answer:string;expectedThreadGeneration:number})
+  | {type:'inspectQuestion';teamId:string;threadId:string}
+  | (MemberAuthority & {type:'observeDeadlines'})
+  | (MemberAuthority & {type:'acknowledgeNotice';noticeId:string})
   | (AttemptAuthority & {type:'openGate';gateId:string;question:string;options:string[]})
   | (MemberAuthority & {type:'replaceGate';gateId:string;newGateId:string;expectedGateGeneration:number;question:string;options:string[]})
   | (MemberAuthority & {type:'resolveGate';gateId:string;expectedGateGeneration:number;choice:string;note?:string})

@@ -5,6 +5,8 @@ import {join,isAbsolute} from 'node:path';
 import {realpath,lstat,mkdir,open} from 'node:fs/promises';
 import {openBackend,inspectSchema,SHARED_SCHEMA} from './bootstrap.mjs';
 import * as schema5 from './schema5-contract.mjs';
+import * as schema7 from './schema7-contract.mjs';
+import {MEETING_DDL,meetingGuardsFor} from './meeting-contract.mjs';
 import * as schema6 from './schema6-contract.mjs';
 import {ddlFor,historyGuardsFor,gateGuardsFor,runtimeGuardsFor} from '../contract.mjs';
 import {normalizeWriter,checkWriter} from './writers.mjs';
@@ -42,21 +44,25 @@ async function lock(db,legacy) {
 export async function upgradeTeamStore(options,dependencies={}) {
  const projectRoot=await realpath(text(options.projectRoot,'projectRoot')),operationId=text(options.operationId,'operationId');
  const machineId=text(options.machineId,'machineId'),writer=normalizeWriter(options.writer,false);
- const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:6,toVersion:7};
- authorize(options.authorize,options.caller,'upgradeStore',scope,{operationId},writer);
- let db,legacy=schema6;
+ const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:7,toVersion:8};
+ let db,legacy=schema7;
  const backend=dependencies.openBackend??openBackend;
  try {
-  try{({db}=await backend({...options,projectRoot,create:false},definitionFor(legacy)));}
-  catch(error) {
-   if(error.code==='STORE_VERSION_UNSUPPORTED'&&error.details.version===5){legacy=schema5;({db}=await backend({...options,projectRoot,create:false},definitionFor(legacy)));}
-   else {
-   if(error.code!=='STORE_VERSION_UNSUPPORTED'||error.details.version!==7)throw error;
-   ({db}=await backend({...options,projectRoot,create:false}));
-   const [prior]=await db.query('SELECT * FROM schema_migrations WHERE operation_id=:id',{id:operationId});
-   return prior?{status:'upgraded',fromVersion:Number(prior.from_version),toVersion:7,backupPath:prior.backup_path}:{status:'already_current',toVersion:7};
+  for(const candidate of [schema7,schema6,schema5]) {
+   legacy=candidate;
+   try{({db}=await backend({...options,projectRoot,create:false},definitionFor(legacy)));authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:legacy.SCHEMA_VERSION},{operationId},writer);break;}
+   catch(error){
+    if(error.code!=='STORE_VERSION_UNSUPPORTED')throw error;
+    if(error.details.version===8){
+     ({db}=await backend({...options,projectRoot,create:false}));
+     authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:8},{operationId},writer);
+     const [prior]=await db.query('SELECT * FROM schema_migrations WHERE operation_id=:id',{id:operationId});
+     return prior?{status:'upgraded',fromVersion:Number(prior.from_version),toVersion:8,backupPath:prior.backup_path}:{status:'already_current',toVersion:8};
+    }
+    if(![5,6,7].includes(error.details.version))throw error;
    }
   }
+  if(!db)throw refusal('STORE_VERSION_UNSUPPORTED','No supported legacy store was opened.');
   // Snapshot under the shared lock, write its backup outside any transaction,
   // then compare again under lock. Changed state refuses rather than migrating
   // data that the backup does not contain. No host I/O runs under the write lock.
@@ -101,6 +107,7 @@ export async function upgradeTeamStore(options,dependencies={}) {
    if(inconsistent.length)throw refusal('STORE_UPGRADE_INVALID','An open historical gate belongs to a terminal task. Resolve this ambiguity before upgrading.');
    await db.exec("UPDATE tasks SET status='blocked' WHERE task_id IN (SELECT task_id FROM decision_gates WHERE status='open')");
    }
+   if(legacy.SCHEMA_VERSION<7){
    await db.exec("ALTER TABLE threads ADD COLUMN thread_kind TEXT NOT NULL DEFAULT 'work' CHECK (thread_kind IN ('work','question'))");
    await db.exec('ALTER TABLE threads ADD COLUMN answer_window_minutes BIGINT CHECK (answer_window_minutes IS NULL OR (answer_window_minutes >= 1 AND answer_window_minutes <= 9007199254740991))');
    await db.exec('DROP INDEX one_open_thread_per_task_endpoints; DROP INDEX one_open_thread_per_team_endpoints');
@@ -109,14 +116,17 @@ export async function upgradeTeamStore(options,dependencies={}) {
    await db.exec(ddl.match(/CREATE TABLE member_launches \([\s\S]*?\n\);/)[0]);
    await db.exec(ddl.match(/CREATE TABLE deadline_notices \([\s\S]*?\n\);/)[0]);
    await db.exec(runtimeGuardsFor(db.engine));
+   }
+   await db.exec(MEETING_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));
+   await db.exec(meetingGuardsFor(db.engine));
    const finished=await db.now();
    if(finished<now||finished>=expiry)throw refusal('STORE_LEASE_EXPIRED','Upgrade exceeded its database lease; the transaction was rolled back.');
-   await db.query('INSERT INTO schema_migrations VALUES (:id,:from_version,7,:machine,:path,:now)',{id:operationId,from_version:legacy.SCHEMA_VERSION,machine:machineId,path:backupPath,now:finished});
-   await db.exec('UPDATE store_metadata SET schema_version=7 WHERE singleton=1');
+   await db.query('INSERT INTO schema_migrations VALUES (:id,:from_version,8,:machine,:path,:now)',{id:operationId,from_version:legacy.SCHEMA_VERSION,machine:machineId,path:backupPath,now:finished});
+   await db.exec('UPDATE store_metadata SET schema_version=8 WHERE singleton=1');
    await db.exec('UPDATE store_lease SET holder_machine_id=NULL,holder_token=NULL,expires_at_ms=0 WHERE singleton=1');
    await inspectSchema(db,SHARED_SCHEMA);
    committing=true;await db.commit();
-   return {status:'upgraded',fromVersion:legacy.SCHEMA_VERSION,toVersion:7,backupPath};
+   return {status:'upgraded',fromVersion:legacy.SCHEMA_VERSION,toVersion:8,backupPath};
   }catch(error){await db.rollback().catch(()=>{});if(committing)throw refusal('STORE_COMMIT_UNKNOWN','Upgrade commit could not be confirmed. Check access before repeating.',{operationId,backupPath},error);if(error instanceof StoreError)throw error;throw refusal('STORE_UPGRADE_REFUSED','Upgrade constraints refused the data. The original schema was preserved.',{backupPath},error);}
  }finally{await db?.close();}
 }

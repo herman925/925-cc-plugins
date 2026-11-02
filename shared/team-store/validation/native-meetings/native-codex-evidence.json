@@ -1,0 +1,25 @@
+{
+  "modelTurnsStarted": 0,
+  "checks": [
+    "native MCP callback returns a supported denial for an ephemeral thread without ownership proof",
+    "native API call refuses an unowned thread before opening the store"
+  ],
+  "events": [
+    "remoteControl/status/changed",
+    "mcpServer/startupStatus/updated",
+    "thread/started",
+    "mcpServer/startupStatus/updated"
+  ],
+  "refusal": {
+    "code": "API_NATIVE_UNVERIFIED",
+    "message": "No native thread writer lock exists for this conversation."
+  },
+  "guard": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "Native caller or team authority could not be verified."
+    }
+  },
+  "passed": true
+}
