@@ -1,0 +1,41 @@
+{
+  "kind": "native_codex_mcp_identity_probe",
+  "codexVersion": "0.166.0",
+  "orcaVersion": "1.4.242",
+  "modelTurnsStarted": 0,
+  "transport": "isolated app-server stdio with ephemeral thread and temporary CODEX_HOME",
+  "threadId": "01a19bce-6b34-78e3-8c04-b42450c813cf",
+  "received": [
+    {
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "threadId": "01a19bce-6b34-78e3-8c04-b42450c813cf",
+          "progressToken": 1
+        },
+        "name": "inspect_native_context",
+        "arguments": {}
+      },
+      "environmentNames": []
+    }
+  ],
+  "call": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Native metadata observed; no task or authority mutation."
+      }
+    ]
+  },
+  "events": [
+    "remoteControl/status/changed",
+    "mcpServer/startupStatus/updated",
+    "thread/started",
+    "mcpServer/startupStatus/updated"
+  ],
+  "limitations": [
+    "Controller-initiated native tool call, not a model-generated call",
+    "Thread metadata alone is not full caller proof",
+    "No admission, approval, guard enforcement or mixed lifecycle acceptance claimed"
+  ]
+}
