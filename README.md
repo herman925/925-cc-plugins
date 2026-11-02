@@ -1,13 +1,28 @@
 # 925-cc-plugins
 
-Herman's Claude Code mods. One marketplace (`herman-mods`), one folder per mod, plus one Orca plugin.
+Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the `herman-mods` marketplace; Codex uses `herman925-codex` or the repository skill installer.
+
+## Codex: 925 Team Orchestrator
+
+[`925-to` 0.1.0](925-to/README.md) lets an Orca-hosted Windows Codex session create and edit teams, connect existing Claude/Codex sessions, inspect status and use durable meetings through the shared API. An active Claude session is not required. Install through either route:
+
+```text
+npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/925-to --skill 925-to --agent codex
+```
+
+```text
+codex plugin marketplace add herman925/925-cc-plugins
+codex plugin add 925-to@herman925-codex
+```
+
+Invoke `$925-to` in Codex. First use previews project-local MCP/hook setup, followed by reconnect and native hook review. Team creation and edits require native confirmation. See [supported operations and current acceptance limits](925-to/README.md).
 
 ## Claude Code mods
 
 | Mod | What it does | Version |
 |---|---|---|
 | [`session-panel`](session-panel/README.md) | Hides tool calls and shows a calm step checklist above the prompt, with a Hide details / Show details button (`/simple on\|off`). Has a prompt Enhancer (`/enhance`, or auto-enhance on Enter), and an Assumptions list that Claude fills as it works, with Confirm, Wrong and Delete. A question box rule, on by default, has Claude ask for permission and big choices with AskUserQuestion instead of in prose, including every `/grilling`, `/grill-me` and `/grill-with-docs` question, with an optional warning when it asks in prose. Settings is a floating card with tabs, laid out as a table. | 0.3.66 |
-| [`team-orchestrator`](team-orchestrator/README.md) | Runs a team of Claude Code sessions as Orca tabs, managed from a native panel that defaults to the right side where the host supports docking: quick starts, a team form, a live roster (stacked, side by side or docked) and an org chart. Members start on their first message and reopen when a message arrives; automatic close and eviction are paused until native cleanup verification exists. Each member has a role file. Members can be added to a running team. A guard keeps members from starting subagents, and members with reports from writing files, unless you allow it. With Session Panel, it shows each member's open assumptions and lets its boss or the team top confirm, mark wrong or delete them (opt-in: Settings → Classic teams → Assumptions → Show). Works on Windows, macOS and Linux. | 0.5.55 |
+| [`team-orchestrator`](team-orchestrator/README.md) | Runs a team of Claude Code sessions as Orca tabs, managed from a native panel that defaults to the right side where the host supports docking: quick starts, a team form, a live roster (stacked, side by side or docked) and an org chart. Members start on their first message and reopen when a message arrives; automatic close and eviction are paused until native cleanup verification exists. Each member has a role file. Members can be added to a running team. A guard keeps members from starting subagents, and members with reports from writing files, unless you allow it. With Session Panel, it shows each member's open assumptions and lets its boss or the team top confirm, mark wrong or delete them (opt-in: Settings → Classic teams → Assumptions → Show). Works on Windows, macOS and Linux. | 0.5.56 |
 | [`speaker-colours`](speaker-colours) | Speaker colours: a blue bar for your messages, orange for Claude's replies. | 0.1.0 |
 
 ### Install

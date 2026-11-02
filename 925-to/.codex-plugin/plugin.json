@@ -1,0 +1,7 @@
+{
+  "name": "925-to",
+  "version": "0.1.0",
+  "description": "Codex-native Team Orchestrator workflows and project-local setup.",
+  "skills": "./skills/",
+  "extensions": {"com.openai": {"onboardingSkill": "./skills/925-to/SKILL.md"}}
+}

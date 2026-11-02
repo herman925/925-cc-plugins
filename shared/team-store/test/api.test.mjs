@@ -149,6 +149,9 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
  });
  test('wake reservations throttle retries and never skip older outstanding recipient mail',async t=>{
   const f=await setup(t);await f.ready();
+  // Test the before-cutoff state, not whether loaded CI finishes two API calls
+  // within the one-second production default. Expiry is forced explicitly below.
+  await rawWrite(f,'UPDATE team_settings SET replay_interval_ms=60000');
   await f.call({...f.admit,taskId:'second-task',assignmentId:'second-assignment'});
   const command={...f.base,type:'prepareDeliveries'};
   const first=(await f.call(command)).result.deliveries;

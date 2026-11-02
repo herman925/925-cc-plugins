@@ -1,5 +1,7 @@
 # API boundary — implemented preview, acceptance pending
 
+**Current checkpoint: Mod 0.5.56 / 925-to 0.1.0, schema 8.** Codex-native management uses a private trusted confirmation path for controller approval, fresh-team creation, atomic `editTeam` and explicit session binding. Normal Codex `shared_team` calls cannot invoke management operations. `inspectController` returns the caller's own approval/team overview; controller-only `inspectConfiguration` returns configuration without transcripts/tasks, including after a stale member binding. Management re-verifies native identity after review and preserves exact operation receipts. A model-supplied boolean is never approval. See [925-to validation](VALIDATION-925-TO.md). Earlier checkpoints below are historical.
+
 **Development update:** [schema 6 runtime](SCHEMA-6-RUNTIME.md) adds durable inbox/replay primitives, per-attempt history, explicit schema-5 update, deadline returns and gate application. The schema-5 acceptance below remains historical; newer validation reports name their exact checkpoint and limits.
 
 Status: the private typed API and opt-in fresh-team Mod source integration for #141 are implemented in schema 5. See [the implementation contract and remaining acceptance](SCHEMA-5.md). Installed clients have not been changed. Schema-4 independent verification is historical evidence, preserved separately; it does not cover this increment.

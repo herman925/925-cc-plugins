@@ -1,8 +1,22 @@
 # Native Codex with the Claude Mod
 
+## Current setup: 925-to 0.1.0 / Mod 0.5.56
+
+Install the [925-to skill or Codex repository plugin](../../925-to/README.md), then invoke `$925-to`. Its Create team, Edit team, Connect session, Status and Meetings workflows use this same shared runtime. An active Claude session is no longer needed to approve/configure a new team. Windows Orca-hosted native Codex remains the supported host; the Orca plugin's separate store is not selected automatically.
+
+When MCP tools are missing, the packaged setup helper previews project-local configuration using the actual native Codex config parser. It discovers the verified Orca project/session, preserves unrelated configuration and records ownership/recovery receipts. Apply the preview, reconnect and use Codex's native hook review. Installing a skill is not hook trust or controller approval. Updates/removal touch only owned configuration; interrupted changes have explicit recovery.
+
+`shared_team_interview` supplies draft menus/forms when ordinary native question tools are unavailable. `shared_team_manage` shows the exact proposed configuration in a native confirmation; cancellation, timeout or an unsupported client grants nothing. It supports atomic team/settings edits, member addition and bounded member-field changes. Connected model replacement, member removal, hierarchy/CLI conversion and automatic launches remain unavailable. Use an explicit reviewed reconnect when a resumed conversation retains controller approval but its member incarnation changed.
+
+The other tools are `shared_team_status`, `shared_team_sessions`, `shared_team`, `shared_inbox_read`, `shared_inbox_seen` and private `team_guard`. Typed member/meeting operations and recipient-owned read acknowledgements are unchanged. Source runtime files are packaged identically in the Mod and skill. See [the final test evidence and live limits](../../shared/team-store/VALIDATION-925-TO.md).
+
+## Earlier 0.5.55 preview setup (manual alternative)
+
+The following manual workflow is retained for trusted integrators. Prefer the packaged setup above for new installations.
+
 The first route connects an existing Orca-hosted Codex terminal to the Mod's shared workspace. It is a native local MCP adapter, **not an Orca plugin panel**. Both providers use the same shared task, inbox, meeting, permission and receipt records. Automatic Codex launch and an independent non-Orca adapter remain later work.
 
-In Create team, choose **Codex · connect existing session** for a member. The member picker matches that configured CLI to an explicitly verified native session. Codex members have Connect session, not a misleading Claude Launch button. The approved Claude controller configures and binds the roster; a bound Codex head can then coordinate its workers through the member API. This release does not expose model-driven controller approval or target-identity injection.
+In Create team, choose **Codex · connect existing session** for a member. The member picker matches that configured CLI to an explicitly verified native session. Codex members have Connect session, not a misleading Claude Launch button. The earlier preview required an approved Claude controller to configure and bind the roster; a bound Codex head could then coordinate its workers through the member API. In 0.5.56, the native confirmation path above provides Codex management too. Target identity is always verified outside model arguments.
 
 ## Preview setup
 

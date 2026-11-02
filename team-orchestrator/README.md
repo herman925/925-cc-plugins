@@ -1,5 +1,7 @@
 # team-orchestrator
 
+**0.5.56** shares its management API with [`925-to` 0.1.0](../925-to/README.md): Codex can create a team, review atomic configuration edits and connect existing sessions without an active Claude controller. The installable Codex skill includes project-local setup and native draft/confirmation forms. Schema 8 is unchanged. See [validation and live acceptance limits](../shared/team-store/VALIDATION-925-TO.md).
+
 **0.5.55** implements [durable meetings](../shared/team-store/SCHEMA-8-MEETINGS.md) in the native right-panel workspace: reviewed invitations, safe self-joining, Agenda/Discussion/Outputs tabs, bounded contributions, explicit deferrals and separately reviewed minutes. It also adds the [native Codex adapter preview](docs/native-codex.md), a per-member CLI picker and existing-session mixed-provider binding. Shared schema 8 requires an explicit backed-up update from schemas 5–7. A live Codex hook/meeting acceptance run remains outstanding; see [three-pass validation](../shared/team-store/VALIDATION-NATIVE-MEETINGS.md).
 
 **0.5.53** fixes permission checks against older supported shared stores: ordinary nonmember file work continues while existing member guards remain enforced. The compatibility reader is read-only; workspace updates stay explicit. See [the guard validation](../shared/team-store/VALIDATION-GUARD-COMPATIBILITY.md).
@@ -18,7 +20,7 @@ nobody starts subagents unless you allow it.
 
 The highest supervisor's generated role includes interactive question guidance independently of Session Panel or `/grill-me`: Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` or `request_user_input_async`, and Hermes Agent uses `clarify`, subject to actual availability and permissions. If names differ, use an exposed native/MCP equivalent that shows choices and returns the user's answer in the same conversation; use prose numbered choices only when no permitted interactive tool exists. An async accepted/pending result is not an answer: keep the turn open with the available wait/resume mechanism until the user answers, cancels or the tool closes, without sending a final reply or opening a duplicate card. Lower members still relay decisions through their boss. This guidance does not add another CLI's launch support or bypass existing approval checks.
 
-Version 0.5.55. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.56. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 
@@ -809,6 +811,7 @@ These texts are shared with Session Panel's README, so both mods describe the sa
 
 | Version | Change |
 |---|---|
+| 0.5.56 | Codex-native management through the bundled 925-to skill: project-local setup, interactive drafts, exact native confirmation, atomic edits, explicit reconnect and durable receipt recovery. Matching runtime in both packages; live-model guard acceptance pending. |
 | 0.5.55 | Durable native meeting workspace and schema-8 backup/update; recipient-owned notifications, immutable contributions and reviewed minutes. Existing-session Codex MCP/guard preview and mixed CLI picker; live-model acceptance pending. |
 | 0.5.54 | Shared Orca host verifier and private Windows Codex identity groundwork; explicit mixed roster CLI and provider-consistent binding. Codex admission/transport remain pending. Three-direction right-panel meeting prototype, sample data only. |
 | 0.5.53 | Read-only permission inspection for schemas 5, 6 and 7; prevents schema mismatch from blocking ordinary nonmember Write/Edit while retaining member and state guards. |

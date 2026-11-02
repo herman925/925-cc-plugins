@@ -25,7 +25,7 @@ export async function createTeamApi(options) {
       authorize:({caller,kind})=>caller.capability===capability && (kind==='api' || (create && kind==='createStore'))});
     return store;
   };
-  const request = async (input, privileged = false) => {
+  const request = async (input, privileged = false, recover = false) => {
     exact(input,['operationId','command',...(privileged ? ['approval'] : []), 'target']);
     const command = normalizeApiCommand(input.command,{privileged});
     const actor = await authenticate();
@@ -35,10 +35,11 @@ export async function createTeamApi(options) {
       target = normalizeActor(await options.verifyTarget(input.target));
       target = normalizeActor({...target,projectRoot:await realpath(target.projectRoot)});
     } else if (input.target !== undefined) throw refusal('API_INPUT_INVALID','This operation does not accept a target.');
-    if (command.type === 'approveController') {
+    if (command.type === 'approveController'&&!recover) {
       if (typeof options.confirmController !== 'function' || await options.confirmController({actor,approval:input.approval}) !== true) throw refusal('API_APPROVAL_REQUIRED','A specific user controller-approval action is required.');
     }
-    const db = await open(actor, command.type === 'approveController');
+    if(command.type==='editTeam'&&!recover&&(typeof options.confirmManagement!=='function'||await options.confirmManagement({actor,command})!==true))throw refusal('API_APPROVAL_REQUIRED','A specific native review of this configuration change is required.');
+    const db = await open(actor, command.type === 'approveController'&&!recover);
     const value = {operationId:text(input.operationId,'operationId'),kind:'api',command,target,caller:{principalId:controllerId(actor),capability,actor}};
     return {db,value};
   };
@@ -48,6 +49,8 @@ export async function createTeamApi(options) {
     // Only the client UI calls this method; it is deliberately absent from the
     // public execute command catalogue.
     approveController:async input=>{const {db,value}=await request({...input,command:{type:'approveController'}},true); return db.execute(value);},
+    manageTeam:async input=>{if(!['createFreshTeam','editTeam','bindMember'].includes(input?.command?.type))throw refusal('API_OPERATION_DENIED','Unsupported native management operation.');const {db,value}=await request(input,true);return db.execute(value);},
+    reconcileManagement:async input=>{if(!['approveController','createFreshTeam','editTeam','bindMember'].includes(input?.command?.type))throw refusal('API_OPERATION_DENIED','Unsupported management receipt.');const {db,value}=await request(input,true,true);return db.reconcile(value);},
     launch:async input=>{const {db,value}=await request(input,true);if(!['reserveLaunch','claimLaunch','attachLaunch'].includes(value.command.type))throw refusal('API_OPERATION_DENIED','Not a launch operation.');return db.execute(value);},
     close:async()=>{if(store) await store.close();},
   });

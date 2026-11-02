@@ -29,7 +29,8 @@ export type Command =
   | (AttemptAuthority & {type:'openGate';gateId:string;question:string;options:string[]})
   | (MemberAuthority & {type:'replaceGate';gateId:string;newGateId:string;expectedGateGeneration:number;question:string;options:string[]})
   | (MemberAuthority & {type:'resolveGate';gateId:string;expectedGateGeneration:number;choice:string;note?:string})
-  | {type:'inspectCaller'}
+  | {type:'inspectCaller'|'inspectController'}
+  | {type:'inspectConfiguration';teamId:string}
   | {type:'inspectTeam';teamId:string}
   | {type:'inspectAssignment';teamId:string;assignmentId:string}
   | {type:'inspectInbox';teamId:string;recipientMemberId:string}
@@ -45,14 +46,23 @@ export type Command =
   | (AttemptAuthority & {type:'reportOutcome';outcome:'succeeded'|'failed';summary:string;evidence:string})
   | (AttemptAuthority & {type:'acceptTask';decision:'accepted'|'rejected';reason:string})
   | {type:'revokeController';controllerId:string;expectedControllerGeneration:number};
+export type TeamEdit =
+ | {type:'updateTeam';name:string;functionText:string}
+ | {type:'saveSettings';settings:Settings}
+ | {type:'addMember';memberId:string;name:string;bossMemberId:string;role:string;officialText:string;cli:'claude'|'codex'}
+ | {type:'updateMember';memberId:string;expectedMemberGeneration:number;patch:{name?:string;role?:string;officialText?:string;advisoryNotes?:string;model?:string;effort?:string;allowWrite?:boolean;allowAgent?:boolean}};
+export interface EditTeam {type:'editTeam';teamId:string;expectedConfigVersion:number;expectedControllerGeneration:number;changes:TeamEdit[]}
 export interface Request { operationId:string;command:Command;target?:unknown }
 export interface Receipt { operationId:string;kind:'api';result:Readonly<Record<string,unknown>> }
 export interface TeamApi {
  execute(request:Request):Promise<Receipt>;
  reconcile(request:Request):Promise<Receipt|{status:'unknown';operationId:string}>;
  /** Trusted UI only; this is not a model-facing command. */
- approveController(request:{operationId:string;approval:unknown}):Promise<Receipt>;
+ approveController(request:{operationId:string;approval?:unknown}):Promise<Receipt>;
+ /** Trusted native confirmation path; absent from normal model execute. */
+ manageTeam(request:{operationId:string;command:EditTeam|Extract<Command,{type:'createFreshTeam'|'bindMember'}>;target?:unknown}):Promise<Receipt>;
+ reconcileManagement(request:{operationId:string;command:EditTeam|Command|{type:'approveController'};target?:unknown}):Promise<Receipt|{status:'unknown';operationId:string}>;
  close():Promise<void>;
 }
 /** All options are supplied by trusted client code, never tool request JSON. */
-export function createTeamApi(options:{projectRoot:string;machineId:string;writer:{client:'team-orchestrator'|'team-orchestrator-orca';version:string;protocol?:number};postgres?:{connectionString:string};holderToken?:string;authenticate:()=>Promise<VerifiedActor>;verifyTarget?:(reference:unknown)=>Promise<VerifiedActor>;confirmController?:(value:{actor:VerifiedActor;approval:unknown})=>boolean|Promise<boolean>}):Promise<TeamApi>;
+export function createTeamApi(options:{projectRoot:string;machineId:string;writer:{client:'team-orchestrator'|'team-orchestrator-orca';version:string;protocol?:number};postgres?:{connectionString:string};holderToken?:string;authenticate:()=>Promise<VerifiedActor>;verifyTarget?:(reference:unknown)=>Promise<VerifiedActor>;confirmManagement?:(value:{actor:VerifiedActor;command:EditTeam})=>boolean|Promise<boolean>;confirmController?:(value:{actor:VerifiedActor;approval:unknown})=>boolean|Promise<boolean>}):Promise<TeamApi>;
