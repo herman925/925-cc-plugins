@@ -1,3 +1,4 @@
+import {normalizeTeamEdits,applyTeamEdits,configurationSnapshot} from './team-management.mjs';
 import {meetingFields,normalizeMeeting,meetingAccess,inspectMeeting,applyMeeting} from './meetings.mjs';
 // Private transaction implementation. Only the trusted API adapter supplies actor
 // facts; no model-facing request accepts an actor, policy, path or SQL.
@@ -28,16 +29,17 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 export {API_COMMAND_FIELDS};
 
 export function normalizeApiCommand(input, { privileged = false } = {}) {
-  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['approveController',...launchTypes].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
+  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['approveController','editTeam',...launchTypes].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
   const names = API_COMMAND_FIELDS[input.type];
   exact(input, ['type', ...names]);
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
-    if (k === 'settings' || k === 'members' || k === 'options' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit') continue;
+    if (k === 'settings' || k === 'members' || k === 'options' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
       : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note' });
   }
+  if(input.type==='editTeam')out.changes=normalizeTeamEdits(input.changes);
   if(input.type==='createMeeting')Object.assign(out,normalizeMeeting(input));
   if(names.includes('options')) {
     if(!Array.isArray(input.options)||input.options.length<2)fail('INPUT_INVALID','Offer at least two distinct string options.');
@@ -111,8 +113,9 @@ export async function readGuardAuthority(db,actor,version){
 export async function assertApiCaller(db, command, actor) {
   if (['approveController','attachLaunch'].includes(command.type)) return;
   if(['reserveLaunch','claimLaunch'].includes(command.type)){await controller(db,actor);return;}
-  if (command.type === 'inspectCaller') return;
-  if (['revokeController','createFreshTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
+  if (['inspectCaller','inspectController'].includes(command.type)) return;
+  if(command.type==='inspectConfiguration'){await controller(db,actor);return;}
+  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
   if (command.type === 'inspectTeam') {
     const [row] = await db.query('SELECT revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
     if (row && Number(row.revoked) === 0) return;
@@ -127,8 +130,10 @@ export async function assertApiReceipt(db,command,actor,receipt) {
  if(Object.hasOwn(meetingFields,type)){const {member}=await memberActor(db,actor,command,false);await meetingAccess(db,command,member.member_id);return;}
  if(launchTypes.includes(type)){if(type!=='attachLaunch')await controller(db,actor);return;}
  if(['askQuestion','answerQuestion','inspectQuestion'].includes(type)){const {member}=await memberActor(db,actor,command,false);await questionAccess(db,command.teamId,command.threadId,member.member_id);return;}
+ if(type==='inspectConfiguration'){await controller(db,actor);return;}
+ if(type==='inspectController'){if(value.controllerGeneration!==null)await controller(db,actor);return;}
  if(type==='approveController'){await controller(db,actor);return;}
- if(['createFreshTeam','bindMember','revokeController'].includes(type))return;
+ if(['createFreshTeam','editTeam','bindMember','revokeController'].includes(type))return;
  if(type==='inspectCaller') {
   if(value.controllerGeneration!==null)await controller(db,actor);
   if(value.member) {
@@ -196,6 +201,12 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   if(['reserveLaunch','claimLaunch'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='reserveLaunch'?reserveLaunch(db,command,actor,controllerId(actor),now):claimLaunch(db,command,actor,controllerId(actor));}
   if(type==='inspectMeeting'){const {member}=await memberActor(db,actor,command,false);return inspectMeeting(db,command,member.member_id);}
   if(type==='inspectQuestion'){const {member}=await memberActor(db,actor,command,false);return questionAccess(db,command.teamId,command.threadId,member.member_id);}
+  if(type==='inspectController'){
+   const [approval]=await db.query('SELECT generation,revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
+   const active=approval&&Number(approval.revoked)===0;
+   return {controllerGeneration:active?gen(approval.generation,'controller generation'):null,controllerRevoked:Boolean(approval&&Number(approval.revoked)),teams:active?await db.query('SELECT team_id,name,function_text,config_version FROM teams ORDER BY name,team_id'):[]};
+  }
+  if(type==='inspectConfiguration'){await controller(db,actor);return configurationSnapshot(db,command.teamId);}
   if (type === 'inspectCaller') {
     const [identity]=await db.query('SELECT project_id FROM project_identity WHERE singleton=1');
     const [approval] = await db.query('SELECT generation,revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
@@ -209,7 +220,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
     return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
   }
-  if (['revokeController','createFreshTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
+  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {
     // Self-revocation only in this slice; approving another never revokes it.
     if (command.controllerId !== controllerId(actor)) fail('OPERATION_DENIED', 'Only self-revocation is supported by this slice.');
@@ -257,7 +268,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
         }
       }
     }
-    return { team, questions, notices, meetings, meetingNotifications, members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id:command.teamId}), bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}), launches:await db.query('SELECT l.* FROM member_launches l JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id:command.teamId}), roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id:command.teamId}),work };
+    return {...await configurationSnapshot(db,command.teamId),questions,notices,meetings,meetingNotifications,work};
   }
   if (type === 'inspectAssignment') {
     const {member} = await memberActor(db,actor,command,false);
@@ -286,6 +297,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     return {delivery,message,thread:await reference(db,'threads','thread_id',message.thread_id),run:await reference(db,'runs','run_id',delivery.run_id)};
   }
   await teamVersion(db,command);
+  if(type==='editTeam')return applyTeamEdits(db,command,actor,writer);
   if (type === 'bindMember') {
     const m = await reference(db,'members','member_id',command.memberId);
     if (m.team_id !== command.teamId || m.membership_state !== 'active') fail('MEMBER_SCOPE','Only an active member of this team can be bound.');

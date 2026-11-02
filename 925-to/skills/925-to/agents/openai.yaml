@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 Team Orchestrator"
+  short_description: "Create and manage Codex-led agent teams"
+  default_prompt: "Use $925-to to set up or manage my team in this project."

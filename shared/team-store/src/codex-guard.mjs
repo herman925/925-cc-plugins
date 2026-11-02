@@ -6,7 +6,7 @@ export function codexGuard(authority,{tool,input}) {
  if(!m)return {};
  const source=typeof input==='string'?input:JSON.stringify(input??{});
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
- if(/team-orchestrator\/(?:controller-actions|launch-settings)|machine\.sqlite|mod-bridge\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
+ if(/team-orchestrator\/(?:controller-actions|launch-settings)|machine\.sqlite|925-to\/installations|mod-bridge\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
  const agent=/^(?:Agent|spawn_agent|functions\.spawn_agent|mcp__.*__spawn_agent)$/.test(tool);
  if(agent&&!Number(m.allow_agent))return deny('This team member has no subagent permission. Ask the person to enable its standing setting.');
  const shell=['Bash','exec_command','shell_command','PowerShell'].includes(tool);

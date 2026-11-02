@@ -1,0 +1,30 @@
+{
+  "project": "C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-native-management-2ZuS6J",
+  "modelTurnsStarted": 0,
+  "identity": "substituted TEMP fixture; real Orca identity is not asserted",
+  "confirmationSource": "test harness response through native Codex form transport",
+  "reviews": [
+    {
+      "mode": "form",
+      "kind": "draft-menu",
+      "projectMatched": false
+    },
+    {
+      "mode": "form",
+      "kind": "effect-review",
+      "projectMatched": true
+    },
+    {
+      "mode": "form",
+      "kind": "effect-review",
+      "projectMatched": true
+    }
+  ],
+  "checks": [
+    "native action menu returned draft data without granting permission",
+    "native Codex form transport created a fixture team with no Claude session",
+    "native reviewed edit and shared readback agreed",
+    "receipt recovery did not issue another confirmation or repeat creation"
+  ],
+  "passed": true
+}

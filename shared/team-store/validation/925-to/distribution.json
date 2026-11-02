@@ -1,0 +1,100 @@
+{
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg",
+  "modelTurnsStarted": 0,
+  "checks": [
+    "Codex selected the Codex marketplace while the Claude marketplace also existed",
+    "native plugin installation contains a relocatable matching runtime and setup helper",
+    "actual Codex skills/list discovers the installed skill",
+    "pinned npx installer copies the same standalone skill/runtime",
+    "native plugin reinstall updates to the changed local release",
+    "native plugin removal removes its installed entry"
+  ],
+  "commands": [
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "marketplace",
+        "add",
+        "C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\market",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"marketplaceName\": \"herman925-codex\",\n  \"installedRoot\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\market\",\n  \"alreadyAdded\": false\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "add",
+        "925-to@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"925-to@herman925-codex\",\n  \"name\": \"925-to\",\n  \"marketplaceName\": \"herman925-codex\",\n  \"version\": \"0.1.0\",\n  \"installedPath\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\\\\plugins\\\\cache\\\\herman925-codex\\\\925-to\\\\0.1.0\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\"))\n"
+    },
+    {
+      "program": "npx",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "--yes",
+        "skills@1.7.4",
+        "add",
+        "C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\market\\925-to",
+        "--skill",
+        "925-to",
+        "--agent",
+        "codex",
+        "--copy",
+        "--yes"
+      ],
+      "exit": 0,
+      "stdout": "\n|\n•   codex  Agent detected — installing non-interactively\n\u001b[?25l|\no  Source: C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\market\\925-to\n\u001b[?25h\u001b[?25l|\no  Local path validated\n\u001b[?25h\u001b[?25l|\no  Found 1 skill\n\u001b[?25h|\n•  Selected 1 skill: 925-to\n\n|\no  Installation Summary -------------------------------------------------------+\n|                                                                              |\n|  ~\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\npx-consumer\\.agents\\skill  |\n|  s\\925-to                                                                    |\n|    copy → Codex                                                              |\n|                                                                              |\n+------------------------------------------------------------------------------+\n\u001b[?25l|\no  Installation complete\n\u001b[?25h\n|\no  Installed 1 skill ----------------------------------------------------------+\n|                                                                              |\n|  ✓ 925-to (copied)                                                           |\n|    → ~\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\npx-consumer\\.agents\\s  |\n|  kills\\925-to                                                                |\n|                                                                              |\n+------------------------------------------------------------------------------+\n\n|\n—  Done!  Review skills before use; they run with full agent permissions.\n\n",
+      "stderr": ""
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "add",
+        "925-to@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"925-to@herman925-codex\",\n  \"name\": \"925-to\",\n  \"marketplaceName\": \"herman925-codex\",\n  \"version\": \"0.1.1\",\n  \"installedPath\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\\\\plugins\\\\cache\\\\herman925-codex\\\\925-to\\\\0.1.1\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "remove",
+        "925-to@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"925-to@herman925-codex\",\n  \"name\": \"925-to\",\n  \"marketplaceName\": \"herman925-codex\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "list",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"installed\": [],\n  \"available\": []\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\925-to-distribution-5JSvLg\\\\codex-home\"))\n"
+    }
+  ],
+  "skills": [
+    {
+      "name": "925-to:925-to",
+      "path": "C:\\Users\\Herman\\AppData\\Local\\Temp\\925-to-distribution-5JSvLg\\codex-home\\plugins\\cache\\herman925-codex\\925-to\\0.1.0\\skills\\925-to\\SKILL.md"
+    }
+  ],
+  "passed": true
+}

@@ -4,6 +4,7 @@
 import {realpath,lstat} from 'node:fs/promises';
 import {join,basename} from 'node:path';
 import {homedir} from 'node:os';
+import {createModNative} from './mod-native.mjs';
 import {createOrcaHost} from './src/orca-host.mjs';
 import {exact} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
@@ -45,6 +46,26 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    await ownsThread(threadId);
    if(await identity()!==birth)deny('The native Codex parent changed before verification completed.');
    return current.actor;
+  },
+  async verifyTarget(input,metadata){
+   const sender=await this.verifyCaller(metadata);
+   exact(input,['projectRoot','conversationId','terminalHandle','contextId']);
+   if(await realpath(input.projectRoot)!==root||input.contextId!==sender.contextId)deny('Only sessions at this exact project/context can be connected.');
+   if(input.conversationId===sender.conversationId&&input.terminalHandle===sender.terminalHandle)return sender;
+   try{return (await host.verifyTerminal(input,'codex')).actor;}catch(codexError){
+    try{const mod=await createModNative({orcaCommand,env},dependencies);return await mod.verify(input);}catch{throw codexError;}
+   }
+  },
+  async listTargets(metadata){
+   const sender=await this.verifyCaller(metadata);
+   const response=await host.rpc('session.tabs.list',{worktree:sender.contextId.startsWith('folder:')?sender.contextId:`id:${sender.contextId}`}),sessions=[];
+   for(const tab of response.tabs??[]){
+    const s=tab.agentStatus;
+    if(tab.type!=='terminal'||!['claude','codex'].includes(s?.agentType)||!s.providerSession?.id||!s.terminalHandle)continue;
+    const candidate={projectRoot:root,conversationId:s.providerSession.id,terminalHandle:s.terminalHandle,contextId:sender.contextId};
+    try{const actor=await this.verifyTarget(candidate,metadata);sessions.push({provider:actor.provider,label:tab.title||actor.terminalHandle,reference:candidate});}catch{}
+   }
+   return {sessions};
   },
   async wake(deliveries,metadata) {
    // These are committed API reservations supplied by the private adapter, never
