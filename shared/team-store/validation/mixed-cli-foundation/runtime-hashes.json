@@ -22,7 +22,7 @@
     },
     {
       "path": "codex-native.mjs",
-      "sha256": "14e8fc78479b935df091fdd527ae620500828c12a66c9701299d8053d7ca7635"
+      "sha256": "21e9bf06a0dabe22a1696d980e2ecc51125cdff20ea03bf1e9931154aba5b6f7"
     },
     {
       "path": "src/api-domain.mjs",
@@ -109,6 +109,10 @@
       "sha256": "2fe8a572918a699a2478ad93908d65820954d132a326eb7668527d99308b5019"
     },
     {
+      "path": "src/windows-native.mjs",
+      "sha256": "40b741c4ced354eee70c6b45cbbcec0efae80f9667bec92bf72adea5a36978ca"
+    },
+    {
       "path": "src/windows-thread-owner.ps1",
       "sha256": "b19b0e176673e91d601ce1f065cb3ce88b439eaaa1cb1928a47567c84150123d"
     },
@@ -118,5 +122,5 @@
     }
   ],
   "allMatch": true,
-  "count": 29
+  "count": 30
 }
