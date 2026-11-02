@@ -1,6 +1,6 @@
 # Native Codex with the Claude Mod
 
-## Current setup: team-orchestration-925 0.1.1 / Mod 0.5.56
+## Current setup: team-orchestration-925 0.1.2 / Mod 0.5.56
 
 Install the [team-orchestration-925 skill or Codex repository plugin](../../team-orchestration-925/README.md), then type `$team-orchestration-925` and select the skill. Plugin installation registers `team-orchestration-925:team-orchestration-925`; repository skill installation uses the short name. The former `925-to` name was replaced because Orca's mention picker rejects a digit as the first character. Its Create team, Edit team, Connect session, Status and Meetings workflows use this same shared runtime. An active Claude session is no longer needed to approve/configure a new team. Windows Orca-hosted native Codex remains the supported host; the Orca plugin's separate store is not selected automatically.
 

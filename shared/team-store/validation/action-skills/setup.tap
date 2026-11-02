@@ -1,0 +1,47 @@
+TAP version 13
+# Subtest: Codex project setup with native config writer
+    # Subtest: preview writes no project configuration; install/update/remove preserve unrelated settings and hooks
+    ok 1 - preview writes no project configuration; install/update/remove preserve unrelated settings and hooks
+      ---
+      duration_ms: 2281.3584
+      ...
+    # Subtest: interrupted setup records recovery and restores exact originals
+    ok 2 - interrupted setup records recovery and restores exact originals
+      ---
+      duration_ms: 1063.2436
+      ...
+    # Subtest: unowned and independently modified server/hook configuration is never overwritten
+    ok 3 - unowned and independently modified server/hook configuration is never overwritten
+      ---
+      duration_ms: 1069.2467
+      ...
+    # Subtest: setup refuses stale previews and recovery refuses a concurrent user edit
+    ok 4 - setup refuses stale previews and recovery refuses a concurrent user edit
+      ---
+      duration_ms: 1414.7805
+      ...
+    # Subtest: a hard process exit releases the native installer lock and recovery remains possible
+    ok 5 - a hard process exit releases the native installer lock and recovery remains possible
+      ---
+      duration_ms: 849.278
+      ...
+    # Subtest: the renamed package updates an owned legacy adapter without changing receipt or recovery identity
+    ok 6 - the renamed package updates an owned legacy adapter without changing receipt or recovery identity
+      ---
+      duration_ms: 1374.7599
+      ...
+    1..6
+ok 1 - Codex project setup with native config writer
+  ---
+  duration_ms: 8054.2781
+  type: 'suite'
+  ...
+1..1
+# tests 6
+# suites 1
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8207.4525

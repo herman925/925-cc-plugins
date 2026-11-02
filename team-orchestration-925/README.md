@@ -32,10 +32,23 @@ $team-orchestration-925 status
 $team-orchestration-925 meeting
 ```
 
-The plugin route registers the namespaced skill **`team-orchestration-925:team-orchestration-925`**. Its explicit invocation is:
+The plugin route includes six direct action skills in version **0.1.2**:
+
+| Invocation | Opens |
+| --- | --- |
+| `$team-orchestration-925:create` | New team composition and reviewed creation |
+| `$team-orchestration-925:edit` | Existing team inspection and supported edits |
+| `$team-orchestration-925:connect` | Verified existing session connection/reconnection |
+| `$team-orchestration-925:status` | Team, approval, binding and capability status |
+| `$team-orchestration-925:meeting` | Durable meeting workflow |
+| `$team-orchestration-925:setup` | Project connection setup, update, recovery or removal |
+
+Each action starts its own workflow without reopening the general action menu. They share the menu skill's references, helper and single runtime. The npx command above installs only the self-contained menu skill; use its action arguments there. Use the plugin route for all six namespaced action skills.
+
+The existing menu remains available as **`team-orchestration-925:team-orchestration-925`**:
 
 ```text
-$team-orchestration-925:team-orchestration-925 create-team
+$team-orchestration-925:team-orchestration-925
 ```
 
 Version 0.1.1 replaces the original `925-to` package name because Orca's `$` picker rejects names beginning with a digit. Both plugin and skill names now start with a letter. After installing the replacement, remove the old plugin with `codex plugin remove 925-to@herman925-codex` once any project connection has been updated through the new skill's setup workflow. Existing team data, MCP server name and owned setup/recovery records keep their identities. Do not install both a standalone skill and plugin merely to get a second invocation alias.
@@ -58,4 +71,4 @@ Update the installed skill through its installer or refresh/reinstall the reposi
 
 Before removing the skill/plugin, run its project setup `remove` workflow so the owned MCP/hook entries are removed first. Removal preserves teams, other configuration and private recovery backups. Resolve active work/binding ownership with the head first; uninstalling configuration is not a team-member transfer or retirement operation. If setup is interrupted, use `recover`; a native OS lock is released when the installer dies, and recovery refuses independently changed files.
 
-See [invocation repair validation](../shared/team-store/VALIDATION-SKILL-INVOCATION.md) and [the earlier integration evidence and live limits](../shared/team-store/VALIDATION-925-TO.md). Automated/native transport fixtures do not establish a real multi-model guard/lifecycle acceptance run. The runtime reports hook trust as unverified until it is checked in the actual client.
+See [direct action skill validation](../shared/team-store/VALIDATION-ACTION-SKILLS.md), [invocation repair validation](../shared/team-store/VALIDATION-SKILL-INVOCATION.md) and [the earlier integration evidence and live limits](../shared/team-store/VALIDATION-925-TO.md). Automated/native transport fixtures do not establish a real multi-model guard/lifecycle acceptance run. The runtime reports hook trust as unverified until it is checked in the actual client.

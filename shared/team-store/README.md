@@ -1,6 +1,6 @@
 # Shared team-store contract and adapter
 
-**Current: schema 8 / Mod 0.5.56 / team-orchestration-925 0.1.1.** [Codex-native team management](../../team-orchestration-925/README.md) adds reviewed create/edit/connect workflows and project-local onboarding over this API, with no schema change. See [the invocation repair](VALIDATION-SKILL-INVOCATION.md) and [earlier three-pass validation](VALIDATION-925-TO.md). [Durable meeting behavior](SCHEMA-8-MEETINGS.md) and [its earlier validation](VALIDATION-NATIVE-MEETINGS.md) remain unchanged. The schema-7 and earlier sections below are historical checkpoints.
+**Current: schema 8 / Mod 0.5.56 / team-orchestration-925 0.1.2.** [Codex-native team management](../../team-orchestration-925/README.md) adds reviewed create/edit/connect workflows and project-local onboarding over this API, with no schema change. See [the invocation repair](VALIDATION-SKILL-INVOCATION.md) and [earlier three-pass validation](VALIDATION-925-TO.md). [Durable meeting behavior](SCHEMA-8-MEETINGS.md) and [its earlier validation](VALIDATION-NATIVE-MEETINGS.md) remain unchanged. The schema-7 and earlier sections below are historical checkpoints.
 
 **Schema 7 / Mod 0.5.52:** [bounded questions, deadline notices and fresh member launch](SCHEMA-7-QUESTIONS-LAUNCH.md). Historical schema-6 validation below remains a checkpoint, not full acceptance of the newer runtime.
 

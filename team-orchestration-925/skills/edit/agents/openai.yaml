@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Edit team"
+  short_description: "Edit an existing Team Orchestrator team from Codex. Use for "
+  default_prompt: "Use $team-orchestration-925:edit to edit my team in this project."

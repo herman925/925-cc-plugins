@@ -9,7 +9,7 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {createOrcaHost} from './runtime/src/orca-host.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.1';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.2';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));

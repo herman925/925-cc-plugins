@@ -12,7 +12,7 @@ const match=source.match(/function (\w+)\(e\)\{let t=e\.match\((\w+)\)\?\.\[1\]\
 assert.ok(match,'The current host parser could not be isolated; inspect the asset before changing this probe.');
 const [,fn,pattern,environments]=match,context={[pattern]:/(?:^|\s)\$(\S*)$/,[environments]:new Set('PATH HOME USER SHELL PWD TMPDIR TEMP TMP LANG TERM XDG_CONFIG_HOME'.split(' '))};
 const parse=runInNewContext(`(${match[0]})`,context,{timeout:1000});
-const cases=[['$925-to',null],['$925-to:925-to',null],['$team-orchestration-925','team-orchestration-925'],['$team-orchestration-925:team-orchestration-925','team-orchestration-925:team-orchestration-925']];
+const cases=[['$925-to',null],['$925-to:925-to',null],['$team-orchestration-925','team-orchestration-925'],['$team-orchestration-925:team-orchestration-925','team-orchestration-925:team-orchestration-925'],...['create','edit','connect','status','meeting','setup'].map(action=>['$team-orchestration-925:'+action,'team-orchestration-925:'+action])];
 for(const [input,expected]of cases)assert.equal(parse(input),expected);
 const root=await mkdtemp(join(tmpdir(),'team-skill-invocation-')),evidence={asset,assetSha256:createHash('sha256').update(source).digest('hex'),parserName:fn,parser:match[0],cases:cases.map(([input,expected])=>({input,expected,actual:parse(input)})),modelTurnsStarted:0,passed:true};
 await writeFile(join(root,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({root,passed:true,cases:evidence.cases}));

@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Connect session"
+  short_description: "Connect an existing verified Claude or Codex session to a Te"
+  default_prompt: "Use $team-orchestration-925:connect to connect an existing session in this project."

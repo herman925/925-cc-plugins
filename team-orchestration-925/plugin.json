@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "team-orchestration-925",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Codex-native Team Orchestrator creation, reviewed editing, session connection and durable meetings.",
   "author": {
     "name": "herman925"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "925 · Team status"
+  short_description: "Inspect Team Orchestrator configuration, caller approval, na"
+  default_prompt: "Use $team-orchestration-925:status to check my team status in this project."
