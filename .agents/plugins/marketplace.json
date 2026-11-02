@@ -1,5 +1,20 @@
 {
   "name": "herman925-codex",
-  "interface": {"displayName": "Herman 925 Codex tools"},
-  "plugins": [{"name": "925-to", "source": {"source": "local", "path": "./925-to"}, "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}, "category": "Productivity"}]
+  "interface": {
+    "displayName": "Herman 925 Codex tools"
+  },
+  "plugins": [
+    {
+      "name": "team-orchestration-925",
+      "source": {
+        "source": "local",
+        "path": "./team-orchestration-925"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
 }

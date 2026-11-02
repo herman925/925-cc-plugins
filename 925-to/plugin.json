@@ -1,9 +1,0 @@
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "925-to",
-  "version": "0.1.0",
-  "description": "Codex-native Team Orchestrator creation, reviewed editing, session connection and durable meetings.",
-  "author": {"name": "herman925"},
-  "repository": "https://github.com/herman925/925-cc-plugins",
-  "extensions": {"com.openai": {"onboardingSkill": "./skills/925-to/SKILL.md", "interface": {"displayName": "925 Team Orchestrator", "shortDescription": "Create and manage Codex-led teams"}}}
-}

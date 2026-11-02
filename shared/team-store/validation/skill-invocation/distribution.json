@@ -1,0 +1,100 @@
+{
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO",
+  "modelTurnsStarted": 0,
+  "checks": [
+    "Codex selected the Codex marketplace while the Claude marketplace also existed",
+    "native plugin installation contains a relocatable matching runtime and setup helper",
+    "actual Codex skills/list discovers the installed skill",
+    "pinned npx installer copies the same standalone skill/runtime",
+    "native plugin reinstall updates to the changed local release",
+    "native plugin removal removes its installed entry"
+  ],
+  "commands": [
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "marketplace",
+        "add",
+        "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\market",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"marketplaceName\": \"herman925-codex\",\n  \"installedRoot\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\market\",\n  \"alreadyAdded\": false\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "add",
+        "team-orchestration-925@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"team-orchestration-925@herman925-codex\",\n  \"name\": \"team-orchestration-925\",\n  \"marketplaceName\": \"herman925-codex\",\n  \"version\": \"0.1.1\",\n  \"installedPath\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\\\\plugins\\\\cache\\\\herman925-codex\\\\team-orchestration-925\\\\0.1.1\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\"))\n"
+    },
+    {
+      "program": "npx",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "--yes",
+        "skills@1.7.4",
+        "add",
+        "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\market\\team-orchestration-925",
+        "--skill",
+        "team-orchestration-925",
+        "--agent",
+        "codex",
+        "--copy",
+        "--yes"
+      ],
+      "exit": 0,
+      "stdout": "\n|\n•   codex  Agent detected — installing non-interactively\n\u001b[?25l|\no  Source: C:\\Users\\Herman\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\market\\team-orchestration-925\n\u001b[?25h\u001b[?25l|\no  Local path validated\n\u001b[?25h\u001b[?25l|\no  Found 1 skill\n\u001b[?25h|\n•  Selected 1 skill: team-orchestration-925\n\n|\no  Installation Summary -------------------------------------------------------+\n|                                                                              |\n|  ~\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\npx-consum  |\n|  er\\.agents\\skills\\team-orchestration-925                                    |\n|    copy → Codex                                                              |\n|                                                                              |\n+------------------------------------------------------------------------------+\n\u001b[?25l|\no  Installation complete\n\u001b[?25h\n|\no  Installed 1 skill ----------------------------------------------------------+\n|                                                                              |\n|  ✓ team-orchestration-925 (copied)                                           |\n|    → ~\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\npx-co  |\n|  nsumer\\.agents\\skills\\team-orchestration-925                                |\n|                                                                              |\n+------------------------------------------------------------------------------+\n\n|\n—  Done!  Review skills before use; they run with full agent permissions.\n\n",
+      "stderr": ""
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "add",
+        "team-orchestration-925@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"team-orchestration-925@herman925-codex\",\n  \"name\": \"team-orchestration-925\",\n  \"marketplaceName\": \"herman925-codex\",\n  \"version\": \"0.1.2\",\n  \"installedPath\": \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\\\\plugins\\\\cache\\\\herman925-codex\\\\team-orchestration-925\\\\0.1.2\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "remove",
+        "team-orchestration-925@herman925-codex",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"pluginId\": \"team-orchestration-925@herman925-codex\",\n  \"name\": \"team-orchestration-925\",\n  \"marketplaceName\": \"herman925-codex\"\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\"))\n"
+    },
+    {
+      "program": "codex",
+      "args": [
+        "plugin",
+        "list",
+        "--json"
+      ],
+      "exit": 0,
+      "stdout": "{\n  \"installed\": [],\n  \"available\": []\n}\n",
+      "stderr": "WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\\" (codex_home: AbsolutePathBuf(\"C:\\\\Users\\\\Herman\\\\AppData\\\\Local\\\\Temp\\\\team-orchestration-925-distribution-qnwaVO\\\\codex-home\"))\n"
+    }
+  ],
+  "skills": [
+    {
+      "name": "team-orchestration-925:team-orchestration-925",
+      "path": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-orchestration-925-distribution-qnwaVO\\codex-home\\plugins\\cache\\herman925-codex\\team-orchestration-925\\0.1.1\\skills\\team-orchestration-925\\SKILL.md"
+    }
+  ],
+  "passed": true
+}

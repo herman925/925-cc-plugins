@@ -5,7 +5,7 @@ import {join,dirname,basename} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup} from '../../../925-to/skills/925-to/scripts/setup.mjs';
+import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs';
 const native=process.env.TEAM_TEST_CODEX_EXECUTABLE;
 const prepareSetup=options=>nativePrepareSetup(options,{verifyHost:async()=>{}});
 describe('Codex project setup with native config writer',{skip:!native},()=>{
@@ -41,10 +41,19 @@ describe('Codex project setup with native config writer',{skip:!native},()=>{
  });
  test('a hard process exit releases the native installer lock and recovery remains possible',async t=>{
   const f=await fixture(t);await writeFile(f.config,'model = "before-crash"\n');
-  const script=join(f.root,'crash.mjs'),helper=new URL('../../../925-to/skills/925-to/scripts/setup.mjs',import.meta.url).href;
+  const script=join(f.root,'crash.mjs'),helper=new URL('../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs',import.meta.url).href;
   await writeFile(script,`import {prepareSetup,applySetup} from ${JSON.stringify(helper)};const plan=await prepareSetup(JSON.parse(process.argv[2]),{verifyHost:async()=>{}});await applySetup(plan,{afterWrite:async()=>process.exit(9)});`);
   const child=spawn(process.execPath,[script,JSON.stringify(f.options)],{windowsHide:true,stdio:'ignore'});const exit=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});assert.equal(exit,9);
   let result;for(let attempt=0;attempt<20;attempt++){try{result=await recoverSetup(f.options);break;}catch(e){if(e.code!=='SETUP_BUSY')throw e;await new Promise(resolve=>setTimeout(resolve,25));}}
   assert.equal(result?.status,'recovered');assert.equal(await readFile(f.config,'utf8'),'model = "before-crash"\n');
+ });
+ test('the renamed package updates an owned legacy adapter without changing receipt or recovery identity',async t=>{
+  const f=await fixture(t),oldAdapter=join(f.root,'old-925-to-adapter.mjs');await writeFile(oldAdapter,'// Legacy adapter path used only by the staged native config parser.\n');
+  const oldPlan=await prepareSetup({...f.options,adapter:oldAdapter});await applySetup(oldPlan);
+  const legacy=JSON.parse(await readFile(f.receipt,'utf8'));legacy.version='0.1.0';await writeFile(f.receipt,JSON.stringify(legacy));
+  const next=await prepareSetup(f.options);assert.equal(next.paths.files.receipt,f.receipt);assert.equal(next.paths.state,oldPlan.paths.state);await applySetup(next);
+  const updated=JSON.parse(await readFile(f.receipt,'utf8'));assert.equal(updated.version,'0.1.1');assert.notEqual(updated.serverHash,legacy.serverHash);assert.equal(updated.guardHash,legacy.guardHash);
+  const config=await readFile(f.config,'utf8');assert.ok(config.includes('team-orchestration-925'));assert.ok(!config.includes('old-925-to-adapter'));
+  await applySetup(await prepareSetup({...f.options,action:'remove'}));await assert.rejects(access(f.hooks));
  });
 });

@@ -1,5 +1,5 @@
 ---
-name: 925-to
+name: team-orchestration-925
 description: Create, edit and connect Team Orchestrator teams from Codex, inspect their status and manage durable meetings. Use for team composition, reporting roles and existing Claude/Codex sessions; includes project-local setup when its tools are missing.
 ---
 

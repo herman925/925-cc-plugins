@@ -1,0 +1,11 @@
+{
+  "name": "team-orchestration-925",
+  "version": "0.1.1",
+  "description": "Codex-native Team Orchestrator workflows and project-local setup.",
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/team-orchestration-925/SKILL.md"
+    }
+  }
+}

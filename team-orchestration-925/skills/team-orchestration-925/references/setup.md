@@ -6,7 +6,7 @@ Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The h
 
 When the user requests setup, review that preview and use `apply`. Only this project's `.codex/config.toml`, `.codex/hooks.json` and owned setup receipt are changed; global Codex settings and real team stores remain untouched. Existing unrelated settings/hooks are preserved. Existing unowned or modified team configuration is refused instead of overwritten. Private recovery backups stay outside the project.
 
-After setup, reconnect/reload MCP through the client's available controls or start a fresh Codex session in the project. Review/trust the exact team permission hook through Codex's native hook interface. The helper does not mark it trusted. Invoke `$925-to` again and inspect `shared_team_status` before team creation.
+After setup, reconnect/reload MCP through the client's available controls or start a fresh Codex session in the project. Review/trust the exact team permission hook through Codex's native hook interface. The helper does not mark it trusted. Invoke `$team-orchestration-925` again and inspect `shared_team_status` before team creation.
 
 `diagnose` reads the current installation and supported prerequisites. `remove` removes only the owned MCP/hook entries and preserves unrelated user changes; it does not delete teams, transcripts, other skills, global config or the current conversation. A partial setup uses the recorded recovery journal; changed/unowned files require manual review rather than an unsafe overwrite.
 
