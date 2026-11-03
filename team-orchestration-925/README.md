@@ -1,24 +1,26 @@
 # 925 Team Orchestrator
 
-`team-orchestration-925` gives Codex native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
+`team-orchestration-925` **0.1.2** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
+
+For the wider product, see [choose your Team Orchestrator client](../README.md#team-orchestrator): Claude Code uses the native Mod/plugin, Codex uses this skill bundle, and Hermes native integration is pending. The existing classic-team Hermes guard is not an equivalent shared-runtime client.
 
 This first release supports native Windows Codex terminals hosted by Orca. It does not require the Team Orchestrator Orca plugin. Automatic Codex launch, Hermes admission, independent hosts and the Orca plugin's separate store convergence remain later work.
 
 ## Install
 
-Choose one route; both contain the same self-contained skill and matching runtime.
+Choose one route. **The plugin route is recommended for the complete skill set**; the repository skill route installs the self-contained menu and matching runtime only.
 
-Repository skill installation, with the tested installer version:
-
-```text
-npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
-```
-
-Codex repository marketplace:
+Complete Codex plugin, from this GitHub repository's Codex marketplace:
 
 ```text
 codex plugin marketplace add herman925/925-cc-plugins
 codex plugin add team-orchestration-925@herman925-codex
+```
+
+Optional standalone menu, with the tested repository installer version:
+
+```text
+npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
 ```
 
 Start a fresh Codex session in the project. Type `$team-orchestration-925` and select **925 Team Orchestrator** from the skill picker. A repository skill installation uses the short name:
@@ -45,6 +47,8 @@ The plugin route includes six direct action skills in version **0.1.2**:
 
 Each action starts its own workflow without reopening the general action menu. They share the menu skill's references, helper and single runtime. The npx command above installs only the self-contained menu skill; use its action arguments there. Use the plugin route for all six namespaced action skills.
 
+For a new project, start with **`:setup` → reconnect/native hook review → `:create` → `:connect` → `:status`**, using the full `team-orchestration-925:` prefix for each invocation. Use `:edit` for later changes and `:meeting` for the durable meeting workflow. These are conversation skill invocations, not terminal commands.
+
 The existing menu remains available as **`team-orchestration-925:team-orchestration-925`**:
 
 ```text
@@ -68,6 +72,13 @@ Only normal typed operations modify teams. A native confirmation is required for
 ## Updates and removal
 
 Update the installed skill through its installer or refresh/reinstall the repository plugin, then use the packaged setup workflow to update its owned project connection. Existing unrelated settings/hooks are preserved. Modified or unowned team entries require review rather than replacement.
+
+For plugin updates, run in your terminal:
+
+```text
+codex plugin marketplace upgrade herman925-codex
+codex plugin add team-orchestration-925@herman925-codex
+```
 
 Before removing the skill/plugin, run its project setup `remove` workflow so the owned MCP/hook entries are removed first. Removal preserves teams, other configuration and private recovery backups. Resolve active work/binding ownership with the head first; uninstalling configuration is not a team-member transfer or retirement operation. If setup is interrupted, use `recover`; a native OS lock is released when the installer dies, and recovery refuses independently changed files.
 
