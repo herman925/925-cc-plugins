@@ -8,8 +8,10 @@ import {createHash,randomUUID} from 'node:crypto';
 import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
-import {createOrcaHost} from './runtime/src/orca-host.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.2';
+import {discoverCodexExecutable} from './codex-executable.mjs';
+import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
+export {discoverCodexExecutable} from './codex-executable.mjs';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.3';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));
@@ -21,12 +23,6 @@ async function paths(options){
  try{const stat=await lstat(dir);if(!stat.isDirectory()||stat.isSymbolicLink())fail('SETUP_PATH_REFUSED','The project Codex directory must be a real directory.');}catch(e){if(e.code!=='ENOENT')throw e;}
  const state=resolve(options.stateRoot||join(process.env.CODEX_HOME||join(homedir(),'.codex'),'925-to','installations'));
  return {root,dir,state:join(state,hash(root)),files:{config:join(dir,'config.toml'),hooks:join(dir,'hooks.json'),receipt:join(dir,'925-to-installation.json')}};
-}
-export async function discoverCodexExecutable(){
- if(process.platform!=='win32')fail('SETUP_HOST_UNSUPPORTED','The native Codex adapter currently supports Windows Orca terminals.');
- const script=`$toCursor=${process.ppid}; for($toAttempt=0;$toAttempt -lt 8;$toAttempt++){ $toProcess=Get-Process -Id $toCursor -ErrorAction Stop; if([IO.Path]::GetFileName($toProcess.Path) -ieq 'codex.exe'){ [Console]::Write($toProcess.Path); exit 0 }; $toCursor=(Get-CimInstance Win32_Process -Filter "ProcessId=$toCursor" -ErrorAction Stop).ParentProcessId }; throw 'No native Codex ancestor'`;
- try{const r=await exec(join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:10000,maxBuffer:8192});return await realpath(r.stdout.trim());}
- catch{fail('SETUP_CODEX_NOT_FOUND','Run setup from a native Codex session; no native Codex ancestor could be verified.');}
 }
 async function native(bin,args,stage){
  try{const result=await exec(bin,args,{cwd:stage,env:{...process.env,CODEX_HOME:stage},windowsHide:true,timeout:15000,maxBuffer:2*1024*1024});return result.stdout;}
@@ -52,17 +48,6 @@ function mergedHooks(original,receipt,remove){
  if(remove&&receipt.hooksCreated&&Object.keys(doc.hooks).length===0&&Object.keys(doc).every(k=>k==='hooks'))return null;
  return Buffer.from(JSON.stringify(doc,null,2)+'\n');
 }
-async function verifySetupHost(project){
- const env=process.env,conversationId=env.CODEX_THREAD_ID||env.CODEX_SESSION_ID;
- if(!env.ORCA_TERMINAL_HANDLE||!env.ORCA_WORKTREE_ID||!conversationId)fail('SETUP_HOST_UNSUPPORTED','Run setup inside the intended Orca-hosted Codex session. Its native scope could not be discovered.');
- try{const host=await createOrcaHost();await host.verifyTerminal({projectRoot:project,conversationId,terminalHandle:env.ORCA_TERMINAL_HANDLE,contextId:env.ORCA_WORKTREE_ID},'codex');}
- catch{fail('SETUP_HOST_UNVERIFIED','Orca could not verify this Codex conversation in the selected project. No project configuration was changed.');}
-}
-async function nativeProjectRoot(){
- if(!process.env.ORCA_TERMINAL_HANDLE||!process.env.ORCA_WORKTREE_ID)fail('SETUP_HOST_UNSUPPORTED','Setup requires the intended Orca-hosted Codex session.');
- try{const host=await createOrcaHost(),{terminal}=await host.rpc('terminal.show',{terminal:process.env.ORCA_TERMINAL_HANDLE});if(terminal.worktreeId!==process.env.ORCA_WORKTREE_ID)throw Error('Scope changed.');return await realpath(terminal.worktreePath);}
- catch{fail('SETUP_HOST_UNVERIFIED','The current Orca project could not be discovered. No configuration was changed.');}
-}
 export async function prepareSetup(options={},dependencies={}){
  const p=await paths(options),before=Object.fromEntries(await Promise.all(Object.entries(p.files).map(async([k,path])=>[k,await bytes(path)])));
  let receipt;try{receipt=before.receipt?JSON.parse(before.receipt):null;}catch{fail('SETUP_CONFIG_INVALID','The setup receipt is malformed.');}
@@ -71,7 +56,7 @@ export async function prepareSetup(options={},dependencies={}){
  const installed=receipt?.phase==='installed'?receipt:null,remove=options.action==='remove';
  if(remove&&!installed)return {noop:true,summary:{project:p.root,status:'not-installed',changes:[]}};
  if(!remove)await (dependencies.verifyHost??verifySetupHost)(p.root);
- const bin=options.codexExecutable||await discoverCodexExecutable(),temp=await realpath(tmpdir()),stage=await mkdtemp(join(temp,'925-to-setup-'));
+ const bin=await discoverCodexExecutable({executable:options.codexExecutable}),temp=await realpath(tmpdir()),stage=await mkdtemp(join(temp,'925-to-setup-'));
  try{
   if(before.config!==null)await writeFile(join(stage,'config.toml'),before.config,{mode:0o600});
   const list=JSON.parse(await native(bin,['mcp','list','--json'],stage)),existing=list.find(s=>s.name===serverName);

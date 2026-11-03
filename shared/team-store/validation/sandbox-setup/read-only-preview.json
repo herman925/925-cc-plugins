@@ -1,0 +1,13 @@
+{
+  "environment": "current Codex tool session; not the independent tester sandbox",
+  "project": "C:\\Users\\Herman\\Downloads\\925-cc-plugins",
+  "status": "setup-ready",
+  "changes": [
+    "Configure project MCP server and native team hook"
+  ],
+  "globalConfigurationChanged": false,
+  "teamStoreChanged": false,
+  "hookTrustGranted": false,
+  "requiresReconnect": true,
+  "requiresNativeHookReview": true
+}

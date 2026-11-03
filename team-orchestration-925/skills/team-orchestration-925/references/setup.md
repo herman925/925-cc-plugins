@@ -2,7 +2,11 @@
 
 The skill contains its matching runtime under `scripts/runtime/`; it must not refer to the developer's checkout. Node 22.13+ and a native Windows Codex session in Orca are required. No account/API key is added by this package.
 
-Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The helper discovers the native Codex ancestor and project scope; it uses Codex's own config writer/parser in disposable staging. Preview explains the project-local server and hook changes without applying them. It never prints existing configuration or secrets.
+Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The helper discovers the native CLI and verifies project/session scope; it uses Codex's own config writer/parser in disposable staging. Preview explains the project-local server and hook changes without applying them. It never prints existing configuration or secrets.
+
+The config-writer executable is resolved from PATH, including the native package behind a Codex npm shim; it is checked with `--version`. No ancestor/process query or shell-shim execution is required. For a non-PATH installation, the person may explicitly configure `TEAM_CODEX_EXECUTABLE` as an absolute native `codex.exe` path. This does not prove caller identity; the native MCP adapter separately retains its exact parent/thread-lock/Orca verification.
+
+Treat `SETUP_HOST_ACCESS_DENIED` as a host/profile/local-connection access problem, `SETUP_HOST_UNAVAILABLE` as a missing Orca CLI/profile prerequisite and `SETUP_CODEX_NOT_FOUND` as executable discovery. A failed Orca subprocess reports its own stage/exit classification; it is not described as a missing project. Do not infer a successful setup, silently switch projects or approve permission escalation from these errors.
 
 When the user requests setup, review that preview and use `apply`. Only this project's `.codex/config.toml`, `.codex/hooks.json` and owned setup receipt are changed; global Codex settings and real team stores remain untouched. Existing unrelated settings/hooks are preserved. Existing unowned or modified team configuration is refused instead of overwritten. Private recovery backups stay outside the project.
 

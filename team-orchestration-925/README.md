@@ -1,10 +1,12 @@
 # 925 Team Orchestrator
 
-`team-orchestration-925` **0.1.2** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
+`team-orchestration-925` **0.1.3** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.56. An active Claude session is not required for team management.
 
 For the wider product, see [choose your Team Orchestrator client](../README.md#team-orchestrator): Claude Code uses the native Mod/plugin, Codex uses this skill bundle, and Hermes native integration is pending. The existing classic-team Hermes guard is not an equivalent shared-runtime client.
 
 This first release supports native Windows Codex terminals hosted by Orca. It does not require the Team Orchestrator Orca plugin. Automatic Codex launch, Hermes admission, independent hosts and the Orca plugin's separate store convergence remain later work.
+
+Version **0.1.3** repairs setup executable discovery after live testing found that Codex's sandbox denied its Windows process query. Setup now resolves native `codex.exe` from PATH, including an installed npm shim's native package, and checks `--version`. It does not execute the shim or request process-query escalation. An explicit `TEAM_CODEX_EXECUTABLE` can select a native executable when PATH discovery is unavailable. This selects the staged config writer only; MCP parent/thread ownership and Orca caller checks remain unchanged. Host errors distinguish denied access, a missing host, CLI failure and a changed project scope. See [repair validation and live retest status](../shared/team-store/VALIDATION-SANDBOX-SETUP.md).
 
 ## Install
 
