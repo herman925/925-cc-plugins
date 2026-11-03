@@ -2,22 +2,91 @@
 
 Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the `herman-mods` marketplace; Codex uses `herman925-codex` or the repository skill installer.
 
-## Codex: 925 Team Orchestrator
+## Team Orchestrator
 
-[`team-orchestration-925` 0.1.2](team-orchestration-925/README.md) lets an Orca-hosted Windows Codex session create and edit teams, connect existing Claude/Codex sessions, inspect status and use durable meetings through the shared API. An active Claude session is not required. Install through either route:
+Choose the client you work in. The Claude Code shared workspace and Codex client use the same project-owned store and management API; each has its own interface and installation package.
+
+| Client | Package | Current status | How you use it |
+| --- | --- | --- | --- |
+| **Claude Code** | [Team Orchestrator Mod](team-orchestrator/README.md), installed as a Claude Code plugin | **0.5.56**, implemented | Native panel: Create team, templates/Interview me, team workspace, members, tasks, inbox, gates and meetings |
+| **Codex** | [team-orchestration-925](team-orchestration-925/README.md), a Codex plugin containing a skill set and matching runtime | **0.1.2**, implemented for Windows native Codex hosted by Orca | Six direct action skills plus a general menu; an active Claude session is not required |
+| **Hermes Agent** | Native Team Orchestrator client/package | **Pending** | Shared-store management, verified admission and lifecycle integration are not implemented; no equivalent install command yet |
+
+The Codex **plugin** is the installable bundle; its **skills** are the named workflows. The optional npx route installs only the standalone menu skill with its matching runtime. It does not install the complete plugin or automatically activate/trust its connection and hook.
+
+A separate [Orca plugin](#orca-plugin) also exists. It currently has its own store/runtime and is not required to use the Claude Code or Codex clients. Selecting Orca as the Codex session host does not install that plugin or move a team into its store.
+
+### Claude Code: install and start
+
+Run in your terminal:
 
 ```text
-npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
+claude plugin marketplace add herman925/925-cc-plugins
+claude plugin install team-orchestrator@herman-mods --scope user
 ```
+
+In an already-open Claude Code session, run `/reload-plugins`. Open Team Orchestrator with the visible control, `t` or `/team`. For a new shared team, choose **Create team**, start from a template, **Interview me** or your own draft, then review members/options, enable the project's shared workspace, explicitly allow conversation management and create the team. The resulting **Team workspace** provides member/task controls; meetings use Agenda, Discussion and Outputs. The panel requests right docking where the host supports it. See [the Mod guide](team-orchestrator/README.md) and [panel navigation](team-orchestrator/docs/panel-navigation.md).
+
+To update:
+
+```text
+claude plugin marketplace update herman-mods
+claude plugin update team-orchestrator@herman-mods
+```
+
+Then reload/restart as described in the Mod guide, reloading the team top first. Existing classic rosters remain separate from shared teams; installation is not a migration.
+
+### Codex: install the plugin and choose a flow
+
+For the complete skill set, run in your terminal:
 
 ```text
 codex plugin marketplace add herman925/925-cc-plugins
 codex plugin add team-orchestration-925@herman925-codex
 ```
 
-Type `$team-orchestration-925` in Codex and select **925 Team Orchestrator**. Plugin installs register `team-orchestration-925:team-orchestration-925`; repository skill installs use the short name. First use previews project-local MCP/hook setup, followed by reconnect and native hook review. Team creation and edits require native confirmation. See [supported operations and current acceptance limits](team-orchestration-925/README.md).
+In a Codex conversation, type `$team-orchestration-925` and select a workflow in the skill picker, or use its full name:
 
-Plugin version 0.1.2 also offers direct skills: `$team-orchestration-925:create`, `:edit`, `:connect`, `:status`, `:meeting` and `:setup` (each uses the full plugin prefix). They share one runtime and skip the general action menu.
+| Flow | Skill invocation | What happens |
+| --- | --- | --- |
+| Set up the project connection | `$team-orchestration-925:setup` | Preview/apply the owned project MCP/hook configuration, diagnose it, update it, recover interruption or remove it |
+| Create a team | `$team-orchestration-925:create` | Draft purpose, composition, roles, reporting lines and supported CLIs; review and confirm creation |
+| Edit a team | `$team-orchestration-925:edit` | Inspect the current team, preview supported configuration changes and confirm the exact edits |
+| Connect sessions | `$team-orchestration-925:connect` | Choose verified existing Claude/Codex sessions for members, or explicitly reconnect a changed native binding |
+| Check status | `$team-orchestration-925:status` | Inspect team, controller approval, binding and capability state |
+| Work with meetings | `$team-orchestration-925:meeting` | Inspect invitations/discussion/outputs and use the operations permitted for the current member or chair |
+| Choose from the general menu | `$team-orchestration-925:team-orchestration-925` | Pick one of the workflows interactively |
+
+For a new project: **setup → reconnect/native hook review → create → connect → status**. The setup helper discovers the verified Orca project/session; it preserves unrelated configuration. Controller approval and management changes use native confirmation. Installing a plugin or answering draft questions is not approval or hook trust. Existing sessions are connected explicitly; automatic Codex launch is pending. If the skill list is stale, reopen the Codex session.
+
+Update the repository snapshot and installed plugin with:
+
+```text
+codex plugin marketplace upgrade herman925-codex
+codex plugin add team-orchestration-925@herman925-codex
+```
+
+Then use `:setup` for any owned project connection update and reconnect as instructed. Before uninstalling, use its setup removal workflow to remove owned connection/hook entries, then `codex plugin remove team-orchestration-925@herman925-codex`. Team data is preserved. See [supported edits, setup and removal](team-orchestration-925/README.md).
+
+### Codex: optional standalone menu skill
+
+If you prefer the repository skill installer instead of the complete plugin:
+
+```text
+npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-orchestration-925 --skill team-orchestration-925 --agent codex
+```
+
+This route provides `$team-orchestration-925` with action arguments such as `create-team`, `edit-team`, `connect-session`, `status` and `meeting`. It includes the matching setup/runtime resources, but the six plugin-namespaced action skills come with the complete plugin route above. Choose one installation route. The first-use project connection and native hook review are required in either route.
+
+### Hermes: pending native integration
+
+Hermes is a planned client lane, not a shipped equivalent of the Codex skill set. The Mod already contains a [classic-team Hermes guard and patch checker](team-orchestrator/README.md#hermes-members-the-guard-and-the-re-check-0529). Those helpers do not provide shared-store management, native controller approval, session admission, delivery/recovery or meeting parity. The shared creation/binding API currently supports Claude and Codex only. Track the remaining work in the [Wayfinder map](https://github.com/herman925/925-cc-plugins/issues/2).
+
+### Shared storage and current limits
+
+Shared teams use local **SQLite by default**, with explicitly configured **PostgreSQL as an alternative**. This is store selection, not automatic local/online switching or synchronization. Hosted onboarding and classic/plugin migration remain separate work.
+
+The Claude Mod's classic mode supports Windows, macOS and Linux; that does not extend the current Codex adapter beyond **Windows + Orca**. Positive live-model Codex guard behavior and a complete mixed-session assignment/meeting/wake acceptance run remain open. [Action-skill evidence](shared/team-store/VALIDATION-ACTION-SKILLS.md) and [shared runtime evidence](shared/team-store/VALIDATION-925-TO.md) state the exact tested boundaries.
 
 ## Claude Code mods
 
@@ -70,7 +139,7 @@ commands install it.
 
 ## Orca plugin
 
-The [shared team-store foundation](shared/team-store/README.md) defines the common schema and typed API, tested against SQLite and PostgreSQL. Team Orchestrator 0.5.51 includes guided Create team, a project-remembered shared workspace, durable inbox, retry history and decision gates; the Orca plugin still uses its native lifecycle. Existing classic teams are preserved separately. New shared setup explicitly remembers the chosen mode per project. See [update and testing instructions](team-orchestrator/docs/RELEASE-RUNTIME-0.5.51.md).
+The [shared team-store foundation](shared/team-store/README.md) defines the common schema and typed API, tested against SQLite and PostgreSQL and consumed by the Claude Mod and Codex clients described above. The Orca plugin still uses its own store/lifecycle; shared-runtime convergence is pending. Existing classic teams are also preserved separately. See the [client/install guide](#team-orchestrator) and [current shared validation](shared/team-store/VALIDATION-925-TO.md).
 
 [Team Orchestrator for Orca](team-orchestrator-orca-plugin/README.md) (0.1.25) lives in `team-orchestrator-orca-plugin/`. It brings Team Orchestrator's team creation into Orca's own plugin panel: hierarchies derived from the lead count, with independent worker counts, automatic project detection, host-derived model selectors, an organisation tree and a read-only member roster. Add team opens the setup form; new teams start all members, and users give work directly to the highest supervisor. It bundles a local Node worker and an automatic in-memory runtime adapter that launch and brief Codex or Claude Code sessions on the selected workspace's host, and name terminal-backed tabs, with no separate helper to install and no Orca source patch. Injection depends on the installed Orca build passing its compatibility checks; its README explains native-worker consent, lazy startup, connection checks and the verified limits.
 

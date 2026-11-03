@@ -1,5 +1,7 @@
 # team-orchestrator
 
+This is the **Claude Code Mod**, distributed as a Claude Code plugin with a native panel. See [choose your Team Orchestrator client](../README.md#team-orchestrator) for the installation methods and workflows across Claude Code, the Codex plugin/skill set and the planned Hermes client. The shared Claude/Codex clients use one project-owned store/API; existing classic teams and the separate Orca plugin remain separate.
+
 **0.5.56** shares its management API with [`team-orchestration-925` 0.1.2](../team-orchestration-925/README.md): Codex can create a team, review atomic configuration edits and connect existing sessions without an active Claude controller. The installable Codex skill includes project-local setup and native draft/confirmation forms. Schema 8 is unchanged. See [validation and live acceptance limits](../shared/team-store/VALIDATION-925-TO.md).
 
 **0.5.55** implements [durable meetings](../shared/team-store/SCHEMA-8-MEETINGS.md) in the native right-panel workspace: reviewed invitations, safe self-joining, Agenda/Discussion/Outputs tabs, bounded contributions, explicit deferrals and separately reviewed minutes. It also adds the [native Codex adapter preview](docs/native-codex.md), a per-member CLI picker and existing-session mixed-provider binding. Shared schema 8 requires an explicit backed-up update from schemas 5–7. A live Codex hook/meeting acceptance run remains outstanding; see [three-pass validation](../shared/team-store/VALIDATION-NATIVE-MEETINGS.md).
@@ -608,8 +610,7 @@ A closed member reopens when a message arrives for it.
 - A worker that has just reopened is not closed again straight away (0.5.20).
 - **Rename / model / effort…** restarts idle members with `--resume`. Model and effort left on "keep" stay as saved.
 
-Members that run another CLI (Codex, Hermes and others) can be adopted. They show as **not managed**. The mod never
-reopens, closes, briefs, messages or tab-checks them.
+In **classic teams**, members that run another CLI (Codex, Hermes and others) can be adopted. They show as **not managed**. The classic path never reopens, closes, briefs, messages or tab-checks them. The newer [native Codex shared-workspace client](../team-orchestration-925/README.md) uses explicit verified binding and the shared API instead; its host and live-acceptance limits are documented separately.
 
 ### Auto-close, the session cap and the queue
 
@@ -678,6 +679,8 @@ Limits:
   numeric ids.
 
 ### Hermes members: the guard and the re-check (0.5.29)
+
+These are **classic-team helpers**. The native Hermes shared-store management/admission/lifecycle client is still pending; installing this hook does not provide the Codex skill set's workflows or shared-runtime parity.
 
 A Hermes member is guarded by `team-orchestrator/hermes/guard.py`, a Hermes `pre_tool_call` shell hook. It applies the
 team rules to `write_file`, `patch`, `terminal` and `delegate_task`, for the members the roster lists. It reads only the
