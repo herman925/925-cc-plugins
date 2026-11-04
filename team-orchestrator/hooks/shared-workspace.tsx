@@ -1,6 +1,7 @@
 import {sharedMeetingsView} from './shared-meetings'
 import {atom,read,update} from 'claude-code'
-import {sharedCall} from './shared-bridge'
+import {sharedCall,sharedReviewedEdit} from './shared-bridge'
+import {beginTeamEdit,teamEditCommand,sharedTeamEditView} from './shared-team-edit'
 import type {SharedProof} from './shared-bridge'
 import {queueSharedDeliveries} from './shared-transport'
 import {sharedQuestionsView} from './shared-questions'
@@ -8,12 +9,12 @@ import {sharedMailView} from './shared-mail'
 import {USER_QUESTION_GUIDANCE} from './question-guidance'
 
 export type MemberDraft={memberId:string;name:string;bossMemberId:string|null;role:string;officialText:string;cli?:'claude'|'codex'}
-type Pending={request:any;label:string}
-export type Workspace={scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:MemberDraft[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;memberChoice:string;taskChoice:string;about:boolean;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:Pending|null;retry:boolean;gateChoice:string;gateNote:string;gateDraft:{replaceId:string;question:string;options:string[]}|null}
+type Pending={request:any;label:string;management?:boolean}
+export type Workspace={scope:string;busy:boolean;notice:string;error:boolean;caller:any;teams:any[];teamId:string;createdTeamId:string;snapshot:any;page:string;members:MemberDraft[];name:string;purpose:string;pickup:string;answer:string;window:string;replay:string;capacity:string;sessions:any[];sessionChoice:string;memberChoice:string;taskChoice:string;about:boolean;bindingMember:string;assignmentMember:string;instructions:string;expectedResult:string;selectedAssignment:string;reason:string;summary:string;evidence:string;verified:any;pending:Pending|null;retry:boolean;gateChoice:string;gateNote:string;gateDraft:{replaceId:string;question:string;options:string[]}|null;editor:any|null}
 export type WorkspaceDependencies={enabled:boolean;node:string;orca:string;proof:Extract<SharedProof,{ok:true}>;controllerGeneration:number|null;revalidate:()=>Promise<SharedProof>;onNewTeam?:()=>Promise<void>}
 type Dependencies=WorkspaceDependencies
 const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')
-const initial=():Workspace=>({scope:'',busy:false,notice:'',error:false,caller:null,teams:[],teamId:'',createdTeamId:'',snapshot:null,page:'home',members:[],name:'',purpose:'',pickup:'2',answer:'3',window:'',replay:'1000',capacity:'8',sessions:[],sessionChoice:'0',memberChoice:'',taskChoice:'',about:false,bindingMember:'',assignmentMember:'',instructions:'',expectedResult:'',selectedAssignment:'',reason:'',summary:'',evidence:'',verified:null,pending:null,retry:false,gateChoice:'',gateNote:'',gateDraft:null})
+const initial=():Workspace=>({scope:'',busy:false,notice:'',error:false,caller:null,teams:[],teamId:'',createdTeamId:'',snapshot:null,page:'home',members:[],name:'',purpose:'',pickup:'2',answer:'3',window:'',replay:'1000',capacity:'8',sessions:[],sessionChoice:'0',memberChoice:'',taskChoice:'',about:false,bindingMember:'',assignmentMember:'',instructions:'',expectedResult:'',selectedAssignment:'',reason:'',summary:'',evidence:'',verified:null,pending:null,retry:false,gateChoice:'',gateNote:'',gateDraft:null,editor:null})
 const state=atom({plugin:'team-orchestrator',key:'sharedWorkspace'} as const,initial())
 const valueOf=(response:any)=>response?.result?.result
 const scopeOf=(proof:Extract<SharedProof,{ok:true}>)=>workspaceScope(proof.root,proof.sessionId)
@@ -58,6 +59,7 @@ async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  const command=pending.request.command
  const notify=/Meeting/.test(command.type)||['admitAssignment','retryAssignment','reportOutcome','resolveGate','askQuestion','answerQuestion'].includes(command.type)
  const patch:Partial<Workspace>={pending:null,retry:false,page:'home',notice:`${pending.label} confirmed.`,error:false}
+ if(command.type==='editTeam')patch.editor=null
  if(command.type==='createFreshTeam'){patch.teamId=command.teamId;patch.createdTeamId=command.teamId;patch.memberChoice='';patch.taskChoice='';patch.selectedAssignment='';patch.about=false;patch.notice='Team created. Launch a member or connect an existing session to start using tasks.'}
  if(command.type==='admitAssignment'){patch.selectedAssignment=command.assignmentId;patch.taskChoice=command.assignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null}
  if(command.type==='retryAssignment'){patch.selectedAssignment=command.newAssignmentId;patch.taskChoice=command.newAssignmentId;patch.reason='';patch.summary='';patch.evidence='';patch.verified=null;patch.page='review'}
@@ -69,13 +71,14 @@ async function committed($:any,deps:Dependencies,pending:Pending,result:any){
  finally{if(notify)queueSharedDeliveries($,deps.proof,deps)}
  if(command.type==='verifyAssignment')await set($,{verified:result,page:'review'})
 }
-async function mutate($:any,deps:Dependencies,command:any,label:string,target?:any){
+async function mutate($:any,deps:Dependencies,command:any,label:string,target?:any,management=false){
  const old=await read($,state)
  if(old.pending)throw Error('Check the pending operation receipt before making another change.')
  const proof=await proofNow(deps)
- const pending={request:{operationId:`workspace-${uid()}`,command,...(target?{target}:{})},label}
+ const pending={request:{operationId:`workspace-${uid()}`,command,...(target?{target}:{})},label,...(management?{management:true}:{})}
  await set($,{pending,retry:false})
- const response=await sharedCall($,proof,pending.request,deps)
+ let response:any
+ try{response=management?await sharedReviewedEdit($,proof,pending.request,deps):await sharedCall($,proof,pending.request,deps)}catch(error){await set($,{pending:null});throw error}
  if(response.ok){await committed($,deps,pending,valueOf(response));return}
  if(uncertain(response)){await set($,{notice:`${label} is not confirmed. Check its receipt before making another change.`,error:true});return}
  await set($,{pending:null});throw Error(failure(response))
@@ -133,7 +136,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
  const pending=s.pending
  const resume=(retry=false)=>action($,async()=>{
   const current=await read($,state),p=current.pending;if(!p)return
-  const response=await sharedCall($,await proofNow(deps),p.request,{...deps,mode:retry?'execute':'reconcile'})
+  const proof=await proofNow(deps)
+  const response=p.management?(retry?await sharedReviewedEdit($,proof,p.request,deps):await sharedCall($,proof,p.request,{...deps,mode:'reconcileManagement'})):await sharedCall($,proof,p.request,{...deps,mode:retry?'execute':'reconcile'})
   if(response.ok&&response.result?.status!=='unknown'){await committed($,deps,p,valueOf(response));return}
   await set($,{retry:response.ok&&response.result?.status==='unknown',notice:response.ok?'No committed receipt found yet. Check again or retry the same operation.':failure(response),error:!response.ok})
  })
@@ -142,6 +146,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   <Box flexWrap="wrap" columnGap={1}>
    {button('workspace-refresh',s.busy?'Working…':'Refresh',refresh)}
    {snapshot&&button('workspace-about',s.about?'Hide team info':'Team info',async()=>edit('about',!s.about))}
+   {snapshot&&s.caller?.controllerGeneration&&!pending&&button('workspace-edit-team',s.page==='edit-team'?'Close edit':'Edit team',async()=>{if(s.editor?.teamId===s.teamId)await set($,{page:s.page==='edit-team'?'home':'edit-team'});else await set($,{editor:beginTeamEdit(snapshot,s.caller.controllerGeneration),page:'edit-team'})})}
    {!!controller&&!pending&&button('workspace-new',s.teams.length?'New team':'Create team',async()=>{if(deps.onNewTeam)await deps.onNewTeam();else await beginSharedDraft($)},s.teams.length===0)}
   </Box>
   {pending&&<Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
@@ -157,6 +162,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
     <Text dimColor>{members.length} members · {bindings.length} connected · {new Set(work.map((item:any)=>item.task.task_id)).size} tasks · {work.length} attempts</Text>
     {s.about&&snapshot.team.function_text&&<Text>{snapshot.team.function_text}</Text>}
     <Box flexWrap="wrap" columnGap={1}>{button('workspace-roster-tab',s.page==='home'?'● Members':'Members',async()=>edit('page','home'))}{button('workspace-tasks-tab',s.page==='tasks'||s.page==='review'?'● Tasks':'Tasks',async()=>edit('page','tasks'))}{me&&button('workspace-meetings-tab',s.page==='meetings'?'● Meetings':'Meetings',async()=>edit('page','meetings'))}{me&&button('workspace-inbox-tab',s.page==='inbox'?'● Inbox':'Inbox',async()=>edit('page','inbox'))}</Box>
+    {s.page==='edit-team'&&s.editor&&!pending&&await sharedTeamEditView(ui,{draft:s.editor,stale:s.editor.teamId!==s.teamId||s.editor.version!==snapshot.team.config_version||s.editor.controller!==s.caller?.controllerGeneration,onPatch:async(patch:any)=>{await update($,state,current=>current.busy||current.scope!==scope||current.editor?.teamId!==s.editor.teamId?current:{...current,editor:{...current.editor,...patch}})},onReview:()=>action($,async()=>{const current=await read($,state),draft=current.editor;if(!draft||draft.teamId!==current.teamId||draft.version!==current.snapshot?.team.config_version||draft.controller!==current.caller?.controllerGeneration)throw Error('Refresh and reopen Edit team before reviewing a changed configuration.');await set($,{editor:{...draft,command:teamEditCommand(draft),tab:'review'}})}),onCancel:async()=>{await update($,state,current=>current.busy||current.scope!==scope||current.editor?.teamId!==s.editor.teamId?current:{...current,editor:null,page:'home'})},onSave:()=>action($,async()=>{const current=await read($,state),draft=current.editor;if(!draft?.command||draft.teamId!==current.teamId||draft.version!==current.snapshot?.team.config_version||draft.controller!==current.caller?.controllerGeneration)throw Error('Team configuration or approval changed. Cancel and reopen Edit team.');await mutate($,deps,draft.command,'Team edit',undefined,true)})})}
     {s.page==='meetings'&&me&&!pending&&await sharedMeetingsView($,ui,{scope:`${scope}:${s.teamId}`,me,snapshot,onRead:async(command:any)=>{const response=await request($,deps,{teamId:s.teamId,...command});if(!response.ok)throw Error(failure(response));return valueOf(response)},onCommand:async(command:any)=>{let failed:any,confirmed=false;await action($,async()=>{try{const current=await read($,state);await mutate($,deps,{...authority(current),...command},'Meeting');if((await read($,state)).pending)throw Error('Meeting change is unconfirmed. Check its receipt before continuing.');confirmed=true;await edit('page','meetings')}catch(error){failed=error;throw error}});if(failed)throw failed;if(!confirmed)throw Error('Another workspace action is still running. Try again when it finishes.')}})}
     {s.page==='inbox'&&me&&!pending&&<Box flexDirection="column">{await sharedMailView($,ui,deps,members)}{await sharedQuestionsView($,ui,{scope,me,snapshot,onCommand:async(command:any)=>action($,async()=>{const current=await read($,state);await mutate($,deps,{...authority(current),...command},command.type==='askQuestion'?'Question':command.type==='answerQuestion'?'Answer':'Notice');await edit('page','inbox')})})}</Box>}
     {s.page==='home'&&members.length>0&&<Box flexDirection="column">

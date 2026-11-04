@@ -1,4 +1,14 @@
 export type SharedProof = { ok: true; root: string; sessionId: string; handle: string; contextId: string } | { ok: false; reason: string }
+// Called only from the native panel's Apply/retry button, never model arguments.
+export async function sharedReviewedEdit($:any,proof:SharedProof,request:any,options:{node:string;orca:string}){
+ if(!proof.ok)return {ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:proof.reason}}
+ if(request?.command?.type!=='editTeam'||JSON.stringify(request).length>12000)throw Error('This team edit is too large for one review. Shorten the purpose or split the change.')
+ const config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
+ if(config==='/.claude')throw Error('The local configuration folder could not be verified.')
+ const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')
+ await $.fs.write(`${config}/team-orchestrator/controller-actions/${id}.json`,JSON.stringify({action:'editTeam',id,createdAt:Date.now(),projectRoot:proof.root,conversationId:proof.sessionId,terminalHandle:proof.handle,contextId:proof.contextId,request}))
+ return sharedCall($,proof,request,{...options,mode:'manageTeam',uiApprovalId:id})
+}
 export async function sharedCall($:any, proof:SharedProof, request:any, options:{node:string;orca:string;mode?:string;uiApprovalId?:string}) {
  if(!proof.ok)return {ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:proof.reason}}
  const envelope={mode:options.mode??'execute',proof:{projectRoot:proof.root,conversationId:proof.sessionId,terminalHandle:proof.handle,contextId:proof.contextId},request,orcaCommand:options.orca,...(options.uiApprovalId?{uiApprovalId:options.uiApprovalId}:{})}

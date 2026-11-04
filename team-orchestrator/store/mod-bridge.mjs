@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {launchMember} from './src/mod-launch.mjs';
 import {hostname} from 'node:os';
 import {homedir} from 'node:os';
-import {readFile,lstat} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createTeamApi} from './api.mjs';
 import {createModNative} from './mod-native.mjs';
@@ -14,24 +14,18 @@ import {exact} from './src/api-domain.mjs';
 import {StoreError,refusal} from './src/errors.mjs';
 import {createInboxJournal} from './src/inbox-journal.mjs';
 import {upgradeTeamStore} from './src/upgrade.mjs';
+import {verifyModAction} from './src/mod-actions.mjs';
 
 let api,journal;
 try {
  let input='';for await(const chunk of process.stdin){input+=chunk;if(Buffer.byteLength(input)>256*1024)throw refusal('API_INPUT_INVALID','Mod request is oversized.');}
  const envelope=JSON.parse(input);
  exact(envelope,['mode','proof','request','uiApprovalId','orcaCommand']);
- if(!['execute','reconcile','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore','launchMember','attachLaunch','guardInspect'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(!['execute','reconcile','manageTeam','reconcileManagement','approveController','listSessions','inboxPoll','inboxAttached','upgradeStore','launchMember','attachLaunch','guardInspect'].includes(envelope.mode))throw refusal('API_OPERATION_DENIED','Unsupported private Mod bridge method.');
+ if(['manageTeam','reconcileManagement'].includes(envelope.mode)&&envelope.request?.command?.type!=='editTeam')throw refusal('API_OPERATION_DENIED','The native edit path only supports an explicitly reviewed team edit.');
  const native=await createModNative({orcaCommand:envelope.orcaCommand});
  const actor=await native.verifyCaller(envelope.proof);
- const userAction=async action=>{
-  try {
-  if(!/^[a-f0-9]{32}$/.test(envelope.uiApprovalId??''))return false;
-  const ticketPath=join(process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude'),'team-orchestrator','controller-actions',`${envelope.uiApprovalId}.json`);
-  const info=await lstat(ticketPath);if(!info.isFile()||info.isSymbolicLink()||info.size>8192)return false;
-  const ticket=JSON.parse(await readFile(ticketPath,'utf8'));
-  return ticket.action===action && ticket.id===envelope.uiApprovalId && ticket.conversationId===actor.conversationId && ticket.terminalHandle===actor.terminalHandle && ticket.contextId===actor.contextId && ticket.projectRoot.replaceAll('\\','/')===actor.projectRoot.replaceAll('\\','/') && Number.isSafeInteger(ticket.createdAt) && ticket.createdAt<=Date.now() && Date.now()-ticket.createdAt<60000 && (action!=='upgradeStore'||[5,6,7].includes(ticket.fromVersion)&&ticket.toVersion===8);
-  }catch{return false;}
- };
+ const userAction=action=>verifyModAction({action,id:envelope.uiApprovalId,actor,request:envelope.request,configRoot:process.env.CLAUDE_CONFIG_DIR||join(homedir(),'.claude')});
  if(envelope.mode==='guardInspect'){
   exact(envelope.request,[]);console.log(JSON.stringify({ok:true,result:{result:await inspectGuardCaller({actor})}}));
  } else if(envelope.mode==='listSessions') {
@@ -51,7 +45,7 @@ try {
   authenticate:()=>native.verifyCaller(envelope.proof),verifyTarget:target=>native.verifyBinding(target,envelope.proof),
   confirmController:async({approval})=>{
    return envelope.mode==='approveController'&&approval===envelope.uiApprovalId&&await userAction('approveController');
-  }});
+  },confirmManagement:async()=>envelope.mode==='manageTeam'&&await userAction('editTeam')});
  if(envelope.mode!=='approveController')await api.launch({operationId:`auto-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});
  let result;
  if(envelope.mode==='launchMember') {result=await launchMember({api,native,actor,request:envelope.request,configuration:{node:process.execPath,orca:envelope.orcaCommand},pluginRoot:fileURLToPath(new URL('../',import.meta.url))});}

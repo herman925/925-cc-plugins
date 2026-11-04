@@ -1,5 +1,7 @@
 # Panel navigation — 0.5.50
 
+The creation/navigation checkpoint below is retained. Shared-team editing added in 0.5.57 is described at [Edit a shared team](#edit-a-shared-team--0557).
+
 A new project starts with **＋ Create team** and **Settings** in the band. The arrow or `t` opens the same team entry. Create team opens a draft before workspace mode or management permission is enabled.
 
 Setup has four steps: **Team → Members → Options → Review & permission**. Back, Close setup and switching to Settings keep the draft and its member identities in this conversation. Discard requires its own confirmation. Draft recovery after a whole-app restart is not promised.
@@ -42,3 +44,19 @@ The first Create team step exposes the original **Squad** (head + 3 workers), **
 **Interview me** starts interactive questions in the conversation. The agent uses the available multiple-choice question tool and returns its proposal to **Review & permission** through `team_draft`. The visible request stays short; a read-only helper supplies the complete current draft and question guidance to the agent. Create stays unavailable until the proposal finishes or is cancelled. It fills a draft only. You still review members and options, explicitly enable the project mode, allow management and Create separately. Editing the draft during an interview makes that proposal stale; Cancel proposal and restart Interview me to include your edits. Cancelling invalidates the proposal, without silently stopping the model turn.
 
 In Members, **Edit member** opens and closes its list. Choosing the same or a different member closes it; **Close member picker** is also available. Buttons use native click or Tab/Enter. Escape follows the host's setup-pane close behavior; reopening retains draft/selection with the picker closed. Inline Escape follows host focus behavior and is not a separate custom picker key handler.
+
+## Edit a shared team — 0.5.57
+
+An approved controller opens **Team workspace → Edit team**. This uses the existing right panel and three compact tabs:
+
+- **Team:** name and a multiline purpose.
+- **Options:** open-session capacity, pickup/answer/task windows, with replay timing behind **Delivery options**. Blank task window means off.
+- **Review:** only changed values, each with Before and After, followed by **Apply reviewed changes**.
+
+Opening, editing or reviewing a draft writes no team changes and grants no permission. Apply mints a short-lived native approval for the exact project, conversation, operation and proposal. Other settings retain their current values. Existing admitted deadlines remain fixed; changing options does not close sessions or rewrite admitted work.
+
+Click **Close edit** to return to Members while retaining the draft; **Cancel edit** discards it. Switching to another team does not apply it. Refreshing after a concurrent configuration/approval change marks the old draft stale; cancel and reopen against the latest state before saving. Workers without controller approval have no Edit team action.
+
+An uncertain save displays **Check receipt** and pauses other mutations. A committed receipt finishes the original operation without another effect. If its receipt is still unknown, **Retry same operation** preserves the exact proposal/id and records a fresh explicit native action. Never turn an uncertain edit into a new operation. See [validation and acceptance limits](../../shared/team-store/VALIDATION-MOD-TEAM-EDIT.md).
+
+This editor covers team details and the options above. Member role/permission edits, hierarchy/CLI changes, migration and hosted-store selection retain their separate supported workflows or remaining design work.
