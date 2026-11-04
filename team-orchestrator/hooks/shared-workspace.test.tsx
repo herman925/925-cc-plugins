@@ -6,10 +6,10 @@ function fixture(on:any,who='head'){
  const head={member_id:'head',team_id:'team',name:'Head',role:'Lead',boss_member_id:null,level:1,membership_state:'active',generation:1}
  const worker={member_id:'worker',team_id:'team',name:'Worker',role:'Implement',boss_member_id:'head',level:2,membership_state:'active',generation:1}
  const binding=(id:string)=>({member_id:id,conversation_id:id==='head'?ID1:ID2,generation:1})
- const model:any={team:{team_id:'team',name:'Demo',function_text:'Build',config_version:5},members:[head,worker],bindings:[binding('head'),binding('worker')],roles:[{member_id:'head',official_text:'Delegate and review.'},{member_id:'worker',official_text:'READ THIS ROLE BEFORE THE FIXTURE'}],work:[]}
+ const model:any={team:{team_id:'team',name:'Demo',function_text:'Build',config_version:5},settings:{autoClose:false,idleMinutes:15,reopen:'fresh',maxOpen:8,launch:'demand',batch:2,autoScratch:false,assumptions:true,scratchDir:'.scratch-kept',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:['worker']},members:[head,worker],bindings:[binding('head'),binding('worker')],roles:[{member_id:'head',official_text:'Delegate and review.'},{member_id:'worker',official_text:'READ THIS ROLE BEFORE THE FIXTURE'}],work:[]}
  const configSets:any[]=[];let refuseConfig=false
  on('config.set',async(_$:any,e:any)=>{configSets.push(e);return refuseConfig?{deny:'settings read-only'}:{value:e.value}})
- const calls:any[]=[],receipts=new Map<string,any>(),control={unknown:false,discoveryFailure:false,reloadFailure:false,created:false}
+ const calls:any[]=[],receipts=new Map<string,any>(),control={unknown:false,unknownBefore:false,discoveryFailure:false,reloadFailure:false,created:false}
  const item=()=>({assignment:{assignment_id:'assignment',member_id:'worker',assigned_by_member_id:'head',pickup_observed_at_ms:null},task:{task_id:'task',status:'open'},brief:{instructions:'Count the fixture words.',expected_result:'13 words with evidence'},attempt:{generation:1,outcome:null,summary:null,evidence:null},acceptance:null})
  const files=world(on,[],[],e=>{
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
@@ -20,11 +20,18 @@ function fixture(on:any,who='head'){
   if(envelope.mode==='inboxAttached')return ok({confirmed:true})
   if(envelope.mode==='listSessions')return control.discoveryFailure?JSON.stringify({ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:'No proof'}}):ok({sessions:[{label:'Verified worker',reference:{projectRoot:'C:/proj',conversationId:ID2,terminalHandle:'term_w',contextId:'r1::C:/proj'}}]})
   const {command,operationId}=envelope.request
-  if(envelope.mode==='reconcile')return ok(receipts.get(operationId)??{status:'unknown',operationId})
+  if(['reconcile','reconcileManagement'].includes(envelope.mode))return ok(receipts.get(operationId)??{status:'unknown',operationId})
   let result:any={}
   if(command.type==='inspectCaller'&&control.created&&control.reloadFailure)return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Read failed after commit'}})
   if(command.type==='inspectCaller')result={controllerGeneration:who==='worker'?null:1,member:who==='controller'?null:model.members.find((m:any)=>m.member_id===who),binding:who==='controller'?null:binding(who),teams:[model.team]}
   if(command.type==='inspectTeam')result=model
+  if(command.type==='editTeam'){
+   if(control.unknownBefore){control.unknownBefore=false;return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'No reply before commit'}})}
+   if(envelope.mode!=='manageTeam')return JSON.stringify({ok:false,error:{code:'API_OPERATION_DENIED',message:'Native review required'}})
+   if(command.expectedConfigVersion!==model.team.config_version)return JSON.stringify({ok:false,error:{code:'API_STALE_AUTHORITY',message:'Configuration changed'}})
+   for(const change of command.changes){if(change.type==='updateTeam'){model.team.name=change.name;model.team.function_text=change.functionText}else if(change.type==='saveSettings')model.settings=change.settings;model.team.config_version++}
+   result={teamId:'team',configVersion:model.team.config_version,changesApplied:command.changes.length}
+  }
   if(command.type==='inspectMeeting')result=model.meetingDetail
   if(command.type==='inspectInbox')result={messages:[{message_id:'mail-1',delivery_id:'delivery-1',sender_member_id:'head',recipient_member_id:who,kind:'dispatch',body:'private body hidden until read'}]}
   if(command.type==='createFreshTeam'){
@@ -40,7 +47,7 @@ function fixture(on:any,who='head'){
   if(command.type==='reportOutcome'){Object.assign(model.work[0].attempt,{generation:3,outcome:command.outcome,summary:command.summary,evidence:command.evidence});result={attemptGeneration:3,acceptance:'pending'}}
   if(command.type==='acceptTask'){model.work[0].acceptance={decision:command.decision,reason:command.reason};model.work[0].task.status='succeeded';result={decision:command.decision}}
   const receipt={operationId,kind:'api',result};receipts.set(operationId,receipt)
-  if(control.unknown&&command.type==='createFreshTeam'){control.unknown=false;return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Lost reply'}})}
+  if(control.unknown&&['createFreshTeam','editTeam'].includes(command.type)){control.unknown=false;return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Lost reply'}})}
   return ok(receipt)
  });sessionAs(on,ID1)
  return {model,calls,control,files,item,configSets,refuseConfig:()=>{refuseConfig=true}}
@@ -385,4 +392,25 @@ test('meeting workspace uses native Agenda Discussion Outputs tabs and browsing 
  for(const tab of ['agenda','discussion','outputs']){await band.press({key:`meeting-tab-${tab}`});expect(await band.find({key:`meeting-tab-${tab}`})).toBeDefined()}
  expect(f.calls.some(c=>c.request?.command?.type==='respondMeeting')).toBe(false)
  expect(JSON.stringify(await band.drawn())).toContain('Follow up')
+})
+
+
+test('shared team edits remain drafts until exact native review and preserve undisplayed settings',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-edit-team'});await band.input({key:'team-edit-name',text:'Revised team',kind:'change'});await band.input({key:'team-edit-purpose',text:'Build with review',kind:'change'});await band.press({key:'team-edit-tab-options'});await band.input({key:'team-edit-capacity',text:'4',kind:'change'});await band.press({key:'team-edit-review'});
+ expect(f.model.team.name).toBe('Demo');expect(f.calls.some(c=>c.mode==='manageTeam')).toBe(false);expect([...f.files.keys()].some(k=>k.includes('controller-actions/'))).toBe(false);expect(JSON.stringify(await band.drawn())).toContain('Before: Demo');expect(JSON.stringify(await band.drawn())).toContain('After: Revised team');
+ await band.press({key:'team-edit-apply'});const sent=f.calls.find(c=>c.mode==='manageTeam'),ticket=JSON.parse(f.files.get('C:/home/.claude/team-orchestrator/controller-actions/'+sent.uiApprovalId+'.json')!);expect(ticket.action).toBe('editTeam');expect(ticket.request).toEqual(sent.request);expect(ticket.conversationId).toBe(ID1);expect(sent.request.command.expectedConfigVersion).toBe(5);expect(f.model.team.name).toBe('Revised team');expect(f.model.settings.maxOpen).toBe(4);expect(f.model.settings.scratchDir).toBe('.scratch-kept');expect(f.model.settings.exemptMemberIds).toEqual(['worker']);expect(f.model.settings.batch).toBe(2);expect(f.model.settings.assumptions).toBe(true);
+})
+test('native edit cancel/invalid numbers never write, and unapproved workers have no edit control',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-edit-team'});await band.press({key:'team-edit-tab-options'});await band.input({key:'team-edit-pickup',text:'-1',kind:'change'});await band.press({key:'team-edit-review'});expect(await band.find({key:'team-edit-apply'})).toBeUndefined();await band.press({key:'team-edit-cancel'});expect(f.calls.some(c=>c.mode==='manageTeam')).toBe(false);expect([...f.files.keys()].some(k=>k.includes('controller-actions/'))).toBe(false);
+})
+test('worker cannot open the native shared-team editor',options,async($:any,on:any)=>{fixture(on,'worker');const band=await open($);expect(await band.find({key:'workspace-edit-team'})).toBeUndefined()})
+test('a lost edit reply reconciles the same operation without another native ticket or effect',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-edit-team'});await band.input({key:'team-edit-name',text:'Exactly once',kind:'change'});await band.press({key:'team-edit-review'});f.control.unknown=true;await band.press({key:'team-edit-apply'});expect(await band.find({key:'workspace-reconcile'})).toBeDefined();const sent=f.calls.find(c=>c.mode==='manageTeam');await band.press({key:'workspace-reconcile'});expect(f.calls.filter(c=>c.mode==='manageTeam').length).toBe(1);expect(f.calls.find(c=>c.mode==='reconcileManagement').request).toEqual(sent.request);expect(f.model.team.config_version).toBe(6);expect(f.model.team.name).toBe('Exactly once');expect(await band.find({key:'workspace-reconcile'})).toBeUndefined();
+})
+test('a concurrently changed team refuses a reviewed stale save and keeps the draft for refresh',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-edit-team'});await band.input({key:'team-edit-name',text:'Stale proposal',kind:'change'});await band.press({key:'team-edit-review'});f.model.team.config_version=6;await band.press({key:'team-edit-apply'});expect(f.model.team.name).toBe('Demo');expect(JSON.stringify(await band.drawn())).toContain('Configuration changed');await band.press({key:'workspace-refresh'});expect(await band.find({key:'team-edit-apply'})).toBeUndefined();expect(JSON.stringify(await band.drawn())).toContain('Cancel and reopen Edit team');
+})
+
+test('an edit with no receipt retries only its original reviewed request through a fresh native action',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($);await band.press({key:'workspace-edit-team'});await band.input({key:'team-edit-name',text:'Retry original',kind:'change'});await band.press({key:'team-edit-review'});f.control.unknownBefore=true;await band.press({key:'team-edit-apply'});expect(f.model.team.name).toBe('Demo');await band.press({key:'workspace-reconcile'});expect(await band.find({key:'workspace-retry'})).toBeDefined();await band.press({key:'workspace-retry'});const calls=f.calls.filter(c=>c.mode==='manageTeam');expect(calls.length).toBe(2);expect(calls[0].request).toEqual(calls[1].request);expect(calls[0].uiApprovalId).not.toBe(calls[1].uiApprovalId);expect(f.model.team.name).toBe('Retry original');expect(f.model.team.config_version).toBe(6);
 })

@@ -52,7 +52,7 @@ describe('Codex project setup with native config writer',{skip:!native},()=>{
   const oldPlan=await prepareSetup({...f.options,adapter:oldAdapter});await applySetup(oldPlan);
   const legacy=JSON.parse(await readFile(f.receipt,'utf8'));legacy.version='0.1.0';await writeFile(f.receipt,JSON.stringify(legacy));
   const next=await prepareSetup(f.options);assert.equal(next.paths.files.receipt,f.receipt);assert.equal(next.paths.state,oldPlan.paths.state);await applySetup(next);
-  const updated=JSON.parse(await readFile(f.receipt,'utf8'));assert.equal(updated.version,'0.1.3');assert.notEqual(updated.serverHash,legacy.serverHash);assert.equal(updated.guardHash,legacy.guardHash);
+  const updated=JSON.parse(await readFile(f.receipt,'utf8'));assert.equal(updated.version,'0.1.4');assert.notEqual(updated.serverHash,legacy.serverHash);assert.equal(updated.guardHash,legacy.guardHash);
   const config=await readFile(f.config,'utf8');assert.ok(config.includes('team-orchestration-925'));assert.ok(!config.includes('old-925-to-adapter'));
   await applySetup(await prepareSetup({...f.options,action:'remove'}));await assert.rejects(access(f.hooks));
  });
