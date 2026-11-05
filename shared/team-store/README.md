@@ -1,6 +1,6 @@
 # Shared team-store contract and adapter
 
-**Current: schema 9 / Mod 0.5.58 / team-orchestration-925 0.1.8.** [Reviewed Codex worker plans](SCHEMA-9-LAUNCH-PLANS.md) add native launch, verified terminal self-binding, explicit schema-5/6/7/8 upgrades and a cache-independent installed runtime. [Codex workflows](../../team-orchestration-925/README.md) run without an active Claude session. Earlier schema-8 reports below remain historical evidence, including [active-client observation](VALIDATION-CODEX-OBSERVER.md) and [durable meetings](SCHEMA-8-MEETINGS.md).
+**Current: schema 9 / Mod 0.5.59 / team-orchestration-925 0.1.9.** [Windows ownership-query concurrency repair](VALIDATION-CODEX-OWNERSHIP.md) serializes inspectors while preserving strict native authority checks. [Reviewed Codex worker plans](SCHEMA-9-LAUNCH-PLANS.md) add native launch, verified terminal self-binding, explicit schema-5/6/7/8 upgrades and a cache-independent installed runtime. [Codex workflows](../../team-orchestration-925/README.md) run without an active Claude session. Earlier schema-8 reports below remain historical evidence, including [active-client observation](VALIDATION-CODEX-OBSERVER.md) and [durable meetings](SCHEMA-8-MEETINGS.md).
 
 **Schema 7 / Mod 0.5.52:** [bounded questions, deadline notices and fresh member launch](SCHEMA-7-QUESTIONS-LAUNCH.md). Historical schema-6 validation below remains a checkpoint, not full acceptance of the newer runtime.
 

@@ -20,6 +20,22 @@ public static class TeamThreadLock {
  [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint session,out uint needed,ref uint count,[In,Out] Info[] list,ref uint reasons);
  [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint session);
  public static Info[] Read(string path) {
+  // Registering a resource can make this inspector visible to another Restart
+  // Manager query. Serialize observations across adapters/processes, without
+  // filtering any resource owner or changing the caller's strict proof rule.
+  using(var hash=System.Security.Cryptography.SHA256.Create())
+  using(var gate=new System.Threading.Mutex(false,@"Local\925TeamThreadOwners-"+BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(System.IO.Path.GetFullPath(path).ToUpperInvariant()))).Replace("-",""))) {
+   bool held=false;
+   try {
+    try { held=gate.WaitOne(4000); } catch(System.Threading.AbandonedMutexException) { held=true; }
+    if(!held)throw new Exception("Ownership inspection busy");
+    // No cached ownership survives a failed/abandoned inspection. Always make
+    // a fresh OS query while holding the observation gate.
+    return Query(path);
+   } finally {if(held)gate.ReleaseMutex();}
+  }
+ }
+ static Info[] Query(string path) {
   uint session;int status=RmStartSession(out session,0,new StringBuilder(64));if(status!=0)throw new Exception("RmStartSession "+status);
   try {
    status=RmRegisterResources(session,1,new string[]{path},0,null,0,null);if(status!=0)throw new Exception("RmRegisterResources "+status);
