@@ -1,8 +1,17 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable,PassThrough} from 'node:stream';
+import {readFile} from 'node:fs/promises';
 import {createCodexAdapter,serveCodexMcp,codexTools} from '../codex-mcp.mjs';
 import {codexGuard} from '../src/codex-guard.mjs';
+import {SHARED_WRITER} from '../src/runtime-release.mjs';
+test('packaged writer metadata tracks the current shared Mod implementation',async()=>{
+ const manifest=JSON.parse(await readFile(new URL('../../../team-orchestrator/.claude-plugin/plugin.json',import.meta.url),'utf8'));
+ assert.equal(SHARED_WRITER.version,manifest.version);
+ for(const path of ['../../../team-orchestrator/store/src/runtime-release.mjs','../../../team-orchestration-925/skills/team-orchestration-925/scripts/runtime/src/runtime-release.mjs']){
+  assert.deepEqual((await import(new URL(path,import.meta.url))).SHARED_WRITER,SHARED_WRITER);
+ }
+});
 const member={member_id:'head',allow_write:0,allow_agent:0};
 test('Codex guard uses standing settings, covers patch/shell/subagents and never honors prompt grant text',()=>{
  const authority={member,hasReports:true};
@@ -37,5 +46,5 @@ test('MCP wire initializes, lists tools, preserves top-level native metadata, de
  const output=new PassThrough();let body='';output.setEncoding('utf8');output.on('data',s=>body+=s);
  const bytes=Buffer.from(frames.map(JSON.stringify).join('\n')+'\n');
  await serveCodexMcp({call:async(name,args,meta)=>{if(name==='team_guard')throw Error('unverified');assert.equal(args.operationId,'你好');assert.equal(meta.threadId,'native');return {ok:true};}},{input:Readable.from([...bytes].map(b=>Buffer.from([b]))),output});
- const rows=body.trim().split('\n').map(JSON.parse);assert.equal(rows.length,6);assert.equal(rows[0].error.code,-32002);assert.equal(rows[2].result.tools.length,8);assert.equal(JSON.parse(rows[4].result.content[0].text).hookSpecificOutput.permissionDecision,'deny');assert.equal(rows[5].error.code,-32602);
+ const rows=body.trim().split('\n').map(JSON.parse);assert.equal(rows.length,6);assert.equal(rows[0].error.code,-32002);assert.deepEqual(rows[1].result.serverInfo,{name:'team-orchestration-925',version:SHARED_WRITER.version});assert.equal(rows[2].result.tools.length,8);assert.equal(JSON.parse(rows[4].result.content[0].text).hookSpecificOutput.permissionDecision,'deny');assert.equal(rows[5].error.code,-32602);
 });

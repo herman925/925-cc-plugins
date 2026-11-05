@@ -1,18 +1,19 @@
 import {describe,test} from 'node:test';
 import assert from 'node:assert/strict';
-import {access} from 'node:fs/promises';
+import {access,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createCodexAdapter} from '../codex-mcp.mjs';
 import {createTeamApi} from '../api.mjs';
 import {runtimeFixture,rawWrite} from './support/runtime-fixture.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:8,launch:'demand',batch:3,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
+const modRelease=JSON.parse(await readFile(new URL('../../../team-orchestrator/.claude-plugin/plugin.json',import.meta.url),'utf8')).version;
 for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native management`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
  async function setup(t){
   const f=await runtimeFixture(t,engine),actor={projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:'codex-head',executionHostId:'local',contextId:'context',terminalHandle:'codex-head-terminal',incarnationId:'inc'};
   const state={actor,reply:{action:'accept',content:{confirm:true}},reviews:[],lost:false},metadata={threadId:'native-fixed'};
   const native={verifyCaller:async m=>{assert.equal(m,metadata);return {...state.actor};},verifyTarget:async target=>{if(target.conversationId!=='codex-head')throw Error('Unverified');return {...state.actor};},listTargets:async()=>({sessions:[]})};
-  const make=()=>createCodexAdapter({writer:{client:'team-orchestrator',version:'0.5.56'}},{createIdentity:async()=>native,createApi:async options=>{
+  const make=(writer={client:'team-orchestrator',version:'0.5.56'})=>createCodexAdapter({writer},{createIdentity:async()=>native,createApi:async options=>{
    const api=await createTeamApi({...options,...f.options});
    return {...api,manageTeam:async request=>{const result=await api.manageTeam(request);if(state.lost){state.lost=false;throw Object.assign(Error('Lost reply'),{code:'STORE_COMMIT_UNKNOWN'});}return result;}};
   }});
@@ -22,6 +23,18 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
   return {...f,state,metadata,connection,adapter,make,call,create,rows,actor};
  }
+ test('the production Codex writer can read and edit after the current Mod advances the shared fence',async t=>{
+  const f=await setup(t);await f.call(f.create);
+  const mod=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:{client:'team-orchestrator',version:modRelease},authenticate:async()=>f.actor,confirmManagement:async()=>true});
+  try{await mod.manageTeam({operationId:'mod-edit',command:{type:'editTeam',teamId:'team',expectedConfigVersion:5,expectedControllerGeneration:1,changes:[{type:'updateTeam',name:'Edited by Mod',functionText:'Shared configuration'}]}});}finally{await mod.close();}
+  const current=await f.make(null),status=await current.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(status.info.controllerGeneration,1);
+  const edited=await current.call('shared_team_manage',{operationId:'codex-after-mod',command:{type:'editTeam',teamId:'team',expectedConfigVersion:6,expectedControllerGeneration:1,changes:[{type:'updateTeam',name:'Edited by Codex',functionText:'Shared configuration'}]}},f.metadata,f.connection);
+  assert.equal(edited.result.configVersion,7);
+  await assert.rejects(f.adapter.call('shared_team_status',{},f.metadata,f.connection),e=>e.code==='STORE_WRITER_TOO_OLD');
+  assert.equal((await f.rows("SELECT writer_version FROM writer_fences WHERE writer_client='team-orchestrator'"))[0].writer_version,modRelease);
+  assert.equal((await f.rows('SELECT name FROM teams'))[0].name,'Edited by Codex');
+ });
  test('one native review approves this Codex conversation and creates its team without a Claude session',async t=>{
   const f=await setup(t);const result=await f.call(f.create);assert.equal(result.result.configVersion,5);assert.equal(f.state.reviews.length,1);assert.ok(f.state.reviews[0].message.includes('"approveController": true'));
   assert.deepEqual((await f.rows('SELECT provider,conversation_id FROM controller_approvals')).map(r=>[r.provider,r.conversation_id]),[['codex','codex-head']]);

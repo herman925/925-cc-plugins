@@ -1,6 +1,6 @@
 {
   "name": "team-orchestration-925",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Codex-native Team Orchestrator workflows and project-local setup.",
   "skills": "./skills/",
   "extensions": {

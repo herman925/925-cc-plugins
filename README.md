@@ -9,7 +9,7 @@ Choose the client you work in. The Claude Code shared workspace and Codex client
 | Client | Package | Current status | How you use it |
 | --- | --- | --- | --- |
 | **Claude Code** | [Team Orchestrator Mod](team-orchestrator/README.md), installed as a Claude Code plugin | **0.5.57**, implemented | Native panel: Create team, templates/Interview me, team workspace, members, tasks, inbox, gates and meetings |
-| **Codex** | [team-orchestration-925](team-orchestration-925/README.md), a Codex plugin containing a skill set and matching runtime | **0.1.5**, implemented for Windows native Codex hosted by Orca | Six direct action skills plus a general menu; an active Claude session is not required |
+| **Codex** | [team-orchestration-925](team-orchestration-925/README.md), a Codex plugin containing a skill set and matching runtime | **0.1.6**, implemented for Windows native Codex hosted by Orca | Six direct action skills plus a general menu; an active Claude session is not required |
 | **Hermes Agent** | Native Team Orchestrator client/package | **Pending** | Shared-store management, verified admission and lifecycle integration are not implemented; no equivalent install command yet |
 
 The Codex **plugin** is the installable bundle; its **skills** are the named workflows. The optional npx route installs only the standalone menu skill with its matching runtime. It does not install the complete plugin or automatically activate/trust its connection and hook.

@@ -15,6 +15,7 @@ import {commandSchema} from './src/api-schema.mjs';
 import {exact} from './src/api-domain.mjs';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
+import {SHARED_WRITER} from './src/runtime-release.mjs';
 const editChanges={type:'array',minItems:1,maxItems:30,items:{oneOf:[
  {type:'object',additionalProperties:false,properties:{type:{const:'updateTeam'},name:{type:'string'},functionText:{type:'string'}},required:['type','name','functionText']},
  {type:'object',additionalProperties:false,properties:{type:{const:'saveSettings'},settings:commandSchema.properties.settings},required:['type','settings']},
@@ -34,7 +35,8 @@ export const codexTools=[
  {name:'shared_inbox_seen',description:'Confirm that recovered inbox context reached this conversation. This accepts no task and grants no permissions.',inputSchema:{...object({readReceiptId:{type:'string'}}),required:['readReceiptId']}},
  {name:'team_guard',description:'Native PreToolUse hook callback. Evaluates current durable member switches. This tool cannot change permissions or approve controllers.',inputSchema:{...object({tool:{type:'string'},input:{}}),required:['tool','input']}},
 ];
-export async function createCodexAdapter(options,dependencies={}) {
+export async function createCodexAdapter(options={},dependencies={}) {
+ options={...options,writer:options.writer??SHARED_WRITER};
  const native=await (dependencies.createIdentity??createCodexNativeIdentity)(options);
  return Object.freeze({
   async call(name,args,metadata,connection){
@@ -77,7 +79,7 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const scope={projectRoot:process.env.TEAM_PROJECT_ROOT,terminalHandle:process.env.TEAM_TERMINAL_HANDLE||process.env.ORCA_TERMINAL_HANDLE,contextId:process.env.TEAM_CONTEXT_ID||process.env.ORCA_WORKTREE_ID};
   if(!scope.projectRoot){if(!scope.terminalHandle||!scope.contextId)throw Error('A verified Orca terminal/context is required.');const host=await createOrcaHost();const terminal=(await host.rpc('terminal.show',{terminal:scope.terminalHandle})).terminal;if(terminal.worktreeId!==scope.contextId)throw Error('Orca scope changed.');scope.projectRoot=terminal.worktreePath;}
   const codexExecutable=process.env.TEAM_CODEX_EXECUTABLE||(await inspectWindowsProcess(process.ppid)).executable;
-  const adapter=await createCodexAdapter({scope,codexExecutable,codexHome:process.env.TEAM_CODEX_HOME,orcaCommand:process.env.TEAM_ORCA_COMMAND,writer:{client:'team-orchestrator',version:'0.5.56'}});
+  const adapter=await createCodexAdapter({scope,codexExecutable,codexHome:process.env.TEAM_CODEX_HOME,orcaCommand:process.env.TEAM_ORCA_COMMAND});
   await serveCodexMcp(adapter);
  }catch{process.stderr.write('Native Codex team adapter refused startup or transport. Check fixed scope, native executable and Orca runtime.\n');process.exitCode=1;}
 }
