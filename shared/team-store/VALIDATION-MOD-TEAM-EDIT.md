@@ -2,6 +2,8 @@
 
 Release: **Claude Mod 0.5.57 / Codex package 0.1.4**, shared schema 8 unchanged. The Mod now exposes the existing typed `editTeam` operation through Team workspace → Edit team, with native Team, Options and Review tabs.
 
+Later independent native panel results are recorded in [the CEO checkpoints](INDEPENDENT-MOD-TEAM-EDIT.md). Several visible/apply/refusal checks passed; native stale-save and recovery acceptance remain unmeasured.
+
 The bounded editor supports name/purpose, open-session capacity, pickup/answer/task windows and replay timing. It preserves every setting outside those fields. Role/permission/hierarchy/CLI changes and hosted-store/migration workflows are not added by this increment.
 
 ## Authorization and recovery
