@@ -1,10 +1,12 @@
 // Native Codex has no verified composer-vs-peer prompt provenance. Only durable
 // member switches grant writes/subagents; prompt keywords never do.
+import {sourceEditAllowed} from './source-edits.mjs';
 export function codexGuard(authority,{tool,input}) {
  const deny=permissionDecisionReason=>({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason}});
  const m=authority.member;
  const source=typeof input==='string'?input:JSON.stringify(input??{});
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
+ if(sourceEditAllowed(authority,{tool,input}))return {};
  if(/team-orchestrator\/(?:controller-actions|launch-settings)|machine\.sqlite|925-to\/(?:installations|launch-profiles)|mod-bridge\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
  if(!m)return {};
  const agent=/^(?:Agent|spawn_agent|functions\.spawn_agent|mcp__.*__spawn_agent)$/.test(tool);
