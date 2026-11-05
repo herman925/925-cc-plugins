@@ -1,5 +1,7 @@
 # Direct Codex action skills
 
+**Status guidance correction, 0.1.5 (2026-11-05):** the status/menu instructions now stop when `shared_team_status` reports `info.storeExists:false`, and avoid inferring project emptiness from an unauthorized visibility list. Shared runtime/API behavior is unchanged. Both changed skills validate; native package installation/discovery/update/removal and the npx menu route pass; six minimum-Node setup cases pass. All 44 current runtime files match both packages. This is an instruction/package check, not a claim of a new live-model run.
+
 Team Orchestrator plugin **team-orchestration-925 0.1.2** adds six real skill entry points: `:create`, `:edit`, `:connect`, `:status`, `:meeting` and `:setup`. The existing menu skill remains available. These are plugin skills discovered by Codex, rather than arguments parsed by another CLI. Each starts its selected workflow and reads the shared menu skill's rules/references; the runtime is bundled once.
 
 The repository npx command continues to install only the self-contained menu skill. Its existing `create-team`, `edit-team`, `connect-session`, `status` and `meeting` arguments remain valid. The complete plugin install includes all seven skills and their shared resources.

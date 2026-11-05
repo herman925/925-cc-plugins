@@ -1,10 +1,12 @@
 # 925 Team Orchestrator
 
-`team-orchestration-925` **0.1.4** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.57. An active Claude session is not required for team management.
+`team-orchestration-925` **0.1.5** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.57. An active Claude session is not required for team management.
 
 Version 0.1.4 packages the matching runtime for the [Mod's native team editor](../team-orchestrator/docs/panel-navigation.md#edit-a-shared-team--0557). The existing Codex action skills and schema 8 remain the same.
 
 For the wider product, see [choose your Team Orchestrator client](../README.md#team-orchestrator): Claude Code uses the native Mod/plugin, Codex uses this skill bundle, and Hermes native integration is pending. The existing classic-team Hermes guard is not an equivalent shared-runtime client.
+
+Version **0.1.5** clarifies the status workflow: a verified connection with no store reports **Connected · no team created** and stops without a redundant failing API read. Use `:create` when ready to create a team. For an existing store, no teams visible to an unapproved conversation does not mean the project is empty. Status never creates data or grants approval.
 
 This first release supports native Windows Codex terminals hosted by Orca. It does not require the Team Orchestrator Orca plugin. Automatic Codex launch, Hermes admission, independent hosts and the Orca plugin's separate store convergence remain later work.
 
@@ -45,7 +47,7 @@ The plugin route includes six direct action skills in version **0.1.2**:
 | `$team-orchestration-925:create` | New team composition and reviewed creation |
 | `$team-orchestration-925:edit` | Existing team inspection and supported edits |
 | `$team-orchestration-925:connect` | Verified existing session connection/reconnection |
-| `$team-orchestration-925:status` | Team, approval, binding and capability status |
+| `$team-orchestration-925:status` | Team, approval, binding and capability status; a fresh project reports connected/no team created without a second failed store read |
 | `$team-orchestration-925:meeting` | Durable meeting workflow |
 | `$team-orchestration-925:setup` | Project connection setup, update, recovery or removal |
 
