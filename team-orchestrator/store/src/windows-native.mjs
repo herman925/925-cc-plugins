@@ -11,9 +11,11 @@ export async function inspectWindowsProcess(pid){
  // Win32_Process.CreationDate loses sub-microsecond precision. Get-Process
  // preserves the FILETIME ticks returned by Restart Manager; never round them.
  const script=`$p=Get-Process -Id ${pid} -ErrorAction Stop; [pscustomobject]@{pid=[int]$p.Id;executable=[string]$p.Path;createdAt=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress`;
- const {stdout}=await execute(shell(),['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:5000,maxBuffer:8192});return JSON.parse(stdout);
+ try{const {stdout}=await execute(shell(),['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:5000,maxBuffer:8192});return JSON.parse(stdout);}
+ catch(error){throw refusal('API_NATIVE_UNVERIFIED',`Native process inspection ${error.killed?'timed out':'failed'}; the parent process could not be verified.`);}
 }
 export async function windowsFileOwners(path){
  windows();
- const {stdout}=await execute(shell(),['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./windows-thread-owner.ps1',import.meta.url)),'-LiteralPath',path],{windowsHide:true,timeout:8000,maxBuffer:32768});return JSON.parse(stdout);
+ try{const {stdout}=await execute(shell(),['-NoProfile','-NonInteractive','-File',fileURLToPath(new URL('./windows-thread-owner.ps1',import.meta.url)),'-LiteralPath',path],{windowsHide:true,timeout:8000,maxBuffer:32768});return JSON.parse(stdout);}
+ catch(error){throw refusal('API_NATIVE_UNVERIFIED',`Native thread ownership inspection ${error.killed?'timed out':'failed'}; the thread writer lock could not be verified.`);}
 }

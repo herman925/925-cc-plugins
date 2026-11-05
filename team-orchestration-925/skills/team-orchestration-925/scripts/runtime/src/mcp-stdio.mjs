@@ -37,7 +37,8 @@ export async function serveMcp(adapter,tools,{input=process.stdin,output=process
      const value=await adapter.call(params.name,params.arguments??{},params._meta,{canElicit:Boolean(capabilities.elicitation&&(Object.keys(capabilities.elicitation).length===0||capabilities.elicitation.form)),elicit:p=>elicit(p,id)});
      result={content:[{type:'text',text:JSON.stringify(value)}]};
     }catch(e){
-     const value=params.name==='team_guard'?{hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Native caller or team authority could not be verified.'}}:{ok:false,error:{code:e.code??'API_CODEX_REFUSED',message:e.code?e.message:'Native team operation was refused.'}};
+     const diagnostic=typeof e.code==='string'&&/^(API_|STORE_)[A-Z_]+$/.test(e.code)?` ${e.code}: ${String(e.message).slice(0,500)}`:'';
+     const value=params.name==='team_guard'?{hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:`Native caller or team authority could not be verified.${diagnostic}`}}:{ok:false,error:{code:e.code??'API_CODEX_REFUSED',message:e.code?e.message:'Native team operation was refused.'}};
      result={content:[{type:'text',text:JSON.stringify(value)}],...(params.name==='team_guard'?{}:{isError:true})};
     }
    }else{error(id,-32601,'Method not found.');return;}

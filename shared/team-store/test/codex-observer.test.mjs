@@ -117,7 +117,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`
   f.current.actor=original;await timers.advance(60000);
   assert.equal((await f.rows('SELECT * FROM assignment_returns')).length,0);
   assert.equal(f.observer.status().state,'suspended');
-  f.observer.activate(f.metadata,original);await timers.advance(30000);
+  f.observer.activate(f.metadata,original);assert.equal(f.observer.status().lastFailure.code,'API_OBSERVER_SCOPE_CHANGED');await timers.advance(30000);
   assert.equal((await f.rows('SELECT * FROM assignment_returns')).length,1);
   assert.equal(f.observer.status().lastError,null);
  });

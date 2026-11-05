@@ -24,7 +24,7 @@ export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node
    const snapshot=await sharedCall($,proof,{operationId:operationId(),command:{type:'inspectTeam',teamId:team.team_id}},options);
    const data=snapshot.ok?snapshot.result?.result:null;
    for(const launch of data?.launches??[]){
-    if(launch.status!=='queued')continue;const member=data.members.find((m:any)=>m.member_id===launch.member_id);if(!member)continue;
+    if(launch.status!=='queued')continue;const member=data.members.find((m:any)=>m.member_id===launch.member_id);if(!member||member.cli==='codex')continue;
     await sharedCall($,proof,{operationId:operationId(),command:{type:'reserveLaunch',teamId:team.team_id,memberId:member.member_id,launchId:launch.launch_id,expectedConfigVersion:data.team.config_version,expectedMemberGeneration:member.generation,expectedControllerGeneration:info.controllerGeneration}},{...options,mode:'launchMember'});
    }
   }

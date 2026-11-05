@@ -18,7 +18,7 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
  if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
-  if(/mod-bridge\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
+  if(/mod-bridge\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
   if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(c) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
  }
  return undefined
@@ -72,7 +72,7 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
    await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
-  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7].includes(result.error.details?.version)&&result.error.details?.supported===8) {
+  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8].includes(result.error.details?.version)&&result.error.details?.supported===9) {
    await update($,uiState,old=>({...old,upgrade:true,upgradeFrom:result.error.details.version}));await sharedFeedback($,'Update this workspace to continue. A backup will be kept before its data changes.','yellow')
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
@@ -88,7 +88,7 @@ export async function upgradeSharedWorkspace($:any,dependencies:SharedAccess) {
   if(!current.ok||JSON.stringify(proofOf(current))!==JSON.stringify(proofOf(proof)))throw Error('This conversation changed. Check access before updating.')
   const token=id(),config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
   if(!config||config==='/.claude')throw Error('Local configuration folder could not be verified.')
-  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:8,...proofOf(current)}))
+  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:9,...proofOf(current)}))
   const result=await sharedCall($,current,{operationId:`upgrade-${token}`},{...dependencies,mode:'upgradeStore',uiApprovalId:token})
   await update($,status,()=>JSON.stringify(result));updated=result.ok===true
   if(updated){await update($,uiState,old=>({...old,upgrade:false,checked:false,approved:null,member:false}));await sharedFeedback($,'Workspace updated. Existing approvals and history are kept.','green')}

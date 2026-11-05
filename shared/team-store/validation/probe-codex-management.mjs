@@ -5,9 +5,10 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
+import {configurationEnvironment} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup-environment.mjs';
 const executable=process.argv[2];if(!executable)throw Error('Supply native Codex executable.');
 const root=await mkdtemp(join(tmpdir(),'925-to-native-management-')),home=join(root,'codex-home');await mkdir(home);
-const child=spawn(executable,['app-server','--listen','stdio://'],{cwd:root,env:{...process.env,CODEX_HOME:home},windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(executable,['app-server','--listen','stdio://'],{cwd:root,env:configurationEnvironment(home),windowsHide:true,stdio:['pipe','pipe','pipe']});
 let seq=0,threadId,stderr='';const pending=new Map(),evidence={project:root,modelTurnsStarted:0,identity:'substituted TEMP fixture; real Orca identity is not asserted',confirmationSource:'test harness response through native Codex form transport',reviews:[],checks:[]};
 child.stderr.setEncoding('utf8');child.stderr.on('data',x=>stderr+=x);
 const timer=setTimeout(()=>child.kill(),60000);
@@ -28,11 +29,14 @@ try{
  const call=async(tool,args)=>{const result=await rpc('mcpServer/tool/call',{threadId,server:'team_orchestrator',tool,arguments:args});const value=JSON.parse(result.content[0].text);assert.notEqual(result.isError,true,JSON.stringify(value));return value;};
  const menu=await call('shared_team_interview',{step:'action'});assert.equal(menu.draftOnly,true);assert.equal(menu.response.content.action,'create-team');evidence.checks.push('native action menu returned draft data without granting permission');
  const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:8,launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
- const command={type:'createFreshTeam',teamId:'native-team',name:'Native Codex fixture',functionText:'Transport acceptance',settings,members:[{memberId:'native-head',name:'Native head',bossMemberId:null,role:'Lead',officialText:'Delegate and review.',cli:'codex'}],expectedControllerGeneration:1};
- const created=await call('shared_team_manage',{operationId:'native-create',command});assert.equal(created.result.configVersion,3);evidence.checks.push('native Codex form transport created a fixture team with no Claude session');
- const edited=await call('shared_team_manage',{operationId:'native-edit',command:{type:'editTeam',teamId:'native-team',expectedControllerGeneration:1,expectedConfigVersion:3,changes:[{type:'updateTeam',name:'Native edited fixture',functionText:'Edit verified'}]}});assert.equal(edited.result.configVersion,4);
+ const command={type:'createFreshTeam',teamId:'native-team',name:'Native Codex fixture',functionText:'Transport acceptance',settings,members:[{memberId:'native-head',name:'Native head',bossMemberId:null,role:'Lead',officialText:'Delegate and review.',cli:'codex'},{memberId:'native-worker',name:'Native worker',bossMemberId:'native-head',role:'Verify',officialText:'Read role and admitted assignment before work.',cli:'codex'}],expectedControllerGeneration:1};
+ const created=await call('shared_team_manage',{operationId:'native-create',command});assert.equal(created.result.configVersion,5);evidence.checks.push('native Codex form transport created a fixture team with no Claude session');
+ const edited=await call('shared_team_manage',{operationId:'native-edit',command:{type:'editTeam',teamId:'native-team',expectedControllerGeneration:1,expectedConfigVersion:5,changes:[{type:'updateTeam',name:'Native edited fixture',functionText:'Edit verified'}]}});assert.equal(edited.result.configVersion,6);
  const current=await call('shared_team',{operationId:'native-inspect',command:{type:'inspectTeam',teamId:'native-team'}});assert.equal(current.result.team.name,'Native edited fixture');evidence.checks.push('native reviewed edit and shared readback agreed');
- assert.deepEqual(await call('shared_team_manage',{operationId:'native-create',command,reconcile:true}),created);assert.equal(evidence.reviews.filter(r=>r.kind==='effect-review').length,2);evidence.checks.push('receipt recovery did not issue another confirmation or repeat creation');evidence.passed=true;
+ assert.deepEqual(await call('shared_team_manage',{operationId:'native-create',command,reconcile:true}),created);assert.equal(evidence.reviews.filter(r=>r.kind==='effect-review').length,2);evidence.checks.push('receipt recovery did not issue another confirmation or repeat creation');
+ const launch={operationId:'native-launch-plan',command:{type:'approveLaunchPlan',teamId:'native-team',planId:'native-plan',expectedControllerGeneration:1,expectedConfigVersion:6,selections:[{memberId:'native-worker',launchId:'native-worker-launch',expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}]}};
+ const approved=await call('shared_team_launch',launch);assert.equal(approved.result.planId,'native-plan');assert.deepEqual(await call('shared_team_launch',{...launch,reconcile:true}),approved);assert.equal(evidence.reviews.filter(r=>r.kind==='effect-review').length,3);
+ const configured=await call('shared_team',{operationId:'native-launch-config',command:{type:'inspectConfiguration',teamId:'native-team'}});assert.equal(configured.result.launches[0].status,'queued');assert.equal(configured.result.launchTargets.length,0);evidence.checks.push('native launch-plan form committed one queued worker and reconciled without a duplicate review; fixture observation disabled, no worker started');evidence.passed=true;
 }catch(e){evidence.passed=false;evidence.error=String(e);process.exitCode=1;}
 finally{child.stdin.end();const stop=setTimeout(()=>{if(child.exitCode===null)child.kill();},3000);await reader;clearTimeout(stop);clearTimeout(timer);await writeFile(join(root,'evidence.json'),JSON.stringify(evidence,null,2));await writeFile(join(root,'stderr.log'),stderr);}
 console.log(JSON.stringify(evidence));

@@ -1,6 +1,6 @@
 # Shared team-store contract and adapter
 
-**Current: schema 8 / Mod 0.5.57 / team-orchestration-925 0.1.7.** [Codex-native team management](../../team-orchestration-925/README.md) adds reviewed create/edit/connect workflows, project-local onboarding and [active-client periodic observation](VALIDATION-CODEX-OBSERVER.md) over this API, with no schema change. See [the writer-version repair](VALIDATION-CODEX-WRITER-RELEASE.md), [the invocation repair](VALIDATION-SKILL-INVOCATION.md) and [earlier three-pass validation](VALIDATION-925-TO.md). [Durable meeting behavior](SCHEMA-8-MEETINGS.md) and [its earlier validation](VALIDATION-NATIVE-MEETINGS.md) remain unchanged. The schema-7 and earlier sections below are historical checkpoints.
+**Current: schema 9 / Mod 0.5.58 / team-orchestration-925 0.1.8.** [Reviewed Codex worker plans](SCHEMA-9-LAUNCH-PLANS.md) add native launch, verified terminal self-binding, explicit schema-5/6/7/8 upgrades and a cache-independent installed runtime. [Codex workflows](../../team-orchestration-925/README.md) run without an active Claude session. Earlier schema-8 reports below remain historical evidence, including [active-client observation](VALIDATION-CODEX-OBSERVER.md) and [durable meetings](SCHEMA-8-MEETINGS.md).
 
 **Schema 7 / Mod 0.5.52:** [bounded questions, deadline notices and fresh member launch](SCHEMA-7-QUESTIONS-LAUNCH.md). Historical schema-6 validation below remains a checkpoint, not full acceptance of the newer runtime.
 

@@ -8,8 +8,8 @@ Choose the client you work in. The Claude Code shared workspace and Codex client
 
 | Client | Package | Current status | How you use it |
 | --- | --- | --- | --- |
-| **Claude Code** | [Team Orchestrator Mod](team-orchestrator/README.md), installed as a Claude Code plugin | **0.5.57**, implemented | Native panel: Create team, templates/Interview me, team workspace, members, tasks, inbox, gates and meetings |
-| **Codex** | [team-orchestration-925](team-orchestration-925/README.md), a Codex plugin containing a skill set and matching runtime | **0.1.7**, implemented for Windows native Codex hosted by Orca | Six direct action skills plus a general menu and periodic coordination checks; an active Claude session is not required |
+| **Claude Code** | [Team Orchestrator Mod](team-orchestrator/README.md), installed as a Claude Code plugin | **0.5.58**, implemented | Native panel and explicit backed-up schema-9 update; shared store remains compatible with native Codex |
+| **Codex** | [team-orchestration-925](team-orchestration-925/README.md), a Codex plugin containing a skill set and matching runtime | **0.1.8**, implemented for Windows native Codex hosted by Orca | Seven action skills plus a menu, periodic coordination and specific reviewed worker launch plans; an active Claude session is not required |
 | **Hermes Agent** | Native Team Orchestrator client/package | **Pending** | Shared-store management, verified admission and lifecycle integration are not implemented; no equivalent install command yet |
 
 The Codex **plugin** is the installable bundle; its **skills** are the named workflows. The optional npx route installs only the standalone menu skill with its matching runtime. It does not install the complete plugin or automatically activate/trust its connection and hook.
@@ -55,6 +55,7 @@ In a Codex conversation, type `$team-orchestration-925` and select a workflow in
 | Connect sessions | `$team-orchestration-925:connect` | Choose verified existing Claude/Codex sessions for members, or explicitly reconnect a changed native binding |
 | Check status | `$team-orchestration-925:status` | Inspect team, controller approval, binding and capability state |
 | Work with meetings | `$team-orchestration-925:meeting` | Inspect invitations/discussion/outputs and use the operations permitted for the current member or chair |
+| Start Codex workers | `$team-orchestration-925:launch` | Review one exact worker plan; eligible workers start as capacity becomes available |
 | Choose from the general menu | `$team-orchestration-925:team-orchestration-925` | Pick one of the workflows interactively |
 
 For a new project: **setup → reconnect/native hook review → create → connect → status**. The setup helper discovers the verified Orca project/session; it preserves unrelated configuration. Controller approval and management changes use native confirmation. Installing a plugin or answering draft questions is not approval or hook trust. Existing sessions are connected explicitly; automatic Codex launch is pending. If the skill list is stale, reopen the Codex session.

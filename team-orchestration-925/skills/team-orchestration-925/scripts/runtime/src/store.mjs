@@ -9,7 +9,7 @@ import { isConfigurationType, normalizeConfigurationMutation, applyConfiguration
 import { openBackend, inspectSchema } from './bootstrap.mjs';
 import { text, integer, databaseInteger, nextInteger, snapshot } from './validation.mjs';
 import { StoreError, refusal, isRetryable, isConstraint } from './errors.mjs';
-import { normalizeApiCommand, normalizeActor, applyApiCommand, assertApiCaller, assertApiReceipt, apiResult } from './api-domain.mjs';
+import { normalizeApiCommand, normalizeActor, normalizeLaunchTarget, applyApiCommand, assertApiCaller, assertApiReceipt, apiResult } from './api-domain.mjs';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -54,7 +54,7 @@ function normalized(request) {
       return result;
     });
     identity = { kind, principalId, mutations };
-  } else if (kind === 'api') identity = { kind, principalId, command: normalizeApiCommand(request.command, {privileged: true}), target: request.target ? normalizeActor(request.target) : null };
+  } else if (kind === 'api') identity = { kind, principalId, command: normalizeApiCommand(request.command, {privileged: true}), target: request.target ? (request.command.type==='recordLaunchTarget'?normalizeLaunchTarget(request.target):normalizeActor(request.target)) : null };
   else identity = { kind, principalId, ttlMs: integer(request.ttlMs ?? 30000, 'ttlMs', { min: 1 }) };
   return { operationId, kind, identity: snapshot(identity), fingerprint: digest(identity), caller: snapshot(request.caller) };
 }

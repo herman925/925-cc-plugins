@@ -6,6 +6,8 @@ import {realpath,lstat,mkdir,open} from 'node:fs/promises';
 import {openBackend,inspectSchema,SHARED_SCHEMA} from './bootstrap.mjs';
 import * as schema5 from './schema5-contract.mjs';
 import * as schema7 from './schema7-contract.mjs';
+import * as schema8 from './schema8-contract.mjs';
+import {LAUNCH_DDL,launchPlanGuardsFor} from './launch-contract.mjs';
 import {MEETING_DDL,meetingGuardsFor} from './meeting-contract.mjs';
 import * as schema6 from './schema6-contract.mjs';
 import {ddlFor,historyGuardsFor,gateGuardsFor,runtimeGuardsFor} from '../contract.mjs';
@@ -44,22 +46,22 @@ async function lock(db,legacy) {
 export async function upgradeTeamStore(options,dependencies={}) {
  const projectRoot=await realpath(text(options.projectRoot,'projectRoot')),operationId=text(options.operationId,'operationId');
  const machineId=text(options.machineId,'machineId'),writer=normalizeWriter(options.writer,false);
- const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:7,toVersion:8};
- let db,legacy=schema7;
+ const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:8,toVersion:9};
+ let db,legacy=schema8;
  const backend=dependencies.openBackend??openBackend;
  try {
-  for(const candidate of [schema7,schema6,schema5]) {
+  for(const candidate of [schema8,schema7,schema6,schema5]) {
    legacy=candidate;
    try{({db}=await backend({...options,projectRoot,create:false},definitionFor(legacy)));authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:legacy.SCHEMA_VERSION},{operationId},writer);break;}
    catch(error){
     if(error.code!=='STORE_VERSION_UNSUPPORTED')throw error;
-    if(error.details.version===8){
+    if(error.details.version===9){
      ({db}=await backend({...options,projectRoot,create:false}));
-     authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:8},{operationId},writer);
+     authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:9},{operationId},writer);
      const [prior]=await db.query('SELECT * FROM schema_migrations WHERE operation_id=:id',{id:operationId});
-     return prior?{status:'upgraded',fromVersion:Number(prior.from_version),toVersion:8,backupPath:prior.backup_path}:{status:'already_current',toVersion:8};
+     return prior?{status:'upgraded',fromVersion:Number(prior.from_version),toVersion:Number(prior.to_version),backupPath:prior.backup_path}:{status:'already_current',toVersion:9};
     }
-    if(![5,6,7].includes(error.details.version))throw error;
+    if(![5,6,7,8].includes(error.details.version))throw error;
    }
   }
   if(!db)throw refusal('STORE_VERSION_UNSUPPORTED','No supported legacy store was opened.');
@@ -117,16 +119,28 @@ export async function upgradeTeamStore(options,dependencies={}) {
    await db.exec(ddl.match(/CREATE TABLE deadline_notices \([\s\S]*?\n\);/)[0]);
    await db.exec(runtimeGuardsFor(db.engine));
    }
-   await db.exec(MEETING_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));
-   await db.exec(meetingGuardsFor(db.engine));
+   if(legacy.SCHEMA_VERSION<8){await db.exec(MEETING_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(meetingGuardsFor(db.engine));}
+   if(legacy.SCHEMA_VERSION>=7){
+    for(const table of ['member_launches','deadline_notices']){
+     for(const suffix of db.engine==='sqlite'?['update','delete','replace']:['update','truncate'])await db.exec(`DROP TRIGGER ${table}_guard_${suffix}${db.engine==='postgres'?` ON ${table}`:''}`);
+     if(db.engine==='postgres')await db.exec(`DROP FUNCTION ${table}_guard()`);
+    }
+    if(db.engine==='sqlite'){
+     await db.exec('ALTER TABLE member_launches RENAME TO member_launches_schema8');
+     await db.exec(ddl.match(/CREATE TABLE member_launches \([\s\S]*?\n\);/)[0]);
+     await db.exec('INSERT INTO member_launches SELECT * FROM member_launches_schema8');await db.exec('DROP TABLE member_launches_schema8');
+    }else{await db.exec('ALTER TABLE member_launches ALTER COLUMN conversation_id DROP NOT NULL');await db.exec("ALTER TABLE member_launches ADD CHECK(status<>'bound' OR conversation_id IS NOT NULL)");}
+    await db.exec(runtimeGuardsFor(db.engine));
+   }
+   await db.exec(LAUNCH_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(launchPlanGuardsFor(db.engine));
    const finished=await db.now();
    if(finished<now||finished>=expiry)throw refusal('STORE_LEASE_EXPIRED','Upgrade exceeded its database lease; the transaction was rolled back.');
-   await db.query('INSERT INTO schema_migrations VALUES (:id,:from_version,8,:machine,:path,:now)',{id:operationId,from_version:legacy.SCHEMA_VERSION,machine:machineId,path:backupPath,now:finished});
-   await db.exec('UPDATE store_metadata SET schema_version=8 WHERE singleton=1');
+   await db.query('INSERT INTO schema_migrations VALUES (:id,:from_version,9,:machine,:path,:now)',{id:operationId,from_version:legacy.SCHEMA_VERSION,machine:machineId,path:backupPath,now:finished});
+   await db.exec('UPDATE store_metadata SET schema_version=9 WHERE singleton=1');
    await db.exec('UPDATE store_lease SET holder_machine_id=NULL,holder_token=NULL,expires_at_ms=0 WHERE singleton=1');
    await inspectSchema(db,SHARED_SCHEMA);
    committing=true;await db.commit();
-   return {status:'upgraded',fromVersion:legacy.SCHEMA_VERSION,toVersion:8,backupPath};
+   return {status:'upgraded',fromVersion:legacy.SCHEMA_VERSION,toVersion:9,backupPath};
   }catch(error){await db.rollback().catch(()=>{});if(committing)throw refusal('STORE_COMMIT_UNKNOWN','Upgrade commit could not be confirmed. Check access before repeating.',{operationId,backupPath},error);if(error instanceof StoreError)throw error;throw refusal('STORE_UPGRADE_REFUSED','Upgrade constraints refused the data. The original schema was preserved.',{backupPath},error);}
  }finally{await db?.close();}
 }

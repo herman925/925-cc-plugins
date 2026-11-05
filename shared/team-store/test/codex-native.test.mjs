@@ -16,12 +16,13 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
  const metadataPath=join(profile,'orca-runtime.json');await writeFile(metadataPath,JSON.stringify(meta));
  const threadId=randomUUID(),scope={projectRoot:root,contextId:'context',terminalHandle:'terminal'};
  await mkdir(join(root,'thread-writer-locks'));await writeFile(join(root,'thread-writer-locks',`${threadId}.lock`),'');
- let mode='normal',birth='12345',parentPath=binary,parentPid=process.ppid,checks=0;
+ let mode='normal',birth='12345',parentPath=binary,parentPid=process.ppid,checks=0,created=false;
  let owners=[{pid:process.ppid,createdAt:'12345'}];
  const sockets=new Set();
  const server=createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.once('data',async bytes=>{
   const r=JSON.parse(bytes.toString());assert.equal(r.authToken,meta.authToken);
   const terminal={handle:'terminal',connected:true,executionHostId:'local',worktreeId:'context',worktreePath:root,incarnationId:'inc'};
+  if(r.method==='terminal.show'&&r.params.terminal==='created'){terminal.handle='created';terminal.incarnationId='created-inc';}
   if(mode==='remote')terminal.executionHostId='remote';if(mode==='disconnected')terminal.connected=false;if(mode==='context')terminal.worktreeId='other';
   const tab={type:'terminal',incarnationId:mode==='incarnation'?'old':'inc',agentStatus:{terminalHandle:'terminal',agentType:mode==='provider'?'claude':'codex',providerSession:{id:mode==='thread'?randomUUID():threadId}}};
   if(mode==='missing-thread')delete tab.agentStatus.providerSession;
@@ -31,7 +32,7 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
  t.after(async()=>{for(const socket of sockets)socket.destroy();if(server.listening)await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
  const sends=[];
- const dependencies={execute:async(_command,args)=>{if(args[0]==='orchestration')sends.push(args);return {stdout:JSON.stringify({ok:true,result:{app:{pid:process.pid},runtime:{runtimeId:'epoch'}}})};},inspectParent:async()=>{checks++;return {pid:parentPid,executable:parentPath,createdAt:birth};},threadOwners:async()=>owners};
+ const dependencies={execute:async(_command,args)=>{if(args[0]==='orchestration'||args[0]==='terminal'&&args[1]==='send')sends.push(args);if(args[0]==='terminal'&&args[1]==='list')return {stdout:JSON.stringify({ok:true,result:{terminals:[{handle:'terminal'},...(created?[{handle:'created'}]:[])],truncated:false}})};if(args[0]==='terminal'&&args[1]==='create'){created=true;assert.ok(!args.includes('--command'));assert.ok(args.includes('powershell.exe'));return {stdout:JSON.stringify({ok:true,result:{terminal:{handle:'created'}}})};}return {stdout:JSON.stringify({ok:true,result:{app:{pid:process.pid},runtime:{runtimeId:'epoch'}}})};},inspectParent:async()=>{checks++;return {pid:parentPid,executable:parentPath,createdAt:birth};},threadOwners:async()=>owners};
  const options={scope,codexExecutable:binary,codexHome:root,env:{ORCA_USER_DATA_PATH:profile}};
  const identity=await createCodexNativeIdentity(options,dependencies);
  const actor=await identity.verifyCaller({threadId,progressToken:1});assert.equal(actor.provider,'codex');assert.equal(actor.conversationId,threadId);assert.equal(actor.projectRoot,root);assert.equal(actor.terminalHandle,'terminal');assert.equal(identity.hostKind,'orca');
@@ -39,6 +40,11 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
  const recipient={machine_id:actor.machineId,execution_host_id:'local',provider:'codex',conversation_id:threadId,terminal_handle:'terminal',context_id:'context',incarnation_id:'inc'};
  assert.equal((await identity.wake([{noticeId:'own-deadline',recipient}],{threadId}))[0]?.queued,true);
  assert.equal(sends.length,1);assert.ok(sends[0].includes('terminal'));assert.match(sends[0].at(-2),/own-deadline/);
+ const target=await identity.createLaunchTerminal({title:'Reviewed worker'},{threadId});assert.equal(created,true);assert.equal(target.terminalHandle,'created');assert.equal(target.conversationId,undefined);
+ await assert.rejects(identity.createLaunchTerminal({title:'No reused terminal'},{threadId}),refused);
+ assert.equal(await identity.verifyLaunchTarget(target,{threadId}),target);await assert.rejects(identity.verifyLaunchTarget({...target},{threadId}),refused);
+ await identity.startLaunchTerminal(target,'fixed reviewed bootstrap',{threadId});assert.equal(sends.length,2);assert.ok(sends[1].includes('fixed reviewed bootstrap'));
+ await assert.rejects(identity.startLaunchTerminal(target,'fixed reviewed bootstrap',{threadId}),refused);assert.equal(sends.length,2);
  for(const bad of [undefined,{},Object.create({threadId}),{threadId:'------------------------------------'},{threadId:threadId.toUpperCase()}])await assert.rejects(identity.verifyCaller(bad),refused);
  for(const bad of ['provider','thread','missing-thread','incarnation','duplicate','remote','disconnected','context'])await t.test(`refuses ${bad} host evidence`,async()=>{mode=bad;await assert.rejects(identity.verifyCaller({threadId}),refused);});
  mode='normal';birth='new-process';await assert.rejects(identity.verifyCaller({threadId}),refused);birth='12345';parentPid=process.pid;await assert.rejects(identity.verifyCaller({threadId}),refused);parentPid=process.ppid;parentPath=process.execPath;await assert.rejects(identity.verifyCaller({threadId}),refused);parentPath=binary;

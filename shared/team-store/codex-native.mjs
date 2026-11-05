@@ -24,7 +24,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   return value.createdAt;
  };
  const birth=await identity();
- const locks=join(await realpath(codexHome||env.CODEX_HOME||join(homedir(),'.codex')),'thread-writer-locks');
+ const home=await realpath(codexHome||env.CODEX_HOME||join(homedir(),'.codex')),locks=join(home,'thread-writer-locks');
  const ownsThread=async threadId=>{
   let info,path;try{if(await realpath(locks)!==locks)deny('Thread ownership directory is redirected.');path=join(locks,`${threadId}.lock`);info=await lstat(path);}catch{deny('No native thread writer lock exists for this conversation.');}
   if(!info.isFile()||info.isSymbolicLink())deny('The native Codex thread ownership record is not a regular file.');
@@ -35,8 +35,37 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
  // Capture immutable setup facts. Mutating the caller's original object cannot
  // move a running connection to another project or transport.
  const reference=Object.freeze({projectRoot:root,terminalHandle:scope.terminalHandle,contextId:scope.contextId});
+ const createdTargets=new WeakSet(),startedTargets=new WeakSet();
+ const verifyCreated=async target=>{
+  if(!createdTargets.has(target))deny('Only this adapter\'s native terminal creation receipt can start a worker.');
+  const terminal=(await host.rpc('terminal.show',{terminal:target.terminalHandle})).terminal;
+  if(terminal?.handle!==target.terminalHandle||!terminal.connected||terminal.executionHostId!=='local'||terminal.worktreeId!==target.contextId||terminal.incarnationId!==target.incarnationId||await realpath(terminal.worktreePath)!==target.projectRoot)deny('The created terminal home or incarnation changed before startup.');
+  const context=target.contextId.startsWith('folder:')?target.contextId:`id:${target.contextId}`;
+  const tabs=await host.rpc('session.tabs.list',{worktree:context});
+  if((tabs.tabs??[]).some(tab=>(tab.agentStatus?.terminalHandle===target.terminalHandle||tab.terminalHandle===target.terminalHandle)&&tab.agentStatus?.agentType))deny('The created terminal already contains an agent; no startup input was sent.');
+  return target;
+ };
  return Object.freeze({
-  hostKind:'orca',runtimeId:host.runtimeId,
+  hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
+  async createLaunchTerminal({title},metadata){
+   const actor=await this.verifyCaller(metadata),context=actor.contextId.startsWith('folder:')?actor.contextId:`id:${actor.contextId}`;
+   const before=await host.cli(['terminal','list','--worktree',context]);
+   if(before.truncated||!Array.isArray(before.terminals)||before.terminals.some(t=>typeof t.handle!=='string'))deny('The complete native terminal inventory is required before creation.');
+   const receipt=await host.cli(['terminal','create','--worktree',context,'--title',title,'--shell','powershell.exe']);
+   const handle=receipt.terminal?.handle;
+   if(!handle||before.terminals.some(t=>t.handle===handle))deny('The host did not return a fresh terminal creation receipt.');
+   const terminal=(await host.rpc('terminal.show',{terminal:handle})).terminal;
+   if(!terminal?.incarnationId)deny('The created terminal has no native incarnation.');
+   const target=Object.freeze({projectRoot:actor.projectRoot,machineId:actor.machineId,executionHostId:'local',contextId:actor.contextId,terminalHandle:handle,incarnationId:terminal.incarnationId});
+   createdTargets.add(target);return verifyCreated(target);
+  },
+  async verifyLaunchTarget(target,metadata){await this.verifyCaller(metadata);return verifyCreated(target);},
+  async startLaunchTerminal(target,command,metadata){
+   await this.verifyCaller(metadata);await verifyCreated(target);
+   if(startedTargets.has(target))deny('This native launch input was already attempted; an uncertain start must not be resent.');
+   startedTargets.add(target);
+   return host.cli(['terminal','send','--terminal',target.terminalHandle,'--text',command,'--enter']);
+  },
   async verifyCaller(metadata) {
    const threadId=metadata?.threadId;
    if(typeof threadId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(threadId)||typeof metadata!=='object'||!Object.hasOwn(metadata,'threadId'))deny('Native Codex transport did not supply a thread identity.');

@@ -23,6 +23,14 @@ test('unverified caller never starts transport I/O',async()=>{
  const f=fixture();await pumpSharedDeliveries(f.$,{ok:false,reason:'unknown'},options)
  expect(f.commands.length).toBe(0);expect(f.sent.length).toBe(0)
 })
+test('the Mod launch pump leaves reviewed Codex reservations to the native Codex adapter',async()=>{
+ const started:string[]=[];const $={plugin:{root:'C:/plugin'},process:{run:async(_argv:any,init:any)=>{
+  const e=JSON.parse(init.stdin),c=e.request.command;
+  if(e.mode==='launchMember')started.push(c.memberId);
+  const value=c.type==='inspectCaller'?{controllerGeneration:1,teams:[{team_id:'team'}]}:c.type==='inspectTeam'?{team:{config_version:7},members:[{member_id:'codex-worker',cli:'codex',generation:1},{member_id:'claude-worker',cli:'claude',generation:1}],launches:[{launch_id:'codex',member_id:'codex-worker',status:'queued'},{launch_id:'claude',member_id:'claude-worker',status:'queued'}]}:{};
+  return {exitCode:0,stdout:JSON.stringify({ok:true,result:{result:value}})};
+ }}};await pumpSharedDeliveries($,proof,options);expect(started).toEqual(['claude-worker']);
+})
 test('queued bindings without fresh private native verification are never transport targets',async()=>{
  const f=fixture({ok:true,result:{result:{deliveries:[{recipient:{conversation_id:'impostor'}}]}}})
  await pumpSharedDeliveries(f.$,proof,options)

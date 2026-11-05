@@ -41,12 +41,12 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} explicit schema 5 
   assert.equal(backup.tables.operations[0].operation_id,'original');assert.ok(backup.schemaSql.includes("'team-orchestrator-shared', 5"));
   assert.deepEqual(await f.rows('SELECT * FROM messages'),beforeMessages);assert.deepEqual(await f.rows('SELECT * FROM controller_approvals'),beforeApprovals);
   assert.equal((await f.rows('SELECT * FROM operations'))[0].request_fingerprint,'fingerprint');
-  assert.equal(Number((await f.rows('SELECT schema_version FROM store_metadata'))[0].schema_version),8);
+  assert.equal(Number((await f.rows('SELECT schema_version FROM store_metadata'))[0].schema_version),9);
   const returns=await f.rows('SELECT * FROM assignment_returns ORDER BY assignment_id');assert.deepEqual(returns.map(r=>r.reason),['pickup_expired','rejected']);
   assert.equal((await f.rows('SELECT * FROM task_acceptances'))[0].reason,'Original rejection');
   assert.deepEqual(await upgradeTeamStore(f.options),receipt);assert.equal((await readdir(join(receipt.backupPath,'..'))).length,1);
   assert.equal((await upgradeTeamStore({...f.options,operationId:'new-check'})).status,'already_current');
-  const {db}=await openBackend(f.options);try{assert.equal((await inspectSchema(db)).version,8);}finally{await db.close();}
+  const {db}=await openBackend(f.options);try{assert.equal((await inspectSchema(db)).version,9);}finally{await db.close();}
   if(engine==='sqlite') {
    // Exercise recovery in a separate disposable file, never over the source.
    // The backup carries frozen schema-5 SQL and all contract data. Generated
@@ -109,7 +109,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} explicit schema 5 
   await assert.rejects(upgradeTeamStore(f.options,{openBackend:async(options,definition)=>{
    const opened=await openBackend(options,definition),db=opened.db;let changed=false;
    return {...opened,db:new Proxy(db,{get(target,key){
-    if(key==='exec')return async sql=>{if(sql.includes('SET schema_version=8'))changed=true;return target.exec(sql);};
+    if(key==='exec')return async sql=>{if(sql.includes('SET schema_version=9'))changed=true;return target.exec(sql);};
     if(key==='commit')return async()=>{await target.commit();if(changed&&fail){fail=false;throw Error('Reply lost');}};
     return target[key];
    }})};

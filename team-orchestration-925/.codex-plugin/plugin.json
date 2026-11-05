@@ -1,7 +1,7 @@
 {
   "name": "team-orchestration-925",
-  "version": "0.1.7",
-  "description": "Codex-native Team Orchestrator workflows and project-local setup.",
+  "version": "0.1.8",
+  "description": "Codex-native teams, reviewed worker launch plans and project-local setup.",
   "skills": "./skills/",
   "extensions": {
     "com.openai": {
