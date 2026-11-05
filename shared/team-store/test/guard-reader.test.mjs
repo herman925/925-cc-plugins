@@ -8,10 +8,11 @@ import {seedLayout} from './support/seed-layout.mjs';
 import * as schema5 from '../src/schema5-contract.mjs';
 import * as schema6 from '../src/schema6-contract.mjs';
 import * as schema7 from '../src/schema7-contract.mjs';
+import * as schema8 from '../src/schema8-contract.mjs';
 import * as current from '../contract.mjs';
 import {inspectGuardCaller} from '../src/guard-reader.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-for(const engine of ['sqlite','postgres'])for(const schema of [schema5,schema6,schema7,current])test(`${engine}: schema ${schema.SCHEMA_VERSION} guard reads live authority without migration, lease or operation writes`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
+for(const engine of ['sqlite','postgres'])for(const schema of [schema5,schema6,schema7,schema8,current])test(`${engine}: schema ${schema.SCHEMA_VERSION} guard reads live authority without migration, lease or operation writes`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
  const f=await runtimeFixture(t,engine),db=await f.raw();
  try{await db.begin();await db.exec(schema.ddlFor(engine));await seedLayout(db);
   await db.query("UPDATE members SET worktree='context',home_context_kind='worktree',home_execution_host_id='local',home_original_path=:root,machine_id='machine'",{root:f.root});

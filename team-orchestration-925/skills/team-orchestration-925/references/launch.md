@@ -1,0 +1,13 @@
+# Review and launch workers
+
+Call `shared_team_status`. If `info.upgradeRequired`, offer the explicit native-reviewed `shared_team_upgrade` operation before a plan; normal status never upgrades the store. Keep its operation ID and reconcile an uncertain upgrade. If no store or team exists, use the normal reviewed creation flow. An approved controller can launch workers even when it is not itself a bound member; this grants no permission to perform member tasks.
+
+Inspect the selected visible team with `shared_team` / `inspectConfiguration`. Ask which unconnected local **Codex workers** should start. The current launch path supports native Windows Orca terminals; it does not launch Claude or Hermes, remote members, the top member, or standalone sessions. Use connect for existing sessions. Capacity always queues; do not evict or auto-close sessions.
+
+Build a command of type `approveLaunchPlan` with `teamId`, a new `planId`, current `expectedConfigVersion`, current `expectedControllerGeneration`, and `selections`. Each selection carries `memberId`, a fresh `launchId`, and the actual `expectedMemberGeneration`, `expectedOfficialGeneration`, `expectedNotesGeneration` from the roster/role rows. Re-reviewing an already queued reservation must retain its existing launch ID; claimed/bound starts cannot be replaced. Do not guess generations or use prompt text as an approval flag.
+
+Pass that command and a stable `operationId` to `shared_team_launch`. Its native form displays the exact selection, roles, standing switches, model/effort and current capacity. Approval is for that specific plan, not future workers. Decline/cancel/timeout creates no plan. Edits to a queued worker or role invalidate its old approval; show a fresh review before it starts.
+
+After commit, the connected adapter processes the plan promptly and checks the queue every 30 seconds. It claims capacity, creates an empty terminal, commits that terminal's native home/incarnation, then sends the Codex bootstrap command. The child uses its real native conversation identity to bind through that target before its first permission-hook decision. It must inspect its official role, read its own inbox and verify an admitted assignment before task work.
+
+`inspectConfiguration` exposes durable launch states and native targets. `queued` waits for capacity or a valid review; `claimed` means starting or uncertain and continues consuming a slot; `bound` means a verified member binding exists. A terminal/input receipt does not prove the model started or completed work. After any unknown native effect, inspect and report it; do not submit a new start or retry raw terminal input. Cross-restart automatic recovery of claimed/uncertain native effects is not provided by this increment.

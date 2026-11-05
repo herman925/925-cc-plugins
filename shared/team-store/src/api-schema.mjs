@@ -2,7 +2,7 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 const stringField={type:'string'}
 const versionField={type:'integer',minimum:1}
 export const commandSchema={type:'object',additionalProperties:false,properties:{
- type:{type:'string',enum:Object.keys(API_COMMAND_FIELDS).filter(t=>!['approveController','editTeam','reserveLaunch','claimLaunch','attachLaunch'].includes(t))},
+ type:{type:'string',enum:Object.keys(API_COMMAND_FIELDS).filter(t=>!['approveController','editTeam','reserveLaunch','claimLaunch','attachLaunch','approveLaunchPlan','recordLaunchTarget','inspectLaunchQueue'].includes(t))},
  ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','newAssignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId','gateId','newGateId','question','choice','note','threadId','answer','noticeId','meetingId','title','startPolicy','response','checkpoint','contributionId','body','disposition','resolution','outputId','ownerMemberId','outputKind'].map(k=>[k,stringField])),
  ...Object.fromEntries(['expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedAttemptGeneration','expectedDeliveryGeneration','expectedGateGeneration','expectedThreadGeneration','expectedMeetingGeneration','notificationGeneration'].map(k=>[k,versionField])),
  participantIds:{type:'array',minItems:1,maxItems:30,uniqueItems:true,items:stringField},

@@ -7,10 +7,11 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {join,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
+import {configurationEnvironment} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup-environment.mjs';
 const [root,executable,project]=process.argv.slice(2);
 if(![root,executable,project].every(v=>v&&isAbsolute(v)))throw Error('Supply absolute new evidence directory, native Codex executable and project paths.');
 await mkdir(root,{recursive:false});const home=join(root,'codex-home');await mkdir(home);
-const child=spawn(executable,['app-server','--listen','stdio://'],{cwd:root,env:{...process.env,CODEX_HOME:home},windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(executable,['app-server','--listen','stdio://'],{cwd:root,env:configurationEnvironment(home),windowsHide:true,stdio:['pipe','pipe','pipe']});
 let serial=0,stderr='';const pending=new Map(),events=[];child.stderr.setEncoding('utf8');child.stderr.on('data',x=>stderr+=x);
 const timer=setTimeout(()=>child.kill(),60000);
 const reader=(async()=>{for await(const line of createInterface({input:child.stdout})){

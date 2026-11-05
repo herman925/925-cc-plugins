@@ -1,8 +1,9 @@
 import {MEETING_DDL,meetingGuardsFor} from './src/meeting-contract.mjs';
+import {LAUNCH_DDL,launchPlanGuardsFor} from './src/launch-contract.mjs';
 // Shared contract for issue #154, consumed by the Mod's typed adapter.
 // One shared table source; dialect fragments only implement equivalent constraints.
 export const FORMAT = 'team-orchestrator-shared';
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const WRITER_PROTOCOL_VERSION = 1;
 export const KNOWN_WRITER_FAMILIES = Object.freeze(['team-orchestrator', 'team-orchestrator-orca']);
 export const MACHINE_FORMAT = 'team-orchestrator-machine';
@@ -251,11 +252,13 @@ CREATE TABLE member_launches (
   member_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE REFERENCES members (member_id),
   controller_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES controller_approvals (controller_id),
   machine_id TEXT COLLATE {{identity_collation}} NOT NULL,
-  conversation_id TEXT COLLATE {{identity_collation}} NOT NULL UNIQUE,
+  conversation_id TEXT COLLATE {{identity_collation}} UNIQUE,
   status TEXT NOT NULL CHECK (status IN ('queued','claimed','bound')),
   generation BIGINT NOT NULL CHECK (generation >= 1 AND generation <= 9007199254740991),
-  created_at_ms BIGINT NOT NULL CHECK (created_at_ms >= 0 AND created_at_ms <= 9007199254740991)
+  created_at_ms BIGINT NOT NULL CHECK (created_at_ms >= 0 AND created_at_ms <= 9007199254740991),
+  CHECK(status<>'bound' OR conversation_id IS NOT NULL)
 );
+${LAUNCH_DDL}
 CREATE TABLE deadline_notices (
   notice_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY,
   team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
@@ -335,7 +338,7 @@ CREATE TABLE operations (
 );
 ${MEETING_DDL}
 {{meeting_guards}}
-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 8);
+INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 9);
 INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
 VALUES (1, NULL, NULL, 0, 0);
 `;
@@ -478,7 +481,7 @@ export function runtimeGuardsFor(engine) {
  const different=engine==='sqlite'?'IS NOT':'IS DISTINCT FROM';
  const unchanged=(columns)=>columns.map(k=>`NEW.${k} ${different} OLD.${k}`).join(' OR ');
  const rules={
-  member_launches:`${unchanged(['launch_id','member_id','controller_id','machine_id','conversation_id','created_at_ms'])} OR NEW.generation<>OLD.generation+1 OR NOT ((OLD.status='queued' AND NEW.status='claimed') OR (OLD.status='claimed' AND NEW.status='bound'))`,
+  member_launches:`${unchanged(['launch_id','member_id','controller_id','machine_id','created_at_ms'])} OR (NEW.conversation_id ${different} OLD.conversation_id AND NOT(OLD.conversation_id IS NULL AND NEW.conversation_id IS NOT NULL AND OLD.status='claimed' AND NEW.status='bound')) OR NEW.generation<>OLD.generation+1 OR NOT ((OLD.status='queued' AND NEW.status='claimed') OR (OLD.status='claimed' AND NEW.status='bound'))`,
   deadline_notices:`${unchanged(['notice_id','team_id','recipient_member_id','event_json','created_at_ms'])} OR (OLD.read_at_ms IS NOT NULL AND NEW.read_at_ms ${different} OLD.read_at_ms) OR (NEW.read_at_ms IS NOT NULL AND NEW.read_at_ms<NEW.created_at_ms) OR (OLD.last_notified_at_ms IS NOT NULL AND (NEW.last_notified_at_ms IS NULL OR NEW.last_notified_at_ms<OLD.last_notified_at_ms))`
  };
  return Object.entries(rules).map(([table,condition])=>{
@@ -502,7 +505,7 @@ export function ddlFor(engine) {
     .replaceAll('{{history_guards}}',historyGuardsFor(engine))
     .replaceAll('{{gate_guards}}',gateGuardsFor(engine))
     .replaceAll('{{runtime_guards}}',runtimeGuardsFor(engine))
-    .replaceAll('{{meeting_guards}}',meetingGuardsFor(engine))
+    .replaceAll('{{meeting_guards}}',meetingGuardsFor(engine)+ '\n'+launchPlanGuardsFor(engine))
     .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
     .replace('{{message_guards}}', messageGuardsFor(engine));
 }

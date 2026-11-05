@@ -9,7 +9,7 @@ import { normalizeConfigurationMutation, applyConfigurationMutation } from './co
 import { checkWriter, reference } from './writers.mjs';
 import {openAssignmentThread,enqueueMessage,settleAssignmentThread,assignmentThreadId,inspectInbox,readOwnInbox,prepareDeliveries,expirePickups} from './mailbox.mjs';
 import {askQuestion,answerQuestion,questionAccess,expireQuestions} from './questions.mjs';
-import {reserveLaunch,claimLaunch,attachLaunch} from './launches.mjs';
+import {reserveLaunch,claimLaunch,attachLaunch,approveLaunchPlan,recordLaunchTarget,inspectLaunchQueue} from './launches.mjs';
 import {applyGateCommand,currentTaskHead,taskGates,effectiveGateSql} from './gates.mjs';
 
 const fail = (code, message) => { throw refusal(`API_${code}`, message); };
@@ -24,7 +24,7 @@ export function apiResult(value) {
   return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,item!==null && /^(?:generation|config_version|level|replay_count|.*_generation|.*_at_ms|.*_deadline_ms|task_window_minutes)$/.test(key) ? databaseInteger(item,key) : apiResult(item)]));
 }
 const expected = (value, actual, field) => { if (value !== gen(actual, field)) fail('STALE_AUTHORITY', `${field} changed; inspect the current state before a new operation.`); };
-const launchTypes=['reserveLaunch','claimLaunch','attachLaunch'];
+export const launchTypes=['reserveLaunch','claimLaunch','attachLaunch','approveLaunchPlan','recordLaunchTarget','inspectLaunchQueue'];
 import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 export {API_COMMAND_FIELDS};
 
@@ -35,11 +35,19 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
-    if (k === 'settings' || k === 'members' || k === 'options' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit') continue;
+    if(input.type==='attachLaunch'&&v===undefined)continue;
+    if (k === 'settings' || k === 'members' || k === 'options' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
       : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note' });
   }
   if(input.type==='editTeam')out.changes=normalizeTeamEdits(input.changes);
+  if(input.type==='attachLaunch'&&['projectId','launchId','memberId'].some(k=>out[k]!==undefined)&&['projectId','launchId','memberId'].some(k=>out[k]===undefined))fail('INPUT_INVALID','Reserved attachment requires the complete fixed launch scope.');
+  if(input.type==='approveLaunchPlan'){
+   if(!Array.isArray(input.selections)||!input.selections.length||input.selections.length>30)fail('INPUT_INVALID','Select 1–30 workers.');
+   out.selections=input.selections.map(s=>{exact(s,['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration']);return Object.fromEntries(Object.entries(s).map(([k,v])=>[k,k.endsWith('Generation')?integer(v,k,{min:1}):text(v,k)]));});
+   if(new Set(out.selections.map(s=>s.memberId)).size!==out.selections.length||new Set(out.selections.map(s=>s.launchId)).size!==out.selections.length)fail('INPUT_INVALID','Each worker and launch must be distinct.');
+   for(const s of out.selections)for(const key of ['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration'])if(s[key]===undefined)fail('INPUT_INVALID','Worker selections require all identity/generation fields.');
+  }
   if(input.type==='createMeeting')Object.assign(out,normalizeMeeting(input));
   if(names.includes('options')) {
     if(!Array.isArray(input.options)||input.options.length<2)fail('INPUT_INVALID','Offer at least two distinct string options.');
@@ -68,6 +76,12 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
 export function normalizeActor(input) {
   exact(input, ['projectRoot', 'machineId', 'provider', 'conversationId', 'executionHostId', 'contextId', 'terminalHandle', 'incarnationId']);
   return snapshot(Object.fromEntries(['projectRoot', 'machineId', 'provider', 'conversationId', 'executionHostId', 'contextId', 'terminalHandle', 'incarnationId'].map(k => [k, text(input[k], `verified ${k}`)])));
+}
+export function normalizeLaunchTarget(input){const keys=['projectRoot','machineId','executionHostId','contextId','terminalHandle','incarnationId'];exact(input,keys);return snapshot(Object.fromEntries(keys.map(k=>[k,text(input[k],`native launch ${k}`)])));}
+export async function pendingNativeLaunch(db,actor){
+ const [binding]=await db.query('SELECT 1 FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
+ if(binding)return null;
+ const [target]=await db.query('SELECT launch_id FROM launch_targets WHERE machine_id=:machine AND terminal_handle=:terminal AND context_id=:context',{machine:actor.machineId,terminal:actor.terminalHandle,context:actor.contextId});return target?.launch_id??null;
 }
 
 async function controller(db, actor, generation) {
@@ -102,6 +116,7 @@ export async function readGuardAuthority(db,actor,version){
  const [binding]=await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
  if(!binding){
   if(version>=7&&(await db.query('SELECT 1 FROM member_launches WHERE conversation_id=:id AND machine_id=:machine',{id:actor.conversationId,machine:actor.machineId})).length)fail('LAUNCH_ATTACH_REQUIRED','Reserved workers must finish verified self-binding before work.');
+  if(version>=9&&await pendingNativeLaunch(db,actor))fail('LAUNCH_ATTACH_REQUIRED','This reserved terminal must finish verified self-binding before work.');
   return {member:null,hasReports:false};
  }
  const row=await reference(db,'members','member_id',binding.member_id);
@@ -112,7 +127,7 @@ export async function readGuardAuthority(db,actor,version){
 
 export async function assertApiCaller(db, command, actor) {
   if (['approveController','attachLaunch'].includes(command.type)) return;
-  if(['reserveLaunch','claimLaunch'].includes(command.type)){await controller(db,actor);return;}
+  if(launchTypes.includes(command.type)){await controller(db,actor);return;}
   if (['inspectCaller','inspectController'].includes(command.type)) return;
   if(command.type==='inspectConfiguration'){await controller(db,actor);return;}
   if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
@@ -197,7 +212,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if (!old) await db.query(`INSERT INTO controller_approvals (controller_id,machine_id,provider,conversation_id,generation,approved_at_ms,revoked) VALUES (:id,:machine,:provider,:conversation,1,:now,0)`, { id, machine: actor.machineId, provider: actor.provider, conversation: actor.conversationId, now });
     return { controllerId: id, controllerGeneration: old ? gen(old.generation, 'controller generation') : 1 };
   }
-  if(type==='attachLaunch')return attachLaunch(db,actor);
+  if(type==='attachLaunch')return attachLaunch(db,actor,command);
+  if(type==='inspectLaunchQueue'){await controller(db,actor,command.expectedControllerGeneration);return inspectLaunchQueue(db,command,actor,controllerId(actor));}
+  if(['approveLaunchPlan','recordLaunchTarget'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='approveLaunchPlan'?approveLaunchPlan(db,command,actor,controllerId(actor),now):recordLaunchTarget(db,command,actor,controllerId(actor),target,now);}
   if(['reserveLaunch','claimLaunch'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='reserveLaunch'?reserveLaunch(db,command,actor,controllerId(actor),now):claimLaunch(db,command,actor,controllerId(actor));}
   if(type==='inspectMeeting'){const {member}=await memberActor(db,actor,command,false);return inspectMeeting(db,command,member.member_id);}
   if(type==='inspectQuestion'){const {member}=await memberActor(db,actor,command,false);return questionAccess(db,command.teamId,command.threadId,member.member_id);}
@@ -213,6 +230,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const [binding] = await db.query('SELECT * FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
     const teams = approval && Number(approval.revoked)===0 ? await db.query('SELECT team_id,name,function_text,config_version FROM teams ORDER BY name,team_id') : [];
     if(!binding&&(await db.query('SELECT 1 FROM member_launches WHERE conversation_id=:id AND machine_id=:machine',{id:actor.conversationId,machine:actor.machineId})).length)fail('LAUNCH_ATTACH_REQUIRED','Reserved workers must finish their verified self-binding before any work.');
+    if(!binding&&await pendingNativeLaunch(db,actor))fail('LAUNCH_ATTACH_REQUIRED','This reserved terminal must finish its verified self-binding before any work.');
     if (!binding) return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,teams};
     const row = await reference(db,'members','member_id',binding.member_id);
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
@@ -302,6 +320,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const m = await reference(db,'members','member_id',command.memberId);
     if (m.team_id !== command.teamId || m.membership_state !== 'active') fail('MEMBER_SCOPE','Only an active member of this team can be bound.');
     expected(command.expectedMemberGeneration,m.generation,'member generation');
+    if((await db.query("SELECT 1 FROM member_launches WHERE member_id=:id AND status='claimed'",{id:m.member_id})).length)fail('LAUNCH_PENDING','A claimed or uncertain start holds this member. Inspect it before connecting another session.');
     if (!target || target.projectRoot !== actor.projectRoot || target.machineId !== actor.machineId || target.executionHostId !== actor.executionHostId || target.contextId !== m.worktree || target.projectRoot !== m.home_original_path || target.executionHostId !== m.home_execution_host_id) fail('TARGET_UNVERIFIED','Target native project, context, machine and home must agree.');
     if(m.cli!==target.provider)fail('PROVIDER_MISMATCH','The verified session provider differs from this member’s configured CLI. Binding does not silently convert a member to another CLI.');
     const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});

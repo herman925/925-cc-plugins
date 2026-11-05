@@ -9,7 +9,7 @@ export async function verifyModAction({action,id,actor,configRoot,request,now=Da
   if(!info.isFile()||info.isSymbolicLink()||info.size>(action==='editTeam'?65536:8192))return false;
   const ticket=JSON.parse(await readFile(path,'utf8'));
   if(ticket.action!==action||ticket.id!==id||ticket.conversationId!==actor.conversationId||ticket.terminalHandle!==actor.terminalHandle||ticket.contextId!==actor.contextId||ticket.projectRoot.replaceAll('\\','/')!==actor.projectRoot.replaceAll('\\','/')||!Number.isSafeInteger(ticket.createdAt)||ticket.createdAt>now||now-ticket.createdAt>=60000)return false;
-  if(action==='upgradeStore')return [5,6,7].includes(ticket.fromVersion)&&ticket.toVersion===8;
+  if(action==='upgradeStore')return [5,6,7,8].includes(ticket.fromVersion)&&ticket.toVersion===9;
   if(action==='editTeam')return request?.command?.type==='editTeam'&&JSON.stringify(canonical(ticket.request))===JSON.stringify(canonical(request));
   return action==='approveController';
  }catch{return false;}

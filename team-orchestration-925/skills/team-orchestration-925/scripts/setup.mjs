@@ -10,8 +10,11 @@ import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {discoverCodexExecutable} from './codex-executable.mjs';
 import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
+import {nativeToolSettings,toolSettingsToml} from './setup-tool-settings.mjs';
+import {prepareRuntime,installRuntime} from './setup-runtime.mjs';
+import {configurationEnvironment} from './setup-environment.mjs';
 export {discoverCodexExecutable} from './codex-executable.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.7';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.8';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));
@@ -25,7 +28,7 @@ async function paths(options){
  return {root,dir,state:join(state,hash(root)),files:{config:join(dir,'config.toml'),hooks:join(dir,'hooks.json'),receipt:join(dir,'925-to-installation.json')}};
 }
 async function native(bin,args,stage){
- try{const result=await exec(bin,args,{cwd:stage,env:{...process.env,CODEX_HOME:stage},windowsHide:true,timeout:15000,maxBuffer:2*1024*1024});return result.stdout;}
+ try{const result=await exec(bin,args,{cwd:stage,env:configurationEnvironment(stage),windowsHide:true,timeout:15000,maxBuffer:2*1024*1024});return result.stdout;}
  catch{fail('SETUP_CONFIG_INVALID','Codex could not validate the staged configuration. Existing project/global files were not changed.');}
 }
 function mergedHooks(original,receipt,remove){
@@ -62,18 +65,20 @@ export async function prepareSetup(options={},dependencies={}){
   const list=JSON.parse(await native(bin,['mcp','list','--json'],stage)),existing=list.find(s=>s.name===serverName);
   if(existing){const current=JSON.parse(await native(bin,['mcp','get',serverName,'--json'],stage));if(!installed||digest(current)!==installed.serverHash)fail('SETUP_UNOWNED','The project already has an unowned or modified team MCP server. It was not replaced.');}
   else if(installed)fail('SETUP_CHANGED','The installed MCP server was removed. Review its configuration before updating.');
+  let toolSettings='';if(existing&&!remove){try{toolSettings=toolSettingsToml(await nativeToolSettings(bin,stage));}catch{fail('SETUP_CONFIG_INVALID','Native per-tool settings could not be preserved. Existing project configuration was not changed.');}}
   if(existing)await native(bin,['mcp','remove',serverName],stage);
-  let server=null;
+  let server=null,runtime=null;
   if(!remove){
-   const adapter=await realpath(options.adapter||fileURLToPath(new URL('./runtime/codex-mcp.mjs',import.meta.url))),node=await realpath(options.node||process.execPath);
+   if(!options.adapter)runtime=await prepareRuntime(fileURLToPath(new URL('./runtime/',import.meta.url)),p.state);
+   const adapter=runtime?.path??await realpath(options.adapter),node=await realpath(options.node||process.execPath);
    await native(bin,['mcp','add',serverName,'--env',`TEAM_PROJECT_ROOT=${p.root}`,'--',node,adapter],stage);
    let config=await readFile(join(stage,'config.toml'),'utf8');const header='[mcp_servers.team_orchestrator]';if(config.split(header).length!==2)fail('SETUP_CONFIG_INVALID','Codex emitted an unexpected server table.');
    config=config.replace(header,header+'\nenv_vars = ["ORCA_TERMINAL_HANDLE", "ORCA_WORKTREE_ID", "ORCA_USER_DATA_PATH", "ORCA_CLI_COMMAND", "CODEX_HOME"]\ntool_timeout_sec = 300');
-   await writeFile(join(stage,'config.toml'),config,{mode:0o600});server=JSON.parse(await native(bin,['mcp','get',serverName,'--json'],stage));
+   await writeFile(join(stage,'config.toml'),config+toolSettings,{mode:0o600});server=JSON.parse(await native(bin,['mcp','get',serverName,'--json'],stage));
   }
   let config=await bytes(join(stage,'config.toml'));if(remove&&installed.configCreated&&(!config||!config.toString().trim()))config=null;
-  const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null};
-  return {paths:p,before,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook'],globalConfigurationChanged:false,teamStoreChanged:false,hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove}};
+  const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null,...(runtime?{runtimePath:runtime.path,runtimeDigest:runtime.digest}:{})};
+  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],globalConfigurationChanged:false,teamStoreChanged:false,hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove}};
  }finally{
   if(dirname(stage)!==temp||!basename(stage).startsWith('925-to-setup-'))throw Error('Refusing unexpected staging cleanup.');
   await rm(stage,{recursive:true,force:true});
@@ -102,12 +107,13 @@ export async function applySetup(plan,{afterWrite}={}){
  try{
   for(const [key,path] of Object.entries(p.files))if(hash(await bytes(path))!==hash(before[key]))fail('SETUP_CHANGED','Project configuration changed during setup preview. Preview again.');
   await mkdir(p.state,{recursive:true,mode:0o700});const canonicalState=await realpath(p.state),stateRelation=relative(p.root,canonicalState);if(canonicalState.toLowerCase()!==p.state.toLowerCase()||stateRelation===''||stateRelation!=='..'&&!stateRelation.startsWith('..'+sep)&&!isAbsolute(stateRelation)||(await lstat(p.state)).isSymbolicLink())fail('SETUP_PATH_REFUSED','The private recovery directory must not be redirected.');
+  if(plan.runtime)await installRuntime(plan.runtime);
   const transaction=randomUUID(),backup={project:p.root,transaction,before:Object.fromEntries(Object.entries(before).map(([k,v])=>[k,v===null?null:v.toString('base64')])),afterHashes:Object.fromEntries(Object.entries(after).map(([k,v])=>[k,hash(v)]))};
   const backupPath=join(p.state,`${transaction}.json`),file=await open(backupPath,'wx',0o600);try{await file.writeFile(JSON.stringify(backup));await file.sync();}finally{await file.close();}
   await atomic(p.files.receipt,Buffer.from(JSON.stringify({phase:'prepared',version,project:p.root,transaction})+'\n'));
   let count=0;for(const key of ['config','hooks']){if(hash(await bytes(p.files[key]))!==hash(before[key]))fail('SETUP_CHANGED','A setup target changed independently; it was not overwritten.');await atomic(p.files[key],after[key]);await afterWrite?.(++count);}
   await atomic(p.files.receipt,after.receipt);return {...plan.summary,status:'complete'};
- }catch(e){if(e.code==='SETUP_CHANGED'||e.code==='SETUP_PATH_REFUSED')throw e;fail('SETUP_RECOVERY_REQUIRED','Setup did not finish. Its private backup/journal was retained; run recover before retrying.');}
+ }catch(e){if(['SETUP_CHANGED','SETUP_PATH_REFUSED','SETUP_RUNTIME_REFUSED'].includes(e.code))throw e;fail('SETUP_RECOVERY_REQUIRED','Setup did not finish. Its private backup/journal was retained; run recover before retrying.');}
  finally{await lock.close();}
 }
 export async function recoverSetup(options={}){

@@ -2,6 +2,8 @@
 
 This is the **Claude Code Mod**, distributed as a Claude Code plugin with a native panel. See [choose your Team Orchestrator client](../README.md#team-orchestrator) for the installation methods and workflows across Claude Code, the Codex plugin/skill set and the planned Hermes client. The shared Claude/Codex clients use one project-owned store/API; existing classic teams and the separate Orca plugin remain separate.
 
+**0.5.58** carries the shared schema-9 runtime for [native-reviewed Codex worker plans](../shared/team-store/SCHEMA-9-LAUNCH-PLANS.md) and adds backed-up schema-8 workspace updates. Codex starts its workers through its own native adapter; this Mod keeps Claude launch behavior and skips Codex reservations. Existing stores need an explicit Update workspace action. Codex can operate without an active Claude Mod process.
+
 **0.5.57** adds **Team workspace → Edit team** for approved controllers. Native Team, Options and Review tabs edit the team name/purpose, capacity, pickup/answer/task windows and replay timing. Review shows before/after values; **Apply reviewed changes** saves the exact proposal. Other settings are preserved. Stale configuration refuses, and an uncertain reply retains its operation receipt for recovery. See [the editing guide](docs/panel-navigation.md#edit-a-shared-team--0557) and [validation](../shared/team-store/VALIDATION-MOD-TEAM-EDIT.md). Schema 8 is unchanged.
 
 **0.5.56** shares its management API with [`team-orchestration-925` 0.1.3](../team-orchestration-925/README.md): Codex can create a team, review atomic configuration edits and connect existing sessions without an active Claude controller. The installable Codex skill includes project-local setup and native draft/confirmation forms. Schema 8 is unchanged. See [validation and live acceptance limits](../shared/team-store/VALIDATION-925-TO.md).
@@ -24,7 +26,7 @@ nobody starts subagents unless you allow it.
 
 The highest supervisor's generated role includes interactive question guidance independently of Session Panel or `/grill-me`: Claude Code uses `AskUserQuestion`, Codex uses `request_user_input` or `request_user_input_async`, and Hermes Agent uses `clarify`, subject to actual availability and permissions. If names differ, use an exposed native/MCP equivalent that shows choices and returns the user's answer in the same conversation; use prose numbered choices only when no permitted interactive tool exists. An async accepted/pending result is not an answer: keep the turn open with the available wait/resume mechanism until the user answers, cancels or the tool closes, without sending a final reply or opening a duplicate card. Lower members still relay decisions through their boss. This guidance does not add another CLI's launch support or bypass existing approval checks.
 
-Version 0.5.57. What changed in each version is in the [changelog](#changelog-05x).
+Version 0.5.58. What changed in each version is in the [changelog](#changelog-05x).
 
 Shared project-owned team-system planning for Claude Mod and Orca clients: [Map: Team Orchestrator — Claude Mod and Orca](https://github.com/herman925/925-cc-plugins/issues/2), [repository Wayfinding operations](../docs/wayfinding.md), and [shared vocabulary](../GLOSSARY.md).
 

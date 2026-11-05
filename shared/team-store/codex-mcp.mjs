@@ -17,6 +17,9 @@ import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {SHARED_WRITER} from './src/runtime-release.mjs';
 import {createCodexObserver} from './src/codex-observer.mjs';
+import {codexLaunchPlan} from './src/codex-launch.mjs';
+import {codexUpgrade} from './src/codex-upgrade.mjs';
+import {readReservedLaunchProfile} from './src/codex-launch-profile.mjs';
 const editChanges={type:'array',minItems:1,maxItems:30,items:{oneOf:[
  {type:'object',additionalProperties:false,properties:{type:{const:'updateTeam'},name:{type:'string'},functionText:{type:'string'}},required:['type','name','functionText']},
  {type:'object',additionalProperties:false,properties:{type:{const:'saveSettings'},settings:commandSchema.properties.settings},required:['type','settings']},
@@ -27,6 +30,8 @@ const managedSchema={...commandSchema,properties:{...commandSchema.properties,ty
 const memberSchema={...commandSchema,properties:{...commandSchema.properties,type:{type:'string',enum:commandSchema.properties.type.enum.filter(t=>!managementTypes.includes(t))}}};
 const object=properties=>({type:'object',properties,additionalProperties:false});
 export const codexTools=[
+ {name:'shared_team_upgrade',description:'Explicit native-reviewed shared workspace update to schema 9 with a complete private backup. Preserves roster, approvals and history; does not grant management, hook trust or launch approval. Other clients need Mod 0.5.58 / Codex 0.1.8. Preserve operationId and reconcile an uncertain reply. Never upgrades on ordinary status or inspection.',inputSchema:{...object({operationId:{type:'string'},reconcile:{type:'boolean'}}),required:['operationId']}},
+ {name:'shared_team_launch',description:'Review one specific Codex worker launch plan through a native confirmation form. Only listed unbound local workers may start automatically as capacity opens. Existing sessions are never closed or replaced. Use inspectConfiguration for current worker and role generations and any existing queued launch IDs. Keep the exact request/id and reconcile uncertain replies. This does not approve new workers, role changes, standalone hosts or Hermes.',inputSchema:{...object({operationId:{type:'string'},reconcile:{type:'boolean'},command:{...object({type:{const:'approveLaunchPlan'},teamId:{type:'string'},planId:{type:'string'},expectedConfigVersion:{type:'integer',minimum:1},expectedControllerGeneration:{type:'integer',minimum:1},selections:{type:'array',minItems:1,maxItems:30,items:{...object({memberId:{type:'string'},launchId:{type:'string'},expectedMemberGeneration:{type:'integer',minimum:1},expectedOfficialGeneration:{type:'integer',minimum:1},expectedNotesGeneration:{type:'integer',minimum:1}}),required:['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration']}}}),required:['type','teamId','planId','expectedConfigVersion','expectedControllerGeneration','selections']}}),required:['operationId','command']}},
  {name:'shared_team_interview',description:'Show a native interactive action menu or collect team/member/edit preferences when a normal question tool is unavailable. Answers are draft data only; they never approve management, change a team or grant permissions.',inputSchema:{...object({step:{type:'string',enum:['action','team','member','change']},bossNames:{type:'array',maxItems:30,items:{type:'string'},uniqueItems:true}}),required:['step']}},
  {name:'shared_team_manage',description:'Native reviewed team management. approveController, createFreshTeam, editTeam or bindMember. Every new effect requests a native confirmation form; ordinary tool arguments cannot approve it. createFreshTeam can request conversation management approval together with the composition preview. editTeam uses explicit changes: updateTeam, saveSettings, addMember, updateMember. Never removes, converts CLI, rebinds silently or transfers homes. Preserve operationId and exact request; reconcile:true only checks the receipt.',inputSchema:{...object({operationId:{type:'string'},command:managedSchema,target:{type:'object',additionalProperties:false,properties:Object.fromEntries(['projectRoot','conversationId','terminalHandle','contextId'].map(k=>[k,{type:'string'}])),required:['projectRoot','conversationId','terminalHandle','contextId']},reconcile:{type:'boolean'}}),required:['operationId','command']}},
  {name:'shared_team_sessions',description:'Discover currently verified existing Claude/Codex sessions eligible for explicit connection. Listing grants no approval or binding.',inputSchema:object({})},
@@ -44,7 +49,25 @@ export async function createCodexAdapter(options={},dependencies={}) {
   close:async()=>observation?.close(),
   async call(name,args,metadata,connection){
    const actor=await native.verifyCaller(metadata);
+   if(options.reservedLaunch){
+    const fixed=options.reservedLaunch;
+    if(actor.projectRoot!==fixed.projectRoot||actor.machineId!==fixed.machineId||actor.contextId!==fixed.contextId)throw refusal('API_LAUNCH_SCOPE','The reserved worker native home changed.');
+    const attach=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});
+    try{
+     // A refused/missing target must be inspected again, not replay a cached
+     // attached:false receipt forever. The database still allows only one bind.
+     const result=await attach.launch({operationId:`reserved-attach-${crypto.randomUUID()}`,command:{type:'attachLaunch',projectId:fixed.projectId,launchId:fixed.launchId,memberId:fixed.memberId}});
+     if(result.result.attached!==true)throw refusal('API_LAUNCH_ATTACH_REQUIRED','This reserved worker has no confirmed native attachment. Wait for the controller; ordinary unbound work is not allowed.');
+     const info=(await attach.execute({operationId:`reserved-caller-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;
+     if(info.projectId!==fixed.projectId||info.member?.member_id!==fixed.memberId)throw refusal('API_LAUNCH_SCOPE','This reserved worker is not bound to its expected project/member.');
+    }finally{await attach.close();}
+   }else if(native.launchWorkers){
+    let probe;try{probe=await (dependencies.inspectGuard??inspectGuardCaller)({actor,postgres:options.postgres,allowLaunchProbe:true});}catch(error){if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))throw error;}
+    if(probe?.pendingLaunchId){const attach=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});try{await attach.launch({operationId:`codex-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});}finally{await attach.close();}}
+   }
    observation?.activate(metadata,actor);
+   if(name==='shared_team_upgrade')return codexUpgrade({args,actor,metadata,native,options,connection});
+   if(name==='shared_team_launch'){if(!native.launchWorkers)throw refusal('API_LAUNCH_UNSUPPORTED','This native host cannot launch Codex workers.');const result=await codexLaunchPlan({args,actor,metadata,native,createApi:dependencies.createApi??createTeamApi,options,connection});if(result.status!=='unknown')observation?.requestPass?.();return result;}
    if(name==='shared_team_interview'){const form=interviewForm(args);if(!connection?.canElicit)throw refusal('API_REVIEW_UNAVAILABLE','A native interactive form is unavailable in this client.');const result=await connection.elicit(form);const current=await native.verifyCaller(metadata);if(JSON.stringify(current)!==JSON.stringify(actor))throw refusal('API_STALE_AUTHORITY','The native conversation changed while the interview was open.');return {draftOnly:true,response:result};}
    if(name==='shared_team_manage'){const result=await codexManagement({args,actor,metadata,native,createApi:dependencies.createApi??createTeamApi,options,connection});if(result.status!=='unknown')observation?.requestPass?.();return result;}
    if(name==='shared_team_sessions'){exact(args,[]);return native.listTargets(metadata);}
@@ -55,7 +78,16 @@ export async function createCodexAdapter(options={},dependencies={}) {
    const api=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});
    let journal;
    try{
-    if(name==='shared_team_status'){exact(args,[]);let info;try{info=(await api.execute({operationId:`status-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;}catch(e){if(e.code==='API_STALE_BINDING'){info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect'};}else{if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(e.code))throw e;info={storeExists:false,controllerGeneration:null,member:null,teams:[]};}}return {host:'orca',provider:'codex',actor,info,observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:false,standalone:false,hermes:false}};}
+    if(name==='shared_team_status'){
+     exact(args,[]);let info;
+     try{info=(await api.execute({operationId:`status-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;}
+     catch(e){
+      if(e.code==='API_STALE_BINDING')info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect'};
+      else if(e.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8].includes(e.details?.version)&&e.details?.supported===9)info={storeExists:true,upgradeRequired:true,storeVersion:e.details.version,controllerApprovalUnknown:true,member:null,teams:[]};
+      else{if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(e.code))throw e;info={storeExists:false,controllerGeneration:null,member:null,teams:[]};}
+     }
+     return {host:'orca',provider:'codex',actor,info,observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:native.launchWorkers===true,launchApproval:'specific-native-reviewed-plan',workspaceUpgrade:'native-review-with-backup',standalone:false,hermes:false}};
+    }
     if(name==='shared_team'){
      exact(args,['operationId','command','reconcile']);
      if(managementTypes.includes(args.command?.type))throw refusal('API_MANAGEMENT_REVIEW_REQUIRED','Use shared_team_manage for a native reviewed management operation.');
@@ -73,12 +105,19 @@ export async function createCodexAdapter(options={},dependencies={}) {
  });
 }
 export async function serveCodexMcp(adapter,options={}){try{return await serveMcp(adapter,codexTools,options);}finally{await adapter.close?.();}}
+export function refusedCodexAdapter(error){
+ const safe=typeof error?.code==='string'&&/^(API_|STORE_)[A-Z_]+$/.test(error.code);
+ const failure=refusal(safe?error.code:'API_NATIVE_UNVERIFIED',safe?String(error.message).slice(0,500):'Native Codex startup authority could not be verified. Reconnect after repairing its fixed configuration.');
+ return Object.freeze({call:async()=>{throw failure;},close:async()=>{}});
+}
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ let adapter;
  try{
   const scope={projectRoot:process.env.TEAM_PROJECT_ROOT,terminalHandle:process.env.TEAM_TERMINAL_HANDLE||process.env.ORCA_TERMINAL_HANDLE,contextId:process.env.TEAM_CONTEXT_ID||process.env.ORCA_WORKTREE_ID};
   if(!scope.projectRoot){if(!scope.terminalHandle||!scope.contextId)throw Error('A verified Orca terminal/context is required.');const host=await createOrcaHost();const terminal=(await host.rpc('terminal.show',{terminal:scope.terminalHandle})).terminal;if(terminal.worktreeId!==scope.contextId)throw Error('Orca scope changed.');scope.projectRoot=terminal.worktreePath;}
   const codexExecutable=process.env.TEAM_CODEX_EXECUTABLE||(await inspectWindowsProcess(process.ppid)).executable;
-  const adapter=await createCodexAdapter({scope,codexExecutable,codexHome:process.env.TEAM_CODEX_HOME,orcaCommand:process.env.TEAM_ORCA_COMMAND});
-  await serveCodexMcp(adapter);
- }catch{process.stderr.write('Native Codex team adapter refused startup or transport. Check fixed scope, native executable and Orca runtime.\n');process.exitCode=1;}
+  const launch=process.env.TEAM_RESERVED_LAUNCH_PROFILE?await readReservedLaunchProfile(process.env.TEAM_RESERVED_LAUNCH_PROFILE,scope.projectRoot):{};
+  adapter=await createCodexAdapter({scope,codexExecutable,codexHome:process.env.TEAM_CODEX_HOME,orcaCommand:process.env.TEAM_ORCA_COMMAND,...launch});
+ }catch(error){process.stderr.write('Native Codex team adapter is serving blocked diagnostics because startup authority was refused.\n');adapter=refusedCodexAdapter(error);}
+ try{await serveCodexMcp(adapter);}catch{process.stderr.write('Native Codex team transport was refused.\n');process.exitCode=1;}
 }
