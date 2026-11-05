@@ -15,4 +15,6 @@ Start the **status / diagnose** branch directly; skip the general action menu. C
 
 Report actual capability state and `guardTrust` accurately. Native review availability is not approval; `not-attested` means hook enforcement is unverified. Reading status must not create a team, grant approval, mark another member's mail read or imply hook trust. If the status call itself refuses, report that exact condition rather than describing it as an empty workspace.
 
+Report `observation.state` and `lastError` when relevant: `waiting-for-member` needs a verified member connection, `waiting-for-store` needs explicit creation, and `suspended` needs fresh native verification or reviewed reconnect. The connected MCP client checks every 30 seconds; no observer runs after disconnect. Mailbox notifications do not mean a model turn started or a recipient read the message. Automatic worker launch remains unavailable.
+
 This entry point is part of the complete plugin and shares its single runtime. If the shared workflow/helper is missing, explain the incomplete installation and use the documented complete package; do not invent a second store or bypass setup.

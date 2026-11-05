@@ -41,6 +41,16 @@ test('inbox reads finish before the adapter closes their journal or API connecti
  const adapter=await createCodexAdapter({},{createIdentity:async()=>({verifyCaller:async()=>({})}),createApi:async()=>({close:async()=>{assert.equal(finished,true);apiClosed=true;}}),createJournal:async()=>({poll:async()=>{await new Promise(resolve=>setTimeout(resolve,5));assert.equal(journalClosed,false);finished=true;return {message:'recovered'};},close:async()=>{assert.equal(finished,true);journalClosed=true;}})});
  assert.deepEqual(await adapter.call('shared_inbox_read',{},{}),{message:'recovered'});assert.equal(journalClosed,true);assert.equal(apiClosed,true);
 });
+test('the adapter activates observation from verified metadata and closes it at transport EOF',async()=>{
+ const actor={provider:'codex',conversationId:'native'},metadata={threadId:'native'};let activated=0,closed=0;
+ const adapter=await createCodexAdapter({}, {
+  createIdentity:async()=>({verifyCaller:async()=>actor}),
+  createObserver:()=>({activate:(meta,verified)=>{assert.equal(meta,metadata);assert.equal(verified,actor);activated++;},status:()=>({state:'scheduled'}),close:async()=>closed++}),
+  createApi:async()=>({execute:async()=>({result:{member:null}}),close:async()=>{}}),
+ });
+ const status=await adapter.call('shared_team_status',{},metadata);assert.equal(activated,1);assert.equal(status.observation.state,'scheduled');
+ await serveCodexMcp(adapter,{input:Readable.from([]),output:new PassThrough()});assert.equal(closed,1);
+});
 test('MCP wire initializes, lists tools, preserves top-level native metadata, denies hook failures and rejects unknown tools',async()=>{
  const frames=[{jsonrpc:'2.0',id:0,method:'tools/list'},{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18'}},{jsonrpc:'2.0',method:'notifications/initialized'},{jsonrpc:'2.0',id:2,method:'tools/list'},{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'shared_team',arguments:{operationId:'你好'},_meta:{threadId:'native'}}},{jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'team_guard',arguments:{tool:'Bash',input:{}}}},{jsonrpc:'2.0',id:5,method:'tools/call',params:{name:'raw_sql'}}];
  const output=new PassThrough();let body='';output.setEncoding('utf8');output.on('data',s=>body+=s);

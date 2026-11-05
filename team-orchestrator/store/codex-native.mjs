@@ -73,7 +73,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    const sender=await this.verifyCaller(metadata),results=[];
    for(const delivery of deliveries){
     const b=delivery.recipient;
-    if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider)||b.conversation_id===sender.conversationId)continue;
+    if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider))continue;
     try{
      const target=(await host.verifyTerminal({projectRoot:root,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},b.provider)).actor;
      if(target.incarnationId!==b.incarnation_id||target.machineId!==b.machine_id)continue;

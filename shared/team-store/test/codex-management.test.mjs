@@ -13,10 +13,10 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const f=await runtimeFixture(t,engine),actor={projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:'codex-head',executionHostId:'local',contextId:'context',terminalHandle:'codex-head-terminal',incarnationId:'inc'};
   const state={actor,reply:{action:'accept',content:{confirm:true}},reviews:[],lost:false},metadata={threadId:'native-fixed'};
   const native={verifyCaller:async m=>{assert.equal(m,metadata);return {...state.actor};},verifyTarget:async target=>{if(target.conversationId!=='codex-head')throw Error('Unverified');return {...state.actor};},listTargets:async()=>({sessions:[]})};
-  const make=(writer={client:'team-orchestrator',version:'0.5.56'})=>createCodexAdapter({writer},{createIdentity:async()=>native,createApi:async options=>{
+  const make=async(writer={client:'team-orchestrator',version:'0.5.56'})=>{const adapter=await createCodexAdapter({writer},{createIdentity:async()=>native,createApi:async options=>{
    const api=await createTeamApi({...options,...f.options});
    return {...api,manageTeam:async request=>{const result=await api.manageTeam(request);if(state.lost){state.lost=false;throw Object.assign(Error('Lost reply'),{code:'STORE_COMMIT_UNKNOWN'});}return result;}};
-  }});
+  }});t.after(()=>adapter.close());return adapter;};
   const adapter=await make(),connection={canElicit:true,elicit:async p=>{state.reviews.push(p);return typeof state.reply==='function'?state.reply(p):state.reply;}};
   const create={type:'createFreshTeam',teamId:'team',name:'Codex team',functionText:'Native management',settings,members:[{memberId:'head',name:'Head',bossMemberId:null,role:'Lead',officialText:'Delegate and review.',cli:'codex'},{memberId:'worker',name:'Worker',bossMemberId:'head',role:'Verify',officialText:'Verify before reporting.',cli:'codex'}],expectedControllerGeneration:1};
   const call=(command,operationId='create',extra={})=>adapter.call('shared_team_manage',{operationId,command,...extra},metadata,connection);
