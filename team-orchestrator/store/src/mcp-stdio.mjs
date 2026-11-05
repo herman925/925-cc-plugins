@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {refusal} from './errors.mjs';
+import {SHARED_WRITER} from './runtime-release.mjs';
 
 // Bidirectional MCP: client replies must be read while an active tools/call is
 // waiting for native elicitation. Tool calls remain serialized independently.
@@ -26,7 +27,7 @@ export async function serveMcp(adapter,tools,{input=process.stdin,output=process
    if(method==='initialize'){
     if(!['2024-11-05','2025-03-26','2025-06-18','2025-11-25','2026-07-28'].includes(params.protocolVersion)){error(id,-32602,'Unsupported MCP protocol version.');return;}
     capabilities=structuredClone(params.capabilities??{});initialized=true;
-    result={protocolVersion:params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'925-to',version:'0.5.56'}};
+    result={protocolVersion:params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'team-orchestration-925',version:SHARED_WRITER.version}};
    }else if(!initialized){error(id,-32002,'Initialize the connection first.');return;}
    else if(method==='ping')result={};
    else if(method==='tools/list')result={tools};

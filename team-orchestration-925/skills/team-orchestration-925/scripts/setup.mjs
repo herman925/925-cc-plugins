@@ -11,7 +11,7 @@ import {fileURLToPath} from 'node:url';
 import {discoverCodexExecutable} from './codex-executable.mjs';
 import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
 export {discoverCodexExecutable} from './codex-executable.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.5';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.6';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));

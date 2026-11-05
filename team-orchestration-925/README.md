@@ -1,6 +1,8 @@
 # 925 Team Orchestrator
 
-`team-orchestration-925` **0.1.5** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.57. An active Claude session is not required for team management.
+`team-orchestration-925` **0.1.6** is a **Codex plugin containing six action skills, a menu skill and their shared runtime**. It provides native workflows for creating and editing a team, connecting existing sessions, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod 0.5.57. An active Claude session is not required for team management.
+
+Version **0.1.6** repairs a live `STORE_WRITER_TOO_OLD` refusal after the Mod touched a shared project. Codex now uses the packaged shared implementation release, generated from the Mod manifest, instead of a stale hardcoded writer version. Packaging checks detect future drift; genuinely older clients remain refused. [Validation and live limits](../shared/team-store/VALIDATION-CODEX-WRITER-RELEASE.md).
 
 Version 0.1.4 packages the matching runtime for the [Mod's native team editor](../team-orchestrator/docs/panel-navigation.md#edit-a-shared-team--0557). The existing Codex action skills and schema 8 remain the same.
 
