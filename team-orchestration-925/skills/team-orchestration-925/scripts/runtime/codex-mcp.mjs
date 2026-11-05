@@ -16,6 +16,7 @@ import {exact} from './src/api-domain.mjs';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {SHARED_WRITER} from './src/runtime-release.mjs';
+import {createCodexObserver} from './src/codex-observer.mjs';
 const editChanges={type:'array',minItems:1,maxItems:30,items:{oneOf:[
  {type:'object',additionalProperties:false,properties:{type:{const:'updateTeam'},name:{type:'string'},functionText:{type:'string'}},required:['type','name','functionText']},
  {type:'object',additionalProperties:false,properties:{type:{const:'saveSettings'},settings:commandSchema.properties.settings},required:['type','settings']},
@@ -38,11 +39,14 @@ export const codexTools=[
 export async function createCodexAdapter(options={},dependencies={}) {
  options={...options,writer:options.writer??SHARED_WRITER};
  const native=await (dependencies.createIdentity??createCodexNativeIdentity)(options);
+ const observation=options.observation===false?null:(dependencies.createObserver??createCodexObserver)({native,writer:options.writer,postgres:options.postgres,createApi:dependencies.createApi??createTeamApi});
  return Object.freeze({
+  close:async()=>observation?.close(),
   async call(name,args,metadata,connection){
    const actor=await native.verifyCaller(metadata);
+   observation?.activate(metadata,actor);
    if(name==='shared_team_interview'){const form=interviewForm(args);if(!connection?.canElicit)throw refusal('API_REVIEW_UNAVAILABLE','A native interactive form is unavailable in this client.');const result=await connection.elicit(form);const current=await native.verifyCaller(metadata);if(JSON.stringify(current)!==JSON.stringify(actor))throw refusal('API_STALE_AUTHORITY','The native conversation changed while the interview was open.');return {draftOnly:true,response:result};}
-   if(name==='shared_team_manage')return codexManagement({args,actor,metadata,native,createApi:dependencies.createApi??createTeamApi,options,connection});
+   if(name==='shared_team_manage'){const result=await codexManagement({args,actor,metadata,native,createApi:dependencies.createApi??createTeamApi,options,connection});if(result.status!=='unknown')observation?.requestPass?.();return result;}
    if(name==='shared_team_sessions'){exact(args,[]);return native.listTargets(metadata);}
    if(name==='team_guard'){
     try{exact(args,['tool','input']);return codexGuard(await (dependencies.inspectGuard??inspectGuardCaller)({actor,...(options.postgres?{postgres:options.postgres}:{})}),args);}
@@ -51,17 +55,12 @@ export async function createCodexAdapter(options={},dependencies={}) {
    const api=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});
    let journal;
    try{
-    if(name==='shared_team_status'){exact(args,[]);let info;try{info=(await api.execute({operationId:`status-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;}catch(e){if(e.code==='API_STALE_BINDING'){info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect'};}else{if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(e.code))throw e;info={storeExists:false,controllerGeneration:null,member:null,teams:[]};}}return {host:'orca',provider:'codex',actor,info,nativeReviewAvailable:connection?.canElicit===true,guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:false,standalone:false,hermes:false}};}
+    if(name==='shared_team_status'){exact(args,[]);let info;try{info=(await api.execute({operationId:`status-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;}catch(e){if(e.code==='API_STALE_BINDING'){info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect'};}else{if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(e.code))throw e;info={storeExists:false,controllerGeneration:null,member:null,teams:[]};}}return {host:'orca',provider:'codex',actor,info,observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:false,standalone:false,hermes:false}};}
     if(name==='shared_team'){
      exact(args,['operationId','command','reconcile']);
      if(managementTypes.includes(args.command?.type))throw refusal('API_MANAGEMENT_REVIEW_REQUIRED','Use shared_team_manage for a native reviewed management operation.');
      const result=await api[args.reconcile===true?'reconcile':'execute']({operationId:args.operationId,command:args.command});
-     if(native.wake&&result.status!=='unknown'&&!args.command.type.startsWith('inspect')){
-      try{
-       const info=(await api.execute({operationId:`codex-caller-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;
-       if(info.member&&info.binding){const reservations=await api.execute({operationId:`codex-wake-${crypto.randomUUID()}`,command:{type:'prepareDeliveries',teamId:info.member.team_id,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation}});await native.wake(reservations.result.deliveries,metadata);}
-      }catch{/* The effect receipt is confirmed; attention delivery may be retried. */}
-     }
+     if(result.status!=='unknown'&&!args.command.type.startsWith('inspect'))observation?.requestPass?.();
      return result;
     }
     if(!['shared_inbox_read','shared_inbox_seen'].includes(name))throw Error('Unknown team tool.');
@@ -73,7 +72,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
   }
  });
 }
-export async function serveCodexMcp(adapter,options={}){return serveMcp(adapter,codexTools,options);}
+export async function serveCodexMcp(adapter,options={}){try{return await serveMcp(adapter,codexTools,options);}finally{await adapter.close?.();}}
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
   const scope={projectRoot:process.env.TEAM_PROJECT_ROOT,terminalHandle:process.env.TEAM_TERMINAL_HANDLE||process.env.ORCA_TERMINAL_HANDLE,contextId:process.env.TEAM_CONTEXT_ID||process.env.ORCA_WORKTREE_ID};

@@ -30,11 +30,15 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
  });});
  t.after(async()=>{for(const socket of sockets)socket.destroy();if(server.listening)await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
- const dependencies={execute:async()=>({stdout:JSON.stringify({ok:true,result:{app:{pid:process.pid},runtime:{runtimeId:'epoch'}}})}),inspectParent:async()=>{checks++;return {pid:parentPid,executable:parentPath,createdAt:birth};},threadOwners:async()=>owners};
+ const sends=[];
+ const dependencies={execute:async(_command,args)=>{if(args[0]==='orchestration')sends.push(args);return {stdout:JSON.stringify({ok:true,result:{app:{pid:process.pid},runtime:{runtimeId:'epoch'}}})};},inspectParent:async()=>{checks++;return {pid:parentPid,executable:parentPath,createdAt:birth};},threadOwners:async()=>owners};
  const options={scope,codexExecutable:binary,codexHome:root,env:{ORCA_USER_DATA_PATH:profile}};
  const identity=await createCodexNativeIdentity(options,dependencies);
  const actor=await identity.verifyCaller({threadId,progressToken:1});assert.equal(actor.provider,'codex');assert.equal(actor.conversationId,threadId);assert.equal(actor.projectRoot,root);assert.equal(actor.terminalHandle,'terminal');assert.equal(identity.hostKind,'orca');
  scope.terminalHandle='mutated';scope.contextId='mutated';assert.equal((await identity.verifyCaller({threadId})).contextId,'context');
+ const recipient={machine_id:actor.machineId,execution_host_id:'local',provider:'codex',conversation_id:threadId,terminal_handle:'terminal',context_id:'context',incarnation_id:'inc'};
+ assert.equal((await identity.wake([{noticeId:'own-deadline',recipient}],{threadId}))[0]?.queued,true);
+ assert.equal(sends.length,1);assert.ok(sends[0].includes('terminal'));assert.match(sends[0].at(-2),/own-deadline/);
  for(const bad of [undefined,{},Object.create({threadId}),{threadId:'------------------------------------'},{threadId:threadId.toUpperCase()}])await assert.rejects(identity.verifyCaller(bad),refused);
  for(const bad of ['provider','thread','missing-thread','incarnation','duplicate','remote','disconnected','context'])await t.test(`refuses ${bad} host evidence`,async()=>{mode=bad;await assert.rejects(identity.verifyCaller({threadId}),refused);});
  mode='normal';birth='new-process';await assert.rejects(identity.verifyCaller({threadId}),refused);birth='12345';parentPid=process.pid;await assert.rejects(identity.verifyCaller({threadId}),refused);parentPid=process.ppid;parentPath=process.execPath;await assert.rejects(identity.verifyCaller({threadId}),refused);parentPath=binary;
