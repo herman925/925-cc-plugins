@@ -1,0 +1,20 @@
+{
+  "pass": "pass3",
+  "startedAt": "2026-11-06T21:47:21.634Z",
+  "completedAt": "2026-11-06T21:47:51.645Z",
+  "exitCode": 0,
+  "runtimeDigest": "5c33808fdc730c3db8397326522f45e73613532221a6b892b94d7cf8bd2283d5",
+  "fileCount": 52,
+  "summary": [
+    "# tests 302",
+    "# suites 24",
+    "# pass 285",
+    "# fail 0",
+    "# cancelled 0",
+    "# skipped 17",
+    "# todo 0",
+    "# duration_ms 29935.4512"
+  ],
+  "nativeConfigWriter": true,
+  "postgresConfigured": false
+}

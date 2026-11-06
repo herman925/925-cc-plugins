@@ -51,20 +51,20 @@ export async function createCodexAdapter(options={},dependencies={}) {
  const observation=options.observation===false?null:(dependencies.createObserver??createCodexObserver)({native,writer:options.writer,postgres:options.postgres,createApi:dependencies.createApi??createTeamApi});
  // Delivery evidence for this adapter's single MCP session. A client can
  // advertise elicitation and still answer the form itself without ever showing
- // it. The only trustworthy signal is a reply that took human-scale time.
- const deliveries={attempts:0,humanPaced:0,fastReplies:0,lastElapsedMs:null};
+ // it. Timing alone cannot attest delivery, and a rejected wait is not a reply.
+ const deliveries={attempts:0,humanPaced:0,fastReplies:0,failedWaits:0,lastElapsedMs:null,lastOutcome:null};
  // humanPaced counts round trips slow enough that a person could have answered,
  // whether they accepted or declined. fastReplies counts the ones too fast for
  // that. A fast reply is a signal about the client, not proof about the person,
  // so the classification names the observation and claims nothing further.
  const reviewProbe=()=>({...deliveries,delivery:'unverified',classification:deliveries.attempts===0?'not-observed':deliveries.humanPaced>0?'human-paced-reply-delivery-unverified':deliveries.fastReplies>0?'replies-too-fast-for-a-person-delivery-unverified':'no-reply'});
- const recordReview=elapsedMs=>{deliveries.attempts++;deliveries.lastElapsedMs=elapsedMs;if(elapsedMs<HUMAN_REVIEW_FLOOR_MS)deliveries.fastReplies++;else deliveries.humanPaced++;};
+ const recordReview=(elapsedMs,outcome)=>{deliveries.attempts++;deliveries.lastElapsedMs=elapsedMs;deliveries.lastOutcome=outcome;if(outcome==='failed'){deliveries.failedWaits++;return;}if(elapsedMs<HUMAN_REVIEW_FLOOR_MS)deliveries.fastReplies++;else deliveries.humanPaced++;};
  return Object.freeze({
   close:async()=>observation?.close(),
   async call(name,args,metadata,baseConnection){
    // Measure every review round trip in one place, so management, launch and
    // upgrade reviews cannot disagree about whether a form was really shown.
-   const connection=baseConnection&&typeof baseConnection.elicit==='function'?{...baseConnection,elicit:async params=>{const started=Date.now();try{const reply=await baseConnection.elicit(params);recordReview(Date.now()-started);return reply;}catch(error){recordReview(Date.now()-started);throw error;}}}:baseConnection;
+   const connection=baseConnection&&typeof baseConnection.elicit==='function'?{...baseConnection,elicit:async params=>{const started=Date.now();try{const reply=await baseConnection.elicit(params);recordReview(Date.now()-started,'response');return reply;}catch(error){recordReview(Date.now()-started,'failed');throw error;}}}:baseConnection;
    const actor=await native.verifyCaller(metadata);
    let stalePreflight;
    if(options.reservedLaunch){

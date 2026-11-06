@@ -22,6 +22,34 @@ test('client cancellation and timeout return refusals rather than accepting defa
 test('clients lacking elicitation support receive a clear refusal and no prompt',async()=>{
  const r=await exchange({capabilities:{}});assert.equal(r.reviewCount,0);assert.equal(r.rows.find(v=>v.id===2).result.isError,true);
 });
+test('human review remains pending beyond the former three-minute deadline',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const input=new PassThrough(),output=new PassThrough(),rows=[],traces=[];let buffer='',reviewId;
+ output.on('data',chunk=>{buffer+=chunk;for(let n;(n=buffer.indexOf('\n'))>=0;){const row=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);rows.push(row);if(row.method==='elicitation/create')reviewId=row.id;if(row.id===2&&!row.method)input.end();}});
+ const run=serveMcp({call:async(_n,_a,_m,c)=>c.elicit({mode:'form',message:'Fixture only',requestedSchema:{type:'object',properties:{confirm:{type:'boolean'}}}})},[{name:'review'}],{input,output,reviewTrace:e=>traces.push(e)});
+ input.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{elicitation:{form:{}}}}})+'\n');
+ input.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'review'}})+'\n');
+ await new Promise(setImmediate);assert.ok(reviewId);
+ t.mock.timers.tick(25*60*1000);await new Promise(setImmediate);
+ assert.equal(rows.some(r=>r.id===2&&!r.method),false,'waiting is not approval or refusal');
+ input.write(JSON.stringify({jsonrpc:'2.0',id:reviewId,result:{action:'accept',content:{confirm:true}}})+'\n');await run;
+ assert.equal(JSON.parse(rows.find(r=>r.id===2).result.content[0].text).content.confirm,true);
+ assert.deepEqual(traces.map(e=>e.event),['request','response']);assert.equal(traces[0].timeoutMs,null);
+ assert.equal(traces[0].id,traces[1].id);assert.equal(traces[0].tool,'review');assert.ok(!JSON.stringify(traces).includes('Fixture only'));
+});
+test('an explicit deadline cancels the native request and a racing late accept cannot authorize effects',async()=>{
+ const input=new PassThrough(),output=new PassThrough(),rows=[],traces=[];let buffer='',effects=0;
+ output.on('data',chunk=>{buffer+=chunk;for(let n;(n=buffer.indexOf('\n'))>=0;){const row=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);rows.push(row);
+  if(row.method==='notifications/cancelled')input.write(JSON.stringify({jsonrpc:'2.0',id:row.params.requestId,result:{action:'accept',content:{confirm:true}}})+'\n');
+  if(row.id===2&&!row.method)input.end();
+ }});
+ const run=serveMcp({call:async(_n,_a,_m,c)=>{await c.elicit({mode:'form',message:'Fixture',requestedSchema:{type:'object',properties:{}}});effects++;}},[{name:'review'}],{input,output,reviewTimeoutMs:10,reviewTrace:e=>traces.push(e)});
+ input.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{elicitation:{}}}})+'\n');input.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'review'}})+'\n');await run;
+ assert.equal(effects,0);assert.equal(rows.find(r=>r.id===2).result.isError,true);
+ assert.equal(rows.find(r=>r.method==='notifications/cancelled').params.requestId,traces[0].id);
+ assert.deepEqual(traces.map(e=>e.event),['request','timeout','unmatched-response']);
+ assert.equal(rows.some(r=>r.error),false,'never answer a late JSON-RPC response with another error response');
+});
 test('keepalive replies are served while native confirmation is pending',async()=>{
  const input=new PassThrough(),output=new PassThrough();let buffer='',reviewId,pingAnswered=false;
  output.setEncoding('utf8');output.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){const row=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);

@@ -77,7 +77,7 @@ otherwise. That guard is deliberate. Do not spoof the host identity.
 Expected digest. The runtime this branch installs hashes to:
 
 ```
-691b3a624fb4b841e24b0f1fb5db98fd3453aefbc5648deed1d999e468c7b18a
+5c33808fdc730c3db8397326522f45e73613532221a6b892b94d7cf8bd2283d5
 ```
 
 (52 files, computed with the installer's own `prepareRuntime`.) This replaces
@@ -86,6 +86,11 @@ launch preflight could throw before reaching the restricted recovery handler.
 It also supersedes `d3937032959dadf54f46bad5662d7c2845ea112b0488dfed9b8bd225fcf6a325`
 with honest timing-only status diagnostics. See the live launch/resume acceptance
 record in `docs/validation/codex-recovery-live-acceptance-20261107.md`.
+The review-delivery correction also supersedes
+`691b3a624fb4b841e24b0f1fb5db98fd3453aefbc5648deed1d999e468c7b18a`:
+human review no longer expires after three minutes on the server while Codex
+keeps its form open. See `codex-review-delivery-fix-20261107.md` for the native
+input timeline, protocol correlation and validation limits.
 After applying, the
 receipt at `<project>/.codex/925-to-installation.json` must show this value as
 `runtimeDigest`, and `runtimePath` must end in a `runtimes\<digest>\codex-mcp.mjs`
@@ -168,11 +173,20 @@ While the binding is stale, the guard admits exactly these calls and nothing els
 and `bindMember`. Everything else is refused, including `editTeam` and
 `createFreshTeam`.
 
-A native review form will appear. **Herman must answer it himself.** If the tool
+A native review form is required. **Herman must answer it himself.** If the tool
 instead returns `API_APPROVAL_UNVERIFIED` — "Approval not obtained; delivery
 unverified. No changes made." — the form probably did not appear. Check step 2,
 fix that, and try once more. Do not assume the request was refused, and do not
 retry repeatedly.
+
+Human review has no server deadline. Keep the exact request pending until the
+person responds, cancels, or the native connection closes. Stderr records
+`[925-to-review]` request and completion IDs without proposal or response content.
+A `request` trace proves emission; it does not attest foreground visibility.
+Only an actual response counts toward the timing probe; failed waits are counted
+separately. An explicitly configured test deadline cancels the client request and
+rejects late answers. A native `Accept` log alone does not prove `confirm:true`.
+The management receipt and normal-access verification are still required.
 
 What this preserves: the member id and its history. Rebinding updates the
 conversation, terminal and incarnation on the existing member row. It does not

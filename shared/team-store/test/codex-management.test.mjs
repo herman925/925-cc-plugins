@@ -83,6 +83,14 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   assert.equal(human.elicitationProbe.classification,'human-paced-reply-delivery-unverified');
   assert.equal(human.elicitationProbe.delivery,'unverified');
  });
+ test('a failed native review wait is not counted as a human-paced reply',async t=>{
+  const f=await setup(t);
+  const connection={canElicit:true,elicit:async()=>{await new Promise(r=>setTimeout(r,1100));throw Object.assign(Error('Disconnected'),{code:'API_REVIEW_UNAVAILABLE'});}};
+  await assert.rejects(f.adapter.call('shared_team_manage',{operationId:'failed-wait',command:f.create},f.metadata,connection),{code:'API_REVIEW_UNAVAILABLE'});
+  const {elicitationProbe:p}=await f.adapter.call('shared_team_status',{},f.metadata,connection);
+  assert.equal(p.attempts,1);assert.equal(p.failedWaits,1);assert.equal(p.humanPaced,0);assert.equal(p.fastReplies,0);assert.equal(p.lastOutcome,'failed');assert.equal(p.classification,'no-reply');assert.equal(p.delivery,'unverified');
+  assert.equal((await f.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='teams'")).length,0);
+ });
  test('create and edit receipts survive interruption and never ask again or duplicate effects',async t=>{
   const f=await setup(t);f.state.lost=true;await assert.rejects(f.call(f.create),e=>e.code==='STORE_COMMIT_UNKNOWN');
   const recovered=await f.call(f.create);assert.equal(recovered.result.teamId,'team');assert.equal(f.state.reviews.length,1);

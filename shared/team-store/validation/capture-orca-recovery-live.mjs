@@ -9,7 +9,7 @@ import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createOrcaHost} from '../src/orca-host.mjs';
 const [label,conversationId,terminalHandle]=process.argv.slice(2);
-if(!/^(?:pass[123]|fresh-launch-baseline|affected-before)$/.test(label??'')||!(/^[a-f0-9-]{36}$/).test(conversationId??'')||!/^term_[a-f0-9-]{36}$/.test(terminalHandle??''))throw Error('Supply an evidence label and exact native conversation/terminal identifiers.');
+if(!/^(?:pass[123]|fresh-launch-baseline|affected-before|review-fresh|review-resume)$/.test(label??'')||!(/^[a-f0-9-]{36}$/).test(conversationId??'')||!/^term_[a-f0-9-]{36}$/.test(terminalHandle??''))throw Error('Supply an evidence label and exact native conversation/terminal identifiers.');
 const root=await import('node:fs/promises').then(fs=>fs.realpath(fileURLToPath(new URL('../../../',import.meta.url)))),host=await createOrcaHost();
 const verified=await host.verifyTerminal({projectRoot:root,conversationId,terminalHandle,contextId:process.env.ORCA_WORKTREE_ID},'codex');
 const execute=promisify(execFile),home=process.env.CODEX_HOME||join(homedir(),'.codex');
@@ -27,4 +27,4 @@ const child=children[0],runtimeDigest=child.CommandLine.match(/runtimes[\\/]([a-
 const evidence={label,observedAt:new Date().toISOString(),actor:verified.actor,orcaRuntimeId:host.runtimeId,codexPid:parent.ProcessId,mcpPid:child.ProcessId,runtimeDigest,
  launch:{explicitMcpPolicy:parent.CommandLine.includes('mcp_elicitations=true'),explicitDangerFullAccess:parent.CommandLine.includes('--sandbox danger-full-access'),resumeCommand:parent.CommandLine.includes('resume '+conversationId)},
  effectiveTurn:{timestamp:context.timestamp,turnId:context.turn_id,approvalPolicy:context.approval_policy,approvalsReviewer:context.approvals_reviewer,sandboxPolicy:context.sandbox_policy,permissionProfile:context.permission_profile}};
-const directory=join(root,'docs/validation/codex-recovery-20261107');await mkdir(directory,{recursive:true});await writeFile(join(directory,label+'-hosted.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
+const directory=join(root,'docs/validation',label.startsWith('review-')?'codex-review-delivery-20261107':'codex-recovery-20261107');await mkdir(directory,{recursive:true});await writeFile(join(directory,label+'-hosted.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
