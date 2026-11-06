@@ -38,7 +38,10 @@ export async function codexManagement({args,actor,metadata,native,createApi,opti
  // fast reply into a claim about what the person did or did not do.
  const declined=(kind,humanMessage)=>{
   if(kind.confirmedRoundTrip)return refusal('API_APPROVAL_REQUIRED',humanMessage);
-  return refusal('API_APPROVAL_UNVERIFIED',`Approval not obtained; delivery unverified. The review returned in ${kind.elapsedMs}ms, which is too fast for a person to have read it, so this is not treated as your refusal. An automatic decline by the client is one possible cause; a form that appeared and was dismissed is not ruled out. No consent was given or withheld. Check that MCP confirmation prompts are enabled for this project, then try again.`);
+  // Report only what is known. The fast reply says the form was probably not
+  // shown; it does not prove that, and it says nothing certain about whether the
+  // person consented or refused. Claim neither.
+  return refusal('API_APPROVAL_UNVERIFIED','Approval not obtained; delivery unverified. No changes made.',{elapsedMs:kind.elapsedMs,reviewFloorMs:HUMAN_REVIEW_FLOOR_MS,hint:'An automatic decline by the client is one possible cause. Check that MCP confirmation prompts are enabled for this project, then try again.'});
  };
  // Acceptance is not gated on timing: an automated harness may legitimately
  // answer at once, and no auto-accept path has been observed. Only the decline

@@ -55,16 +55,21 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const f=await setup(t);
   // The observed lockout: mcp_elicitations disabled makes Codex answer
   // {"action":"decline"} in about 1ms without ever showing a form. That must be
-  // reported as "no form reached the person", never as consent refused.
+  // reported as approval-not-obtained, never as consent refused.
   f.state.replyDelayMs=0;
   for(const reply of [{action:'decline'},{action:'cancel'}]){f.state.reply=reply;
    const error=await f.call(f.create).then(()=>null,e=>e);
    assert.equal(error?.code,'API_APPROVAL_UNVERIFIED');
-   assert.match(error.message,/Approval not obtained; delivery unverified/);
-   // It must not claim the person refused, and must not claim they saw nothing.
+   assert.equal(error.message,'Approval not obtained; delivery unverified. No changes made.');
+   // It must claim nothing about what the person did or saw.
    assert.ok(!/declined or cancelled/.test(error.message));
    assert.ok(!/No native form reached the person/.test(error.message));
-   assert.match(error.message,/automatic decline by the client is one possible cause/);}
+   assert.ok(!/consent was given or withheld/.test(error.message));
+   // The actionable detail travels as structured fields, not as prose claims.
+   assert.equal(error.details?.elapsedMs<1000,true);
+   assert.equal(error.details?.reviewFloorMs,1000);
+   assert.match(error.details?.hint??'',/automatic decline by the client is one possible cause/);
+   assert.match(error.details?.hint??'',/MCP confirmation prompts/);}
   assert.equal((await f.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='teams'")).length,0);
   // The probe reports the timing observation without a delivery claim.
   const silent=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
@@ -103,8 +108,15 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const f=await setup(t);await f.call(f.create);
   const bind={type:'bindMember',teamId:'team',memberId:'head',expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:0,expectedControllerGeneration:1},target={projectRoot:f.root,conversationId:'codex-head',terminalHandle:'codex-head-terminal',contextId:'context'};
   await f.call(bind,'bind',{target});f.state.actor={...f.state.actor,incarnationId:'resumed'};
-  const status=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);assert.equal(status.info.controllerGeneration,1);assert.equal(status.info.bindingState,'stale-needs-explicit-reconnect');
+  const status=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);assert.equal(status.info.controllerGeneration,1);assert.equal(status.info.bindingState,'stale-needs-explicit-reconnect');assert.equal(status.info.recovery,'shared_team_manage bindMember with a native review');
+  const reviewsBefore=f.state.reviews.length;
   const result=await f.call({...bind,expectedBindingGeneration:1},'reconnect',{target});assert.equal(result.result.bindingGeneration,2);assert.equal((await f.rows('SELECT incarnation_id FROM member_bindings'))[0].incarnation_id,'resumed');
+  // The loop must close through a human review, not around it.
+  assert.equal(f.state.reviews.length,reviewsBefore+1,'the rebind must require exactly one native review');
+  assert.match(f.state.reviews.at(-1).message,/bindMember/);
+  const after=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(after.info.bindingState,undefined,'a completed rebind must clear the stale state');
+  assert.equal(after.info.member.member_id,'head');
  });
  test('revoked controller approvals are refused without another misleading review',async t=>{
   const f=await setup(t);await f.call(f.create);await rawWrite(f,'UPDATE controller_approvals SET revoked=1,generation=generation+1');const count=f.state.reviews.length;
