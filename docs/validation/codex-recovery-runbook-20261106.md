@@ -43,15 +43,30 @@ correct in this project as of 2026-11-06. Do not change it.
 
 ## Step 3 — CHANGES FILES: install the fix
 
-Run this **inside the Orca-hosted Codex session for this project**, not from
-Claude:
+This step must run **inside the Orca-hosted Codex session for this project**. It
+cannot run from a Claude session, and it must not be forced to: the installer
+verifies the live local Orca terminal and refuses with `SETUP_HOST_UNSUPPORTED`
+otherwise. That guard is deliberate. Do not spoof the host identity.
+
+Expected digest. The runtime this branch installs hashes to:
+
+```
+859a43aa1873571b9c8e7b0034c9a1affb5d8a897a4225876ca19f58af6f79b4
+```
+
+(52 files, computed with the installer's own `prepareRuntime`.) After applying, the
+receipt at `<project>/.codex/925-to-installation.json` must show this value as
+`runtimeDigest`, and `runtimePath` must end in a `runtimes\<digest>\codex-mcp.mjs`
+directory with the same hash. If the digest differs, stop — the wrong bytes are
+being installed.
+
+Run:
 
 ```
 node team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs preview
 ```
 
-Read the preview. It must report the runtime it would install and the two files it
-would write. Then, only if the preview matches:
+Read the preview, then only if it matches:
 
 ```
 node team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs apply
@@ -82,26 +97,41 @@ Verify the new runtime is loaded by asking the Team Orchestrator for status and
 checking that `elicitationProbe` appears in the reply. If it is absent, the old
 runtime is still running.
 
-## Step 6 — recover `01a18fc1`, in its own terminal
+## Step 6 — recover `01a18fc1` in its own terminal
 
 In the `01a18fc1` session, with the fix loaded:
 
 1. `shared_team_status`. Read `bindingState` and `elicitationProbe`.
    - `bindingState: "stale-needs-explicit-reconnect"` confirms a stale binding.
-   - `elicitationProbe.classification` tells you whether recent reviews actually
-     reached a person, or returned too fast to be human.
-2. `shared_team_sessions`. Find the entry for this conversation.
-3. `shared_team_manage` with `command.type = "bindMember"`, the `target` from
-   step 2, `expectedMemberGeneration` from status, `expectedBindingGeneration`
-   (0 the first time), and `expectedControllerGeneration` if one exists.
+   - `info.recovery` names the call to use.
+   - `elicitationProbe.classification` says whether recent reviews reached a person
+     or returned too fast to be human.
+2. `shared_team_sessions`. Find the entry whose `conversationId` is
+   `01a18fc1-a164-76b0-b83d-5421ca7db4a9`. Copy its whole `reference` object.
+3. `shared_team_manage` with:
+   - `command.type`: `bindMember`
+   - `command.teamId`: the team from status
+   - `command.memberId`: `native-acceptance-head-20261105`
+   - `command.expectedMemberGeneration`: from status
+   - `command.expectedBindingGeneration`: from status (0 the first time)
+   - `command.expectedControllerGeneration`: from status, if one exists
+   - `target`: the `reference` copied in step 2
+
+While the binding is stale, the guard admits exactly these calls and nothing else:
+`shared_team_status`, `shared_team_sessions`, `inspectCaller`,
+`inspectController`, and the two reviewed recovery operations `approveController`
+and `bindMember`. Everything else is refused, including `editTeam` and
+`createFreshTeam`.
 
 A native review form will appear. **Herman must answer it himself.** If the tool
-instead returns `API_APPROVAL_UNVERIFIED`, that means no form reached the person —
-stop and check step 2 rather than assuming the request was refused.
+instead returns `API_APPROVAL_UNVERIFIED` — "Approval not obtained; delivery
+unverified. No changes made." — the form probably did not appear. Check step 2,
+fix that, and try once more. Do not assume the request was refused, and do not
+retry repeatedly.
 
 What this preserves: the member id and its history. Rebinding updates the
-conversation/terminal/incarnation on the existing member row. It does not delete
-team history, tasks, messages or workers.
+conversation, terminal and incarnation on the existing member row. It does not
+delete team history, tasks, messages or workers.
 
 ## Step 7 — verify
 

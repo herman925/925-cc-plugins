@@ -62,10 +62,16 @@ never appeared. A closed loop.
 
 | Change | Effect |
 | --- | --- |
-| `API_APPROVAL_UNVERIFIED` | A sub-human-speed reply reports approval-not-obtained and delivery-unverified. Never reported as the person's refusal. |
+| `API_APPROVAL_UNVERIFIED` | A sub-human-speed reply reports `Approval not obtained; delivery unverified. No changes made.` Timing and the actionable hint travel as structured refusal details. Never reported as the person's refusal, and never asserts what they saw. |
 | `elicitationProbe` in status | Reports the timing observation instead of relying on advertised capability, which over-reports delivery. |
-| Stale binding keeps reads open | Read-only inspection survives so the lockout is diagnosable. Patches, writes, non-read shell, subagents, interactive stdin and private-state denials still refuse. |
-| Regression tests | Sub-millisecond decline, human-paced decline, and the stale-binding boundary (reads allowed, six effect classes denied). |
+| Stale binding reaches recovery | Read-only inspection, `shared_team_status`, `shared_team_sessions`, `inspectCaller`, `inspectController` and exactly the two reviewed recovery operations (`approveController`, `bindMember`) stay reachable. Everything else, including `editTeam`, `createFreshTeam` and every other `shared_team` command, still refuses. |
+| Regression tests | Sub-millisecond decline and its exact message, human-paced decline, the full stale allow/deny matrix including a prefixed MCP tool name, and that a stale rebind closes through exactly one native review and clears the stale state. |
+
+Why the recovery operations must be admitted: they are what rebinds the
+conversation. Allowing only read-only inspection left the loop closed — the
+session could diagnose itself and still never recover. Admitting them grants no
+authority, because both require a native review form that the person themselves
+answers.
 
 Deliberate limitation: acceptance is **not** gated on timing. An automated harness
 may legitimately answer at once, and no auto-accept path has been observed.
