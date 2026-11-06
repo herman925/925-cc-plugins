@@ -8,7 +8,8 @@ Schema-5 typed API adds the following refusal families. Exact messages live in `
 | `API_CALLER_SCOPE` | Verified caller project/machine differs from fixed API configuration. |
 | `API_NATIVE_UNVERIFIED` | Native runtime, terminal, exact conversation, live registry or bridge parent cannot be verified. No authority is inferred from absence. |
 | `API_INPUT_INVALID` / `API_OPERATION_DENIED` | Unsupported command/shape, extra field, invalid explicit outcome or an attempt to use a private operation. |
-| `API_APPROVAL_REQUIRED` | No specific controller approval action was verified. |
+| `API_APPROVAL_REQUIRED` | No specific controller approval action was verified, or a native review that did reach the person was declined or cancelled. |
+| `API_APPROVAL_UNVERIFIED` | Approval was not obtained and delivery could not be verified: the review returned too fast for a person to have read it. This is not a refusal by the person and not an approval. An automatic decline by the client is one possible cause; a form shown and dismissed is not ruled out. |
 | `API_CONTROLLER_REQUIRED` / `API_CONTROLLER_REVOKED` | This conversation has no current approval, or a revoked record cannot be silently resurrected. |
 | `API_STALE_AUTHORITY` | Expected team/controller/member/binding/attempt generation differs from current state. Inspect and decide a new operation; do not substitute a guessed counter. |
 | `API_BINDING_REQUIRED` / `API_STALE_BINDING` | No current binding, or its native incarnation/home no longer agrees with verified facts. |

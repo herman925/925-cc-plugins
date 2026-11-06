@@ -17,7 +17,9 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
    const api=await createTeamApi({...options,...f.options});
    return {...api,manageTeam:async request=>{const result=await api.manageTeam(request);if(state.lost){state.lost=false;throw Object.assign(Error('Lost reply'),{code:'STORE_COMMIT_UNKNOWN'});}return result;}};
   }});t.after(()=>adapter.close());return adapter;};
-  const adapter=await make(),connection={canElicit:true,elicit:async p=>{state.reviews.push(p);return typeof state.reply==='function'?state.reply(p):state.reply;}};
+  // A real person takes time to answer. Replies are delayed past the review floor
+  // so the tests exercise the human path unless they deliberately opt out.
+  const adapter=await make(),connection={canElicit:true,elicit:async p=>{state.reviews.push(p);await new Promise(r=>setTimeout(r,state.replyDelayMs??1100));return typeof state.reply==='function'?state.reply(p):state.reply;}};
   const create={type:'createFreshTeam',teamId:'team',name:'Codex team',functionText:'Native management',settings,members:[{memberId:'head',name:'Head',bossMemberId:null,role:'Lead',officialText:'Delegate and review.',cli:'codex'},{memberId:'worker',name:'Worker',bossMemberId:'head',role:'Verify',officialText:'Verify before reporting.',cli:'codex'}],expectedControllerGeneration:1};
   const call=(command,operationId='create',extra={})=>adapter.call('shared_team_manage',{operationId,command,...extra},metadata,connection);
   const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
@@ -48,6 +50,32 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   await assert.rejects(f.call(f.create,'forged',{approval:true}),e=>e.code==='API_INPUT_INVALID');
   await assert.rejects(f.adapter.call('shared_team',{operationId:'bypass',command:f.create},f.metadata,f.connection),e=>e.code==='API_MANAGEMENT_REVIEW_REQUIRED');
   if(engine==='sqlite')await assert.rejects(access(join(f.root,'.team-orchestrator','team.sqlite')));
+ });
+ test('a client that answers the form itself is never reported as a human decline',async t=>{
+  const f=await setup(t);
+  // The observed lockout: mcp_elicitations disabled makes Codex answer
+  // {"action":"decline"} in about 1ms without ever showing a form. That must be
+  // reported as "no form reached the person", never as consent refused.
+  f.state.replyDelayMs=0;
+  for(const reply of [{action:'decline'},{action:'cancel'}]){f.state.reply=reply;
+   const error=await f.call(f.create).then(()=>null,e=>e);
+   assert.equal(error?.code,'API_APPROVAL_UNVERIFIED');
+   assert.match(error.message,/Approval not obtained; delivery unverified/);
+   // It must not claim the person refused, and must not claim they saw nothing.
+   assert.ok(!/declined or cancelled/.test(error.message));
+   assert.ok(!/No native form reached the person/.test(error.message));
+   assert.match(error.message,/automatic decline by the client is one possible cause/);}
+  assert.equal((await f.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='teams'")).length,0);
+  // The probe reports the timing observation without a delivery claim.
+  const silent=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(silent.elicitationProbe.classification,'replies-too-fast-for-a-person-delivery-unverified');
+  assert.equal(silent.elicitationProbe.humanPaced,0);
+  assert.ok(silent.elicitationProbe.fastReplies>0);
+  // A human-paced decline still reads as an ordinary decline.
+  f.state.replyDelayMs=1100;f.state.reply={action:'decline'};
+  await assert.rejects(f.call(f.create),e=>e.code==='API_APPROVAL_REQUIRED');
+  const human=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(human.elicitationProbe.classification,'form-delivered');
  });
  test('create and edit receipts survive interruption and never ask again or duplicate effects',async t=>{
   const f=await setup(t);f.state.lost=true;await assert.rejects(f.call(f.create),e=>e.code==='STORE_COMMIT_UNKNOWN');
