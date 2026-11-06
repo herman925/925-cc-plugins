@@ -23,6 +23,7 @@ import {readReservedLaunchProfile} from './src/codex-launch-profile.mjs';
 // A person cannot read a proposal and press confirm this fast. Below this floor a
 // reply is reported as a client answer, never as a human decision.
 const HUMAN_REVIEW_FLOOR_MS=1000;
+const staleBindingGuard=(error,event)=>codexGuard({member:null,hasReports:false,staleBinding:true,staleReason:String(error.message).slice(0,300)},event);
 const editChanges={type:'array',minItems:1,maxItems:30,items:{oneOf:[
  {type:'object',additionalProperties:false,properties:{type:{const:'updateTeam'},name:{type:'string'},functionText:{type:'string'}},required:['type','name','functionText']},
  {type:'object',additionalProperties:false,properties:{type:{const:'saveSettings'},settings:commandSchema.properties.settings},required:['type','settings']},
@@ -56,7 +57,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
  // whether they accepted or declined. fastReplies counts the ones too fast for
  // that. A fast reply is a signal about the client, not proof about the person,
  // so the classification names the observation and claims nothing further.
- const reviewProbe=()=>({...deliveries,classification:deliveries.attempts===0?'not-observed':deliveries.humanPaced>0?'form-delivered':deliveries.fastReplies>0?'replies-too-fast-for-a-person-delivery-unverified':'no-reply'});
+ const reviewProbe=()=>({...deliveries,delivery:'unverified',classification:deliveries.attempts===0?'not-observed':deliveries.humanPaced>0?'human-paced-reply-delivery-unverified':deliveries.fastReplies>0?'replies-too-fast-for-a-person-delivery-unverified':'no-reply'});
  const recordReview=elapsedMs=>{deliveries.attempts++;deliveries.lastElapsedMs=elapsedMs;if(elapsedMs<HUMAN_REVIEW_FLOOR_MS)deliveries.fastReplies++;else deliveries.humanPaced++;};
  return Object.freeze({
   close:async()=>observation?.close(),
@@ -65,6 +66,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
    // upgrade reviews cannot disagree about whether a form was really shown.
    const connection=baseConnection&&typeof baseConnection.elicit==='function'?{...baseConnection,elicit:async params=>{const started=Date.now();try{const reply=await baseConnection.elicit(params);recordReview(Date.now()-started);return reply;}catch(error){recordReview(Date.now()-started);throw error;}}}:baseConnection;
    const actor=await native.verifyCaller(metadata);
+   let stalePreflight;
    if(options.reservedLaunch){
     const fixed=options.reservedLaunch;
     if(actor.projectRoot!==fixed.projectRoot||actor.machineId!==fixed.machineId||actor.contextId!==fixed.contextId)throw refusal('API_LAUNCH_SCOPE','The reserved worker native home changed.');
@@ -78,8 +80,19 @@ export async function createCodexAdapter(options={},dependencies={}) {
      if(info.projectId!==fixed.projectId||info.member?.member_id!==fixed.memberId)throw refusal('API_LAUNCH_SCOPE','This reserved worker is not bound to its expected project/member.');
     }finally{await attach.close();}
    }else if(native.launchWorkers){
-    let probe;try{probe=await (dependencies.inspectGuard??inspectGuardCaller)({actor,postgres:options.postgres,allowLaunchProbe:true});}catch(error){if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))throw error;}
+    let probe;try{probe=await (dependencies.inspectGuard??inspectGuardCaller)({actor,postgres:options.postgres,allowLaunchProbe:true});}catch(error){
+     if(error.code==='API_STALE_BINDING')stalePreflight=error;
+     else if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))throw error;
+    }
     if(probe?.pendingLaunchId){const attach=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});try{await attach.launch({operationId:`codex-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});}finally{await attach.close();}}
+   }
+   if(stalePreflight){
+    // The launch probe runs before tool dispatch in real Orca sessions. Apply
+    // the same restricted recovery policy here, including to direct MCP calls;
+    // a stale binding never authorizes a launch or an unrelated effect.
+    if(name==='team_guard'){exact(args,['tool','input']);return staleBindingGuard(stalePreflight,args);}
+    const decision=staleBindingGuard(stalePreflight,{tool:name,input:args});
+    if(decision.hookSpecificOutput?.permissionDecision==='deny')throw stalePreflight;
    }
    observation?.activate(metadata,actor);
    if(name==='shared_team_upgrade')return codexUpgrade({args,actor,metadata,native,options,connection});
@@ -95,7 +108,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
      // every tool. Hand the guard that fact so read-only inspection stays open
      // and the reviewed recovery call remains reachable. All effects and writes
      // stay denied; nothing here grants authority.
-     if(error.code==='API_STALE_BINDING')return codexGuard({member:null,hasReports:false,staleBinding:true,staleReason:String(error.message).slice(0,300)},args);
+     if(error.code==='API_STALE_BINDING')return staleBindingGuard(error,args);
      return {hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Current team authority could not be verified. Refresh the native binding before continuing.'}};
     }
    }

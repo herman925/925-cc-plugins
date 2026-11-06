@@ -13,6 +13,7 @@ import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
 import {nativeToolSettings,toolSettingsToml} from './setup-tool-settings.mjs';
 import {prepareRuntime,installRuntime} from './setup-runtime.mjs';
 import {configurationEnvironment} from './setup-environment.mjs';
+import {openOrcaLaunchSettings,prepareOrcaMcpLaunch,applyOrcaMcpLaunch} from './orca-launch-settings.mjs';
 export {discoverCodexExecutable} from './codex-executable.mjs';
 const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.10';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
@@ -78,7 +79,8 @@ export async function prepareSetup(options={},dependencies={}){
   }
   let config=await bytes(join(stage,'config.toml'));if(remove&&installed.configCreated&&(!config||!config.toString().trim()))config=null;
   const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null,...(runtime?{runtimePath:runtime.path,runtimeDigest:runtime.digest}:{})};
-  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],globalConfigurationChanged:false,teamStoreChanged:false,hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove}};
+  const hookConfigurationChanged=hash(hooks)!==hash(before.hooks);
+  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],globalConfigurationChanged:false,teamStoreChanged:false,hookConfigurationChanged,hookTrust:'not-attested',hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove&&hookConfigurationChanged}};
  }finally{
   if(dirname(stage)!==temp||!basename(stage).startsWith('925-to-setup-'))throw Error('Refusing unexpected staging cleanup.');
   await rm(stage,{recursive:true,force:true});
@@ -130,15 +132,21 @@ export async function recoverSetup(options={}){
  }finally{await lock.close();}
 }
 export async function diagnoseSetup(options={}){
- const p=await paths(options),receipt=await bytes(p.files.receipt);return {project:p.root,platform:process.platform,orcaEnvironmentPresent:Boolean(process.env.ORCA_TERMINAL_HANDLE&&process.env.ORCA_WORKTREE_ID),installation:receipt?JSON.parse(receipt).phase:'not-installed',hookTrust:'requires-native-review',globalConfigurationChanged:false,teamStoreChanged:false};
+ const p=await paths(options),receipt=await bytes(p.files.receipt);return {project:p.root,platform:process.platform,orcaEnvironmentPresent:Boolean(process.env.ORCA_TERMINAL_HANDLE&&process.env.ORCA_WORKTREE_ID),installation:receipt?JSON.parse(receipt).phase:'not-installed',hookTrust:'not-attested',globalConfigurationChanged:false,teamStoreChanged:false};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const action=process.argv[2]||'preview';
  try{
   const [major,minor]=process.versions.node.split('.').map(Number);if(major<22||major===22&&minor<13)fail('SETUP_NODE_UNSUPPORTED','Node 22.13 or newer is required.');
-  if(!['preview','apply','remove','recover','diagnose'].includes(action))fail('SETUP_INPUT','Use preview, apply, remove, recover or diagnose.');
-  const options={projectRoot:['preview','apply'].includes(action)?await nativeProjectRoot():process.cwd(),action};
-  const result=action==='diagnose'?await diagnoseSetup(options):action==='recover'?await recoverSetup(options):await (async()=>{const plan=await prepareSetup(options);return action==='preview'?plan.summary:applySetup(plan);})();
+  if(!['preview','apply','remove','recover','diagnose','launch-preview','launch-apply','resume'].includes(action))fail('SETUP_INPUT','Use preview, apply, remove, recover, diagnose, launch-preview, launch-apply or resume.');
+  const launchAction=['launch-preview','launch-apply','resume'].includes(action);
+  const options={projectRoot:['preview','apply'].includes(action)||launchAction?await nativeProjectRoot():process.cwd(),action};
+  const result=launchAction?await (async()=>{
+   await verifySetupHost(options.projectRoot);const client=await openOrcaLaunchSettings(),plan=prepareOrcaMcpLaunch(await client.read());
+   if(action==='launch-preview')return {project:options.projectRoot,...plan.summary,proposedCodexArguments:plan.after};
+   if(action==='resume')return client.resumeCodex(process.argv[3]);
+   const p=await paths(options);return {project:options.projectRoot,...await applyOrcaMcpLaunch(plan,{client,backupRoot:p.state,projectRoot:p.root})};
+  })():action==='diagnose'?await diagnoseSetup(options):action==='recover'?await recoverSetup(options):await (async()=>{const plan=await prepareSetup(options);return action==='preview'?plan.summary:applySetup(plan);})();
   console.log(JSON.stringify(result));
  }catch(e){console.log(JSON.stringify({ok:false,error:{code:e.code||'SETUP_REFUSED',message:e.code?e.message:'Project setup was refused; existing configuration was preserved.'}}));process.exitCode=1;}
 }

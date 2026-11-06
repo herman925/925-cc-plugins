@@ -9,11 +9,11 @@ import {postgresTestUrl} from './support/engines.mjs';
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:8,launch:'demand',batch:3,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
 const modRelease=JSON.parse(await readFile(new URL('../../../team-orchestrator/.claude-plugin/plugin.json',import.meta.url),'utf8')).version;
 for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native management`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
- async function setup(t){
+ async function setup(t,{launchWorkers=false}={}){
   const f=await runtimeFixture(t,engine),actor={projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:'codex-head',executionHostId:'local',contextId:'context',terminalHandle:'codex-head-terminal',incarnationId:'inc'};
   const state={actor,reply:{action:'accept',content:{confirm:true}},reviews:[],lost:false},metadata={threadId:'native-fixed'};
-  const native={verifyCaller:async m=>{assert.equal(m,metadata);return {...state.actor};},verifyTarget:async target=>{if(target.conversationId!=='codex-head')throw Error('Unverified');return {...state.actor};},listTargets:async()=>({sessions:[]})};
-  const make=async(writer={client:'team-orchestrator',version:'0.5.56'})=>{const adapter=await createCodexAdapter({writer},{createIdentity:async()=>native,createApi:async options=>{
+  const native={launchWorkers,verifyCaller:async m=>{assert.equal(m,metadata);return {...state.actor};},verifyTarget:async target=>{if(target.conversationId!=='codex-head')throw Error('Unverified');return {...state.actor};},listTargets:async()=>({sessions:[]})};
+  const make=async(writer={client:'team-orchestrator',version:'0.5.56'})=>{const adapter=await createCodexAdapter({...f.options,writer,observation:false},{createIdentity:async()=>native,createApi:async options=>{
    const api=await createTeamApi({...options,...f.options});
    return {...api,manageTeam:async request=>{const result=await api.manageTeam(request);if(state.lost){state.lost=false;throw Object.assign(Error('Lost reply'),{code:'STORE_COMMIT_UNKNOWN'});}return result;}};
   }});t.after(()=>adapter.close());return adapter;};
@@ -80,7 +80,8 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   f.state.replyDelayMs=1100;f.state.reply={action:'decline'};
   await assert.rejects(f.call(f.create),e=>e.code==='API_APPROVAL_REQUIRED');
   const human=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
-  assert.equal(human.elicitationProbe.classification,'form-delivered');
+  assert.equal(human.elicitationProbe.classification,'human-paced-reply-delivery-unverified');
+  assert.equal(human.elicitationProbe.delivery,'unverified');
  });
  test('create and edit receipts survive interruption and never ask again or duplicate effects',async t=>{
   const f=await setup(t);f.state.lost=true;await assert.rejects(f.call(f.create),e=>e.code==='STORE_COMMIT_UNKNOWN');
@@ -117,6 +118,42 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const after=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
   assert.equal(after.info.bindingState,undefined,'a completed rebind must clear the stale state');
   assert.equal(after.info.member.member_id,'head');
+ });
+ test('launch-enabled stale recovery still requires native approval before rebinding',async t=>{
+  const f=await setup(t,{launchWorkers:true});await f.call(f.create);
+  const bind={type:'bindMember',teamId:'team',memberId:'head',expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:0,expectedControllerGeneration:1},target={projectRoot:f.root,conversationId:'codex-head',terminalHandle:'codex-head-terminal',contextId:'context'};
+  await f.call(bind,'initial-bind',{target});f.state.actor={...f.state.actor,incarnationId:'resumed-launch-enabled'};
+  const status=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(status.info.bindingState,'stale-needs-explicit-reconnect');
+  assert.equal(status.elicitationProbe.classification,'human-paced-reply-delivery-unverified');
+  assert.deepEqual(await f.adapter.call('shared_team_sessions',{},f.metadata),{sessions:[]});
+  const recovered={...bind,expectedBindingGeneration:1};
+  const unchanged=async()=>{
+   const [binding]=await f.rows('SELECT generation,incarnation_id FROM member_bindings');
+   assert.equal(Number(binding.generation),1);assert.equal(binding.incarnation_id,'inc');
+   assert.equal(Number((await f.rows('SELECT generation FROM controller_approvals'))[0].generation),1);
+  };
+  f.state.replyDelayMs=0;
+  for(const command of [{type:'approveController'},recovered]){
+   const extra=command.type==='bindMember'?{target}:{};
+   await assert.rejects(f.adapter.call('shared_team_manage',{operationId:'missing-review-'+command.type,command,...extra},f.metadata,{canElicit:false}),{code:'API_REVIEW_UNAVAILABLE'});
+   for(const [i,reply] of [{action:'decline'},{action:'cancel'},{action:'accept',content:{confirm:false}}].entries()){
+    f.state.reply=reply;
+    await assert.rejects(f.call(command,'refused-'+command.type+'-'+i,extra),{code:'API_APPROVAL_UNVERIFIED'});
+    await unchanged();
+   }
+  }
+  await assert.rejects(f.call(recovered,'forged-recovery',{target,approval:true}),{code:'API_INPUT_INVALID'});
+  await unchanged();
+  f.state.reply={action:'accept',content:{confirm:true}};f.state.replyDelayMs=1100;
+  const reviewsBefore=f.state.reviews.length;
+  const result=await f.call(recovered,'approved-recovery',{target});
+  assert.equal(result.result.bindingGeneration,2);
+  assert.equal(f.state.reviews.length,reviewsBefore+1);
+  assert.match(f.state.reviews.at(-1).message,/bindMember/);
+  assert.equal((await f.rows('SELECT incarnation_id FROM member_bindings'))[0].incarnation_id,'resumed-launch-enabled');
+  const after=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
+  assert.equal(after.info.bindingState,undefined);assert.equal(after.info.member.member_id,'head');
  });
  test('revoked controller approvals are refused without another misleading review',async t=>{
   const f=await setup(t);await f.call(f.create);await rawWrite(f,'UPDATE controller_approvals SET revoked=1,generation=generation+1');const count=f.state.reviews.length;
