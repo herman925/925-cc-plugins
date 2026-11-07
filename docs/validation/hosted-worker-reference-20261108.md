@@ -10,6 +10,6 @@ Evidence:
 
 - Focused SQLite + actual PostgreSQL launch/profile/reference/policy suite: **37 passed / 0 failed / 0 skipped**. TAP `C:/Users/Herman/AppData/Local/Temp/team-completion-pg-qPKo3F/suite.tap`; SHA256 `29E71D94306A5452D61D807A7E4DB6CC8F8ED7867967D6B98D0F4FE6C9C21F46`.
 - Native Codex 0.166, disposable homes, zero model turns: `team-worker-policy-native-atLQXa/evidence.json` is the absent-variable control; `team-worker-policy-native-2Fai75/evidence.json` proves forwarding through the production helper. Both directories are under `C:/Users/Herman/AppData/Local/Temp/`. No real credentials or native approvals were used. Manual MCP calls were not used as model-access proof.
-- Latest whole common candidate suite: **542/542**, both engines and native setup, as recorded in [completion evidence](completion-checkpoint-20261108.md).
+- Latest whole common candidate suite: **546/546**, both engines and native setup, as recorded in [completion evidence](completion-checkpoint-20261108.md).
 
 This is not completed hosted onboarding, remote TLS/outage acceptance or a store move. The referenced variable must exist in the worker parent's native environment; configuration on a different process/machine is not enough. Engine selection, project identity, cross-client guard enrollment, driver packaging and a reviewed move remain open. No live credential, configuration, binding or store was changed.

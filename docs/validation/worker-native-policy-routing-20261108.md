@@ -12,7 +12,7 @@ The first two cases establish that the four named approval overrides change nati
 
 All three final cases passed. Evidence: `C:/Users/Herman/AppData/Local/Temp/team-worker-approval-native-9YkS3Y/evidence.json`; stdout `%TEMP%/worker-approval-native-final-20261108.jsonl`, SHA256 `03CE6876CCA68CAF76F9565C776904099B561198AE4D804DDD44283614F07C8E`. Only disposable turns/processes were started/interrupted. The harness used the documented [native turn API](https://learn.chatgpt.com/docs/app-server) and [MCP policy configuration](https://learn.chatgpt.com/docs/extend/mcp).
 
-This does not establish a real model worker, delivered human form, Orca-native identity, installed-hook enforcement, real role/inbox bootstrap, readiness lease, task outcome or head acceptance. Those remain separately required. The 542-pass database result predates these validation-only files; no runtime/source behavior changed after that suite. Both runtime packages remain 59 matching files with the same preview digest.
+This does not establish a real model worker, delivered human form, Orca-native identity, installed-hook enforcement, real role/inbox bootstrap, readiness lease, task outcome or head acceptance. Those remain separately required. The original 542-pass database result preceded these validation-only files. A later [schema-upgrade recovery correction](stale-schema-upgrade-recovery-20261108.md) has its own 546-pass full suite and superseding preview digest. All three controls also passed on that corrected candidate (`team-worker-approval-native-IfGWTD/evidence.json` under the same temporary directory). Both runtime packages retain 59 matching files.
 
 Reproduce with the native executable path as a positional argument:
 
