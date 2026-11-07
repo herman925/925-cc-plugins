@@ -135,8 +135,19 @@ and the draft menu still present in the terminal buffer after 93,817 ms and
 form inputs were sent. See `resume-long-wait.json`. The person was then asked
 to submit the draft choice `status` to verify completion after the longer wait.
 
-Pending acceptance: capture that human response, then separately activate and
-review recovery in the affected conversation.
-The receipt alone does not establish those outcomes. The affected process has
+The matching response arrived at `2026-11-07T13:09:49.398Z`, after **10,189,318 ms
+(2 hours, 49 minutes, 49.318 seconds)**. The native provider log records one
+`ResolveElicitation` input at that time. The provider transcript's structured
+`McpToolCall` completion at `13:09:50.719Z` records `status:completed` and
+`draftOnly:true`, action `accept`, draft selection `status`. The full correlation,
+native input and structured completion are in `resume-long-wait.json`.
+
+This establishes that the actual Orca-hosted saved-session path retained the
+request beyond three minutes and forwarded the human response to the same MCP
+waiter. It establishes draft-form transport, not management approval or binding.
+
+Pending acceptance: separately activate the corrected runtime and complete the
+visible, user-reviewed recovery in the affected conversation.
+The installation receipt alone does not establish those outcomes. The affected process has
 not been restarted during this investigation; its successful rebind and normal
 access remain unverified.
