@@ -4,7 +4,7 @@ This continues Herman's instruction to implement all remaining lanes in [Wayfind
 
 ## Latest candidate
 
-The source candidate is now **Mod 0.5.62 / Codex 0.1.12 / schema 10**, with **59 matching runtime files**. Published main remains **0.5.61 / 0.1.11 / schema 9**. Both Codex manifests and its setup receipt version are aligned. Nothing is pushed, installed, activated or migrated by this checkpoint.
+The source candidate is now **Mod 0.5.62 / Codex 0.1.12 / schema 10**, with **59 matching runtime files**, published on the completion branch as [draft PR #204](https://github.com/herman925/925-cc-plugins/pull/204). Published main remains **0.5.61 / 0.1.11 / schema 9**. Both Codex manifests and its setup receipt version are aligned. No main merge, release, installation, activation or live migration occurred.
 
 The final candidate common suite passed **542/542, zero failures/cancellations/skips**, with real SQLite and owned PostgreSQL, Node 22.13 and native Codex setup enabled. Retained TAP: `C:/Users/Herman/AppData/Local/Temp/team-completion-pg-nocDmX/suite.tap`; SHA256 `547381377D07E0785F2C8CDDE7B255F92C08D3F41B931A5A503A4B4658607714`. The earlier candidate's only failing check detected the second Codex manifest still stamped 0.1.11; the manifest was corrected, not the test weakened. All owned PostgreSQL clusters stopped successfully.
 
@@ -30,7 +30,7 @@ The [migration foundations report](migration-foundations-20261108.md) records co
 
 ## Implemented source
 
-Branch `feat/team-orchestrator-completion` contains reliability commit `eb83e26` and local merge `07e0781` of the draft readiness foundation. GitHub PR #199 remains untouched; this checkpoint neither pushes nor merges into main.
+Branch `feat/team-orchestrator-completion` contains reliability commit `eb83e26` and local merge `07e0781` of the draft readiness foundation. GitHub PR #199 remains untouched. The completion branch is pushed as draft PR #204; it is not merged into main.
 
 The readiness source checkpoint was subsequently committed as `41fb4a2`, and the migration/hosted candidate as `c982f2e`. Native migration foundations now live in `shared/team-store/migration/`; the transactional private API is packaged, while source capture/backup/command helpers are source-only and no migration UI/tool is exposed. They preserve explicitly pruned mail, flag uncertain sends, keep proposed permissions off and retain source/backup fingerprints. The earlier 516-test checkpoint below predates that work; use the latest candidate result above.
 
