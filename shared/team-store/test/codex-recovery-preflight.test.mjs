@@ -17,6 +17,7 @@ test('launch-enabled stale preflight preserves bare and prefixed inspection and 
  const allowed=[
   {tool:'shared_team_status',input:{}},
   {tool:'shared_team_sessions',input:{}},
+  {tool:'shared_team_upgrade',input:{operationId:'reviewed-upgrade'}},
   ...['inspectCaller','inspectController'].map(type=>({tool:'shared_team',input:{operationId:'inspect',command:{type}}})),
   ...['approveController','bindMember'].map(type=>({tool:'shared_team_manage',input:{operationId:'recover',command:{type}}})),
  ];
@@ -25,7 +26,7 @@ test('launch-enabled stale preflight preserves bare and prefixed inspection and 
   {tool:'exec_command',input:{cmd:'Set-Content x blocked'}},
   {tool:'spawn_agent',input:{}},
   {tool:'write_stdin',input:{chars:'work\n'}},
-  ...['shared_team_launch','shared_team_upgrade','shared_team_interview','shared_inbox_read','shared_inbox_seen'].map(tool=>({tool,input:{}})),
+  ...['shared_team_launch','shared_team_interview','shared_inbox_read','shared_inbox_seen'].map(tool=>({tool,input:{}})),
   ...['editTeam','createFreshTeam'].map(type=>({tool:'shared_team_manage',input:{operationId:'effect',command:{type}}})),
   ...['readInbox','reportOutcome','createFreshTeam','bindMember'].map(type=>({tool:'shared_team',input:{operationId:'effect',command:{type}}})),
  ];
@@ -41,7 +42,7 @@ test('launch-enabled stale preflight preserves bare and prefixed inspection and 
 test('launch-enabled stale preflight refuses direct effects before dispatch',async t=>{
  const adapter=await fixture(t);
  for(const [name,args] of [
-  ['shared_team_launch',{}],['shared_team_upgrade',{}],['shared_team_interview',{}],['shared_inbox_read',{}],
+  ['shared_team_launch',{}],['shared_team_interview',{}],['shared_inbox_read',{}],
   ...['editTeam','createFreshTeam'].map(type=>['shared_team_manage',{operationId:'effect',command:{type}}]),
   ['shared_team',{operationId:'effect',command:{type:'reportOutcome'}}],
  ])await assert.rejects(adapter.call(name,args,{}),{code:'API_STALE_BINDING'},name);
@@ -50,7 +51,7 @@ test('launch-enabled stale preflight refuses direct effects before dispatch',asy
 test('launch-enabled recovery never relaxes unrelated authority or native identity failures',async t=>{
  for(const code of ['API_NATIVE_UNVERIFIED','STORE_PROTOCOL_UNSUPPORTED','STORE_VERSION_UNSUPPORTED']){
   const adapter=await fixture(t,{inspectGuard:async()=>{throw Object.assign(Error('Refused fixture authority'),{code});}});
-  for(const [name,args] of [['team_guard',{tool:'shared_team_status',input:{}}],['shared_team_status',{}],['shared_team_manage',{command:{type:'bindMember'}}]]){
+  for(const [name,args] of [['team_guard',{tool:'shared_team_status',input:{}}],['shared_team_status',{}],['shared_team_upgrade',{operationId:'reviewed-upgrade'}],['shared_team_manage',{command:{type:'bindMember'}}]]){
    await assert.rejects(adapter.call(name,args,{}),{code});
   }
  }

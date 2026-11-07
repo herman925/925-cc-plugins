@@ -1,5 +1,5 @@
 import {upgradeTeamStore} from './upgrade.mjs';
-import {inspectGuardCaller} from './guard-reader.mjs';
+import {inspectGuardSchema} from './guard-reader.mjs';
 import {exact,controllerId} from './api-domain.mjs';
 import {text} from './validation.mjs';
 import {refusal} from './errors.mjs';
@@ -7,7 +7,7 @@ import {SCHEMA_VERSION} from '../contract.mjs';
 import {nativeReviewRefusal} from './native-review.mjs';
 export async function codexUpgrade({args,actor,metadata,native,options,connection}){
  exact(args,['operationId','reconcile']);text(args.operationId,'operationId');if(args.reconcile!==undefined&&typeof args.reconcile!=='boolean')throw refusal('API_INPUT_INVALID','reconcile must be a boolean.');
- const state=await inspectGuardCaller({actor,postgres:options.postgres});
+ const state=await inspectGuardSchema({actor,postgres:options.postgres});
  if(args.reconcile===true&&state.storeVersion!==SCHEMA_VERSION)return {status:'unknown',operationId:args.operationId};
  let granted=false;
  if(state.storeVersion!==SCHEMA_VERSION){

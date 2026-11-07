@@ -13,7 +13,7 @@ import {normalizeActor,readGuardAuthority,apiResult,pendingNativeLaunch} from '.
 import {databaseInteger} from './validation.mjs';
 import {refusal} from './errors.mjs';
 
-export async function inspectGuardCaller({actor:input,postgres,allowLaunchProbe=false}){
+async function inspectGuardState({actor:input,postgres,allowLaunchProbe=false},schemaOnly=false){
  const actor=normalizeActor({...input,projectRoot:await realpath(input.projectRoot)});
  const db=postgres?await connectPostgres(postgres):await connectSqlite({path:await existingLocalPath(actor.projectRoot),readOnly:true});
  try{
@@ -27,9 +27,15 @@ export async function inspectGuardCaller({actor:input,postgres,allowLaunchProbe=
   await inspectSchema(db,{format:definition.FORMAT,version,ddl:definition.DDL,render:definition.ddlFor,label:'team guard store'});
   const [identity]=await db.query('SELECT minimum_writer_protocol FROM project_identity WHERE singleton=1');
   if(!identity||databaseInteger(identity.minimum_writer_protocol,'minimum protocol')>current.WRITER_PROTOCOL_VERSION)throw refusal('STORE_PROTOCOL_UNSUPPORTED','This guard cannot interpret the project authority protocol.');
-  const launch=version>=9&&allowLaunchProbe?await pendingNativeLaunch(db,actor):null;
-  const authority=launch?{pendingLaunchId:launch}:await readGuardAuthority(db,actor,version);
+  const launch=!schemaOnly&&version>=9&&allowLaunchProbe?await pendingNativeLaunch(db,actor):null;
+  const authority=schemaOnly?{}:launch?{pendingLaunchId:launch}:await readGuardAuthority(db,actor,version);
   await db.commit();
   return apiResult({...authority,storeVersion:version,upgradeRequired:version!==current.SCHEMA_VERSION});
  }finally{await db.rollback().catch(()=>{});await db.close();}
 }
+
+export const inspectGuardCaller=options=>inspectGuardState(options);
+// Native-reviewed upgrades need verified schema/protocol metadata, not a live
+// member binding: resuming changes incarnation before the older store can be
+// rebound by the current API. This projection contains no member authority.
+export const inspectGuardSchema=options=>inspectGuardState(options,true);

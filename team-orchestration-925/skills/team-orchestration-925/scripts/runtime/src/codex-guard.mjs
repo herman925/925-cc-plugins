@@ -23,10 +23,14 @@ export function codexGuard(authority,{tool,input}) {
   if(readOnly)return {};
   const bare=typeof tool==='string'?tool.replace(/^mcp__[a-z0-9_]+__/,''):tool;
   if(['shared_team_status','shared_team_sessions'].includes(bare))return {};
+  // A resumed older store must be upgraded before the current API can rebind
+  // it. This entrypoint validates schema/protocol, requires its own native
+  // review and backup, and preserves the stale binding without granting access.
+  if(bare==='shared_team_upgrade')return {};
   if(bare==='shared_team'&&['inspectCaller','inspectController'].includes(input?.command?.type))return {};
   // Only the two reviewed recovery operations, never another management effect.
   if(bare==='shared_team_manage'&&['approveController','bindMember'].includes(input?.command?.type))return {};
-  return deny(`This conversation's native binding is stale, so only inspection and the reviewed recovery calls are allowed. Run shared_team_status, then recover through shared_team_manage bindMember with a native review. Every other effect stays blocked. ${authority.staleReason??''}`.trim());
+  return deny(`This conversation's native binding is stale, so only inspection and the reviewed recovery calls are allowed. Run shared_team_status; if an upgrade is required, use shared_team_upgrade with native review and backup before shared_team_manage bindMember with its own native review. Every other effect stays blocked. ${authority.staleReason??''}`.trim());
  }
  if(!m)return {};
  if(authority.workerSetup?.covered&&authority.workerSetup.state!=='ready'){
