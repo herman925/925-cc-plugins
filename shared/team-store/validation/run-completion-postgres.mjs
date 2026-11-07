@@ -22,7 +22,8 @@ try{
  const url=`postgresql://postgres@127.0.0.1:${port}/postgres`,client=new pg.Client({connectionString:url});
  await client.connect();try{await client.query('CREATE DATABASE team_store_contract_test');}finally{await client.end();}
  const connection=`postgresql://postgres@127.0.0.1:${port}/team_store_contract_test`;
- const selected=process.argv.slice(4),files=selected.length?selected:(await readdir(join(repo,'shared/team-store/test'))).filter(n=>n.endsWith('.test.mjs')).map(n=>join('shared/team-store/test',n));
+ const selected=process.argv.slice(4),files=selected.length?selected:[];
+ if(!selected.length)for(const directory of ['shared/team-store/test','shared/team-store/migration'])for(const file of await readdir(join(repo,directory)))if(file.endsWith('.test.mjs'))files.push(join(directory,file));
  const log=join(root,'suite.tap'),fd=openSync(log,'wx');let result;
  // Node applies this limit to each file as well as individual tests. The API
  // file runs both engines sequentially and legitimately exceeds 45 seconds.

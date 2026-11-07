@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup,diagnoseSetup} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs';
 import {configurationEnvironment} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup-environment.mjs';
+import {SCHEMA_VERSION} from '../contract.mjs';
 test('temporary native configuration tools do not inherit the acting Orca conversation identity',()=>{
  const original={PATH:'tools',ORCA_TERMINAL_HANDLE:'acting-terminal',ORCA_AGENT_HOOK_TOKEN:'fixture-token',CODEX_THREAD_ID:'acting-thread',CODEX_SESSION_ID:'acting-session',TEAM_PROJECT_ROOT:'acting-project',CODEX_HOME:'acting-home'};
  const isolated=configurationEnvironment('temporary-home',original);
@@ -24,9 +25,11 @@ describe('Codex project setup with native config writer',{skip:!native},()=>{
  test('only a changed hook requires new native review; diagnostics never attest trust',async t=>{
   const f=await fixture(t),initial=await prepareSetup(f.options);
   assert.equal(initial.summary.hookConfigurationChanged,true);assert.equal(initial.summary.requiresNativeHookReview,true);
+  assert.equal(initial.summary.runtimeDigest,initial.runtime.digest);assert.equal(initial.summary.runtimeFileCount,initial.runtime.files.length);assert.equal(initial.summary.sharedSchemaVersion,SCHEMA_VERSION);assert.equal(initial.summary.installedRuntimeMatchesPreview,false);assert.equal(initial.summary.activeRuntime,'not-inspected');
   await applySetup(initial);
   const update=await prepareSetup(f.options);
   assert.equal(update.summary.hookConfigurationChanged,false);assert.equal(update.summary.requiresNativeHookReview,false);
+  assert.equal(update.summary.installedRuntimeMatchesPreview,true);assert.equal(update.summary.activeRuntime,'not-inspected');
   assert.equal(update.summary.hookTrust,'not-attested');assert.equal(update.summary.hookTrustGranted,false);assert.equal(update.summary.requiresReconnect,true);
   assert.equal((await diagnoseSetup(f.options)).hookTrust,'not-attested');
  });

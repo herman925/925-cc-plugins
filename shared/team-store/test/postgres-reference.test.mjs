@@ -41,5 +41,5 @@ test('new worker profiles save only an environment name, keep reviewed tool scop
  const parsed=JSON.parse(body);assert.equal(parsed.version,3);assert.equal(parsed.postgres.connectionEnvironment,name);
  const loaded=await readReservedLaunchProfile(path,projectRoot);assert.equal(loaded.workerAccess.planId,'reviewed');assert.equal(loaded.postgres.connectionEnvironment,name);assert.equal(loaded.postgres.connectionString,undefined);
  await assert.rejects(writeReservedLaunchProfile({...config,postgres:{connectionString:secret}}),{code:'STORE_CONNECTION_REFERENCE_INVALID'});
- delete process.env[name];await assert.rejects(readReservedLaunchProfile(path,projectRoot),{code:'API_LAUNCH_PROFILE_INVALID'});
+ delete process.env[name];await assert.rejects(readReservedLaunchProfile(path,projectRoot),error=>error.code==='STORE_CONNECTION_ENV_MISSING'&&error.message.includes(name));
 });

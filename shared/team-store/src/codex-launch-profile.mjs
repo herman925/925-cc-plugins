@@ -59,5 +59,5 @@ export async function readReservedLaunchProfile(path,projectRoot){
   if(new URL(driverModule).protocol!=='file:')throw invalid();
   const connectionTimeoutMs=integer(data.postgres.connectionTimeoutMs,'connection timeout',{min:1,max:60000});
   return {reservedLaunch:fixed,...access,postgres:{connectionString,connectionTimeoutMs,driverModule,loadDriver:()=>import(driverModule)}};
- }catch{throw invalid();}
+ }catch(error){if(['STORE_CONNECTION_ENV_MISSING','STORE_TLS_REQUIRED'].includes(error.code))throw error;throw invalid();}
 }

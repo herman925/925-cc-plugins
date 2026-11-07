@@ -11,7 +11,7 @@ export function postgresReference(input){
 }
 export function resolvePostgresReference(input,environment=process.env){
  const reference=postgresReference(input),value=environment[reference.connectionEnvironment];
- if(typeof value!=='string'||!value||value.includes('\0')||value.length>16384)throw refusal('STORE_CONNECTION_ENV_MISSING','Configure the PostgreSQL connection variable outside Team Orchestrator on this machine.',{connectionEnvironment:reference.connectionEnvironment});
+ if(typeof value!=='string'||!value||value.includes('\0')||value.length>16384)throw refusal('STORE_CONNECTION_ENV_MISSING',`Configure PostgreSQL environment variable ${reference.connectionEnvironment} outside Team Orchestrator on this machine.`,{connectionEnvironment:reference.connectionEnvironment});
  let url;try{url=new URL(value);}catch{throw invalid();}
  if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||url.pathname.length<2||url.hash)throw invalid();
  // A URI host override would make the displayed database identity misleading.

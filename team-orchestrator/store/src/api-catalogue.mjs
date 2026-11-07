@@ -1,6 +1,7 @@
 import {meetingFields} from './meeting-schema.mjs';
 export const API_COMMAND_FIELDS = {
   beginWorkerRuntime:[],observeWorkerRuntime:['step','receiptId'],closeWorkerRuntime:[],
+  importClassicTeam:['teamId','name','functionText','settings','members','targetHome','sourceFingerprint','backupDigest','expectedControllerGeneration'],
   ...Object.fromEntries(Object.entries(meetingFields).map(([type,names])=>[type,['teamId','meetingId',...(type==='inspectMeeting'?[]:['expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration']),...(type==='createMeeting'||type==='inspectMeeting'?[]:['expectedMeetingGeneration']),...names]])),
   acknowledgeNotice:['teamId','noticeId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   reserveLaunch:['teamId','memberId','launchId','expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration'],

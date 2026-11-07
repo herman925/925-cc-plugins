@@ -13,9 +13,10 @@ import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
 import {nativeToolSettings,toolSettingsToml} from './setup-tool-settings.mjs';
 import {prepareRuntime,installRuntime} from './setup-runtime.mjs';
 import {configurationEnvironment} from './setup-environment.mjs';
+import {SCHEMA_VERSION} from './runtime/contract.mjs';
 import {openOrcaLaunchSettings,prepareOrcaMcpLaunch,applyOrcaMcpLaunch} from './orca-launch-settings.mjs';
 export {discoverCodexExecutable} from './codex-executable.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.11';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.12';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));
@@ -80,7 +81,7 @@ export async function prepareSetup(options={},dependencies={}){
   let config=await bytes(join(stage,'config.toml'));if(remove&&installed.configCreated&&(!config||!config.toString().trim()))config=null;
   const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null,...(runtime?{runtimePath:runtime.path,runtimeDigest:runtime.digest}:{})};
   const hookConfigurationChanged=hash(hooks)!==hash(before.hooks);
-  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],globalConfigurationChanged:false,teamStoreChanged:false,hookConfigurationChanged,hookTrust:'not-attested',hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove&&hookConfigurationChanged}};
+  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],...(runtime?{runtimeDigest:runtime.digest,runtimeFileCount:runtime.files.length,sharedSchemaVersion:SCHEMA_VERSION,installedRuntimeMatchesPreview:installed?.runtimeDigest===runtime.digest,activeRuntime:'not-inspected'}:{}),globalConfigurationChanged:false,teamStoreChanged:false,hookConfigurationChanged,hookTrust:'not-attested',hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove&&hookConfigurationChanged}};
  }finally{
   if(dirname(stage)!==temp||!basename(stage).startsWith('925-to-setup-'))throw Error('Refusing unexpected staging cleanup.');
   await rm(stage,{recursive:true,force:true});

@@ -45,6 +45,11 @@ export async function createTeamApi(options) {
     }
     if(command.type==='editTeam'&&!recover&&(typeof options.confirmManagement!=='function'||await options.confirmManagement({actor,command})!==true))throw refusal('API_APPROVAL_REQUIRED','A specific native review of this configuration change is required.');
     if(command.type==='approveLaunchPlan'&&!recover&&(typeof options.confirmLaunchPlan!=='function'||await options.confirmLaunchPlan({actor,command})!==true))throw refusal('API_APPROVAL_REQUIRED','A specific native review of this launch plan is required.');
+    if(command.type==='importClassicTeam'&&!recover){
+      if(typeof options.confirmClassicImport!=='function'||await options.confirmClassicImport({actor,command})!==true)throw refusal('API_APPROVAL_REQUIRED','A specific native review of this complete classic import is required.');
+      if(typeof options.verifyClassicImport!=='function'||await options.verifyClassicImport({actor,command})!==true)throw refusal('API_IMPORT_SOURCE_UNVERIFIED','Reverify the exact source fingerprint, complete private backup and safe native source state after review before importing.');
+      if(JSON.stringify(await authenticate())!==JSON.stringify(actor))throw refusal('API_STALE_AUTHORITY','The native conversation changed during classic import verification.');
+    }
     const db = await open(actor, command.type === 'approveController'&&!recover);
     const value = {operationId:text(input.operationId,'operationId'),kind:'api',command,target,caller:{principalId:controllerId(actor),capability,actor}};
     return {db,value};
@@ -65,6 +70,10 @@ export async function createTeamApi(options) {
     approveController:async input=>{const {db,value}=await request({...input,command:{type:'approveController'}},true); return db.execute(value);},
     manageTeam:async input=>{if(!['createFreshTeam','editTeam','bindMember'].includes(input?.command?.type))throw refusal('API_OPERATION_DENIED','Unsupported native management operation.');const {db,value}=await request(input,true);return db.execute(value);},
     reconcileManagement:async input=>{if(!['approveController','createFreshTeam','editTeam','bindMember'].includes(input?.command?.type))throw refusal('API_OPERATION_DENIED','Unsupported management receipt.');const {db,value}=await request(input,true,true);return db.reconcile(value);},
+    // Native migration integration only; deliberately absent from every MCP
+    // command catalogue. Source/backup proof and a specific review are required.
+    importClassicTeam:async input=>{if(input?.command?.type!=='importClassicTeam')throw refusal('API_OPERATION_DENIED','Not a classic import.');const {db,value}=await request(input,true);return db.execute(value);},
+    reconcileClassicImport:async input=>{if(input?.command?.type!=='importClassicTeam')throw refusal('API_OPERATION_DENIED','Not a classic import receipt.');const {db,value}=await request(input,true,true);return db.reconcile(value);},
     launch:async input=>{const {db,value}=await request(input,true);if(!launchTypes.includes(value.command.type))throw refusal('API_OPERATION_DENIED','Not a launch operation.');return db.execute(value);},
     reconcileLaunch:async input=>{if(!launchTypes.includes(input?.command?.type))throw refusal('API_OPERATION_DENIED','Not a launch operation.');const {db,value}=await request(input,true,true);return db.reconcile(value);},
     close:async()=>{if(store) await store.close();},

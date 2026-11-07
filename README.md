@@ -1,5 +1,7 @@
 # 925-cc-plugins
 
+**Development branch:** Mod **0.5.62** / Codex **0.1.12**, schema **10**, are unreleased candidates on `feat/team-orchestrator-completion`. They add reviewed worker-tool readiness, source/backup/atomic import foundations and reliability fixes. The published versions and installation flows below still describe main (**0.5.61 / 0.1.11 / schema 9**). No live store is upgraded by installing a runtime. See the [development checkpoint](docs/validation/completion-checkpoint-20261108.md) and [migration limits/evidence](docs/validation/migration-foundations-20261108.md).
+
 Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the `herman-mods` marketplace; Codex uses `herman925-codex` or the repository skill installer.
 
 ## Team Orchestrator

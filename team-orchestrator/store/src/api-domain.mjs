@@ -31,14 +31,14 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 export {API_COMMAND_FIELDS};
 
 export function normalizeApiCommand(input, { privileged = false } = {}) {
-  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['approveController','editTeam',...launchTypes,...WORKER_RUNTIME_TYPES].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
+  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['importClassicTeam','approveController','editTeam',...launchTypes,...WORKER_RUNTIME_TYPES].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
   const names = API_COMMAND_FIELDS[input.type];
   exact(input, ['type', ...names]);
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
     if(input.type==='attachLaunch'&&v===undefined)continue;
-    if (k === 'settings' || k === 'members' || k === 'options' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
+    if (k === 'settings' || k === 'members' || k === 'options' || k==='targetHome' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
       : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note'||k==='receiptId' });
   }
@@ -57,15 +57,19 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
     out.options=input.options.map(v=>text(v,'option'));
     if(new Set(out.options).size!==out.options.length)fail('INPUT_INVALID','Offered options must be distinct.');
   }
-  if (input.type === 'createFreshTeam') {
+  if (['createFreshTeam','importClassicTeam'].includes(input.type)) {
+    const importing=input.type==='importClassicTeam';
+    if(importing&&!['sourceFingerprint','backupDigest'].every(k=>/^[a-f0-9]{64}$/.test(out[k])))fail('INPUT_INVALID','A classic import requires verified source and complete-backup digests.');
+    if(importing){const fields=['projectRoot','machineId','contextId','executionHostId'];exact(input.targetHome,fields);out.targetHome=Object.fromEntries(fields.map(k=>[k,text(input.targetHome[k],'reviewed import home '+k)]));}
     out.settings = normalizeConfigurationMutation({ type: 'createTeam', teamId: out.teamId, name: out.name, functionText: out.functionText, settings: input.settings }).settings;
     if (out.settings.exemptMemberIds.length) fail('INPUT_INVALID', 'Fresh-team exemptions must start empty.');
     if (!Array.isArray(input.members) || !input.members.length || input.members.length > 30) fail('INPUT_INVALID', 'Supply 1–30 fresh members ordered boss-first.');
     const seen = new Map();
     out.members = input.members.map(m => {
-      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText', 'cli']);
-      if(m.cli!==undefined&&!['claude','codex'].includes(m.cli))fail('INPUT_INVALID','Fresh mixed members currently support only claude or codex.');
+      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText', 'cli',...(importing?['advisoryNotes','model','effort']:[])]);
+      if((importing||m.cli!==undefined)&&!['claude','codex'].includes(m.cli))fail('INPUT_INVALID','Fresh mixed members currently support only claude or codex; imports must preserve an explicit CLI.');
       const value = { memberId: text(m.memberId, 'memberId'), name: text(m.name, 'name'), bossMemberId: m.bossMemberId === null ? null : text(m.bossMemberId, 'bossMemberId'), role: text(m.role, 'role'), officialText: text(m.officialText, 'officialText'),...(m.cli!==undefined?{cli:m.cli}:{}) };
+      if(importing)Object.assign(value,{advisoryNotes:text(m.advisoryNotes,'advisoryNotes',{allowEmpty:true}),model:text(m.model,'model',{allowEmpty:true}),effort:text(m.effort,'effort',{allowEmpty:true})});
       if (seen.has(value.memberId) || (value.bossMemberId !== null && !seen.has(value.bossMemberId))) fail('INPUT_INVALID', 'Fresh members must be unique and ordered boss-first.');
       seen.set(value.memberId, value); return value;
     });
@@ -149,7 +153,7 @@ export async function assertApiCaller(db, command, actor) {
   if(launchTypes.includes(command.type)){await controller(db,actor);return;}
   if (['inspectCaller','inspectController'].includes(command.type)) return;
   if(command.type==='inspectConfiguration'){await controller(db,actor);return;}
-  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
+  if (['importClassicTeam','revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
   if (command.type === 'inspectTeam') {
     const [row] = await db.query('SELECT revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
     if (row && Number(row.revoked) === 0) return;
@@ -168,7 +172,7 @@ export async function assertApiReceipt(db,command,actor,receipt) {
  if(type==='inspectConfiguration'){await controller(db,actor);return;}
  if(type==='inspectController'){if(value.controllerGeneration!==null)await controller(db,actor);return;}
  if(type==='approveController'){await controller(db,actor);return;}
- if(['createFreshTeam','editTeam','bindMember','revokeController'].includes(type))return;
+ if(['importClassicTeam','createFreshTeam','editTeam','bindMember','revokeController'].includes(type))return;
  if(type==='inspectCaller') {
   if(value.controllerGeneration!==null)await controller(db,actor);
   if(value.member) {
@@ -261,7 +265,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
     return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
   }
-  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
+  if (['importClassicTeam','revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {
     // Self-revocation only in this slice; approving another never revokes it.
     if (command.controllerId !== controllerId(actor)) fail('OPERATION_DENIED', 'Only self-revocation is supported by this slice.');
@@ -269,7 +273,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
     await db.query('UPDATE controller_approvals SET revoked=1,generation=:next WHERE controller_id=:id AND generation=:expected', { next, id: command.controllerId, expected: command.expectedControllerGeneration });
     return { controllerId: command.controllerId, controllerGeneration: next, revoked: true };
   }
-  if (type === 'createFreshTeam') {
+  if (['createFreshTeam','importClassicTeam'].includes(type)) {
+    const importing=type==='importClassicTeam';
+    if(importing&&Object.entries(command.targetHome).some(([k,v])=>actor[k]!==v))fail('IMPORT_HOME_UNVERIFIED','The reviewed target home does not match the verified native importing home. No original home was transferred.');
     await applyConfigurationMutation(db, { type:'createTeam', teamId:command.teamId, name:command.name, functionText:command.functionText, settings:command.settings }, writer);
     let configVersion = 1;
     const levels = new Map();
@@ -277,10 +283,10 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
       const level = m.bossMemberId === null ? 1 : levels.get(m.bossMemberId) + 1;
       levels.set(m.memberId,level);
       await applyConfigurationMutation(db, { type:'putMember', teamId:command.teamId, expectedConfigVersion:configVersion++, expectedGeneration:0,
-        member: { ...m, level, model:'default', effort:'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
-      await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:'' }, writer);
+        member: { ...m, level, model:importing?m.model||'default':'default', effort:importing?m.effort||'default':'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
+      await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:importing?m.advisoryNotes:'' }, writer);
     }
-    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId) };
+    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId),...(importing?{sourceFingerprint:command.sourceFingerprint,backupDigest:command.backupDigest,permissionPolicy:'start-disabled',workPolicy:'head-review-fresh-assignment'}:{}) };
   }
   if (type === 'inspectTeam') {
     // A controller may inspect; a member may inspect its own team only.

@@ -4,6 +4,8 @@ The skill contains its matching runtime under `scripts/runtime/`; it must not re
 
 Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The helper discovers the native CLI and verifies project/session scope; it uses Codex's own config writer/parser in disposable staging. Preview explains the project-local server and hook changes without applying them. It never prints existing configuration or secrets.
 
+Preview names the exact runtime digest, file count and shared schema version. `installedRuntimeMatchesPreview` compares only the saved installation receipt; `activeRuntime: not-inspected` explicitly does not attest the running process. A runtime update does not perform a schema upgrade. Verify the loaded digest after activation instead of repeating an installation or demanding another hook review when its configuration is unchanged.
+
 The config-writer executable is resolved from PATH, including the native package behind a Codex npm shim; it is checked with `--version`. No ancestor/process query or shell-shim execution is required. For a non-PATH installation, the person may explicitly configure `TEAM_CODEX_EXECUTABLE` as an absolute native `codex.exe` path. This does not prove caller identity; the native MCP adapter separately retains its exact parent/thread-lock/Orca verification.
 
 Treat `SETUP_HOST_ACCESS_DENIED` as a host/profile/local-connection access problem, `SETUP_HOST_UNAVAILABLE` as a missing Orca CLI/profile prerequisite and `SETUP_CODEX_NOT_FOUND` as executable discovery. A failed Orca subprocess reports its own stage/exit classification; it is not described as a missing project. Do not infer a successful setup, silently switch projects or approve permission escalation from these errors.
