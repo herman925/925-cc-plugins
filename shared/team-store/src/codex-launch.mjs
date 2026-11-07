@@ -8,6 +8,7 @@ import {text} from './validation.mjs';
 import {managementReview} from './team-management.mjs';
 import {writeReservedLaunchProfile} from './codex-launch-profile.mjs';
 import {requireWorkerToolPolicy,WORKER_TEAM_TOOLS,workerToolReview} from './worker-policy.mjs';
+import {nativeReviewRefusal} from './native-review.mjs';
 export async function codexLaunchPlan({args,actor,metadata,native,createApi,options,connection}){
  exact(args,['operationId','command','reconcile']);text(args.operationId,'operationId');
  if(args.reconcile!==undefined&&typeof args.reconcile!=='boolean')throw refusal('API_INPUT_INVALID','reconcile must be a boolean.');
@@ -24,9 +25,9 @@ export async function codexLaunchPlan({args,actor,metadata,native,createApi,opti
   if(Number(config.team.config_version)!==command.expectedConfigVersion)throw refusal('API_STALE_AUTHORITY','Configuration changed before launch review.');
   const ids=new Set(command.selections.map(s=>s.memberId)),current={...config,members:config.members.filter(m=>ids.has(m.member_id)),roles:config.roles.filter(r=>ids.has(r.member_id))};
   const review=managementReview({actor,command,current});
-  review.message='Review these workers AND their Team Orchestrator tool access. They may start as capacity opens; work is admitted only after team-tool readiness is verified. No existing session is closed or replaced. Worker/role or tool-bundle changes require another review.\n'+JSON.stringify(workerToolReview(),null,2)+'\n'+review.message;
+  review.message='Review these listed Codex workers AND their Team Orchestrator tool access. Unconnected workers may start as capacity opens. A connected worker is selected only for tool setup: new assignments wait, current work finishes, and any required process refresh resumes that same conversation when idle only if safe resume can be verified. No conversation is replaced. Work is admitted only after team-tool readiness is verified. Worker/role or tool-bundle changes require another review.\n'+JSON.stringify(workerToolReview(),null,2)+'\n'+review.message;
   review.requestedSchema.properties.confirm.title='Approve this specific launch plan once';
-  const answer=await connection.elicit(review);if(answer?.action!=='accept'||answer.content?.confirm!==true)throw refusal('API_APPROVAL_REQUIRED','This launch plan was declined or cancelled.');
+  const started=Date.now(),answer=await connection.elicit(review);if(answer?.action!=='accept'||answer.content?.confirm!==true)throw nativeReviewRefusal(Date.now()-started,'Launch approval was not obtained. No launch plan was recorded.');
   await authenticate();granted=true;return await api.launch(request);
  }finally{granted=false;await api.close();}
 }
@@ -65,7 +66,7 @@ export async function pumpCodexLaunches({api,native,actor,metadata,info,postgres
     const member=config.members.find(m=>m.member_id===launch.member_id);
     const claim=await api.launch({operationId:`codex-claim-${randomUUID()}`,command:{...authority,type:'claimLaunch',launchId:launch.launch_id}});
     if(!claim.result.claimed){results.push({launchId:launch.launch_id,queued:claim.result.queued===true});continue;}
-    const launchProfile=await writeReservedLaunchProfile({root:native.launchProfileRoot,actor,projectId:info.projectId,launchId:launch.launch_id,memberId:member.member_id,postgres});
+    const launchProfile=await writeReservedLaunchProfile({root:native.launchProfileRoot,actor,projectId:info.projectId,launchId:launch.launch_id,memberId:member.member_id,postgres,workerAccess:{planId:claim.result.workerAccess.planId,policyId:claim.result.workerAccess.policyId}});
     // Creation has no command: a child cannot start until its terminal receipt
     // has committed. Every failure after claim keeps the capacity reservation.
     const target=await native.createLaunchTerminal({title:member.name},metadata);

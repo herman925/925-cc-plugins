@@ -1,6 +1,7 @@
 import {expect,test} from 'claude-code/testing'
 import {sharedStoreProtection} from './shared-store'
 import {world,sessionAs,mountBand,ID1} from './test-world'
+import {SCHEMA_VERSION} from '../store/contract.mjs'
 declare const setTimeout:(fn:()=>void,ms:number)=>unknown
 
 test('the shared store blocks raw state and private approval access even for a controller',()=>{
@@ -41,13 +42,13 @@ test('a known older shared store preserves ordinary writes without dropping memb
  const protectedWrite:any=await $.tool.call({tool:'Write',file_path:'C:/proj/.team-orchestrator/team.sqlite',content:'x'} as any)
  expect(protectedWrite.deny).toContain('typed shared_team')
 })
-for(const fromVersion of [5,8])test(`schema ${fromVersion} updates only after a scoped native click and does not grant management`,{options:{sharedStorePreview:true,orcaCommand:'orca'}} as any,async($:any,on:any)=>{
+for(const fromVersion of [5,8,9])test(`schema ${fromVersion} updates only after a scoped native click and does not grant management`,{options:{sharedStorePreview:true,orcaCommand:'orca'}} as any,async($:any,on:any)=>{
  let version=fromVersion;const calls:any[]=[]
  const files=world(on,[],[],e=>{
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
   const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
-  if(envelope.mode==='upgradeStore'){version=9;return JSON.stringify({ok:true,result:{status:'upgraded',fromVersion,toVersion:9,backupPath:'fixture-backup'}})}
-  if(version===fromVersion)return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Old version',details:{version:fromVersion,supported:9}}})
+  if(envelope.mode==='upgradeStore'){version=SCHEMA_VERSION;return JSON.stringify({ok:true,result:{status:'upgraded',fromVersion,toVersion:SCHEMA_VERSION,backupPath:'fixture-backup'}})}
+  if(version===fromVersion)return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Old version',details:{version:fromVersion,supported:SCHEMA_VERSION}}})
   return JSON.stringify({ok:true,result:{result:{controllerGeneration:null,member:null,teams:[]}}})
  });sessionAs(on,ID1)
  const band=await mountBand($,57);await band.press({key:'main'});await band.press({key:'tab-shared'})
@@ -55,7 +56,7 @@ for(const fromVersion of [5,8])test(`schema ${fromVersion} updates only after a 
  expect([...files.keys()].some(k=>k.includes('controller-actions/'))).toBe(false)
  await band.press({key:'shared-upgrade-store'})
  const upgrade=calls.find(c=>c.mode==='upgradeStore'),ticket=JSON.parse(files.get(`C:/home/.claude/team-orchestrator/controller-actions/${upgrade.uiApprovalId}.json`)!)
- expect(ticket.action).toBe('upgradeStore');expect(ticket.fromVersion).toBe(fromVersion);expect(ticket.toVersion).toBe(9)
+ expect(ticket.action).toBe('upgradeStore');expect(ticket.fromVersion).toBe(fromVersion);expect(ticket.toVersion).toBe(SCHEMA_VERSION)
  expect(ticket.conversationId).toBe(ID1);expect(upgrade.proof.conversationId).toBe(ID1)
  expect(calls.some(c=>c.mode==='approveController')).toBe(false);expect(await band.find({key:'shared-approve-controller'})).toBeDefined()
  expect(await band.find({key:'shared-upgrade-store'})).toBeUndefined()

@@ -1,8 +1,10 @@
 import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
+import {WORKER_RUNTIME_TYPES} from './worker-policy.mjs';
 const stringField={type:'string'}
 const versionField={type:'integer',minimum:1}
+export const commandRequirements=types=>({anyOf:types.map(type=>({properties:{type:{enum:[type]}},required:['type',...API_COMMAND_FIELDS[type].filter(field=>field!=='note')]}))})
 export const commandSchema={type:'object',additionalProperties:false,properties:{
- type:{type:'string',enum:Object.keys(API_COMMAND_FIELDS).filter(t=>!['approveController','editTeam','reserveLaunch','claimLaunch','attachLaunch','approveLaunchPlan','recordLaunchTarget','inspectLaunchQueue'].includes(t))},
+ type:{type:'string',enum:Object.keys(API_COMMAND_FIELDS).filter(t=>!['approveController','editTeam','reserveLaunch','claimLaunch','attachLaunch','approveLaunchPlan','recordLaunchTarget','inspectLaunchQueue',...WORKER_RUNTIME_TYPES].includes(t))},
  ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','newAssignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId','gateId','newGateId','question','choice','note','threadId','answer','noticeId','meetingId','title','startPolicy','response','checkpoint','contributionId','body','disposition','resolution','outputId','ownerMemberId','outputKind'].map(k=>[k,stringField])),
  ...Object.fromEntries(['expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedAttemptGeneration','expectedDeliveryGeneration','expectedGateGeneration','expectedThreadGeneration','expectedMeetingGeneration','notificationGeneration'].map(k=>[k,versionField])),
  participantIds:{type:'array',minItems:1,maxItems:30,uniqueItems:true,items:stringField},
@@ -14,3 +16,4 @@ export const commandSchema={type:'object',additionalProperties:false,properties:
  members:{type:'array',items:{type:'object',additionalProperties:false,properties:{memberId:stringField,name:stringField,bossMemberId:{type:['string','null']},role:stringField,officialText:stringField,cli:{type:'string',enum:['claude','codex']}},required:['memberId','name','bossMemberId','role','officialText']}},
  settings:{type:'object',additionalProperties:false,properties:{autoClose:{type:'boolean'},idleMinutes:{type:'integer',minimum:0},reopen:{type:'string',enum:['resume','fresh']},maxOpen:{type:'integer',minimum:0},launch:{type:'string',enum:['demand','all']},batch:versionField,autoScratch:{type:'boolean'},assumptions:{type:'boolean'},scratchDir:stringField,pickupWindowMinutes:versionField,answerWindowMinutes:versionField,taskWindowMinutes:{type:['integer','null'],minimum:1},replayIntervalMs:versionField,exemptMemberIds:{type:'array',items:stringField}},required:['autoClose','idleMinutes','reopen','maxOpen','launch','batch','autoScratch','assumptions','scratchDir','pickupWindowMinutes','answerWindowMinutes','taskWindowMinutes','replayIntervalMs','exemptMemberIds']}
 },required:['type']}
+Object.assign(commandSchema,commandRequirements(commandSchema.properties.type.enum))

@@ -16,6 +16,7 @@ import {writeReservedLaunchProfile,readReservedLaunchProfile} from '../src/codex
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:2,launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:60000,exemptMemberIds:[]};
 async function fixture(t,engine){
  const closers=[];t.after(async()=>{for(const close of closers)await close();});const f=await runtimeFixture(t,engine);
+ if(f.options.postgres){const name='TEAM_LAUNCH_TEST_'+randomUUID().replaceAll('-','');process.env[name]=f.options.postgres.connectionString;t.after(()=>{delete process.env[name];});f.options.postgres={...f.options.postgres,connectionEnvironment:name};delete f.options.postgres.connectionString;}
  const actor=(id,terminal=`term-${id}`)=>({projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:terminal,incarnationId:`inc-${terminal}`});
  const state={actor:actor('head'),approved:true,target:null};
  const make=async overrides=>{const api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:SHARED_WRITER,authenticate:async()=>state.actor,confirmController:async()=>true,confirmManagement:async()=>true,confirmLaunchPlan:async()=>state.approved,verifyTarget:async()=>state.actor,verifyLaunchTarget:async()=>state.target,...overrides});closers.push(()=>api.close());return api;};
@@ -25,7 +26,7 @@ async function fixture(t,engine){
  const info=(await api.execute({operationId:'configuration',command:{type:'inspectConfiguration',teamId:'team'}})).result,version=Number(info.team.config_version);
  const authority={teamId:'team',expectedConfigVersion:version,expectedControllerGeneration:1};
  await api.manageTeam({operationId:'bind-head',command:{...authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:{projectRoot:f.root,conversationId:'head',terminalHandle:'term-head',contextId:'context'}});
- const request={operationId:'plan-review',command:{...authority,type:'approveLaunchPlan',planId:'plan',selections:['a','b'].map(id=>({memberId:id,launchId:`launch-${id}`,expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}))}};
+ const request={operationId:'plan-review',command:{...authority,type:'approveLaunchPlan',planId:'plan',workerToolPolicy:'team-worker-v1',selections:['a','b'].map(id=>({memberId:id,launchId:`launch-${id}`,expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}))}};
  const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
  return {...f,api,make,state,actor,authority,request,rows,launchProfileRoot};
 }
@@ -114,7 +115,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} reviewed Codex lau
   const adapter=await createCodexAdapter({observation:false,...f.options},{createIdentity:async()=>native,createApi:async options=>{const api=await createTeamApi({...options,...f.options});return {...api,launch:async request=>{const answer=await api.launch(request);if(lost){lost=false;throw Object.assign(Error('Lost committed reply'),{code:'STORE_COMMIT_UNKNOWN'});}return answer;}};}});
   const connection={canElicit:true,elicit:async review=>{reviews++;assert.match(review.message,/listed Codex workers/);assert.match(review.message,/Read role before admitted work/);return {action:accept?'accept':'decline',content:{confirm:true}};}};
   await assert.rejects(adapter.call('shared_team_launch',{...f.request,confirm:true},{threadId:'head'},connection),{code:'API_INPUT_INVALID'});
-  await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),{code:'API_APPROVAL_REQUIRED'});assert.equal((await f.rows('SELECT * FROM launch_plans')).length,0);
+  await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),error=>error.code==='API_APPROVAL_UNVERIFIED'&&error.message==='Approval not obtained; delivery unverified. No changes made.');assert.equal((await f.rows('SELECT * FROM launch_plans')).length,0);
   accept=true;await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),{code:'STORE_COMMIT_UNKNOWN'});
   const result=await adapter.call('shared_team_launch',{...f.request,reconcile:true},{threadId:'head'},connection);assert.equal(result.result.planId,'plan');assert.equal(reviews,2);assert.equal((await f.rows('SELECT * FROM launch_plans')).length,1);await adapter.close();
  });

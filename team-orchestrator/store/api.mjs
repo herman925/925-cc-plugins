@@ -4,6 +4,8 @@ import { openTeamStore } from './index.mjs';
 import { normalizeActor, normalizeApiCommand, controllerId, exact,launchTypes } from './src/api-domain.mjs';
 import { text } from './src/validation.mjs';
 import { refusal } from './src/errors.mjs';
+import {WORKER_RUNTIME_TYPES} from './src/worker-policy.mjs';
+import {normalizeRuntimeProof} from './src/worker-readiness.mjs';
 
 // This factory is a trusted integration dependency, never a model tool. The
 // authenticate/verifyTarget/confirmController functions belong to the native
@@ -48,6 +50,14 @@ export async function createTeamApi(options) {
     return {db,value};
   };
   return Object.freeze({
+    workerRuntime:async input=>{
+      exact(input,['operationId','type','step','receiptId']);
+      if(!WORKER_RUNTIME_TYPES.includes(input.type)||typeof options.verifyWorkerRuntime!=='function')throw refusal('API_WORKER_PROOF_REQUIRED','A private verified worker runtime is required.');
+      const command={type:input.type,...(input.type==='observeWorkerRuntime'?{step:input.step,receiptId:input.receiptId??''}:{})};
+      const {db,value}=await request({operationId:input.operationId,command},true);
+      value.runtimeProof=normalizeRuntimeProof(await options.verifyWorkerRuntime({actor:value.caller.actor}));
+      return db.execute(value);
+    },
     execute:async input=>{const {db,value}=await request(input); return db.execute(value);},
     reconcile:async input=>{const {db,value}=await request(input); return db.reconcile(value);},
     // Only the client UI calls this method; it is deliberately absent from the

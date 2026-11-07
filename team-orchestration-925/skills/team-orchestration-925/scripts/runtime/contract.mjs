@@ -1,9 +1,10 @@
 import {MEETING_DDL,meetingGuardsFor} from './src/meeting-contract.mjs';
 import {LAUNCH_DDL,launchPlanGuardsFor} from './src/launch-contract.mjs';
+import {WORKER_READINESS_DDL,workerReadinessGuardsFor} from './src/worker-readiness-contract.mjs';
 // Shared contract for issue #154, consumed by the Mod's typed adapter.
 // One shared table source; dialect fragments only implement equivalent constraints.
 export const FORMAT = 'team-orchestrator-shared';
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 export const WRITER_PROTOCOL_VERSION = 1;
 export const KNOWN_WRITER_FAMILIES = Object.freeze(['team-orchestrator', 'team-orchestrator-orca']);
 export const MACHINE_FORMAT = 'team-orchestrator-machine';
@@ -259,6 +260,7 @@ CREATE TABLE member_launches (
   CHECK(status<>'bound' OR conversation_id IS NOT NULL)
 );
 ${LAUNCH_DDL}
+${WORKER_READINESS_DDL}
 CREATE TABLE deadline_notices (
   notice_id TEXT COLLATE {{identity_collation}} NOT NULL PRIMARY KEY,
   team_id TEXT COLLATE {{identity_collation}} NOT NULL REFERENCES teams (team_id),
@@ -338,7 +340,7 @@ CREATE TABLE operations (
 );
 ${MEETING_DDL}
 {{meeting_guards}}
-INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 9);
+INSERT INTO store_metadata (singleton, format, schema_version) VALUES (1, 'team-orchestrator-shared', 10);
 INSERT INTO store_lease (singleton, holder_machine_id, holder_token, generation, expires_at_ms)
 VALUES (1, NULL, NULL, 0, 0);
 `;
@@ -505,7 +507,7 @@ export function ddlFor(engine) {
     .replaceAll('{{history_guards}}',historyGuardsFor(engine))
     .replaceAll('{{gate_guards}}',gateGuardsFor(engine))
     .replaceAll('{{runtime_guards}}',runtimeGuardsFor(engine))
-    .replaceAll('{{meeting_guards}}',meetingGuardsFor(engine)+ '\n'+launchPlanGuardsFor(engine))
+    .replaceAll('{{meeting_guards}}',meetingGuardsFor(engine)+ '\n'+launchPlanGuardsFor(engine)+'\n'+workerReadinessGuardsFor(engine))
     .replace('{{delivery_message_fk}}', engine === 'sqlite' ? `, ${deliveryMessageForeignKey}` : '')
     .replace('{{message_guards}}', messageGuardsFor(engine));
 }

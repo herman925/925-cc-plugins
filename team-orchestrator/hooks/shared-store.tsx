@@ -1,4 +1,5 @@
 import {commandSchema} from '../store/src/api-schema.mjs'
+import {SCHEMA_VERSION} from '../store/contract.mjs'
 import { atom, read, update } from 'claude-code'
 import { notReadOnly } from './guard'
 import {sharedCall,inspectSharedCaller} from './shared-bridge'
@@ -93,7 +94,7 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
    await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
-  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8].includes(result.error.details?.version)&&result.error.details?.supported===9) {
+  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8,9].includes(result.error.details?.version)&&result.error.details?.supported===SCHEMA_VERSION) {
    await update($,uiState,old=>({...old,upgrade:true,upgradeFrom:result.error.details.version}));await sharedFeedback($,'Update this workspace to continue. A backup will be kept before its data changes.','yellow')
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
@@ -109,7 +110,7 @@ export async function upgradeSharedWorkspace($:any,dependencies:SharedAccess) {
   if(!current.ok||JSON.stringify(proofOf(current))!==JSON.stringify(proofOf(proof)))throw Error('This conversation changed. Check access before updating.')
   const token=id(),config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
   if(!config||config==='/.claude')throw Error('Local configuration folder could not be verified.')
-  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:9,...proofOf(current)}))
+  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:SCHEMA_VERSION,...proofOf(current)}))
   const result=await sharedCall($,current,{operationId:`upgrade-${token}`},{...dependencies,mode:'upgradeStore',uiApprovalId:token})
   await update($,status,()=>JSON.stringify(result));updated=result.ok===true
   if(updated){await update($,uiState,old=>({...old,upgrade:false,checked:false,approved:null,member:false}));await sharedFeedback($,'Workspace updated. Existing approvals and history are kept.','green')}

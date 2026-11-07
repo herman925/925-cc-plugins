@@ -1,12 +1,13 @@
 // Native Codex has no verified composer-vs-peer prompt provenance. Only durable
 // member switches grant writes/subagents; prompt keywords never do.
-import {sourceEditAllowed} from './source-edits.mjs';
+import {sourceEditAllowed,sourceReadAllowed} from './source-edits.mjs';
 export function codexGuard(authority,{tool,input}) {
  const deny=permissionDecisionReason=>({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason}});
  const m=authority.member;
  const source=typeof input==='string'?input:JSON.stringify(input??{});
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
- if(sourceEditAllowed(authority,{tool,input}))return {};
+ if(sourceReadAllowed(authority,{tool,input}))return {};
+ if((!authority.workerSetup?.covered||authority.workerSetup.state==='ready')&&sourceEditAllowed(authority,{tool,input}))return {};
  if(/team-orchestrator\/(?:controller-actions|launch-settings)|machine\.sqlite|925-to\/(?:installations|launch-profiles)|mod-bridge\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
  const shell=['Bash','exec_command','shell_command','PowerShell'].includes(tool);
  const command=String(input?.command??input?.cmd??'').trim();
@@ -28,6 +29,12 @@ export function codexGuard(authority,{tool,input}) {
   return deny(`This conversation's native binding is stale, so only inspection and the reviewed recovery calls are allowed. Run shared_team_status, then recover through shared_team_manage bindMember with a native review. Every other effect stays blocked. ${authority.staleReason??''}`.trim());
  }
  if(!m)return {};
+ if(authority.workerSetup?.covered&&authority.workerSetup.state!=='ready'){
+  const bare=typeof tool==='string'?tool.replace(/^mcp__[a-z0-9_]+__/,''):tool;
+  if(readOnly||['Read','Grep','Glob'].includes(bare)||['shared_team_status','shared_inbox_read','shared_inbox_seen'].includes(bare))return {};
+  if(bare==='shared_team'&&(['inspectCaller','inspectController','inspectTeam'].includes(input?.command?.type)||(input?.command?.type==='askQuestion'&&input.command.assignmentId===null)))return {};
+  return deny(`Worker team tools are ${authority.workerSetup.state}. Complete status, official-role inspection and the exact inbox bootstrap confirmation before task work. No task or permission was granted by connecting.`);
+ }
  const agent=/^(?:Agent|spawn_agent|functions\.spawn_agent|mcp__.*__spawn_agent)$/.test(tool);
  if(agent&&!Number(m.allow_agent))return deny('This team member has no subagent permission. Ask the person to enable its standing setting.');
  const patch=['apply_patch','Write','Edit','NotebookEdit'].includes(tool);

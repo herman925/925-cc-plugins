@@ -8,13 +8,13 @@ export function normalizeRuntimeProof(input){
  if(!input||typeof input!=='object'||Object.keys(input).some(k=>!proofFields.includes(k)))fail('WORKER_PROOF_REQUIRED','A private native worker runtime proof is required.');
  return Object.freeze(Object.fromEntries(proofFields.map(k=>[k,text(input[k],`native runtime ${k}`)])));
 }
-export async function workerConsent(db,launchId){
+export async function workerConsent(db,launchId,planId){
  const [row]=await db.query(`SELECT c.*,r.member_generation,r.official_generation,r.notes_generation FROM worker_tool_consents c
  JOIN launch_plans p ON p.plan_id=c.plan_id JOIN launch_plan_members r ON r.plan_id=c.plan_id AND r.launch_id=c.launch_id
- WHERE c.launch_id=:id ORDER BY p.created_at_ms DESC LIMIT 1`,{id:launchId});return row;
+ WHERE c.launch_id=:id ${planId?'AND c.plan_id=:plan':''} ORDER BY p.created_at_ms DESC LIMIT 1`,{id:launchId,...(planId?{plan:planId}:{})});return row;
 }
-async function currentConsent(db,member,launch){
- const consent=await workerConsent(db,launch.launch_id),[role]=await db.query('SELECT * FROM role_documents WHERE member_id=:id',{id:member.member_id});
+async function currentConsent(db,member,launch,planId){
+ const consent=await workerConsent(db,launch.launch_id,planId),[role]=await db.query('SELECT * FROM role_documents WHERE member_id=:id',{id:member.member_id});
  if(!consent||consent.policy_id!==WORKER_TOOL_POLICY||consent.tools_json!==WORKER_TOOL_BUNDLE_JSON||Number(consent.member_generation)!==Number(member.generation)||Number(consent.official_generation)!==Number(role?.official_generation)||Number(consent.notes_generation)!==Number(role?.notes_generation))return null;
  return consent;
 }
@@ -26,17 +26,26 @@ export async function workerReadiness(db,memberId,now){
  // consent contract governs workers created by the native launch workflow.
  if(!launch)return {state:'external',covered:false,reason:'Connected session; native-launch readiness is not attested.'};
  if(launch.status!=='bound')return {state:launch.status==='queued'?'queued':'starting',covered:true};
- const consent=await currentConsent(db,member,launch);
+ const [r]=await db.query('SELECT * FROM worker_readiness WHERE member_id=:id',{id:memberId});
+ const consent=await currentConsent(db,member,launch,r?.plan_id);
  if(!consent)return {state:'setup_required',covered:true,reason:'Review this worker and its current team-tool access. A process-only launch approval is insufficient.'};
- const [binding]=await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:memberId}),[r]=await db.query('SELECT * FROM worker_readiness WHERE member_id=:id',{id:memberId});
+ const [binding]=await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:memberId});
  if(!binding||!r||r.plan_id!==consent.plan_id||Number(r.binding_generation)!==Number(binding.generation)||r.conversation_id!==binding.conversation_id||r.incarnation_id!==binding.incarnation_id)return {state:'checking',covered:true,reason:'Verify team tools in the current native worker execution.'};
  if(r.state==='disconnected')return {state:'disconnected',covered:true};
  if(now-Number(r.last_verified_at_ms)>90000)return {state:'checking',covered:true,reason:'Native readiness observation expired; wait for a fresh verified check.'};
- return {state:r.state,covered:true,policyId:consent.policy_id,bindingGeneration:Number(binding.generation),missing:['status','api','inbox','seen'].filter(k=>Number(r[k+'_checked'])!==1)};
+ const latest=await workerConsent(db,launch.launch_id),setupPending=latest?.plan_id!==consent.plan_id;
+ return {state:r.state,covered:true,setupPending,policyId:consent.policy_id,bindingGeneration:Number(binding.generation),missing:['status','api','inbox','seen'].filter(k=>Number(r[k+'_checked'])!==1)};
 }
 export async function requireWorkerReady(db,memberId,now){
  const readiness=await workerReadiness(db,memberId,now);
- if(readiness.covered&&readiness.state!=='ready')fail('WORKER_NOT_READY',`The worker is ${readiness.state}. Complete its reviewed team-tool setup and native readiness handshake before admitting work. No task or pickup deadline was created.`);
+ if(readiness.covered&&(readiness.state!=='ready'||readiness.setupPending))fail('WORKER_NOT_READY',`The worker is ${readiness.setupPending?'awaiting reviewed setup':readiness.state}. Complete its reviewed team-tool setup and native readiness handshake before admitting work. No task or pickup deadline was created.`);
+}
+export async function workerReadinessSnapshot(db,teamId){
+ const states=[];const now=await db.now();
+ for(const {member_id} of await db.query("SELECT member_id FROM members WHERE team_id=:id AND cli='codex' AND membership_state='active' ORDER BY member_id",{id:teamId})){
+  const state=await workerReadiness(db,member_id,now);if(state.covered)states.push({memberId:member_id,...state});
+ }
+ return states;
 }
 async function scope(db,actor,proof){
  if(actor.provider!=='codex'||proof.policyId!==WORKER_TOOL_POLICY)fail('WORKER_PROOF_REQUIRED','This is not a verified native Codex worker policy.');
@@ -44,7 +53,7 @@ async function scope(db,actor,proof){
  if(!binding||binding.context_id!==actor.contextId||binding.terminal_handle!==actor.terminalHandle||binding.incarnation_id!==actor.incarnationId||binding.execution_host_id!==actor.executionHostId)fail('STALE_BINDING','The worker runtime does not match its native member binding.');
  const [member]=await db.query('SELECT * FROM members WHERE member_id=:id',{id:binding.member_id}),[launch]=await db.query('SELECT * FROM member_launches WHERE launch_id=:id',{id:proof.launchId});
  if(!member||member.membership_state!=='active'||member.home_original_path!==actor.projectRoot||member.machine_id!==actor.machineId||!launch||launch.member_id!==member.member_id||launch.status!=='bound'||launch.conversation_id!==actor.conversationId)fail('WORKER_PROOF_REQUIRED','The runtime is not this member’s bound native launch.');
- const consent=await currentConsent(db,member,launch);if(!consent||consent.plan_id!==proof.planId)fail('WORKER_ACCESS_REQUIRED','The native worker profile does not match its current reviewed tool-access plan.');
+ const consent=await currentConsent(db,member,launch,proof.planId);if(!consent)fail('WORKER_ACCESS_REQUIRED','The native worker profile does not match its reviewed tool-access plan.');
  return {binding,member,launch,consent};
 }
 export async function applyWorkerRuntime(db,c,actor,proof,now){
@@ -66,5 +75,5 @@ export async function applyWorkerRuntime(db,c,actor,proof,now){
  const flags=Object.fromEntries(['status','api','inbox','seen'].map(k=>[k,Number(old[k+'_checked'])]));if(c.step!=='heartbeat')flags[c.step]=1;
  const state=Object.values(flags).every(v=>v===1)?'ready':'checking';
  await db.query('UPDATE worker_readiness SET state=:state,status_checked=:status,api_checked=:api,inbox_checked=:inbox,seen_checked=:seen,generation=:generation,last_verified_at_ms=:now WHERE member_id=:id AND runtime_epoch=:epoch',{state,...flags,generation:nextInteger(Number(old.generation),'worker readiness generation'),now,id:member.member_id,epoch:proof.runtimeEpoch});
- return {state,...(c.step==='inbox'&&state!=='ready'?{bootstrap:{kind:'worker_tool_readiness',instructions:'This is a tool-readiness receipt, not a task or mail acknowledgement. Confirm this exact readReceiptId with shared_inbox_seen and inspect your team/official role through shared_team. Wait for Ready before task work.'},message:null,readReceiptId:old.receipt_id}:{})};
+ return {state,missing:Object.keys(flags).filter(k=>flags[k]!==1),...(c.step==='inbox'&&state!=='ready'?{bootstrap:{kind:'worker_tool_readiness',instructions:'This is a tool-readiness receipt, not a task or mail acknowledgement. Confirm this exact readReceiptId with shared_inbox_seen and inspect your team/official role through shared_team. Wait for Ready before task work.'},message:null,readReceiptId:old.receipt_id}:{})};
 }

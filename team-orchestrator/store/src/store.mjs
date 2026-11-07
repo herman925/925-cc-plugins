@@ -10,6 +10,9 @@ import { openBackend, inspectSchema } from './bootstrap.mjs';
 import { text, integer, databaseInteger, nextInteger, snapshot } from './validation.mjs';
 import { StoreError, refusal, isRetryable, isConstraint } from './errors.mjs';
 import { normalizeApiCommand, normalizeActor, normalizeLaunchTarget, applyApiCommand, assertApiCaller, assertApiReceipt, apiResult } from './api-domain.mjs';
+import {WORKER_RUNTIME_TYPES} from './worker-policy.mjs';
+import {normalizeRuntimeProof} from './worker-readiness.mjs';
+import {postgresConnectionOptions} from './postgres-reference.mjs';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -54,7 +57,7 @@ function normalized(request) {
       return result;
     });
     identity = { kind, principalId, mutations };
-  } else if (kind === 'api') identity = { kind, principalId, command: normalizeApiCommand(request.command, {privileged: true}), target: request.target ? (request.command.type==='recordLaunchTarget'?normalizeLaunchTarget(request.target):normalizeActor(request.target)) : null };
+  } else if (kind === 'api') identity = { kind, principalId, command: normalizeApiCommand(request.command, {privileged: true}), target: request.target ? (request.command.type==='recordLaunchTarget'?normalizeLaunchTarget(request.target):normalizeActor(request.target)) : null,...(WORKER_RUNTIME_TYPES.includes(request.command?.type)?{runtimeProof:normalizeRuntimeProof(request.runtimeProof)}:{}) };
   else identity = { kind, principalId, ttlMs: integer(request.ttlMs ?? 30000, 'ttlMs', { min: 1 }) };
   return { operationId, kind, identity: snapshot(identity), fingerprint: digest(identity), caller: snapshot(request.caller) };
 }
@@ -71,6 +74,9 @@ function leaseRow(row) {
 // Internal factory has one test seam for real-engine fault injection. The public
 // entry point below always uses the real bootstrap and exposes no SQL/callback executor.
 export async function createRuntimeStore(options = {}, dependencies = {}) {
+  // Pin one resolved secret for scope review, initial connect and reconnect.
+  // Rotation takes effect on a new store connection, not halfway through one.
+  if(options.postgres!==undefined)options={...options,postgres:postgresConnectionOptions(options.postgres)};
   const machineId = text(options.machineId, 'machineId');
   const writer = normalizeWriter(options.writer, false);
   const holderToken = text(options.holderToken ?? randomUUID(), 'holderToken');
@@ -84,8 +90,8 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
     resource = { engine: 'sqlite', projectRoot: await realpath(options.projectRoot) };
   } else {
     let url;
-    try { url = new URL(options.postgres?.connectionString); }
-    catch { throw refusal('STORE_INPUT_INVALID', 'PostgreSQL connectionString must be an explicit postgres URL.'); }
+    try { url = new URL(postgresConnectionOptions(options.postgres).connectionString); }
+    catch(error) { if(error.code?.startsWith('STORE_'))throw error;throw refusal('STORE_INPUT_INVALID', 'PostgreSQL connectionString must be an explicit postgres URL.'); }
     resource = { engine: 'postgres', host: url.hostname, port: url.port || '5432', database: url.pathname.slice(1) };
   }
   const scope = snapshot(resource);
@@ -324,7 +330,7 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
       if (recorded) return recorded;
       if (configurationWrite) await checkWriter(db, writer);
       if (request.kind === 'api') {
-        const result = apiResult(await applyApiCommand(db, request.identity.command, normalizeActor(request.caller.actor), writer, await clock(), request.identity.target));
+        const result = apiResult(await applyApiCommand(db, request.identity.command, normalizeActor(request.caller.actor), writer, await clock(), request.identity.target,request.identity.runtimeProof));
         const receipt = await save(request, result, await clock());
         if (options.releaseAfterApi === true) await db.query('UPDATE store_lease SET holder_machine_id=NULL,holder_token=NULL,expires_at_ms=0 WHERE singleton=1 AND holder_machine_id=:machine AND holder_token=:token AND generation=:generation', {machine:machineId,token:holderToken,generation:lease.generation});
         return receipt;

@@ -3,10 +3,11 @@ import {exact,normalizeApiCommand} from './api-domain.mjs';
 import {managementReview} from './team-management.mjs';
 import {refusal} from './errors.mjs';
 import {text,snapshot} from './validation.mjs';
+import {HUMAN_REVIEW_FLOOR_MS,nativeReviewRefusal} from './native-review.mjs';
+export {HUMAN_REVIEW_FLOOR_MS} from './native-review.mjs';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 export const managementTypes=['approveController','createFreshTeam','editTeam','bindMember'];
 // A person cannot read a proposal and press confirm this fast.
-export const HUMAN_REVIEW_FLOOR_MS=1000;
 
 export async function codexManagement({args,actor,metadata,native,createApi,options,connection}){
  exact(args,['operationId','command','target','reconcile']);text(args.operationId,'operationId');if(args.reconcile!==undefined&&typeof args.reconcile!=='boolean')throw refusal('API_INPUT_INVALID','reconcile must be a boolean.');
@@ -37,11 +38,7 @@ export async function codexManagement({args,actor,metadata,native,createApi,opti
  // unverified, with an automatic decline as one possible cause. Never turn a
  // fast reply into a claim about what the person did or did not do.
  const declined=(kind,humanMessage)=>{
-  if(kind.confirmedRoundTrip)return refusal('API_APPROVAL_REQUIRED',humanMessage);
-  // Report only what is known. The fast reply says the form was probably not
-  // shown; it does not prove that, and it says nothing certain about whether the
-  // person consented or refused. Claim neither.
-  return refusal('API_APPROVAL_UNVERIFIED','Approval not obtained; delivery unverified. No changes made.',{elapsedMs:kind.elapsedMs,reviewFloorMs:HUMAN_REVIEW_FLOOR_MS,hint:'An automatic decline by the client is one possible cause. Check that MCP confirmation prompts are enabled for this project, then try again.'});
+  return nativeReviewRefusal(kind.elapsedMs,humanMessage);
  };
  // Acceptance is not gated on timing: an automated harness may legitimately
  // answer at once, and no auto-accept path has been observed. Only the decline

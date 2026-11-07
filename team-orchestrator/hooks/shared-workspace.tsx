@@ -171,9 +171,12 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
      <Select key="workspace-member-select" label="Member " value={chosenMember?.member_id} options={members.map((m:any)=>({value:m.member_id,label:workspaceLine(`${m.name}${me?.member_id===m.member_id?' · You':''} · ${bindings.some((b:any)=>b.member_id===m.member_id)?'Connected':'Not connected'}`)}))} onSelect={async(value:string)=>{if(!s.busy)await edit('memberChoice',value)}}/>
      {members.filter((m:any)=>m.member_id===chosenMember?.member_id).map((m:any)=>{
       const binding=bindings.find((b:any)=>b.member_id===m.member_id),boss=members.find((b:any)=>b.member_id===m.boss_member_id)
+      const setup=snapshot.workerReadiness?.find((r:any)=>r.memberId===m.member_id),ready=!setup?.covered||(setup.state==='ready'&&!setup.setupPending)
+      const setupLabel=setup?.setupPending?'Setup queued':({queued:'Queued',starting:'Starting',checking:'Checking tools',ready:'Ready',setup_required:'Setup needed',disconnected:'Disconnected'} as Record<string,string>)[setup?.state]||'Checking tools'
       return <Box key={m.member_id} flexDirection="column">
        <Text weight="bold">{m.name}{me?.member_id===m.member_id?' · You':''} · {m.role}</Text>
        <Text dimColor>{boss?`Reports to ${boss.name}`:'Team head'} · {binding?'Session linked':'Not connected'}</Text>
+       {setup?.covered&&<Box borderStyle="round" borderColor={ready?'green':'yellow'} paddingX={1}><Text color={ready?'green':'yellow'}>{setupLabel}</Text></Box>}
        <Box flexWrap="wrap" columnGap={1}>
         {!!controller&&m.cli!=='codex'&&!binding&&!pending&&button(`workspace-launch-${m.member_id}`,(snapshot.launches??[]).some((l:any)=>l.member_id===m.member_id)?'Check launch':'Launch session',()=>action($,async()=>{
          const current=await read($,state),member=current.snapshot.members.find((x:any)=>x.member_id===m.member_id)
@@ -191,7 +194,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
          const member=(await read($,state)).snapshot?.members.find((x:any)=>x.member_id===m.member_id)
          await set($,{sessions:(response.result?.sessions??[]).filter((candidate:any)=>(candidate.provider||'claude')===(member?.cli||'claude'))})
         }),!binding)}
-        {!pending&&binding&&direct.some((d:any)=>d.member_id===m.member_id)&&button(`workspace-assign-${m.member_id}`,'Assign task',async()=>set($,{memberChoice:m.member_id,page:'assign',assignmentMember:m.member_id,instructions:'',expectedResult:''}),true)}
+        {!pending&&binding&&ready&&direct.some((d:any)=>d.member_id===m.member_id)&&button(`workspace-assign-${m.member_id}`,'Assign task',async()=>set($,{memberChoice:m.member_id,page:'assign',assignmentMember:m.member_id,instructions:'',expectedResult:''}),true)}
+        {!pending&&setup?.covered&&!ready&&button(`workspace-check-tools-${m.member_id}`,'Check tools',()=>action($,async()=>load($,deps,s.teamId)))}
        </Box>
       </Box>
      })}

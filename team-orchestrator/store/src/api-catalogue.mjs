@@ -1,11 +1,12 @@
 import {meetingFields} from './meeting-schema.mjs';
 export const API_COMMAND_FIELDS = {
+  beginWorkerRuntime:[],observeWorkerRuntime:['step','receiptId'],closeWorkerRuntime:[],
   ...Object.fromEntries(Object.entries(meetingFields).map(([type,names])=>[type,['teamId','meetingId',...(type==='inspectMeeting'?[]:['expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration']),...(type==='createMeeting'||type==='inspectMeeting'?[]:['expectedMeetingGeneration']),...names]])),
   acknowledgeNotice:['teamId','noticeId','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   reserveLaunch:['teamId','memberId','launchId','expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration'],
   claimLaunch:['teamId','launchId','expectedConfigVersion','expectedControllerGeneration'],
   attachLaunch:['projectId','launchId','memberId'],
-  approveLaunchPlan:['teamId','planId','selections','expectedConfigVersion','expectedControllerGeneration'],
+  approveLaunchPlan:['teamId','planId','selections','workerToolPolicy','expectedConfigVersion','expectedControllerGeneration'],
   recordLaunchTarget:['teamId','launchId','expectedConfigVersion','expectedControllerGeneration'],
   inspectLaunchQueue:['teamId','expectedControllerGeneration'],
   askQuestion:['teamId','threadId','runId','assignmentId','recipientMemberId','question','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],

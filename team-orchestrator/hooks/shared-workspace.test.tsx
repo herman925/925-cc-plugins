@@ -56,6 +56,21 @@ function fixture(on:any,who='head'){
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
 
+test('native worker tool readiness is visible and blocks assignment until ready, including reviewed setup pending',options,async($:any,on:any)=>{
+ const f=fixture(on);f.model.workerReadiness=[{memberId:'worker',covered:true,state:'checking',missing:['api','inbox','seen']}]
+ const band=await open($)
+ expect(JSON.stringify(await band.drawn())).toContain('Checking tools')
+ expect(await band.find({key:'workspace-assign-worker'})).toBeUndefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='admitAssignment')).toBe(false)
+ f.model.workerReadiness[0]={memberId:'worker',covered:true,state:'ready'}
+ await band.press({key:'workspace-refresh'})
+ expect(await band.find({key:'workspace-assign-worker'})).toBeDefined()
+ f.model.workerReadiness[0].setupPending=true
+ await band.press({key:'workspace-refresh'})
+ expect(JSON.stringify(await band.drawn())).toContain('Setup queued')
+ expect(await band.find({key:'workspace-assign-worker'})).toBeUndefined()
+})
+
 test('D3: Mod controller recovery uses native session selection and one exact self-rebind without member authority',options,async($:any,on:any)=>{
  const f=fixture(on);f.control.stale=true
  const band=await open($)
