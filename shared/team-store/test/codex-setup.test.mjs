@@ -5,7 +5,7 @@ import {join,dirname,basename} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawn} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs';
+import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup,diagnoseSetup} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs';
 import {configurationEnvironment} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup-environment.mjs';
 test('temporary native configuration tools do not inherit the acting Orca conversation identity',()=>{
  const original={PATH:'tools',ORCA_TERMINAL_HANDLE:'acting-terminal',ORCA_AGENT_HOOK_TOKEN:'fixture-token',CODEX_THREAD_ID:'acting-thread',CODEX_SESSION_ID:'acting-session',TEAM_PROJECT_ROOT:'acting-project',CODEX_HOME:'acting-home'};
@@ -21,6 +21,15 @@ describe('Codex project setup with native config writer',{skip:!native},()=>{
   const options={projectRoot,stateRoot:join(root,'private-state'),codexExecutable:native};
   return {root,projectRoot,options,config:join(projectRoot,'.codex','config.toml'),hooks:join(projectRoot,'.codex','hooks.json'),receipt:join(projectRoot,'.codex','925-to-installation.json')};
  }
+ test('only a changed hook requires new native review; diagnostics never attest trust',async t=>{
+  const f=await fixture(t),initial=await prepareSetup(f.options);
+  assert.equal(initial.summary.hookConfigurationChanged,true);assert.equal(initial.summary.requiresNativeHookReview,true);
+  await applySetup(initial);
+  const update=await prepareSetup(f.options);
+  assert.equal(update.summary.hookConfigurationChanged,false);assert.equal(update.summary.requiresNativeHookReview,false);
+  assert.equal(update.summary.hookTrust,'not-attested');assert.equal(update.summary.hookTrustGranted,false);assert.equal(update.summary.requiresReconnect,true);
+  assert.equal((await diagnoseSetup(f.options)).hookTrust,'not-attested');
+ });
  test('preview writes no project configuration; install/update/remove preserve unrelated settings and hooks',async t=>{
   const f=await fixture(t);await writeFile(f.config,'# Keep this comment\nmodel = "gpt-6.1"\n[mcp_servers.other]\ncommand = "other-program"\n');
   const unrelated={hooks:{PreToolUse:[{matcher:'Bash',hooks:[{type:'command',command:'echo existing'}]}]}};await writeFile(f.hooks,JSON.stringify(unrelated));

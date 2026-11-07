@@ -1,0 +1,35 @@
+{
+  "label": "affected-before",
+  "observedAt": "2026-11-06T20:47:50.764Z",
+  "actor": {
+    "projectRoot": "C:\\Users\\Herman\\Downloads\\925-cc-plugins",
+    "machineId": "Herman-5090",
+    "provider": "codex",
+    "conversationId": "01a18fc1-a164-76b0-b83d-5421ca7db4a9",
+    "executionHostId": "local",
+    "contextId": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/Downloads/925-cc-plugins",
+    "terminalHandle": "term_f7a8b177-115a-4a10-8933-862f92e32d1e",
+    "incarnationId": "5c6fe5f0-775c-4557-81bd-781fc6b191a6"
+  },
+  "orcaRuntimeId": "520a2e28-f6d0-4372-acb1-2b54a98123dc",
+  "codexPid": 54636,
+  "mcpPid": 51980,
+  "runtimeDigest": "d3937032959dadf54f46bad5662d7c2845ea112b0488dfed9b8bd225fcf6a325",
+  "launch": {
+    "explicitMcpPolicy": false,
+    "explicitDangerFullAccess": false,
+    "resumeCommand": true
+  },
+  "effectiveTurn": {
+    "timestamp": "2026-11-06T20:25:49.767Z",
+    "turnId": "01a1b289-fb82-7312-a7b7-c23302c052a6",
+    "approvalPolicy": "never",
+    "approvalsReviewer": "user",
+    "sandboxPolicy": {
+      "type": "danger-full-access"
+    },
+    "permissionProfile": {
+      "type": "disabled"
+    }
+  }
+}

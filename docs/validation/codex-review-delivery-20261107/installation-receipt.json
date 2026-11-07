@@ -1,0 +1,16 @@
+{
+  "phase": "installed",
+  "project": "C:\\Users\\Herman\\Downloads\\925-cc-plugins",
+  "version": "0.1.10",
+  "runtimeDigest": "5c33808fdc730c3db8397326522f45e73613532221a6b892b94d7cf8bd2283d5",
+  "runtimePath": "C:\\Users\\Herman\\.codex\\925-to\\installations\\0907a40ec5d807466c9e2ac724d439b59e3b92563db1fef75f157bfa358bc1c8\\runtimes\\5c33808fdc730c3db8397326522f45e73613532221a6b892b94d7cf8bd2283d5\\codex-mcp.mjs",
+  "serverHash": "4dbec62505ccce63e82f7e592380befebbabe1608a97e17241e9a61ae15bc550",
+  "guardHash": "38f9eec9a75d47aab7a00f0d159ea3f9fdbf182cdd9bb7ebfca4a1cf91a96394",
+  "previewed": true,
+  "normalSetupApplied": true,
+  "hookConfigurationChanged": false,
+  "requiresNativeHookReview": false,
+  "globalConfigurationChanged": false,
+  "teamStoreChanged": false,
+  "requiresReconnect": true
+}

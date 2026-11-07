@@ -112,6 +112,15 @@ async function teamVersion(db, command) {
   return team;
 }
 
+async function retiredOrdinaryMembership(db,actor,member,hasLaunches=true){
+ if(member.membership_state!=='retired')return null;
+ // Retirement ends ordinary membership, not the native caller's own execution
+ // permissions. Keep the historical binding, but never release a reserved worker
+ // into unbound work merely because its roster entry was retired.
+ if(hasLaunches&&(await db.query('SELECT 1 FROM member_launches WHERE member_id=:member OR (conversation_id=:conversation AND machine_id=:machine)',{member:member.member_id,conversation:actor.conversationId,machine:actor.machineId})).length)fail('LAUNCH_ATTACH_REQUIRED','This retired launched worker remains reserved. An approved controller must resolve its launch; retirement does not authorize ordinary unbound work.');
+ return {membershipState:'retired',retiredMemberId:member.member_id};
+}
+
 export async function readGuardAuthority(db,actor,version){
  const [binding]=await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
  if(!binding){
@@ -120,6 +129,8 @@ export async function readGuardAuthority(db,actor,version){
   return {member:null,hasReports:false};
  }
  const row=await reference(db,'members','member_id',binding.member_id);
+ const retired=await retiredOrdinaryMembership(db,actor,row,version>=7);
+ if(retired)return {member:null,hasReports:false,...retired};
  const {member}=await memberActor(db,actor,{teamId:row.team_id},false);
  const reports=await db.query("SELECT 1 FROM members WHERE boss_member_id=:id AND membership_state='active' LIMIT 1",{id:member.member_id});
  return {member,hasReports:reports.length>0};
@@ -233,6 +244,8 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if(!binding&&await pendingNativeLaunch(db,actor))fail('LAUNCH_ATTACH_REQUIRED','This reserved terminal must finish its verified self-binding before any work.');
     if (!binding) return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,teams};
     const row = await reference(db,'members','member_id',binding.member_id);
+    const retired=await retiredOrdinaryMembership(db,actor,row);
+    if(retired)return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member:null,binding:null,hasReports:false,teams,...retired};
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
     const team = await reference(db,'teams','team_id',member.team_id);
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});

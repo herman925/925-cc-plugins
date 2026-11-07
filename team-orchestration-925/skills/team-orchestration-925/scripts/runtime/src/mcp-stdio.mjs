@@ -4,19 +4,30 @@ import {SHARED_WRITER} from './runtime-release.mjs';
 
 // Bidirectional MCP: client replies must be read while an active tools/call is
 // waiting for native elicitation. Tool calls remain serialized independently.
-export async function serveMcp(adapter,tools,{input=process.stdin,output=process.stdout,reviewTimeoutMs=180000}={}){
+export async function serveMcp(adapter,tools,{input=process.stdin,output=process.stdout,reviewTimeoutMs=null,reviewTrace=event=>process.stderr.write('[925-to-review] '+JSON.stringify(event)+'\n')}={}){
+ if(reviewTimeoutMs!==null&&(!Number.isSafeInteger(reviewTimeoutMs)||reviewTimeoutMs<1))throw Error('Invalid native review timeout.');
  input.setEncoding?.('utf8');
  let buffer='',initialized=false,capabilities={},closed=false,inputEnded=false,queue=Promise.resolve();
  const pending=new Map();
  const send=value=>{if(!closed)output.write(JSON.stringify(value)+'\n');};
  const error=(id,code,message)=>send({jsonrpc:'2.0',id,error:{code,message}});
  const reviewError=()=>refusal('API_REVIEW_UNAVAILABLE','Native confirmation is unavailable, cancelled or disconnected. No approval was granted.');
- const elicit=(params,requestId)=>{
+ // Human review has no server deadline by default. Codex pauses tool timeouts
+ // while its form is open; expiring only this side leaves a dead form onscreen.
+ // Traces contain protocol correlation only, never proposal or response content.
+ const trace=event=>{try{reviewTrace({at:new Date().toISOString(),...event});}catch{}};
+ const elicit=(params,requestId,tool)=>{
   if(closed||inputEnded||!capabilities.elicitation||capabilities.elicitation.form===false||Object.keys(capabilities.elicitation).length>0&&!Object.hasOwn(capabilities.elicitation,'form'))return Promise.reject(reviewError());
   return new Promise((resolve,reject)=>{
    const id=`925-to-review-${randomUUID()}`;
-   const timer=setTimeout(()=>{pending.delete(id);reject(reviewError());},reviewTimeoutMs);
-   pending.set(id,{requestId,resolve:value=>{clearTimeout(timer);resolve(value);},reject:()=>{clearTimeout(timer);reject(reviewError());}});
+   const started=Date.now();
+   const finish=(outcome,value)=>{clearTimeout(timer);pending.delete(id);trace({event:outcome,id,requestId,tool,elapsedMs:Date.now()-started});outcome==='response'?resolve(value):reject(reviewError());};
+   const timer=reviewTimeoutMs===null?null:setTimeout(()=>{
+    finish('timeout');
+    send({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:id,reason:'Native review deadline expired. No approval was granted.'}});
+   },reviewTimeoutMs);
+   pending.set(id,{requestId,resolve:value=>finish('response',value),reject:reason=>finish(reason??'response-error')});
+   trace({event:'request',id,requestId,tool,timeoutMs:reviewTimeoutMs});
    send({jsonrpc:'2.0',id,method:'elicitation/create',params});
   });
  };
@@ -34,7 +45,7 @@ export async function serveMcp(adapter,tools,{input=process.stdin,output=process
    else if(method==='tools/call'){
     if(!tools.some(t=>t.name===params.name)){error(id,-32602,'Unknown tool.');return;}
     try{
-     const value=await adapter.call(params.name,params.arguments??{},params._meta,{canElicit:Boolean(capabilities.elicitation&&(Object.keys(capabilities.elicitation).length===0||capabilities.elicitation.form)),elicit:p=>elicit(p,id)});
+     const value=await adapter.call(params.name,params.arguments??{},params._meta,{canElicit:Boolean(capabilities.elicitation&&(Object.keys(capabilities.elicitation).length===0||capabilities.elicitation.form)),elicit:p=>elicit(p,id,params.name)});
      result={content:[{type:'text',text:JSON.stringify(value)}]};
     }catch(e){
      const diagnostic=typeof e.code==='string'&&/^(API_|STORE_)[A-Z_]+$/.test(e.code)?` ${e.code}: ${String(e.message).slice(0,500)}`:'';
@@ -53,11 +64,14 @@ export async function serveMcp(adapter,tools,{input=process.stdin,output=process
     const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);if(!line.trim())continue;
     let r;try{r=JSON.parse(line);}catch{error(null,-32700,'Invalid JSON.');continue;}
     if(r?.jsonrpc!=='2.0'){error(r?.id??null,-32600,'Invalid JSON-RPC request.');continue;}
-    if(!r.method&&pending.has(r.id)){
-     const waiter=pending.get(r.id);pending.delete(r.id);r.error?waiter.reject():waiter.resolve(r.result);continue;
+    if(!r.method&&(Object.hasOwn(r,'result')||Object.hasOwn(r,'error'))){
+     const waiter=pending.get(r.id);
+     if(waiter)r.error?waiter.reject():waiter.resolve(r.result);
+     else trace({event:'unmatched-response',id:r.id});
+     continue;
     }
     if(r.method==='notifications/cancelled'){
-     for(const [id,waiter] of pending)if(waiter.requestId===r.params?.requestId){pending.delete(id);waiter.reject();}continue;
+     for(const [id,waiter] of pending)if(waiter.requestId===r.params?.requestId){waiter.reject('cancelled');send({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:id,reason:'Parent tool call cancelled.'}});}continue;
     }
     if(typeof r.method!=='string'){error(r.id??null,-32600,'Invalid JSON-RPC method.');continue;}
     if(!Object.hasOwn(r,'id'))continue;
@@ -71,8 +85,8 @@ export async function serveMcp(adapter,tools,{input=process.stdin,output=process
   // Flush already queued ordinary requests in finite input fixtures. Native
   // confirmation cannot succeed after EOF; pending prompts are explicitly refused.
   inputEnded=true;
-  if(pending.size){for(const p of pending.values())p.reject();pending.clear();}
+  if(pending.size){for(const p of pending.values())p.reject('disconnected');pending.clear();}
   await queue;
   if(buffer.trim())throw Error('Truncated MCP frame.');
- }finally{closed=true;for(const p of pending.values())p.reject();pending.clear();}
+ }finally{closed=true;for(const p of pending.values())p.reject('disconnected');pending.clear();}
 }

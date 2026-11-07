@@ -1,0 +1,20 @@
+[
+  {
+    "file": "elicitation.rs",
+    "sha256": "e6672c5b9e31d515e4d415b24e8fa8532a4d739cc3569b32c1b7970eff7729c5",
+    "tag": "rust-v0.166.0",
+    "repository": "https://github.com/openai/codex"
+  },
+  {
+    "file": "elicitation_client_service.rs",
+    "sha256": "133d4447020af4db640626733e1c985ae5e40caa31e09a88d2ec34e7096f9ca4",
+    "tag": "rust-v0.166.0",
+    "repository": "https://github.com/openai/codex"
+  },
+  {
+    "file": "mcp_server_elicitation.rs",
+    "sha256": "aae45a3397a393efe69c94cfbf48cdd00fc35820e10ea72faccb36a0e6c0e6d9",
+    "tag": "rust-v0.166.0",
+    "repository": "https://github.com/openai/codex"
+  }
+]

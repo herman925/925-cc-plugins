@@ -1,0 +1,129 @@
+{
+  "nativePid": 48768,
+  "mcpPid": 68580,
+  "terminal": "term_f6e5dbab-a874-46c0-8878-79e1410f6fe7",
+  "reviewId": "925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76",
+  "automatedFormInputs": 0,
+  "observations": [
+    {
+      "observedAt": "2026-11-07T10:21:33.897758+00:00",
+      "elapsedMs": 93817,
+      "responseSeen": false,
+      "draftMenuInTerminalBuffer": true,
+      "tail": [
+        "\u203a One more read-only transport timing check. Call shared_team_interview with step action once. Do not answer, cancel, or submit any form yourself. Leave the draft",
+        "  menu open for the person. We need at least 190 seconds of real wall-clock time after the server emits elicitation/create before the person submits a draft choice.",
+        "  Do not edit files, change teams, launch workers, or call any follow-up action from the draft result. Report only returned draft data and stop.",
+        "\u2022 I\u2019ll open the draft menu once and leave it for you to submit after the 190-second interval.",
+        "\u2022 Calling team_orchestrator.shared_team_interview",
+        "    + Show details",
+        "  Field 1/1 (1 required unanswered)",
+        "  925 Team Orchestrator \u2014 choose what to do.",
+        "  Action",
+        "  \u203a 1. create-team",
+        "    2. edit-team",
+        "    3. connect-session",
+        "    4. launch-workers",
+        "    5. status",
+        "    6. meeting",
+        "    7. diagnose",
+        "  enter to submit | esc to cancel"
+      ]
+    },
+    {
+      "observedAt": "2026-11-07T10:23:30.479145+00:00",
+      "elapsedMs": 210399,
+      "responseSeen": false,
+      "draftMenuInTerminalBuffer": true,
+      "tail": [
+        "\u203a One more read-only transport timing check. Call shared_team_interview with step action once. Do not answer, cancel, or submit any form yourself. Leave the draft",
+        "  menu open for the person. We need at least 190 seconds of real wall-clock time after the server emits elicitation/create before the person submits a draft choice.",
+        "  Do not edit files, change teams, launch workers, or call any follow-up action from the draft result. Report only returned draft data and stop.",
+        "\u2022 I\u2019ll open the draft menu once and leave it for you to submit after the 190-second interval.",
+        "\u2022 Calling team_orchestrator.shared_team_interview",
+        "    + Show details",
+        "  Field 1/1 (1 required unanswered)",
+        "  925 Team Orchestrator \u2014 choose what to do.",
+        "  Action",
+        "  \u203a 1. create-team",
+        "    2. edit-team",
+        "    3. connect-session",
+        "    4. launch-workers",
+        "    5. status",
+        "    6. meeting",
+        "    7. diagnose",
+        "  enter to submit | esc to cancel"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "nativeLogId": 3803795,
+      "at": "2026-11-07T10:20:00.080Z",
+      "event": "request",
+      "id": "925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76",
+      "requestId": 7,
+      "tool": "shared_team_interview",
+      "timeoutMs": null
+    },
+    {
+      "nativeLogId": 3807802,
+      "at": "2026-11-07T13:09:49.398Z",
+      "event": "response",
+      "id": "925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76",
+      "requestId": 7,
+      "tool": "shared_team_interview",
+      "elapsedMs": 10189318
+    }
+  ],
+  "nativeInput": [
+    {
+      "nativeLogId": 3807800,
+      "utc": "2026-11-07T13:09:49+00:00",
+      "nanoseconds": 398361100,
+      "target": "codex_core::session::handlers",
+      "body": "session_loop{thread_id=01a1b2d3-22a7-7f83-9592-a5bec21ebf71}: Submission thread_id=01a1b2d3-22a7-7f83-9592-a5bec21ebf71 submission_id=01a1b621-2ad6-7cc1-9797-6a86e887b1f2 operation=\"resolve_elicitation\" parent_turn_id=None root_turn_id=None op=ResolveElicitation { request_id: String(\"codex-mcp-elicitation-1\"), decision: Accept }"
+    }
+  ],
+  "nativeToolCompletions": [
+    {
+      "timestamp": "2026-11-07T13:09:50.719Z",
+      "ordinal": 100,
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "thread_id": "01a1b2d3-22a7-7f83-9592-a5bec21ebf71",
+        "turn_id": "01a1b585-8ee6-74a2-b408-6a2ca7b651da",
+        "item": {
+          "type": "McpToolCall",
+          "id": "exec-dbb2827b-54dd-4532-bebd-233fbce7bf0a",
+          "server": "team_orchestrator",
+          "tool": "shared_team_interview",
+          "arguments": {
+            "step": "action"
+          },
+          "status": "completed",
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"draftOnly\":true,\"response\":{\"action\":\"accept\",\"content\":{\"action\":\"status\"}}}"
+              }
+            ]
+          },
+          "duration": {
+            "secs": 10192,
+            "nanos": 2854800
+          }
+        },
+        "started_at_ms": 1794046798716,
+        "completed_at_ms": 1794056990719
+      }
+    }
+  ],
+  "completionObservedAt": "2026-11-07T14:43:51.976735+00:00",
+  "limits": [
+    "Terminal buffer and human interaction establish draft form delivery; metadata traces alone do not attest foreground visibility.",
+    "This draft-only test grants no management authority and is not a rebind receipt."
+  ]
+}

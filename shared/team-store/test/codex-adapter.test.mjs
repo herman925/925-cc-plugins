@@ -44,6 +44,41 @@ test('unavailable native authority returns a valid blocking hook decision',async
  const adapter=await createCodexAdapter({},{createIdentity:async()=>({verifyCaller:async()=>({})}),inspectGuard:async()=>{throw Error('offline');}});
  assert.equal((await adapter.call('team_guard',{tool:'Bash',input:{}},{})).hookSpecificOutput.permissionDecision,'deny');
 });
+test('a stale binding still reaches native recovery review and still denies every other effect',async()=>{
+ // The observed lockout: a resumed session's incarnation changes, the guard
+ // throws STALE_BINDING, and every tool including status and rebound is denied.
+ // Allowing only read-only inspection would leave the loop closed, because the
+ // recovery call itself is what rebinds the conversation.
+ const stale=Object.assign(Error('The current native runtime does not match the active member binding.'),{code:'API_STALE_BINDING'});
+ const adapter=await createCodexAdapter({},{createIdentity:async()=>({verifyCaller:async()=>({})}),inspectGuard:async()=>{throw stale;}});
+ const guard=event=>adapter.call('team_guard',event,{}).then(r=>r.hookSpecificOutput?r.hookSpecificOutput.permissionDecision:'allow');
+ for(const event of [
+  {tool:'exec_command',input:{cmd:'git status --short'}},
+  {tool:'Bash',input:{command:'rg -n bindMember README.md'}},
+  {tool:'shared_team_status',input:{}},
+  {tool:'shared_team_sessions',input:{}},
+  {tool:'shared_team',input:{operationId:'i',command:{type:'inspectCaller'}}},
+  {tool:'shared_team',input:{operationId:'i',command:{type:'inspectController'}}},
+  {tool:'shared_team_manage',input:{operationId:'r',command:{type:'approveController'}}},
+  {tool:'shared_team_manage',input:{operationId:'r',command:{type:'bindMember',teamId:'t',memberId:'m'}}},
+  {tool:'mcp__team_orchestrator__shared_team_manage',input:{operationId:'r',command:{type:'bindMember'}}},
+ ]) assert.equal(await guard(event),'allow','inspection and the reviewed recovery calls must survive a stale binding');
+ for(const event of [
+  {tool:'apply_patch',input:{command:'*** Add File: x\n+hello'}},
+  {tool:'Bash',input:{command:'Get-Content x | Out-File y'}},
+  {tool:'exec_command',input:{cmd:'node mod-bridge.mjs'}},
+  {tool:'exec_command',input:{cmd:'Get-Content .codex/config.toml'}},
+  {tool:'Agent',input:{prompt:'do work'}},
+  {tool:'write_stdin',input:{chars:'ls\n'}},
+  {tool:'shared_team_manage',input:{operationId:'e',command:{type:'editTeam',teamId:'t'}}},
+  {tool:'shared_team_manage',input:{operationId:'c',command:{type:'createFreshTeam'}}},
+  {tool:'shared_team',input:{operationId:'x',command:{type:'createFreshTeam'}}},
+  {tool:'shared_team',input:{operationId:'x',command:{type:'readInbox'}}},
+ ]) assert.equal(await guard(event),'deny','a stale binding must never permit an effect');
+ const decision=await adapter.call('team_guard',{tool:'exec_command',input:{cmd:'touch x'}},{});
+ assert.match(decision.hookSpecificOutput.permissionDecisionReason,/native binding is stale/i);
+ assert.match(decision.hookSpecificOutput.permissionDecisionReason,/bindMember/);
+});
 test('inbox reads finish before the adapter closes their journal or API connection',async()=>{
  let finished=false,journalClosed=false,apiClosed=false;
  const adapter=await createCodexAdapter({},{createIdentity:async()=>({verifyCaller:async()=>({})}),createApi:async()=>({close:async()=>{assert.equal(finished,true);apiClosed=true;}}),createJournal:async()=>({poll:async()=>{await new Promise(resolve=>setTimeout(resolve,5));assert.equal(journalClosed,false);finished=true;return {message:'recovered'};},close:async()=>{assert.equal(finished,true);journalClosed=true;}})});

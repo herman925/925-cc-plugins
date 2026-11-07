@@ -20,6 +20,10 @@ import {createCodexObserver} from './src/codex-observer.mjs';
 import {codexLaunchPlan} from './src/codex-launch.mjs';
 import {codexUpgrade} from './src/codex-upgrade.mjs';
 import {readReservedLaunchProfile} from './src/codex-launch-profile.mjs';
+// A person cannot read a proposal and press confirm this fast. Below this floor a
+// reply is reported as a client answer, never as a human decision.
+const HUMAN_REVIEW_FLOOR_MS=1000;
+const staleBindingGuard=(error,event)=>codexGuard({member:null,hasReports:false,staleBinding:true,staleReason:String(error.message).slice(0,300)},event);
 const editChanges={type:'array',minItems:1,maxItems:30,items:{oneOf:[
  {type:'object',additionalProperties:false,properties:{type:{const:'updateTeam'},name:{type:'string'},functionText:{type:'string'}},required:['type','name','functionText']},
  {type:'object',additionalProperties:false,properties:{type:{const:'saveSettings'},settings:commandSchema.properties.settings},required:['type','settings']},
@@ -45,10 +49,24 @@ export async function createCodexAdapter(options={},dependencies={}) {
  options={...options,writer:options.writer??SHARED_WRITER};
  const native=await (dependencies.createIdentity??createCodexNativeIdentity)(options);
  const observation=options.observation===false?null:(dependencies.createObserver??createCodexObserver)({native,writer:options.writer,postgres:options.postgres,createApi:dependencies.createApi??createTeamApi});
+ // Delivery evidence for this adapter's single MCP session. A client can
+ // advertise elicitation and still answer the form itself without ever showing
+ // it. Timing alone cannot attest delivery, and a rejected wait is not a reply.
+ const deliveries={attempts:0,humanPaced:0,fastReplies:0,failedWaits:0,lastElapsedMs:null,lastOutcome:null};
+ // humanPaced counts round trips slow enough that a person could have answered,
+ // whether they accepted or declined. fastReplies counts the ones too fast for
+ // that. A fast reply is a signal about the client, not proof about the person,
+ // so the classification names the observation and claims nothing further.
+ const reviewProbe=()=>({...deliveries,delivery:'unverified',classification:deliveries.attempts===0?'not-observed':deliveries.humanPaced>0?'human-paced-reply-delivery-unverified':deliveries.fastReplies>0?'replies-too-fast-for-a-person-delivery-unverified':'no-reply'});
+ const recordReview=(elapsedMs,outcome)=>{deliveries.attempts++;deliveries.lastElapsedMs=elapsedMs;deliveries.lastOutcome=outcome;if(outcome==='failed'){deliveries.failedWaits++;return;}if(elapsedMs<HUMAN_REVIEW_FLOOR_MS)deliveries.fastReplies++;else deliveries.humanPaced++;};
  return Object.freeze({
   close:async()=>observation?.close(),
-  async call(name,args,metadata,connection){
+  async call(name,args,metadata,baseConnection){
+   // Measure every review round trip in one place, so management, launch and
+   // upgrade reviews cannot disagree about whether a form was really shown.
+   const connection=baseConnection&&typeof baseConnection.elicit==='function'?{...baseConnection,elicit:async params=>{const started=Date.now();try{const reply=await baseConnection.elicit(params);recordReview(Date.now()-started,'response');return reply;}catch(error){recordReview(Date.now()-started,'failed');throw error;}}}:baseConnection;
    const actor=await native.verifyCaller(metadata);
+   let stalePreflight;
    if(options.reservedLaunch){
     const fixed=options.reservedLaunch;
     if(actor.projectRoot!==fixed.projectRoot||actor.machineId!==fixed.machineId||actor.contextId!==fixed.contextId)throw refusal('API_LAUNCH_SCOPE','The reserved worker native home changed.');
@@ -62,8 +80,19 @@ export async function createCodexAdapter(options={},dependencies={}) {
      if(info.projectId!==fixed.projectId||info.member?.member_id!==fixed.memberId)throw refusal('API_LAUNCH_SCOPE','This reserved worker is not bound to its expected project/member.');
     }finally{await attach.close();}
    }else if(native.launchWorkers){
-    let probe;try{probe=await (dependencies.inspectGuard??inspectGuardCaller)({actor,postgres:options.postgres,allowLaunchProbe:true});}catch(error){if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))throw error;}
+    let probe;try{probe=await (dependencies.inspectGuard??inspectGuardCaller)({actor,postgres:options.postgres,allowLaunchProbe:true});}catch(error){
+     if(error.code==='API_STALE_BINDING')stalePreflight=error;
+     else if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))throw error;
+    }
     if(probe?.pendingLaunchId){const attach=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});try{await attach.launch({operationId:`codex-attach-${actor.conversationId}-${actor.incarnationId}`,command:{type:'attachLaunch'}});}finally{await attach.close();}}
+   }
+   if(stalePreflight){
+    // The launch probe runs before tool dispatch in real Orca sessions. Apply
+    // the same restricted recovery policy here, including to direct MCP calls;
+    // a stale binding never authorizes a launch or an unrelated effect.
+    if(name==='team_guard'){exact(args,['tool','input']);return staleBindingGuard(stalePreflight,args);}
+    const decision=staleBindingGuard(stalePreflight,{tool:name,input:args});
+    if(decision.hookSpecificOutput?.permissionDecision==='deny')throw stalePreflight;
    }
    observation?.activate(metadata,actor);
    if(name==='shared_team_upgrade')return codexUpgrade({args,actor,metadata,native,options,connection});
@@ -73,7 +102,15 @@ export async function createCodexAdapter(options={},dependencies={}) {
    if(name==='shared_team_sessions'){exact(args,[]);return native.listTargets(metadata);}
    if(name==='team_guard'){
     try{exact(args,['tool','input']);return codexGuard(await (dependencies.inspectGuard??inspectGuardCaller)({actor,...(options.postgres?{postgres:options.postgres}:{})}),args);}
-    catch(error){if(error.code==='STORE_NOT_FOUND')return {};return {hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Current team authority could not be verified. Refresh the native binding before continuing.'}};}
+    catch(error){
+     if(['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))return codexGuard({member:null,hasReports:false},args);
+     // A stale native binding is a recoverable state, not a reason to disable
+     // every tool. Hand the guard that fact so read-only inspection stays open
+     // and the reviewed recovery call remains reachable. All effects and writes
+     // stay denied; nothing here grants authority.
+     if(error.code==='API_STALE_BINDING')return staleBindingGuard(error,args);
+     return {hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Current team authority could not be verified. Refresh the native binding before continuing.'}};
+    }
    }
    const api=await (dependencies.createApi??createTeamApi)({projectRoot:actor.projectRoot,machineId:actor.machineId,writer:options.writer,postgres:options.postgres,authenticate:()=>native.verifyCaller(metadata)});
    let journal;
@@ -82,11 +119,13 @@ export async function createCodexAdapter(options={},dependencies={}) {
      exact(args,[]);let info;
      try{info=(await api.execute({operationId:`status-${crypto.randomUUID()}`,command:{type:'inspectCaller'}})).result;}
      catch(e){
-      if(e.code==='API_STALE_BINDING')info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect'};
+      if(e.code==='API_STALE_BINDING')info={...(await api.execute({operationId:`controller-status-${crypto.randomUUID()}`,command:{type:'inspectController'}})).result,bindingState:'stale-needs-explicit-reconnect',recovery:'shared_team_manage bindMember with a native review'};
       else if(e.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8].includes(e.details?.version)&&e.details?.supported===9)info={storeExists:true,upgradeRequired:true,storeVersion:e.details.version,controllerApprovalUnknown:true,member:null,teams:[]};
       else{if(!['STORE_NOT_FOUND','STORE_EMPTY'].includes(e.code))throw e;info={storeExists:false,controllerGeneration:null,member:null,teams:[]};}
      }
-     return {host:'orca',provider:'codex',actor,info,observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:native.launchWorkers===true,launchApproval:'specific-native-reviewed-plan',workspaceUpgrade:'native-review-with-backup',standalone:false,hermes:false}};
+     // Capability is not proof of delivery. A client can advertise elicitation and
+     // still answer the form itself; only a confirmed round trip is reported.
+     return {host:'orca',provider:'codex',actor,info,observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,elicitationProbe:reviewProbe(),guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:native.launchWorkers===true,launchApproval:'specific-native-reviewed-plan',workspaceUpgrade:'native-review-with-backup',standalone:false,hermes:false}};
     }
     if(name==='shared_team'){
      exact(args,['operationId','command','reconcile']);

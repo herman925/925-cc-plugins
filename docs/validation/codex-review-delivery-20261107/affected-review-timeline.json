@@ -1,0 +1,104 @@
+{
+  "conversationId": "01a18fc1-a164-76b0-b83d-5421ca7db4a9",
+  "terminal": "term_5973b514-516d-4689-a14d-c91aea019482",
+  "nativePid": 59312,
+  "runtimeDigest": "691b3a624fb4b841e24b0f1fb5db98fd3453aefbc5648deed1d999e468c7b18a",
+  "nativeInput": [
+    {
+      "logId": 3780090,
+      "utc": "2026-11-06T21:14:43+00:00",
+      "nanoseconds": 307123200,
+      "target": "codex_core::session::handlers",
+      "body": "session_loop{thread_id=01a18fc1-a164-76b0-b83d-5421ca7db4a9}: Submission thread_id=01a18fc1-a164-76b0-b83d-5421ca7db4a9 submission_id=01a1b2b6-beeb-70f2-b6ac-f51a33db5f55 operation=\"resolve_elicitation\" parent_turn_id=None root_turn_id=None op=ResolveElicitation { request_id: String(\"codex-mcp-elicitation-0\"), decision: Accept }"
+    }
+  ],
+  "toolCompletions": [
+    {
+      "timestamp": "2026-11-06T20:53:30.192Z",
+      "item": {
+        "type": "McpToolCall",
+        "id": "exec-a5ba90d2-de37-4707-950b-fab99b79b8dd",
+        "server": "team_orchestrator",
+        "tool": "shared_team_manage",
+        "arguments": {
+          "operationId": "recovery-rebind-01a18fc1-aefcab07-20261107",
+          "command": {
+            "type": "bindMember",
+            "teamId": "native-acceptance-20261105-01a18fc1",
+            "memberId": "native-acceptance-head-20261105",
+            "expectedMemberGeneration": 2,
+            "expectedBindingGeneration": 1,
+            "expectedControllerGeneration": 1,
+            "expectedConfigVersion": 8
+          },
+          "target": {
+            "projectRoot": "C:\\Users\\Herman\\Downloads\\925-cc-plugins",
+            "conversationId": "01a18fc1-a164-76b0-b83d-5421ca7db4a9",
+            "terminalHandle": "term_5973b514-516d-4689-a14d-c91aea019482",
+            "contextId": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/Downloads/925-cc-plugins"
+          }
+        },
+        "status": "failed",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"ok\":false,\"error\":{\"code\":\"API_REVIEW_UNAVAILABLE\",\"message\":\"Native confirmation is unavailable, cancelled or disconnected. No approval was granted.\"}}"
+            }
+          ],
+          "isError": true
+        },
+        "duration": {
+          "secs": 188,
+          "nanos": 416590400
+        }
+      }
+    },
+    {
+      "timestamp": "2026-11-06T21:14:58.023Z",
+      "item": {
+        "type": "McpToolCall",
+        "id": "exec-2aeaa853-49ff-425a-be57-4be6b8c20675",
+        "server": "team_orchestrator",
+        "tool": "shared_team_manage",
+        "arguments": {
+          "operationId": "recovery-rebind-01a18fc1-aefcab07-20261107",
+          "command": {
+            "type": "bindMember",
+            "teamId": "native-acceptance-20261105-01a18fc1",
+            "memberId": "native-acceptance-head-20261105",
+            "expectedMemberGeneration": 2,
+            "expectedBindingGeneration": 1,
+            "expectedControllerGeneration": 1,
+            "expectedConfigVersion": 8
+          },
+          "target": {
+            "projectRoot": "C:\\Users\\Herman\\Downloads\\925-cc-plugins",
+            "conversationId": "01a18fc1-a164-76b0-b83d-5421ca7db4a9",
+            "terminalHandle": "term_5973b514-516d-4689-a14d-c91aea019482",
+            "contextId": "888b3004-22d0-4f6a-a9d3-96c758be99a7::C:/Users/Herman/Downloads/925-cc-plugins"
+          },
+          "reconcile": true
+        },
+        "status": "completed",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"status\":\"unknown\",\"operationId\":\"recovery-rebind-01a18fc1-aefcab07-20261107\"}"
+            }
+          ]
+        },
+        "duration": {
+          "secs": 4,
+          "nanos": 196332900
+        }
+      }
+    }
+  ],
+  "limits": [
+    "Historical MCP wire request ID and response content were not logged.",
+    "ResolveElicitation Accept does not prove confirm:true or successful mutation.",
+    "Terminal buffer is not proof that a user saw the foreground window."
+  ]
+}
