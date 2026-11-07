@@ -13,8 +13,8 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   const apis=[]; t.after(async()=>{for(const api of apis) await api.close();});
   const f=await runtimeFixture(t,engine);
   const actor=name=>({projectRoot:f.root,machineId:'machine',provider:'claude',conversationId:name,executionHostId:'local',contextId:'context',terminalHandle:`term-${name}`,incarnationId:`inc-${name}`});
-  const native={current:actor('controller')};
-  const api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:{client:'team-orchestrator',version:'0.5.42'},authenticate:async()=>native.current,verifyTarget:async target=>actor(target),confirmController:async({approval})=>approval==='specific-ui-action'}); apis.push(api);
+  const native={current:actor('controller'),targets:new Map()};
+  const api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:{client:'team-orchestrator',version:'0.5.42'},authenticate:async()=>native.current,verifyTarget:async target=>native.targets.get(target)??actor(target),confirmController:async({approval})=>approval==='specific-ui-action'}); apis.push(api);
   let seq=0;
   const call=(command,extra={})=>api.execute({operationId:`op-${++seq}`,command,...extra});
   const approve=()=>api.approveController({operationId:`approval-${++seq}`,approval:'specific-ui-action'});
@@ -29,6 +29,23 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   const ready=async()=>{await approve();await call(fresh);await bind('head');await bind('worker');await bind('other');native.current=actor('head');await call(admit);};
   return {...f,api,native,actor,call,approve,fresh,bind,base,admit,verify,report,accept,rows,ready};
  }
+ test('Mod controller inspection remains available while member authority is stale until exact verified rebind',async t=>{
+  const f=await setup(t);await f.approve();await f.call(f.fresh);await f.bind('head');await f.bind('worker');
+  f.native.current=f.actor('head');await f.approve();
+  f.native.current={...f.actor('head'),incarnationId:'resumed-head'};f.native.targets.set('head',f.native.current);
+  await assert.rejects(f.call({type:'inspectCaller'}),code('API_STALE_BINDING'));
+  const control=(await f.call({type:'inspectController'})).result;
+  assert.equal(control.controllerGeneration,1);assert.equal(control.teams[0].team_id,'team');
+  const configuration=(await f.call({type:'inspectConfiguration',teamId:'team'})).result;
+  assert.equal(configuration.bindings.find(b=>b.member_id==='head').generation,1);
+  await assert.rejects(f.call(f.admit),code('API_STALE_BINDING'));
+  assert.equal((await f.rows('SELECT * FROM assignments')).length,0);
+  const request={operationId:'mod-exact-self-rebind',command:{type:'bindMember',teamId:'team',memberId:'head',expectedConfigVersion:7,expectedMemberGeneration:1,expectedBindingGeneration:1,expectedControllerGeneration:1},target:'head'};
+  const receipt=await f.api.execute(request);assert.equal(receipt.result.bindingGeneration,2);
+  assert.deepEqual(await f.api.reconcile(request),receipt);
+  const caller=(await f.call({type:'inspectCaller'})).result;
+  assert.equal(caller.member.member_id,'head');assert.equal(caller.binding.generation,2);assert.equal(caller.controllerGeneration,1);
+ });
  test('all gates must be answered before the same valid assignment resumes',async t=>{
   const f=await setup(t);await f.ready();
   const gate={...f.base,type:'openGate',assignmentId:'assignment',expectedAttemptGeneration:1,question:'Which route?',options:['A','B']};

@@ -1,6 +1,6 @@
 import {sharedMeetingsView} from './shared-meetings'
 import {atom,read,update} from 'claude-code'
-import {sharedCall,sharedReviewedEdit} from './shared-bridge'
+import {sharedCall,sharedReviewedEdit,inspectSharedCaller} from './shared-bridge'
 import {beginTeamEdit,teamEditCommand,sharedTeamEditView} from './shared-team-edit'
 import type {SharedProof} from './shared-bridge'
 import {queueSharedDeliveries} from './shared-transport'
@@ -42,7 +42,7 @@ async function request($:any,deps:Dependencies,command:any,extra:any={}){
  return sharedCall($,await proofNow(deps),{operationId:`workspace-read-${uid()}`,command,...extra},deps)
 }
 async function load($:any,deps:Dependencies,preferred?:string){
- const caller=await request($,deps,{type:'inspectCaller'})
+ const caller=await inspectSharedCaller($,await proofNow(deps),deps)
  if(!caller.ok)throw Error(failure(caller))
  const info=valueOf(caller),old=await read($,state),teams=Array.isArray(info?.teams)?info.teams:[]
  const teamId=[preferred,old.teamId,info?.member?.team_id,teams[0]?.team_id].find(id=>id&&teams.some((t:any)=>t.team_id===id))||''
@@ -155,6 +155,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
    <Box flexWrap="wrap" columnGap={1}>{button('workspace-reconcile','Check receipt',()=>resume())}{s.retry&&button('workspace-retry','Retry same operation',()=>resume(true))}</Box>
   </Box>}
   {s.notice&&<Text color={s.error?'yellow':'green'}>{s.notice}</Text>}
+  {s.caller?.recovery&&<Box borderStyle="round" borderColor="yellow" flexDirection="column"><Text weight="bold">Reconnect this conversation</Text><Text>Its saved member binding belongs to an earlier runtime. Choose the original member and a verified session below to reconnect. Team work stays unavailable until that connection is confirmed.</Text></Box>}
   {!s.caller&&<Text dimColor>Refresh to load your teams. Nothing is created by refreshing.</Text>}
   {s.page==='new'&&!pending?<Box flexDirection="column"><Text>A team draft is saved.</Text>{deps.onNewTeam&&button('workspace-resume-setup','Continue setup',deps.onNewTeam,true)}</Box>:<Box flexDirection="column">
    {s.caller&&!s.teams.length&&<Text dimColor>{controller?'No teams yet. Create your first shared team.':'No team binding for this conversation. Ask an approved controller to bind it.'}</Text>}

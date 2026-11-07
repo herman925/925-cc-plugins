@@ -148,7 +148,7 @@ const READERS = /^(cat|type|get-content|gc|ls|dir|get-childitem|gci|grep|select-
 const HARMLESS = /\d?>>?\s*(&\d|\/dev\/null|\$null|nul)(?=$|[\s;|&)])/gi
 
 /** Why the command is not plainly read-only, or '' when it is: only cat, type, Get-Content, ls, dir, grep, Select-String or jq (without -i). */
-export function notReadOnly(command: string): string {
+export function notReadOnly(command: string, options: { navigation?: boolean } = {}): string {
   if (/`|\$\(|\$\{|<\(|>\(/.test(command)) return 'it runs a substitution, so what it does is unclear'
   // quoted text is an argument (a jq filter, a grep pattern), never a redirect or a second command
   const c = command.replace(/'[^']*'|"[^"]*"/g, ' Q ').replace(HARMLESS, ' ')
@@ -159,7 +159,7 @@ export function notReadOnly(command: string): string {
   for (const p of parts) {
     const w = p.split(/\s+/)
     const first = (w[0] ?? '').toLowerCase()
-    if (!READERS.test(first)) return `it runs "${first}", which is not a plain read (cat, type, Get-Content, ls, dir, grep, Select-String, jq)`
+    if (!READERS.test(first) && !(options.navigation && /^(cd|head|echo|true)$/.test(first))) return `it runs "${first}", which is not a plain read (cat, type, Get-Content, ls, dir, grep, Select-String, jq)`
     if (first === 'jq' && w.some(x => x === '--in-place' || /^-[a-z]*i[a-z]*$/i.test(x))) return 'it runs jq -i, which writes in place'
   }
   return ''

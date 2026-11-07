@@ -1,15 +1,34 @@
 import {commandSchema} from '../store/src/api-schema.mjs'
 import { atom, read, update } from 'claude-code'
 import { notReadOnly } from './guard'
-import {sharedCall} from './shared-bridge'
+import {sharedCall,inspectSharedCaller} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
 import {queueSharedDeliveries} from './shared-transport'
 import {sharedWorkspaceView,refreshSharedWorkspace,readSharedWorkspace} from './shared-workspace'
 export {sharedCall} from './shared-bridge'
 export type {SharedProof} from './shared-bridge'
+export {sharedGuardMembership} from './shared-membership.mjs'
 
 // This extends the Mod's existing best-effort literal path/shell checks. It is
 // not an OS sandbox against arbitrary code running as the same account.
+export const sharedReadOnlyCommand=(command:string)=>notReadOnly(command,{navigation:true})===''
+// Only a plain cat with a single-quoted heredoc delimiter carries literal data.
+// Keep its header (including the destination) and all commands after the end.
+// Executable/unquoted heredocs, pipelines and incomplete bodies stay untouched.
+function sharedShellReferences(command:string):string {
+ const lines=command.split('\n')
+ const target=String.raw`(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"'<>;&|]+)`
+ const header=new RegExp(String.raw`^\s*cat\s+(?:>\s*${target}\s*)?<<\s*'([A-Za-z_][A-Za-z0-9_]*)'\s*(?:>\s*${target})?\s*$`)
+ for(let i=0;i<lines.length;i++){
+  const match=header.exec(lines[i]??'')
+  if(!match)continue
+  const end=lines.findIndex((line,j)=>j>i&&line.replace(/\r$/,'')===match[1])
+  if(end<0)continue
+  for(let j=i+1;j<end;j++)lines[j]=''
+  i=end
+ }
+ return lines.join('\n')
+}
 export function sharedStoreProtection(tool:string,path:string,command:string):string|undefined {
  const p=path.replace(/\\/g,'/').toLowerCase()
  const c=command.replace(/\\/g,'/').toLowerCase()
@@ -18,8 +37,10 @@ export function sharedStoreProtection(tool:string,path:string,command:string):st
  if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
+  if(sharedReadOnlyCommand(command))return undefined
   if(/mod-bridge\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
-  if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(c) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
+  const references=sharedShellReferences(command).replace(/\\/g,'/').toLowerCase()
+  if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(references) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
  }
  return undefined
 }
@@ -67,7 +88,7 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
  try {
   const proof=await dependencies.revalidate();await setSharedStoreProof($,proof)
   if(!proof.ok){await sharedFeedback($,'Connection could not be verified. Open Details for the reason.','yellow');return}
-  const result=await sharedCall($,proof,{operationId:`inspect-${id()}`,command:{type:'inspectCaller'}},dependencies)
+  const result=await inspectSharedCaller($,proof,dependencies)
   await update($,status,()=>JSON.stringify(result))
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null

@@ -20,7 +20,7 @@ import type { Change, Meta, QEntry, QReason } from './changes'
 import { CHECK as CHECK_W, cell, chartLabelInfo, columnPlan, EFFORT_SHORT, family, fit, headerLine, shorten, sideBySide } from './layout'
 import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from './assumptions'
 import type { OpenAssumption } from './assumptions'
-import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState } from './shared-store'
+import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState, sharedGuardMembership, sharedReadOnlyCommand } from './shared-store'
 import type { SharedControls } from './shared-store'
 import {pumpSharedDeliveries} from './shared-transport'
 import {sharedInboxContext,sharedInboxSeen,readSharedInbox} from './shared-inbox'
@@ -30,6 +30,7 @@ import {TEAM_TEMPLATES as PRESETS} from './team-templates'
 import {registerDraftTool} from './creation-draft'
 import {refreshSharedWorkspace,patchSharedDraft} from './shared-workspace'
 import {PANEL_SETTINGS0,panelSettings,rightPanelHint} from './panel-layout'
+import {nativeCliFailure} from './native-cli'
 
 // Orca's CLI is orca.exe on Windows and orca on macOS and Linux. The command is the plugin option "orcaCommand" (/config);
 // empty, the mod picks it from the platform, checks it starts, and writes it into the option once (see session.start).
@@ -305,10 +306,11 @@ const bar = (pct: number, cells = 8): [string, string] => {
 const handleOf = (json: string): string => json.match(/term_[0-9a-f-]+/)?.[0] ?? ''
 
 async function orca($: any, ...args: string[]) {
-  const r = await $.process.run([await orcaBin($), ...args, '--json'], { timeoutMs: 120000 }).catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+  let failure:unknown
+  const r = await $.process.run([await orcaBin($), ...args, '--json'], { timeoutMs: 120000 }).catch((err: unknown) => {failure=err;return {exitCode:1,stdout:'',stderr:String(err)}})
   return r.exitCode === 0
     ? { ok: true, out: r.stdout as string }
-    : { ok: false, out: String(r.stderr || r.stdout) }
+    : { ok: false, out: String(r.stderr || r.stdout), diagnostic:nativeCliFailure(r,failure) }
 }
 
 // The ANTHROPIC_DEFAULT_*_MODEL values of this configuration, read before each start command is built (see modelArg).
@@ -388,7 +390,7 @@ async function readOnlyProjectScope($: any): Promise<ProjectScope> {
     }
     if (!handle) return unknown('native caller terminal is unknown')
     const shown = await orca($, 'terminal', 'show', '--terminal', handle)
-    if (!shown.ok) return unknown('native caller terminal could not be verified')
+    if (!shown.ok) return unknown(`native caller terminal could not be verified (${shown.diagnostic})`)
     let terminal: any
     try {
       terminal = JSON.parse(shown.out).result?.terminal
@@ -2128,22 +2130,43 @@ let turn: Grants = NO_GRANTS
 // as this session's member, by the grants standing right now: a helper has exactly what its spawner has (#73).
 // Bash and PowerShell are judged only against the team files (#58).
 const guardUpgradeNotices=new Set<string>()
+// Read only: do not migrate, reattach or run native identity checks merely to
+// decide that this session is absent from the classic roster.
+async function classicGuardCandidate($:any,list:Partial<Member>[]):Promise<boolean>{
+ if(!list.length)return false
+ const id=String(await $.session.id().catch(()=>'')),handle=String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(()=>''))??'')
+ if(list.some(m=>(id!==''&&m.sessionId===id)||(handle!==''&&m.handle===handle)))return true
+ const local=await readRegistry($)
+ let name=local.list.find(row=>row.sessionId===id&&row.name!=='')?.name??''
+ if(!name){const own=(await transcripts($)).filter(file=>file.id===id);if(own.length)name=(await peek($,own))[0]?.title??''}
+ return name!==''&&list.some(m=>[m.name,m.address].includes(name))
+}
 async function guard($: any, e: any, tool: string): Promise<string | undefined> {
   const shell = (SHELL_TOOLS as readonly string[]).includes(tool)
   const command = shell ? String(e.command ?? '') : ''
   const protectedState=sharedStoreProtection(tool,pathOf(e),command)
   if(protectedState)return `Blocked ${tool}: ${protectedState}`
+  if(tool==='Read')return undefined
+  const creation=shell?createsManaged(command):undefined
+  if(shell&&!creation&&(!namesTeamFile(command)||sharedReadOnlyCommand(command)))return undefined
+  let roster=(await effective($))?.rows??await readMembers($)
+  if(!roster.length&&!await $.fs.exists(await teamFile($))){const legacy=await readJson($,await oldTeamFile($));if(Array.isArray(legacy))roster=legacy}
+  const classicMember=await classicGuardCandidate($,roster)
+  const shared=await sharedGuardMembership($,{node:sharedConfig.node})
+  const probeFailure=(reason:string)=>`Blocked ${tool}: Team Orchestrator guard could not verify itself: ${reason}. No team permission was inferred.`
+  if(shared.membership==='unknown')return probeFailure('its read-only membership lookup did not return a verified result')
+  if(!classicMember&&shared.membership==='none')return undefined
   if(tool===AGENT_TOOL || (WRITE_TOOLS as readonly string[]).includes(tool) || (shell && createsManaged(command))){
     // Disabling the preview does not remove an existing member's authority rules.
-    if(await sharedEnabled($) || await $.fs.exists(`${await $.session.root()}/.team-orchestrator/team.sqlite`)){
+    if(shared.membership==='member'){
       const scope=await preflight($)
-      if(!scope.ok)return `Blocked ${tool}: shared caller verification failed: ${scope.reason}`
+      if(!scope.ok)return probeFailure(scope.reason)
       if(await $.fs.exists(`${scope.root}/.team-orchestrator/team.sqlite`)){
         const reply=await sharedCall($,scope,{},{node:sharedConfig.node,orca:await orcaBin($),mode:'guardInspect'})
-        if(!reply.ok)return `Blocked ${tool}: ${reply.error?.code}: ${reply.error?.message}`
+        if(!reply.ok)return probeFailure(`${reply.error?.code}: ${reply.error?.message}`)
         const current=reply.result.result
         const noticeKey=JSON.stringify([scope.root,scope.sessionId,current.storeVersion])
-        if(current.upgradeRequired&&!guardUpgradeNotices.has(noticeKey)){guardUpgradeNotices.add(noticeKey);await $.ui.toast('Shared workspace needs Update workspace. Existing member permissions remain enforced; ordinary nonmember work can continue.').catch(()=>undefined)}
+        if(current.upgradeRequired&&!guardUpgradeNotices.has(noticeKey)){guardUpgradeNotices.add(noticeKey);try{await $.ui.toast('Shared workspace needs Update workspace. Existing member permissions remain enforced; ordinary nonmember work can continue.')}catch{/* A missing notification surface must never skip the member verdict. */}}
         if(current.member){
           const row=current.member
           const me={name:row.name,boss:row.boss_member_id??'user',allowAgent:Number(row.allow_agent)===1,allowWrite:Number(row.allow_write)===1} as Member
@@ -2154,9 +2177,8 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
       }
     }
   }
-  if(tool==='Read')return undefined
+  if(!classicMember)return undefined
   // judged before the team-file question: a creating command names no team file, and would otherwise return here
-  const creation = shell ? createsManaged(command) : undefined
   if (shell && !creation && !namesTeamFile(command)) return undefined
   // a command that names a team file and is not plainly read-only: a creation command is not one of those
   const changesTeamFile = shell
@@ -2164,7 +2186,16 @@ async function guard($: any, e: any, tool: string): Promise<string | undefined> 
     : (WRITE_TOOLS as readonly string[]).includes(tool) && isTeamFilePath(pathOf(e))
   if (changesTeamFile) {
     const scope = await preflight($)
-    if (!scope.ok) return `Blocked ${tool}: team-file guard cannot verify the project scope for ${JSON.stringify(shell ? command : pathOf(e))}: ${scope.reason}. No project files were changed.`
+    if (!scope.ok) return probeFailure(scope.reason)
+  }
+  const scope=await preflight($)
+  if(!scope.ok){
+    const id=String(await $.session.id().catch(()=>'')),handle=String((await $.env.get('ORCA_TERMINAL_HANDLE').catch(()=>''))??'')
+    const me=roster.find(m=>(id!==''&&m.sessionId===id)||(handle!==''&&m.handle===handle))
+    if(!me)return undefined
+    if(creation)return probeFailure(scope.reason)
+    const held=judgeHeld({me:me as Member,why:scope.reason,tool,grants:turn})
+    return held?.kind==='deny'?probeFailure(scope.reason):undefined
   }
   await pull($)
   const list = await readMembers($)

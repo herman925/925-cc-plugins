@@ -40,7 +40,7 @@ export const world = (
   on: any,
   tabs: Tab[] = [],
   trs: Tr[] = [],
-  first?: (e: any) => string | undefined,
+  first?: (e: any) => string | {exitCode:number;stdout?:string;stderr?:string} | undefined,
   opts: { env?: Record<string, string>; registry?: RegEntry[]; dirs?: Record<string, { name: string; kind: string; isLink: boolean }[]>; version?: string; refuse?: (path: string) => boolean; worktreePath?: string; worktrees?: Record<string, string>; sessionId?: string; cwd?: string; sessionName?: string } = {},
 ) => {
   const registry = opts.registry ?? REG0
@@ -112,7 +112,7 @@ export const world = (
     files.calls.push(a)
     const out = (stdout: string) => ({ value: { ...no, exitCode: 0, stdout } }) as any
     const mine = first?.(e)
-    if (mine !== undefined) return out(mine)
+    if (mine !== undefined) return typeof mine==='string'?out(mine):{value:{...no,...mine}} as any
     if (a[0] === 'powershell.exe')
       return out(String(e.init.env.TO_FILES).split('|').map(f => '\0' + tail(trs.find(t => p(f).endsWith(`${t.id}.jsonl`))!)).join(''))
     if (a[1] === 'worktree' && a[2] === 'show') {

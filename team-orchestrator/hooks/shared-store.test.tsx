@@ -24,15 +24,17 @@ test('a known older shared store preserves ordinary writes without dropping memb
  const calls:any[]=[]
  on('tool.call',{tool:'Write'} as any,async()=>({result:'ordinary write completed'}) as any)
  const files=world(on,[],[],e=>{
+  if(e.argv.some((value:any)=>String(value).includes('team-orchestrator-membership-v1')))return JSON.stringify({membership:member?'member':'none'})
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
   const envelope=JSON.parse(e.init.stdin);calls.push(envelope)
   if(envelope.mode!=='guardInspect')return JSON.stringify({ok:false,error:{code:'STORE_VERSION_UNSUPPORTED',message:'Update required'}})
   return JSON.stringify({ok:true,result:{result:{member,hasReports:!!member,storeVersion:5,upgradeRequired:true}}})
  });sessionAs(on,ID1);files.set('C:/proj/.team-orchestrator/team.sqlite','older schema fixture')
  const ordinary:any=await $.tool.call({tool:'Write',file_path:'C:/temp/unrelated.md',content:'report'} as any)
- expect(ordinary.result).toBe('ordinary write completed');expect(calls[0].mode).toBe('guardInspect');expect(calls[0].request.command).toBeUndefined()
+ expect(ordinary.result).toBe('ordinary write completed');expect(calls.length).toBe(0)
  member={name:'Head',boss_member_id:null,allow_write:0,allow_agent:0}
  const head:any=await $.tool.call({tool:'Write',file_path:'C:/temp/unrelated.md',content:'report'} as any)
+ expect(calls[0].mode).toBe('guardInspect');expect(calls[0].request.command).toBeUndefined()
  expect(head.deny).toContain('has reports')
  const agent:any=await $.tool.call({tool:'Agent',subagent_type:'general-purpose',prompt:'x'} as any)
  expect(agent.deny).toContain('no subagent permission')
@@ -100,7 +102,7 @@ test('redrawing the shared approval view performs no native subprocess verificat
 test('shared managers retain the existing write and Agent restrictions and composer-only grants', {options:{sharedStorePreview:true,orcaCommand:'orca'}} as any,async($:any,on:any)=>{
  on('prompt.submit',async(_$:any,e:any)=>({text:e.text}) as any)
  on('tool.call',{tool:'Write'} as any,async()=>({result:'wrote'}) as any)
- const files=world(on,[],[],e=>{if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined;return JSON.stringify({ok:true,result:{result:{member:{name:'Head',boss_member_id:null,allow_write:0,allow_agent:0},hasReports:true}}})})
+ const files=world(on,[],[],e=>{if(e.argv.some((value:any)=>String(value).includes('team-orchestrator-membership-v1')))return JSON.stringify({membership:'member'});if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined;return JSON.stringify({ok:true,result:{result:{member:{name:'Head',boss_member_id:null,allow_write:0,allow_agent:0},hasReports:true}}})})
  sessionAs(on,ID1);files.set('C:/proj/.team-orchestrator/team.sqlite','fixture')
  const write:any=await $.tool.call({tool:'Write',file_path:'C:/proj/code.ts',content:'x'} as any)
  expect(write.deny).toContain('has reports')
@@ -183,7 +185,7 @@ test('an uncertain approval requires a readback before another approval action',
 })
 
 test('switching the preview off cannot bypass existing shared member or raw-store guards',async($,on)=>{
- const files=world(on,[],[],e=>String(e.argv[1]).endsWith('mod-bridge.mjs')?JSON.stringify({ok:true,result:{result:{member:{name:'Head',boss_member_id:null,allow_write:0,allow_agent:0},hasReports:true}}}):undefined)
+ const files=world(on,[],[],e=>e.argv.some((value:any)=>String(value).includes('team-orchestrator-membership-v1'))?JSON.stringify({membership:'member'}):String(e.argv[1]).endsWith('mod-bridge.mjs')?JSON.stringify({ok:true,result:{result:{member:{name:'Head',boss_member_id:null,allow_write:0,allow_agent:0},hasReports:true}}}):undefined)
  sessionAs(on,ID1);files.set('C:/proj/.team-orchestrator/team.sqlite','fixture')
  const denied:any=await $.tool.call({tool:'Write',file_path:'C:/proj/code.ts',content:'x'} as any)
  expect(denied.deny).toContain('has reports')
