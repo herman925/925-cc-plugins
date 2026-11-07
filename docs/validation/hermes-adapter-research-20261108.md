@@ -1,0 +1,7 @@
+# Hermes adapter research — 2026-11-08
+
+Research only: Hermes remains unsupported for managed shared teams. No installation, hook/configuration change, model turn or member binding was attempted. A local `hermes.exe` is discoverable; its version/behavior was not tested.
+
+The current [official MCP reference](https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference) documents stdio configuration and canonical MCP tool names. The [official hooks reference](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/hooks.md) documents blocking pre-tool hooks, a fail-closed option, and shell payload correlation fields. Its approval action has Hermes-specific semantics and must not be treated as a Claude automatic-allow action. The [current MCP client source](https://github.com/NousResearch/hermes-agent/blob/main/tools/mcp_tool.py) includes optional elicitation support and replays pending-call context for callbacks.
+
+Inference: an adapter route is plausible, but these surfaces do not prove caller identity, prompt authorship, a delivered human review or installed guard coverage. Per-call session/parent/Orca identity, confirmation delivery, exact guard enforcement, reconnect/readiness and resume must be established against the actual installed release. A `clarify` answer is draft input, not a controller or worker permission grant. Preserve the earlier decision that Hermes cannot join as an unguarded messenger; do not enable membership from provider-name recognition or a source-document claim alone.
