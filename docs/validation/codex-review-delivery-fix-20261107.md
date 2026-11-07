@@ -120,9 +120,23 @@ Normal `setup.mjs resume` admitted the same saved conversation into terminal
 68580 run the same corrected digest. The resumed turn again reports granular MCP
 confirmation and `danger-full-access`; see `review-resume-hosted.json`.
 
-Pending acceptance: observe a native request beyond three minutes and capture
-its response through the resumed path, then separately activate and review
-recovery in the affected conversation.
+The resumed request `925-to-review-951a00a7-e082-408c-8c5b-42da468b817f`
+(parent request 5) was emitted at `2026-11-07T05:16:05.811Z` and its response
+was received at `05:16:29.318Z`, after 23,507 ms. The native tool returned
+`draftOnly:true`, action `accept`, draft selection `status`. See
+`resume-native-wire.json`. This establishes native response forwarding after
+normal resume, but the request completed before the former three-minute deadline.
+
+An additional draft-only interview request in that same resumed process,
+`925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76` (parent request 7),
+was emitted at `2026-11-07T10:20:00.080Z`. Read-only observations found no response
+and the draft menu still present in the terminal buffer after 93,817 ms and
+210,399 ms. The latter exceeds the former 180,000 ms deadline. No automated
+form inputs were sent. See `resume-long-wait.json`. The person was then asked
+to submit the draft choice `status` to verify completion after the longer wait.
+
+Pending acceptance: capture that human response, then separately activate and
+review recovery in the affected conversation.
 The receipt alone does not establish those outcomes. The affected process has
 not been restarted during this investigation; its successful rebind and normal
 access remain unverified.

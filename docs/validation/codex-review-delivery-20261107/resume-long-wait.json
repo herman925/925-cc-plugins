@@ -1,0 +1,70 @@
+{
+  "nativePid": 48768,
+  "mcpPid": 68580,
+  "terminal": "term_f6e5dbab-a874-46c0-8878-79e1410f6fe7",
+  "reviewId": "925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76",
+  "automatedFormInputs": 0,
+  "observations": [
+    {
+      "observedAt": "2026-11-07T10:21:33.897758+00:00",
+      "elapsedMs": 93817,
+      "responseSeen": false,
+      "draftMenuInTerminalBuffer": true,
+      "tail": [
+        "\u203a One more read-only transport timing check. Call shared_team_interview with step action once. Do not answer, cancel, or submit any form yourself. Leave the draft",
+        "  menu open for the person. We need at least 190 seconds of real wall-clock time after the server emits elicitation/create before the person submits a draft choice.",
+        "  Do not edit files, change teams, launch workers, or call any follow-up action from the draft result. Report only returned draft data and stop.",
+        "\u2022 I\u2019ll open the draft menu once and leave it for you to submit after the 190-second interval.",
+        "\u2022 Calling team_orchestrator.shared_team_interview",
+        "    + Show details",
+        "  Field 1/1 (1 required unanswered)",
+        "  925 Team Orchestrator \u2014 choose what to do.",
+        "  Action",
+        "  \u203a 1. create-team",
+        "    2. edit-team",
+        "    3. connect-session",
+        "    4. launch-workers",
+        "    5. status",
+        "    6. meeting",
+        "    7. diagnose",
+        "  enter to submit | esc to cancel"
+      ]
+    },
+    {
+      "observedAt": "2026-11-07T10:23:30.479145+00:00",
+      "elapsedMs": 210399,
+      "responseSeen": false,
+      "draftMenuInTerminalBuffer": true,
+      "tail": [
+        "\u203a One more read-only transport timing check. Call shared_team_interview with step action once. Do not answer, cancel, or submit any form yourself. Leave the draft",
+        "  menu open for the person. We need at least 190 seconds of real wall-clock time after the server emits elicitation/create before the person submits a draft choice.",
+        "  Do not edit files, change teams, launch workers, or call any follow-up action from the draft result. Report only returned draft data and stop.",
+        "\u2022 I\u2019ll open the draft menu once and leave it for you to submit after the 190-second interval.",
+        "\u2022 Calling team_orchestrator.shared_team_interview",
+        "    + Show details",
+        "  Field 1/1 (1 required unanswered)",
+        "  925 Team Orchestrator \u2014 choose what to do.",
+        "  Action",
+        "  \u203a 1. create-team",
+        "    2. edit-team",
+        "    3. connect-session",
+        "    4. launch-workers",
+        "    5. status",
+        "    6. meeting",
+        "    7. diagnose",
+        "  enter to submit | esc to cancel"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "nativeLogId": 3803795,
+      "at": "2026-11-07T10:20:00.080Z",
+      "event": "request",
+      "id": "925-to-review-0b192720-dca3-4b27-b262-6154f9a8cb76",
+      "requestId": 7,
+      "tool": "shared_team_interview",
+      "timeoutMs": null
+    }
+  ]
+}
