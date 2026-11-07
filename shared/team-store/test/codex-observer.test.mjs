@@ -120,6 +120,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`
   f.observer.activate(f.metadata,original);assert.equal(f.observer.status().lastFailure.code,'API_OBSERVER_SCOPE_CHANGED');await timers.advance(30000);
   assert.equal((await f.rows('SELECT * FROM assignment_returns')).length,1);
   assert.equal(f.observer.status().lastError,null);
+  assert.equal(f.observer.status().lastFailure,null,'verified recovery clears the previous failure rather than reporting it as current');
  });
 });
 test('observation never creates a missing SQLite store',async t=>{

@@ -23,7 +23,8 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   const create={type:'createFreshTeam',teamId:'team',name:'Codex team',functionText:'Native management',settings,members:[{memberId:'head',name:'Head',bossMemberId:null,role:'Lead',officialText:'Delegate and review.',cli:'codex'},{memberId:'worker',name:'Worker',bossMemberId:'head',role:'Verify',officialText:'Verify before reporting.',cli:'codex'}],expectedControllerGeneration:1};
   const call=(command,operationId='create',extra={})=>adapter.call('shared_team_manage',{operationId,command,...extra},metadata,connection);
   const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
-  return {...f,state,metadata,connection,adapter,make,call,create,rows,actor};
+  const objects=async()=>{const db=await f.raw();try{return await db.objects();}finally{await db.close();}};
+  return {...f,state,metadata,connection,adapter,make,call,create,rows,objects,actor};
  }
  test('the production Codex writer can read and edit after the current Mod advances the shared fence',async t=>{
   const f=await setup(t);await f.call(f.create);
@@ -70,7 +71,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
    assert.equal(error.details?.reviewFloorMs,1000);
    assert.match(error.details?.hint??'',/automatic decline by the client is one possible cause/);
    assert.match(error.details?.hint??'',/MCP confirmation prompts/);}
-  assert.equal((await f.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='teams'")).length,0);
+  assert.equal((await f.objects()).filter(row=>row.name==='teams').length,0);
   // The probe reports the timing observation without a delivery claim.
   const silent=await f.adapter.call('shared_team_status',{},f.metadata,f.connection);
   assert.equal(silent.elicitationProbe.classification,'replies-too-fast-for-a-person-delivery-unverified');
@@ -89,7 +90,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   await assert.rejects(f.adapter.call('shared_team_manage',{operationId:'failed-wait',command:f.create},f.metadata,connection),{code:'API_REVIEW_UNAVAILABLE'});
   const {elicitationProbe:p}=await f.adapter.call('shared_team_status',{},f.metadata,connection);
   assert.equal(p.attempts,1);assert.equal(p.failedWaits,1);assert.equal(p.humanPaced,0);assert.equal(p.fastReplies,0);assert.equal(p.lastOutcome,'failed');assert.equal(p.classification,'no-reply');assert.equal(p.delivery,'unverified');
-  assert.equal((await f.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='teams'")).length,0);
+  assert.equal((await f.objects()).filter(row=>row.name==='teams').length,0);
  });
  test('create and edit receipts survive interruption and never ask again or duplicate effects',async t=>{
   const f=await setup(t);f.state.lost=true;await assert.rejects(f.call(f.create),e=>e.code==='STORE_COMMIT_UNKNOWN');

@@ -33,13 +33,13 @@ export function createCodexObserver({native,writer=SHARED_WRITER,createApi=creat
   try{
    const info=(await api.execute({operationId:`observer-caller-${randomUUID()}`,command:{type:'inspectCaller'}})).result;
    if(native.launchWorkers)launches=await pumpCodexLaunches({api,native,actor,metadata:current.metadata,info,postgres});
-   if(!info.member||!info.binding){state='waiting-for-member';lastError=null;return;}
+   if(!info.member||!info.binding){state='waiting-for-member';lastError=null;lastFailure=null;return;}
    const authority={teamId:info.member.team_id,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation};
    await confirmed('deadlines',{...authority,type:'observeDeadlines'});
    const prepared=await confirmed('deliveries',{...authority,type:'prepareDeliveries'});
    await authenticate();
    if(prepared.result.deliveries.length)await native.wake(prepared.result.deliveries,current.metadata);
-   if(!closed&&scope===current){state='active';lastError=null;}
+   if(!closed&&scope===current){state='active';lastError=null;lastFailure=null;}
   }finally{await api.close();}
  };
  const observer=Object.freeze({

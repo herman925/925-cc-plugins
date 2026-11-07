@@ -17,6 +17,8 @@ export async function inspectGuardCaller({actor:input,postgres,allowLaunchProbe=
  const db=postgres?await connectPostgres(postgres):await connectSqlite({path:await existingLocalPath(actor.projectRoot),readOnly:true});
  try{
   await db.exec(db.engine==='sqlite'?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  const objects=await db.objects();
+  if(!objects.length)throw refusal('STORE_EMPTY','The team store has no schema or membership. No schema or authority was installed.');
   const rows=await db.query('SELECT format,schema_version FROM store_metadata WHERE singleton=1');
   const version=rows.length===1?databaseInteger(rows[0].schema_version,'schema version'):null;
   const definition=[schema5,schema6,schema7,schema8,current].find(s=>s.SCHEMA_VERSION===version);

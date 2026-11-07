@@ -103,7 +103,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
    if(name==='team_guard'){
     try{exact(args,['tool','input']);return codexGuard(await (dependencies.inspectGuard??inspectGuardCaller)({actor,...(options.postgres?{postgres:options.postgres}:{})}),args);}
     catch(error){
-     if(error.code==='STORE_NOT_FOUND')return {};
+     if(['STORE_NOT_FOUND','STORE_EMPTY'].includes(error.code))return codexGuard({member:null,hasReports:false},args);
      // A stale native binding is a recoverable state, not a reason to disable
      // every tool. Hand the guard that fact so read-only inspection stays open
      // and the reviewed recovery call remains reachable. All effects and writes

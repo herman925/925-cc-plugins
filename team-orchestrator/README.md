@@ -2,6 +2,8 @@
 
 This is the **Claude Code Mod**, distributed as a Claude Code plugin with a native panel. See [choose your Team Orchestrator client](../README.md#team-orchestrator) for the installation methods and workflows across Claude Code, the Codex plugin/skill set and the planned Hermes client. The shared Claude/Codex clients use one project-owned store/API; existing classic teams and the separate Orca plugin remain separate.
 
+**0.5.61** packages the shared recovery and ordinary-session fixes for Codex **0.1.11**. Retired ordinary members no longer inherit team tool restrictions from a historical binding, while reserved workers remain fenced. Pending native reviews survive long waits, stale active bindings reach reviewed recovery, and recovered observers clear their old error. Schema 9 and the Mod UI are unchanged. [Recovery evidence](../docs/validation/codex-review-delivery-fix-20261107.md).
+
 **0.5.60** packages the Codex public-source editing guard repair for **0.1.10**. Explicit standing writes allow scoped public package-source patches; private runtime state and direct private API execution stay protected. Schema 9 and the Mod UI are unchanged. [Evidence](../shared/team-store/VALIDATION-PUBLIC-SOURCE-GUARD.md).
 
 **0.5.59** packages the shared Windows ownership-query repair for Codex **0.1.9**. Concurrent inspectors serialize without filtering owners or weakening native caller proof. Schema 9 and Mod UI behavior are unchanged. [Evidence and limits](../shared/team-store/VALIDATION-CODEX-OWNERSHIP.md).
