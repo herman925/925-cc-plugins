@@ -48,6 +48,15 @@ test('launch-enabled stale preflight refuses direct effects before dispatch',asy
  ])await assert.rejects(adapter.call(name,args,{}),{code:'API_STALE_BINDING'},name);
 });
 
+test('stale native recovery keeps draft questions reachable without admitting effects or unrelated MCP aliases',async t=>{
+ const adapter=await fixture(t);
+ const input={questions:[{title:'Should we inspect .codex/config.toml during recovery?',options:['Inspect later','Leave it unchanged']}]};
+ for(const questions of [{questions:[{title:'Finish classic tasks before migration?',options:['Finish first','Use a handover']}]},input])for(const tool of ['request_user_input','request_user_input_async','functions.request_user_input','functions.request_user_input_async'])assert.deepEqual(await adapter.call('team_guard',{tool,input:questions},{}),{});
+ for(const tool of ['mcp__unrelated__request_user_input_async','mcp__unrelated__clarify','exec_command','apply_patch'])assert.equal((await adapter.call('team_guard',{tool,input},{})).hookSpecificOutput.permissionDecision,'deny');
+ const unverified=await fixture(t,{verifyCaller:async()=>{throw Object.assign(Error('Unknown native caller'),{code:'API_NATIVE_UNVERIFIED'});}});
+ await assert.rejects(unverified.call('team_guard',{tool:'request_user_input_async',input},{}),{code:'API_NATIVE_UNVERIFIED'});
+});
+
 test('launch-enabled recovery never relaxes unrelated authority or native identity failures',async t=>{
  for(const code of ['API_NATIVE_UNVERIFIED','STORE_PROTOCOL_UNSUPPORTED','STORE_VERSION_UNSUPPORTED']){
   const adapter=await fixture(t,{inspectGuard:async()=>{throw Object.assign(Error('Refused fixture authority'),{code});}});

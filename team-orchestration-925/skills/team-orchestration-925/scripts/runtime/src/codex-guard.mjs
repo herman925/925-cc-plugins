@@ -3,6 +3,10 @@
 import {sourceEditAllowed,sourceReadAllowed} from './source-edits.mjs';
 export function codexGuard(authority,{tool,input}) {
  const deny=permissionDecisionReason=>({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason}});
+ // Native questions collect draft answers, never management consent or tool
+ // effects. Keep them available during verified stale recovery, even when the
+ // question mentions a protected path. Do not trust lookalike MCP tool names.
+ if(authority.staleBinding&&['request_user_input','request_user_input_async','functions.request_user_input','functions.request_user_input_async'].includes(tool))return {};
  const m=authority.member;
  const source=typeof input==='string'?input:JSON.stringify(input??{});
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
