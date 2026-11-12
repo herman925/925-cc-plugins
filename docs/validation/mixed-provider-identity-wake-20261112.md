@@ -2,6 +2,8 @@
 
 Development candidate on `feat/team-orchestrator-completion` / draft PR #204. This is not an installed-runtime or live-worker acceptance claim. No CiteReflex session was prompted, restarted, rebound, granted permission or assigned work by this change.
 
+**Follow-up:** the [bidirectionality/freshness audit](wake-bidirectionality-audit-20261112.md) found incomplete reverse delivery, a new request ID for the same delivery after rebind, post-read stale reservations and missing progress recovery. The green suites below cover narrower cases. Do not interpret this report as complete two-way delivery or duplicate prevention across binding changes.
+
 ## Incident and accepted design
 
 Read-only native session search and the head's actual tool-result transcript established that the saved Research workers already had `cli: codex` and `binding.provider: codex` before the Claude head called them Claude. `model: default` did not identify a provider. The head later corrected itself. This was a reasoning/context error, not evidence of a saved binding being converted to Claude.

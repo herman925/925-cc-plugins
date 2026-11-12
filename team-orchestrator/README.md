@@ -2,7 +2,9 @@
 
 This development branch is **0.5.62 / schema 10**, paired with Codex **0.1.12**. It adds worker readiness and Mod recovery fixes; native classic-import primitives have no client UI yet. It is not published or installed. The 0.5.61 release notes below describe the stable baseline. See the [current development evidence](../docs/validation/completion-checkpoint-20261108.md).
 
-The candidate also refreshes mixed-team identities and guard explanations on each prompt. An idle connected Codex worker can receive one automatic inbox-check prompt through Orca, with durable duplicate prevention and separate input/turn-start receipts. A saved binding is not proof that work started. `Allow writes` being off does not by itself block a leaf worker; task expiry and actual tool denials are separate facts. See the [implementation and acceptance limits](../docs/validation/mixed-provider-identity-wake-20261112.md).
+The candidate also refreshes mixed-team identities and guard explanations on each prompt. An idle connected Codex worker can receive an automatic inbox-check prompt through Orca, with recorded native request IDs and separate input/turn-start receipts. A saved binding is not proof that work started. `Allow writes` being off does not by itself block a leaf worker; task expiry and actual tool denials are separate facts. See the [implementation and acceptance limits](../docs/validation/mixed-provider-identity-wake-20261112.md).
+
+Follow-up validation found [wake directionality and freshness gaps](../docs/validation/wake-bidirectionality-audit-20261112.md), including duplicate-prompt risk across a rebind. This is not yet complete two-way wake support and remains unactivated.
 
 This is the **Claude Code Mod**, distributed as a Claude Code plugin with a native panel. See [choose your Team Orchestrator client](../README.md#team-orchestrator) for the installation methods and workflows across Claude Code, the Codex plugin/skill set and the planned Hermes client. The shared Claude/Codex clients use one project-owned store/API; existing classic teams and the separate Orca plugin remain separate.
 
