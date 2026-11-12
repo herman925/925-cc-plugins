@@ -1,0 +1,186 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "threadId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+  "inspector": {
+    "sameThread": true,
+    "projectRoot": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX\\project",
+    "status": {
+      "type": "notLoaded"
+    }
+  },
+  "installedRuntimeDigest": "fec236a3c7189f06c89305b0ae5b569246f87568eb19fd3779279a904c1a7db4",
+  "records": [
+    {
+      "kind": "initialize",
+      "capabilities": {
+        "experimental": {
+          "codex/auth-change": {}
+        },
+        "elicitation": {
+          "form": {},
+          "url": {}
+        }
+      }
+    },
+    {
+      "kind": "call",
+      "name": "scope_probe",
+      "metadata": {
+        "callId": "scope_call",
+        "x-codex-turn-metadata": {
+          "session_id": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+          "thread_id": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+          "model": "gpt-5.1-codex",
+          "turn_id": "01a1ce98-920f-72b0-8261-1cac8d211900",
+          "turn_started_at_unix_ms": 1794467467799,
+          "sandbox": "none",
+          "sandbox_mode": "read-only",
+          "auto_review_enabled": false,
+          "node_repl_auto_review_required": false,
+          "node_repl_disabled": false,
+          "codex_version": "0.167.0"
+        },
+        "threadId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+        "sessionId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+        "windowId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a:0",
+        "itemId": "scope_call",
+        "progressToken": 1
+      }
+    },
+    {
+      "kind": "native-actor",
+      "actor": {
+        "projectRoot": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX\\project",
+        "machineId": "Herman-5090",
+        "provider": "codex",
+        "conversationId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+        "executionHostId": "local",
+        "contextId": "project:30bf924e2876c0576f6c54861e3b26c6f781759cf7d5d3d57702834cd8be71b3",
+        "terminalHandle": "codex-thread:01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+        "incarnationId": "codex-process:69132:134389410673209048"
+      },
+      "host": "independent"
+    },
+    {
+      "kind": "adapter-status",
+      "status": {
+        "host": "independent",
+        "provider": "codex",
+        "actor": {
+          "projectRoot": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX\\project",
+          "machineId": "Herman-5090",
+          "provider": "codex",
+          "conversationId": "01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+          "executionHostId": "local",
+          "contextId": "project:30bf924e2876c0576f6c54861e3b26c6f781759cf7d5d3d57702834cd8be71b3",
+          "terminalHandle": "codex-thread:01a1ce98-9136-7cd3-8bf0-ab0f57b44e0a",
+          "incarnationId": "codex-process:69132:134389410673209048"
+        },
+        "info": {
+          "storeExists": false,
+          "controllerGeneration": null,
+          "member": null,
+          "teams": []
+        },
+        "inboxWake": {
+          "state": "target-check-required",
+          "primaryRoute": "provider-direct",
+          "managedFallback": {
+            "state": "not-enrolled",
+            "launchesWorkers": false
+          },
+          "providers": [
+            "codex"
+          ],
+          "note": "Automatic input is available only for exact workers owned by the project dispatcher. Existing external conversations require a supported host transport or manual inbox checks."
+        },
+        "observation": {
+          "state": "disabled"
+        },
+        "nativeReviewAvailable": false,
+        "elicitationProbe": {
+          "attempts": 0,
+          "humanPaced": 0,
+          "fastReplies": 0,
+          "failedWaits": 0,
+          "lastElapsedMs": null,
+          "lastOutcome": null,
+          "delivery": "unverified",
+          "classification": "not-observed"
+        },
+        "guardTrust": "not-attested",
+        "actions": {
+          "createTeam": "native-review",
+          "editTeam": "native-review",
+          "connectSession": "existing-verified",
+          "automaticCodexLaunch": true,
+          "launchApproval": "specific-native-reviewed-plan",
+          "workspaceUpgrade": "native-review-with-backup",
+          "standalone": true,
+          "standaloneScope": "native management and reviewed owned Codex workers; external conversations are not automatically adopted",
+          "workerNativeReview": "top-head-native-forms-and-questions",
+          "hermes": false
+        }
+      }
+    },
+    {
+      "kind": "ordinary-guard",
+      "result": {}
+    },
+    {
+      "kind": "setup-preview",
+      "summary": {
+        "project": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX\\project",
+        "hostMode": "independent",
+        "previousHostMode": null,
+        "contextReference": "project:30bf924e2876c0576f6c54861e3b26c6f781759cf7d5d3d57702834cd8be71b3",
+        "status": "setup-ready",
+        "changes": [
+          "Configure project MCP server and native team hook",
+          "Install a private runtime snapshot that survives plugin cache updates"
+        ],
+        "runtimeDigest": "fec236a3c7189f06c89305b0ae5b569246f87568eb19fd3779279a904c1a7db4",
+        "runtimeFileCount": 76,
+        "sharedSchemaVersion": 10,
+        "installedRuntimeMatchesPreview": false,
+        "activeRuntime": "not-inspected",
+        "globalConfigurationChanged": false,
+        "teamStoreChanged": false,
+        "hookConfigurationChanged": true,
+        "hookTrust": "not-attested",
+        "hookTrustGranted": false,
+        "requiresReconnect": true,
+        "requiresNativeHookReview": true
+      }
+    },
+    {
+      "kind": "setup-applied",
+      "summary": {
+        "project": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-independent-scope-GSyVoX\\project",
+        "hostMode": "independent",
+        "previousHostMode": null,
+        "contextReference": "project:30bf924e2876c0576f6c54861e3b26c6f781759cf7d5d3d57702834cd8be71b3",
+        "status": "complete",
+        "changes": [
+          "Configure project MCP server and native team hook",
+          "Install a private runtime snapshot that survives plugin cache updates"
+        ],
+        "runtimeDigest": "fec236a3c7189f06c89305b0ae5b569246f87568eb19fd3779279a904c1a7db4",
+        "runtimeFileCount": 76,
+        "sharedSchemaVersion": 10,
+        "installedRuntimeMatchesPreview": false,
+        "activeRuntime": "not-inspected",
+        "globalConfigurationChanged": false,
+        "teamStoreChanged": false,
+        "hookConfigurationChanged": true,
+        "hookTrust": "not-attested",
+        "hookTrustGranted": false,
+        "requiresReconnect": true,
+        "requiresNativeHookReview": true
+      }
+    }
+  ]
+}

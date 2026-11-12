@@ -8,7 +8,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createProjectDispatcher} from '../src/project-dispatcher.mjs';
-import {dispatcherLocation,serveProjectDispatcher,connectProjectReceiver} from '../src/dispatcher-service.mjs';
+import {dispatcherLocation,serveProjectDispatcher,connectProjectReceiver,projectOwnedRequest} from '../src/dispatcher-service.mjs';
 
 function fixture(options={}){let time=0;const persisted=[],sent=[];const dispatcher=createProjectDispatcher({now:()=>time,intervalMs:30,persist:async value=>persisted.push(structuredClone(value)),...options});return {dispatcher,persisted,sent,advance:n=>time+=n,register:async(id,pid=1)=>dispatcher.register({id,pid,send:row=>sent.push({id,...row})})};}
 test('one scheduler serializes receivers and durably records intent before a callback',async()=>{
@@ -53,6 +53,12 @@ test('headless teams schedule every sender rather than starving worker-to-lead m
  assert.deepEqual(f.sent.map(r=>r.id),['worker-a','worker-b','worker-a','worker-b']);
 });
 async function until(condition){for(let i=0;i<500;i++){if(await condition())return;await delay(20);}assert.fail('Timed out waiting for dispatcher fixture.');}
+test('a submitted owned request with a lost reply is never automatically resent or assigned another owner',async t=>{
+ const projectRoot=await mkdtemp(join(tmpdir(),'team-owned-ipc-')),root=join(projectRoot,'private'),location=await dispatcherLocation({projectRoot,root});let attempts=0,active=true,closed=0;
+ const service=await serveProjectDispatcher(location,{tickMs:5,idleMs:10,createOwnedManager:()=>({prepare:async()=>{attempts++;await delay(70);return {state:'prepared'};},inspect:async()=>({attempts}),active:()=>active,close:async()=>closed++})});t.after(()=>service.close());
+ await assert.rejects(projectOwnedRequest({projectRoot,root,launch:false,timeoutMs:25,operation:{type:'prepare',input:{}}}),{code:'API_OWNED_EXECUTION_UNKNOWN'});await delay(100);assert.equal(attempts,1);assert.equal(closed,0,'An owned worker keeps the dispatcher alive without any head receiver.');
+ assert.deepEqual(await projectOwnedRequest({projectRoot,root,launch:false,operation:{type:'inspect',input:{}}}),{attempts:1});active=false;
+});
 test('real local IPC elects one owner, authenticates receivers and serializes Claude/Codex callbacks',async t=>{
  const root=await mkdtemp(join(tmpdir(),'team-single-dispatch-')),location=await dispatcherLocation({projectRoot:root,root:join(root,'private')});
  const service=await serveProjectDispatcher(location,{intervalMs:50,tickMs:5,idleMs:10000});assert.equal(service.owner,true);t.after(()=>service.close());

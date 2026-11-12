@@ -26,6 +26,7 @@ export async function codexLaunchPlan({args,actor,metadata,native,createApi,opti
   if(Number(config.team.config_version)!==command.expectedConfigVersion)throw refusal('API_STALE_AUTHORITY','Configuration changed before launch review.');
   const ids=new Set(command.selections.map(s=>s.memberId)),current={...config,members:config.members.filter(m=>ids.has(m.member_id)),roles:config.roles.filter(r=>ids.has(r.member_id))};
   const review=managementReview({actor,command,current});
+  if(native.hostKind==='independent')review.message='Independent worker route: the project dispatcher owns a new native Codex app-server connection for each listed unconnected worker. Execution and approval settings come from native project configuration; this review grants only the listed team-tool bundle. Existing external conversations are not adopted. Pending questions/forms can be relayed by the approved top head; unsupported permission requests stay pending.\n'+review.message;
   review.message='Review these listed Codex workers AND their Team Orchestrator tool access. Unconnected workers may start as capacity opens. A connected worker is selected only for tool setup: new assignments wait, current work finishes, and any required process refresh resumes that same conversation when idle only if safe resume can be verified. No conversation is replaced. Work is admitted only after team-tool readiness is verified. Worker/role or tool-bundle changes require another review.\n'+JSON.stringify(workerToolReview(),null,2)+'\n'+review.message;
   review.requestedSchema.properties.confirm.title='Approve this specific launch plan once';
   const started=Date.now(),answer=await connection.elicit(review);if(answer?.action!=='accept'||answer.content?.confirm!==true)throw nativeReviewRefusal(Date.now()-started,'Launch approval was not obtained. No launch plan was recorded.');
@@ -76,10 +77,10 @@ export async function pumpCodexLaunches({api,native,actor,metadata,info,postgres
     const launchProfile=await writeReservedLaunchProfile({root:native.launchProfileRoot,actor,projectId:info.projectId,launchId:launch.launch_id,memberId:member.member_id,postgres,workerAccess:{planId:claim.result.workerAccess.planId,policyId:claim.result.workerAccess.policyId}});
     // Creation has no command: a child cannot start until its terminal receipt
     // has committed. Every failure after claim keeps the capacity reservation.
-    const target=await native.createLaunchTerminal({title:member.name},metadata);
+    const target=native.createLaunchTarget?await native.createLaunchTarget({member,launchId:launch.launch_id,launchProfile,workerToolPolicy:launch.worker_tool_policy},metadata):await native.createLaunchTerminal({title:member.name},metadata);
     await api.launch({operationId:`codex-target-${launch.launch_id}`,command:{...authority,type:'recordLaunchTarget',launchId:launch.launch_id},target});
-    const command=codexLaunchCommand({member,actor,codexExecutable:native.codexExecutable,codexHome:native.codexHome,...configuration,postgres,launchProfile,target,workerToolPolicy:launch.worker_tool_policy});
-    await native.startLaunchTerminal(target,command,metadata);
+    if(native.startLaunchTarget)await native.startLaunchTarget(target,metadata);
+    else{const command=codexLaunchCommand({member,actor,codexExecutable:native.codexExecutable,codexHome:native.codexHome,...configuration,postgres,launchProfile,target,workerToolPolicy:launch.worker_tool_policy});await native.startLaunchTerminal(target,command,metadata);}
     results.push({launchId:launch.launch_id,terminalHandle:target.terminalHandle,starting:true});
    }catch(error){
     if(error.code==='API_NATIVE_UNVERIFIED')throw error;

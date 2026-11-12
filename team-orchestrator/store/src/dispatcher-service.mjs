@@ -6,9 +6,11 @@ import {homedir,hostname} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createProjectDispatcher} from './project-dispatcher.mjs';
+import {createOwnedCodexManager} from './owned-codex-manager.mjs';
 
-const protocol=1,maxBytes=8192;
-const implementation=createHash('sha256').update(await readFile(new URL('./dispatcher-service.mjs',import.meta.url))).update(await readFile(new URL('./project-dispatcher.mjs',import.meta.url))).digest('hex');
+const protocol=1,maxBytes=262144;
+const implementationHash=createHash('sha256');for(const name of ['dispatcher-service','project-dispatcher','owned-codex-manager','provider-rpc','owned-provider-wake','codex-independent-native','codex-inspector'])implementationHash.update(await readFile(new URL(`./${name}.mjs`,import.meta.url)));
+const implementation=implementationHash.digest('hex');
 const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}};
 const read=async path=>{try{return JSON.parse(await readFile(path,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
 async function atomic(path,value){const temp=`${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,file=await open(temp,'wx',0o600);try{await file.writeFile(JSON.stringify(value));await file.sync();}finally{await file.close();}await rename(temp,path);}
@@ -29,7 +31,7 @@ function lines(socket,receive){
 }
 const send=(socket,row)=>{if(socket.destroyed||!socket.writable)throw Error('Receiver disconnected.');socket.write(JSON.stringify(row)+'\n');};
 const sameToken=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
-export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=90000,tickMs=250}={}){
+export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=90000,tickMs=250,createOwnedManager=createOwnedCodexManager}={}){
  const statePath=join(location.directory,'active-pass.json'),accessPath=join(location.directory,'access.json');
  const recovered=await read(statePath);
  if(recovered&&(!Number.isSafeInteger(recovered.pid)||typeof recovered.passId!=='string'||typeof recovered.receiverId!=='string'||!Number.isFinite(recovered.startedAt)))throw Error('Dispatcher recovery receipt is invalid; preserve it for inspection.');
@@ -41,6 +43,7 @@ export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=9
   const receipt=await read(completedPath(location,pass.passId));return receipt?.passId===pass.passId&&receipt.receiverId===pass.receiverId&&receipt.pid===pass.pid;
  }});
  const token=randomBytes(32).toString('hex'),sockets=new Set(),authenticated=new Set();let idleSince=Date.now(),stopped=false,lastStatus='';
+ const owned=createOwnedManager({directory:join(location.directory,'owned-codex'),projectRoot:location.projectRoot,machineId:location.machineId});
  const server=createServer(socket=>{
   if(sockets.size>=128){socket.destroy();return;}
   sockets.add(socket);let id=null,hello=false,queue=Promise.resolve();
@@ -50,6 +53,14 @@ export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=9
     if(row?.type!=='hello'||row.protocol!==protocol||!sameToken(row.token,token))throw Error('Dispatcher authentication failed.');
     if(row.implementation!==implementation){hello=true;send(socket,{type:'incompatible'});socket.end();return;}
     if(typeof row.id!=='string'||!Number.isSafeInteger(row.pid))throw Error('Invalid receiver.');
+    if(row.mode==='owned-request'){
+     hello=true;clearTimeout(timeout);
+     const operation=row.operation;
+     if(!operation||!['prepare','start','inspect','list','sendWake','pending','respond','reviewReceipt'].includes(operation.type))throw Error('Invalid owned provider operation.');
+     try{const result=await owned[operation.type](operation.input??{});send(socket,{type:'owned-result',result});}
+     catch(error){send(socket,{type:'owned-error',error:{code:/^API_[A-Z_]+$/.test(error.code??'')?error.code:'API_OWNED_EXECUTION_UNKNOWN',message:'Owned provider operation did not complete. Preserve the original launch or request and inspect it; no automatic retry was made.'}});}
+     socket.end();return;
+    }
     if(row.mode==='status'){hello=true;send(socket,{type:'status',status:dispatcher.status()});socket.end();return;}
     if(row.mode!=='receiver')throw Error('Unsupported dispatcher connection.');
     await dispatcher.register({id:row.id,pid:row.pid,completedPassId:row.completedPassId,send:value=>send(socket,value)});id=row.id;hello=true;authenticated.add(socket);
@@ -64,15 +75,40 @@ export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=9
  });
  // listen is the cross-process election. Never remove a live owner's socket.
  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(location.endpoint,resolve);});}
- catch(error){await dispatcher.close();if(error.code==='EADDRINUSE')return {owner:false};throw error;}
+ catch(error){await dispatcher.close();await owned.close();if(error.code==='EADDRINUSE')return {owner:false};throw error;}
  if(process.platform!=='win32')await chmod(location.endpoint,0o600);
  await atomic(accessPath,{protocol,token,pid:process.pid,endpoint:location.endpoint});
  const interval=setInterval(()=>{void dispatcher.tick().then(status=>{const text=JSON.stringify(status);if(text!==lastStatus){lastStatus=text;for(const socket of authenticated)try{send(socket,{type:'project-status',status});}catch{socket.destroy();}}}).catch(()=>{stopped=true;for(const socket of sockets)socket.destroy();server.close();});
   if(sockets.size)idleSince=Date.now();
-  if(!stopped&&!sockets.size&&!dispatcher.status().active&&Date.now()-idleSince>=idleMs)void close();
+  if(!stopped&&!sockets.size&&!dispatcher.status().active&&!owned.active()&&Date.now()-idleSince>=idleMs)void close();
  },tickMs);
- async function close(){if(stopped)return;stopped=true;clearInterval(interval);for(const socket of sockets)socket.destroy();await dispatcher.close();await new Promise(resolve=>server.close(resolve));}
+ async function close(){if(stopped)return;stopped=true;clearInterval(interval);for(const socket of sockets)socket.destroy();await dispatcher.close();await owned.close();await new Promise(resolve=>server.close(resolve));}
  return {owner:true,dispatcher,close,closed:new Promise(resolve=>server.once('close',()=>{clearInterval(interval);resolve();}))};
+}
+
+// Private request client for the same authenticated project dispatcher. Only a
+// failed pre-submission connection may start/discover a service. Once a request
+// is written, a lost reply remains unknown; it is never resent automatically.
+export async function projectOwnedRequest({projectRoot,machineId,root,operation,launch=true,timeoutMs=30000}){
+ const location=await dispatcherLocation({projectRoot,machineId,root});
+ for(let attempt=0;attempt<30;attempt++){
+  let submitted=false;
+  try{
+   const access=await read(join(location.directory,'access.json'));if(!access||access.protocol!==protocol||access.endpoint!==location.endpoint||typeof access.token!=='string')throw Error('Dispatcher is not ready.');
+   return await new Promise((resolve,reject)=>{
+    const socket=createConnection(location.endpoint);let settled=false;
+    const finish=(error,result)=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();error?reject(error):resolve(result);};
+    const timer=setTimeout(()=>finish(Object.assign(Error('Owned provider reply is unknown; inspect the original request.'),{code:'API_OWNED_EXECUTION_UNKNOWN'})),timeoutMs);
+    socket.on('connect',()=>{submitted=true;send(socket,{type:'hello',protocol,implementation,token:access.token,mode:'owned-request',id:`owned-${process.pid}`,pid:process.pid,operation});});
+    lines(socket,row=>{if(row.type==='owned-result')finish(null,row.result);else if(row.type==='owned-error')finish(Object.assign(Error(row.error.message),{code:row.error.code}));else if(row.type==='incompatible')finish(Object.assign(Error('The project dispatcher needs its normal update before managed delivery can run.'),{code:'API_DISPATCHER_UPDATE_REQUIRED'}));else finish(Error('Unexpected owned provider response.'));});
+    socket.on('error',error=>finish(error));socket.on('close',()=>finish(Object.assign(Error('The owned provider connection closed; inspect the original operation.'),{code:'API_OWNED_EXECUTION_UNKNOWN'})));
+   });
+  }catch(error){
+   if(submitted||!launch||attempt===29)throw error;
+   if(attempt===0){const child=spawn(process.execPath,[fileURLToPath(new URL('./dispatcher-service.mjs',import.meta.url)),'serve',location.projectRoot,location.machineId,root??''],{detached:true,windowsHide:true,stdio:'ignore'});child.on('error',()=>{});child.unref();}
+   await new Promise(resolve=>setTimeout(resolve,100));
+  }
+ }
 }
 
 export function connectProjectReceiver({projectRoot,machineId,id,onPass,root,intervalMs=30000,retryMs=1000,launch=true,launchService}={}){

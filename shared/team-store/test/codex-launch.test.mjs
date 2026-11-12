@@ -31,6 +31,12 @@ async function fixture(t,engine){
  return {...f,api,make,state,actor,authority,request,rows,launchProfileRoot};
 }
 for(const engine of ['sqlite','postgres'])describe(`${engine} reviewed Codex launch`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
+ test('the independent owner path commits its target before bootstrap without a terminal command',async t=>{
+  const f=await fixture(t,engine);await f.api.launch(f.request);let prepared=0,started=0;
+  const native={launchProfileRoot:f.launchProfileRoot,createLaunchTarget:async({member,launchId,launchProfile,workerToolPolicy})=>{assert.equal(member.member_id,'a');assert.equal(launchId,'launch-a');assert.equal(workerToolPolicy,'team-worker-v1');await access(launchProfile);prepared++;const child=f.actor('actual-native-worker','codex-thread:actual-native-worker');f.state.target=Object.fromEntries(Object.entries(child).filter(([key])=>!['provider','conversationId'].includes(key)));return f.state.target;},startLaunchTarget:async target=>{assert.equal((await f.rows("SELECT * FROM launch_targets WHERE launch_id='launch-a'"))[0].terminal_handle,target.terminalHandle);started++;},createLaunchTerminal:()=>assert.fail('Independent workers do not create host terminals.'),startLaunchTerminal:()=>assert.fail('Independent workers do not submit shell commands.')};
+  const info=(await f.api.execute({operationId:'managed-head',command:{type:'inspectCaller'}})).result;
+  await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});assert.equal(prepared,1);assert.equal(started,1);
+ });
  test('a private reserved profile pins the same engine and project through a copied runtime',async t=>{
   const f=await fixture(t,engine),projectId=(await f.api.execute({operationId:'profile-caller',command:{type:'inspectCaller'}})).result.projectId;
   const path=await writeReservedLaunchProfile({root:f.launchProfileRoot,actor:f.state.actor,projectId,launchId:'launch-a',memberId:'a',postgres:f.options.postgres});
