@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {createCodexNativeIdentity} from '../codex-native.mjs';
+import {createCodexAdapter} from '../codex-mcp.mjs';
 import {FENCED_WAKE_CAPABILITY} from '../src/wake-journal.mjs';
 
 const refused=error=>error.code==='API_NATIVE_UNVERIFIED';
@@ -87,6 +88,14 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
   const receipt=await managed.managedLaunchNative.createLaunchTarget({member:{cli:'codex',model:'default',effort:'default'},launchId:'reviewed-new-lead',launchProfile:'fixture-profile',workerToolPolicy:'team-worker-v1'},{threadId});assert.deepEqual(receipt,target);assert.equal(created,false);
   assert.equal(await managed.verifyLaunchTarget(receipt,{threadId}),receipt);await assert.rejects(managed.verifyLaunchTarget({...receipt},{threadId}),refused);
   await managed.managedLaunchNative.startLaunchTarget(receipt,{threadId});assert.equal(ownedCalls.filter(row=>row.type==='prepare').length,1);assert.equal(ownedCalls.filter(row=>row.type==='start').length,1);assert.equal(sends.length,0);assert.equal(created,false);
+ });
+ await t.test('an unjoined OS-owned conversation keeps ordinary tools when Orca proof is unavailable, while team calls stay refused',async()=>{
+  mode='remote';const candidate=identity,adapter=await createCodexAdapter({observation:false},{createIdentity:async()=>candidate});
+  try{assert.deepEqual(await adapter.call('team_guard',{tool:'Write',input:{file_path:'public.txt',content:'Ordinary nonmember work.'}},{threadId}),{});await assert.rejects(adapter.call('shared_team_status',{}, {threadId}),refused);}finally{await adapter.close();mode='normal';}
+  const unavailable=await createCodexNativeIdentity({...options,scope:{projectRoot:root,contextId:'context',terminalHandle:'terminal'}},{...dependencies,execute:async()=>{throw Error('Fixture host unavailable.');}}),starting=await createCodexAdapter({observation:false},{createIdentity:async()=>unavailable});
+  try{assert.deepEqual(await starting.call('team_guard',{tool:'Write',input:{file_path:'public.txt',content:'Ordinary nonmember work.'}},{threadId}),{});await assert.rejects(starting.call('shared_team_status',{}, {threadId}),refused);const previous=owners;owners=[];await assert.rejects(unavailable.verifyGuardCaller({threadId}),refused);owners=previous;}finally{await starting.close();}
+  const bound=await createCodexAdapter({observation:false},{createIdentity:async()=>unavailable,inspectGuard:async()=>{throw Object.assign(Error('The fixture member binding is stale.'),{code:'API_STALE_BINDING'});}});
+  try{assert.equal((await bound.call('team_guard',{tool:'Write',input:{file_path:'public.txt',content:'No member effect.'}},{threadId})).hookSpecificOutput.permissionDecision,'deny');assert.deepEqual(await bound.call('team_guard',{tool:'request_user_input_async',input:{questions:[]}},{threadId}),{});}finally{await bound.close();}
  });
  const target=await identity.createLaunchTerminal({title:'Reviewed worker'},{threadId});assert.equal(created,true);assert.equal(target.terminalHandle,'created');assert.equal(target.conversationId,undefined);
  await assert.rejects(identity.createLaunchTerminal({title:'No reused terminal'},{threadId}),refused);

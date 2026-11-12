@@ -7,7 +7,7 @@ import {homedir,hostname} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createModNative} from './mod-native.mjs';
 import {createOrcaHost} from './src/orca-host.mjs';
-import {exact} from './src/api-domain.mjs';
+import {exact,normalizeActor} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
 import {inspectWindowsProcess,windowsFileOwners} from './src/windows-native.mjs';
 import {FENCED_WAKE_CAPABILITY} from './src/orca-wake.mjs';
@@ -35,7 +35,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   const owners=await (dependencies.threadOwners??windowsFileOwners)(path);
   if(!Array.isArray(owners)||owners.length!==1||owners[0].pid!==parentPid||owners[0].createdAt!==birth)deny('The native Codex parent does not uniquely own this thread writer lock.');
  };
- const host=await createOrcaHost({orcaCommand,env},dependencies);
+ let host;try{host=await createOrcaHost({orcaCommand,env},dependencies);}catch{host=null;}
  // Capture immutable setup facts. Mutating the caller's original object cannot
  // move a running connection to another project or transport.
  const reference=Object.freeze({projectRoot:root,terminalHandle:scope.terminalHandle,contextId:scope.contextId});
@@ -50,8 +50,8 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   return target;
  };
  const native={
-  inboxWake:Object.freeze({state:host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',primaryRoute:'orca-terminal',managedFallback:{state:dependencies.createManagedWakeBackend?'target-check-required':'not-enrolled',launchesWorkers:false},providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Startup state describes the primary terminal route. Managed fallback needs current verified enrollment. Route selection, native acceptance, inbox acknowledgement and assignment pickup are separate.'}),
-  hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
+  inboxWake:Object.freeze({state:!host?'host-unavailable':host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',primaryRoute:'orca-terminal',managedFallback:{state:dependencies.createManagedWakeBackend?'target-check-required':'not-enrolled',launchesWorkers:false},providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Startup state describes the primary terminal route. Managed fallback needs current verified enrollment. Route selection, native acceptance, inbox acknowledgement and assignment pickup are separate.'}),
+  hostKind:'orca',runtimeId:host?.runtimeId??null,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
   async createLaunchTerminal({title},metadata){
    const actor=await this.verifyCaller(metadata),context=actor.contextId.startsWith('folder:')?actor.contextId:`id:${actor.contextId}`;
    const before=await host.cli(['terminal','list','--worktree',context]);
@@ -72,6 +72,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    return host.cli(['terminal','send','--terminal',target.terminalHandle,'--text',command,'--enter']);
   },
   async verifyCaller(metadata) {
+   if(!host)deny('Orca host proof is unavailable. Reconnect after restoring the normal Orca connection. No team operation is authorized.');
    const threadId=metadata?.threadId;
    if(typeof threadId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(threadId)||typeof metadata!=='object'||!Object.hasOwn(metadata,'threadId'))deny('Native Codex transport did not supply a thread identity.');
    if(await identity()!==birth)deny('The native Codex parent incarnation changed.');
@@ -80,6 +81,17 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    await ownsThread(threadId);
    if(await identity()!==birth)deny('The native Codex parent changed before verification completed.');
    return current.actor;
+  },
+  async verifyGuardCaller(metadata){
+   try{return await this.verifyCaller(metadata);}catch{
+    // This projection is only for the guard's read-only membership lookup.
+    // It can establish absence, never a native binding or team API authority.
+    const threadId=metadata?.threadId;
+    if(!metadata||!Object.hasOwn(metadata,'threadId')||typeof threadId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(threadId))deny('Native thread metadata is required for guard membership discovery.');
+    if(await identity()!==birth)deny('The native Codex parent changed.');await ownsThread(threadId);
+    if(await identity()!==birth)deny('The native Codex parent changed during guard discovery.');
+    return normalizeActor({projectRoot:root,machineId:hostname(),provider:'codex',conversationId:threadId,executionHostId:'local',contextId:reference.contextId,terminalHandle:reference.terminalHandle,incarnationId:`guard-only-codex-process:${parentPid}:${birth}`});
+   }
   },
   async verifyTarget(input,metadata){
    const sender=await this.verifyCaller(metadata);

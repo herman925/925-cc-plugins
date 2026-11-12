@@ -1,0 +1,3 @@
+* -text
+*.tap -diff
+*.log -diff

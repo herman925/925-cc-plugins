@@ -1,0 +1,149 @@
+TAP version 13
+# Subtest: Codex native identity requires the exact OS parent, fixed project and explicit host thread/incarnation
+    # Subtest: Codex to Claude uses the same fenced native prompt and never an orchestration notification
+    ok 1 - Codex to Claude uses the same fenced native prompt and never an orchestration notification
+      ---
+      duration_ms: 23.4828
+      ...
+    # Subtest: legacy prompt capability without managed enrollment never sends or launches
+    ok 2 - legacy prompt capability without managed enrollment never sends or launches
+      ---
+      duration_ms: 7.5126
+      ...
+    # Subtest: only a private verified managed backend can service an unsupported primary
+    ok 3 - only a private verified managed backend can service an unsupported primary
+      ---
+      duration_ms: 10.5531
+      ...
+    # Subtest: explicit optional managed-team creation uses the owned dispatcher without sending to Orca terminals
+    ok 4 - explicit optional managed-team creation uses the owned dispatcher without sending to Orca terminals
+      ---
+      duration_ms: 17.9337
+      ...
+    # Subtest: an unjoined OS-owned conversation keeps ordinary tools when Orca proof is unavailable, while team calls stay refused
+    not ok 5 - an unjoined OS-owned conversation keeps ordinary tools when Orca proof is unavailable, while team calls stay refused
+      ---
+      duration_ms: 2.5434
+      location: 'C:\\Users\\Herman\\Downloads\\925-cc-plugins\\shared\\team-store\\test\\codex-native.test.mjs:92:10'
+      failureType: 'testCodeFailure'
+      error: 'A complete current local terminal binding is required.'
+      code: 'API_NATIVE_UNVERIFIED'
+      name: 'StoreError'
+      stack: |-
+        refusal (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/errors.mjs:10:59)
+        deny (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/orca-host.mjs:15:28)
+        Object.verifyTerminal (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/src/orca-host.mjs:77:173)
+        async Object.verifyCaller (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/codex-native.mjs:79:18)
+        async Object.call (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/codex-mcp.mjs:94:16)
+        async TestContext.<anonymous> (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/test/codex-native.test.mjs:94:24)
+        async Test.run (node:internal/test_runner/test:932:9)
+        async TestContext.<anonymous> (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/test/codex-native.test.mjs:92:2)
+        async Test.run (node:internal/test_runner/test:932:9)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: refuses provider host evidence
+    ok 6 - refuses provider host evidence
+      ---
+      duration_ms: 2.2745
+      ...
+    # Subtest: refuses thread host evidence
+    ok 7 - refuses thread host evidence
+      ---
+      duration_ms: 2.4913
+      ...
+    # Subtest: refuses missing-thread host evidence
+    ok 8 - refuses missing-thread host evidence
+      ---
+      duration_ms: 2.3776
+      ...
+    # Subtest: refuses incarnation host evidence
+    ok 9 - refuses incarnation host evidence
+      ---
+      duration_ms: 2.3851
+      ...
+    # Subtest: refuses duplicate host evidence
+    ok 10 - refuses duplicate host evidence
+      ---
+      duration_ms: 2.9447
+      ...
+    # Subtest: refuses remote host evidence
+    ok 11 - refuses remote host evidence
+      ---
+      duration_ms: 1.4022
+      ...
+    # Subtest: refuses disconnected host evidence
+    ok 12 - refuses disconnected host evidence
+      ---
+      duration_ms: 1.1465
+      ...
+    # Subtest: refuses context host evidence
+    ok 13 - refuses context host evidence
+      ---
+      duration_ms: 1.2417
+      ...
+    1..13
+not ok 1 - Codex native identity requires the exact OS parent, fixed project and explicit host thread/incarnation
+  ---
+  duration_ms: 199.6266
+  location: 'C:\\Users\\Herman\\Downloads\\925-cc-plugins\\shared\\team-store\\test\\codex-native.test.mjs:13:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: mentioning a private provider directory in public source does not edit that directory
+not ok 2 - mentioning a private provider directory in public source does not edit that directory
+  ---
+  duration_ms: 9.9105
+  location: 'C:\\Users\\Herman\\Downloads\\925-cc-plugins\\shared\\team-store\\test\\public-source-edits.test.mjs:10:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + {
+    +   hookSpecificOutput: {
+    +     hookEventName: 'PreToolUse',
+    +     permissionDecision: 'deny',
+    +     permissionDecisionReason: 'The optional provider driver is private native code. Use its reviewed setup workflow.'
+    +   }
+    + }
+    - {}
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    hookSpecificOutput:
+      hookEventName: 'PreToolUse'
+      permissionDecision: 'deny'
+      permissionDecisionReason: 'The optional provider driver is private native code. Use its reviewed setup workflow.'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Users/Herman/Downloads/925-cc-plugins/shared/team-store/test/public-source-edits.test.mjs:12:9)
+    async Test.run (node:internal/test_runner/test:932:9)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: verified nonmembers can patch public package source without receiving private execution or pending-worker authority
+ok 3 - verified nonmembers can patch public package source without receiving private execution or pending-worker authority
+  ---
+  duration_ms: 7.2447
+  ...
+# Subtest: standing write permission permits editing actual public API source, without permitting its direct execution
+ok 4 - standing write permission permits editing actual public API source, without permitting its direct execution
+  ---
+  duration_ms: 4.9784
+  ...
+# Subtest: source editing permission excludes external targets, unknown edit formats and source redirects
+ok 5 - source editing permission excludes external targets, unknown edit formats and source redirects
+  ---
+  duration_ms: 7.8814
+  ...
+1..5
+# tests 18
+# suites 0
+# pass 15
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 377.3694

@@ -1,6 +1,6 @@
 # Setup and diagnosis
 
-## Optional Claude provider component (development candidate)
+## Optional Claude provider component
 
 For an independent or optional managed-team Claude member, run `node <this-skill>/scripts/setup-claude.mjs preview`. Review the pinned official SDK version, private machine directory and existing native Claude executable, then use `apply` only when this optional setup is requested. It installs no package scripts or optional native downloads, changes no team store or global CLI configuration, and starts no member. `diagnose` is read-only. A changed or redirected component is refused rather than overwritten. The project's matching runtime still needs its normal update/reconnect; status and launch never install this dependency automatically. Use the person's normal Claude authentication, not an orchestrator account or invented key.
 
