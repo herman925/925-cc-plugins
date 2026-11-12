@@ -2,6 +2,8 @@
 
 Reviewed candidate `e34fab9`, Mod 0.5.62 / Codex 0.1.12 / schema 10. This audit changes no runtime behavior, permissions, hook configuration, team records or live sessions. Earlier green-suite results establish their covered cases; they do not establish the missing cases below.
 
+**Follow-up repair:** [client fixes, validation and the explicit host dependency](wake-fencing-repair-20261112.md). The current validation entrypoint runs repaired regressions; the original defect probe is preserved at `778d0c5`. This document remains the historical audit, not the current implementation status.
+
 ## Directional coverage
 
 The shared mailbox supports both directions. The new durable native wake path does **not** yet have equivalent coverage in both directions. It depends on recipient provider, not whether the sender is the head or a worker.
@@ -33,9 +35,9 @@ Codex-origin delivery also checks the native target against the reserved binding
 
 ## Verification
 
-Run `node shared/team-store/validation/probe-wake-staleness-20261112.mjs`. Its native-host responses are deterministic fixtures; its shared-store acknowledgement case uses a disposable real SQLite store. It performs no real Orca sends and removes only its own temporary tree after closing the fixture databases.
+The historical reproduction at `778d0c5` used `node shared/team-store/validation/probe-wake-staleness-20261112.mjs`. Its native-host responses were deterministic fixtures; its acknowledgement case used a disposable real SQLite store. It sent no real Orca prompts. The current entrypoint runs repaired regressions instead; use the pinned historical commit in a disposable checkout to reproduce the original behavior.
 
-The probe confirms the five observations above. Existing focused native identity/wake tests were also rerun: **19 passed / 0 failed / 0 skipped**. These tests did not previously cover the binding-generation, post-read reservation or post-turn/no-read cases. No full-suite rerun is needed for this source-only audit because production code is unchanged.
+That historical probe confirmed five observations. Existing focused native identity/wake tests were also rerun then: **19 passed / 0 failed / 0 skipped**. Those tests did not cover the binding-generation, post-read reservation or post-turn/no-read cases. Production code was unchanged by the audit; subsequent repairs and their expanded suite are documented separately.
 
 Retained probe output: `%TEMP%/wake-staleness-audit-20261112.json`, SHA256 `B958665E6F3ED92E7FC26C142BCDDDAAA389C2519621F13CEDA815D083168425`.
 

@@ -3,17 +3,19 @@ import assert from 'node:assert/strict';
 import {createTeamApi} from '../api.mjs';
 import {wakeModDeliveries} from '../mod-wake.mjs';
 import {runtimeFixture} from './support/runtime-fixture.mjs';
+import {rawWrite} from './support/runtime-fixture.mjs';
+import {currentWakeEligibility} from '../src/wake-eligibility.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
 import {SHARED_WRITER} from '../src/runtime-release.mjs';
 
-for(const engine of ['sqlite','postgres'])test(`${engine}: native Mod wake reconciles a real reservation without acknowledging or starting task work`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
+for(const engine of ['sqlite','postgres'])for(const recipientProvider of ['claude','codex'])test(`${engine}: Mod to ${recipientProvider} wake reconciles a real reservation without acknowledging or starting task work`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
  const apis=[];t.after(async()=>{for(const api of apis)await api.close();});
  const f=await runtimeFixture(t,engine);
- const actor=id=>({projectRoot:f.root,machineId:'machine',provider:id==='head'?'claude':'codex',conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:`term-${id}`,incarnationId:`inc-${id}`});
+ const actor=id=>({projectRoot:f.root,machineId:'machine',provider:id==='head'?'claude':recipientProvider,conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:`term-${id}`,incarnationId:`inc-${id}`});
  const api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:SHARED_WRITER,authenticate:async()=>actor('head'),confirmController:async()=>true,verifyTarget:async input=>actor(input.conversationId)});apis.push(api);
  await api.approveController({operationId:'approve'});
  const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:2,launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:60000,exemptMemberIds:[]};
- await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Mixed native fixture',functionText:'Verify transport separately from pickup.',settings,members:[{memberId:'head',name:'Claude head',bossMemberId:null,role:'Coordinate',officialText:'Review.',cli:'claude'},{memberId:'worker',name:'Codex worker',bossMemberId:'head',role:'Research',officialText:'Read role and brief.',cli:'codex'}],expectedControllerGeneration:1}});
+ await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Mixed native fixture',functionText:'Verify transport separately from pickup.',settings,members:[{memberId:'head',name:'Claude head',bossMemberId:null,role:'Coordinate',officialText:'Review.',cli:'claude'},{memberId:'worker',name:'Worker',bossMemberId:'head',role:'Research',officialText:'Read role and brief.',cli:recipientProvider}],expectedControllerGeneration:1}});
  for(const id of ['head','worker'])await api.manageTeam({operationId:`bind-${id}`,command:{type:'bindMember',teamId:'team',memberId:id,expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:0,expectedControllerGeneration:1},target:{projectRoot:f.root,conversationId:id,terminalHandle:`term-${id}`,contextId:'context'}});
  const authority={teamId:'team',expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:1};
  const caller=(await api.execute({operationId:'caller-policy',command:{type:'inspectCaller'}})).result;
@@ -24,6 +26,9 @@ for(const engine of ['sqlite','postgres'])test(`${engine}: native Mod wake recon
  await api.execute({operationId:'admit',command:{...authority,type:'admitAssignment',runId:'run',taskId:'task',assignmentId:'assignment',memberId:'worker',instructions:'Return a fixture answer.',expectedResult:'fixture',expectedTargetGeneration:1,expectedTargetBindingGeneration:1}});
  const request={operationId:'reservation',command:{...authority,type:'prepareDeliveries'}};
  const reservation=await api.execute(request);assert.equal(reservation.result.deliveries.length,1);
+ const reserved=reservation.result.deliveries[0];
+ assert.equal((await currentWakeEligibility(api,'team',reserved)).eligible,true);
+ await assert.rejects(api.execute({operationId:'model-private',command:{type:'inspectWake',teamId:'team',recipientMemberId:'worker',kind:'delivery',pointerId:reserved.deliveryId,pointerGeneration:1}}),{code:'API_OPERATION_DENIED'});
  const proof={projectRoot:f.root,conversationId:'head',terminalHandle:'term-head',contextId:'context'},woken=[];
  const dependencies={createNative:async()=>({verifyCaller:async input=>{assert.deepEqual(input,proof);return actor('head');}}),createApi:options=>createTeamApi({...options,...f.options}),createHost:async()=>({}),createWake:()=>async delivery=>{woken.push(delivery);return {state:'input-accepted',requestId:'fixture'};}};
  const result=await wakeModDeliveries({proof,request,orcaCommand:'fixture-never-executed'},dependencies);
@@ -34,4 +39,16 @@ for(const engine of ['sqlite','postgres'])test(`${engine}: native Mod wake recon
  }finally{await db.close();}
  const unknown=await wakeModDeliveries({proof,request:{...request,operationId:'never-reserved'},orcaCommand:'fixture'},dependencies);
  assert.equal(unknown.state,'unconfirmed');assert.equal(woken.length,1);
+ await rawWrite(f,'UPDATE assignments SET pickup_deadline_ms=admitted_at_ms+1');
+ const expired=await currentWakeEligibility(api,'team',reserved);assert.equal(expired.eligible,false);assert.equal(expired.reason,'pickup-expired');
+ const expiredWake=await wakeModDeliveries({proof,request,orcaCommand:'fixture'},dependencies);
+ assert.equal(expiredWake.results[0].state,'settled-or-ineligible');assert.equal(woken.length,1);
+ await rawWrite(f,'UPDATE assignments SET pickup_deadline_ms=admitted_at_ms+120000');
+ const workerApi=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:SHARED_WRITER,authenticate:async()=>actor('worker')});
+ try{
+  const inbox=(await workerApi.execute({operationId:'own-inbox',command:{type:'inspectInbox',teamId:'team',recipientMemberId:'worker'}})).result.messages[0];
+  await workerApi.execute({operationId:'own-read',command:{...authority,type:'readInbox',deliveryId:inbox.delivery_id,expectedDeliveryGeneration:Number(inbox.delivery_generation)}});
+ }finally{await workerApi.close();}
+ const afterRead=await wakeModDeliveries({proof,request,orcaCommand:'fixture'},dependencies);
+ assert.equal(afterRead.results[0].state,'settled-or-ineligible');assert.equal(woken.length,1);
 });

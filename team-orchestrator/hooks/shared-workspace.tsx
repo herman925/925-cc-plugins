@@ -3,7 +3,7 @@ import {atom,read,update} from 'claude-code'
 import {sharedCall,sharedReviewedEdit,inspectSharedCaller} from './shared-bridge'
 import {beginTeamEdit,teamEditCommand,sharedTeamEditView} from './shared-team-edit'
 import type {SharedProof} from './shared-bridge'
-import {queueSharedDeliveries} from './shared-transport'
+import {queueSharedDeliveries,sharedWakeObservation} from './shared-transport'
 import {sharedQuestionsView} from './shared-questions'
 import {sharedMailView} from './shared-mail'
 import {USER_QUESTION_GUIDANCE} from './question-guidance'
@@ -95,6 +95,7 @@ function freshMembers():MemberDraft[]{
 
 export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
  const {Box,Text,Button,Input,Select}=ui
+ const wake=sharedWakeObservation(deps.proof)
  let s=await read($,state)
  const scope=scopeOf(deps.proof)
  if(s.scope!==scope){
@@ -155,6 +156,10 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
    <Box flexWrap="wrap" columnGap={1}>{button('workspace-reconcile','Check receipt',()=>resume())}{s.retry&&button('workspace-retry','Retry same operation',()=>resume(true))}</Box>
   </Box>}
   {s.notice&&<Text color={s.error?'yellow':'green'}>{s.notice}</Text>}
+  {wake&&<Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
+   <Text weight="bold">Inbox wake-up · {wake.stale?'Needs refresh':wake.results.some(r=>r.state==='host-update-required')?'Waiting for Orca update':wake.results.every(r=>r.state==='settled-or-ineligible')?'No pending wake':wake.results.some(r=>['needs-attention','needs-reconciliation'].includes(r.state))?'Needs attention':'Checking inbox progress'}</Text>
+   <Text dimColor>{wake.stale?'The last observation is old. Refresh before drawing conclusions.':wake.results.some(r=>r.state==='host-update-required')?'Automatic sends are blocked until Orca supports verified target delivery. Messages stay in the inbox.':'A wake-up is separate from reading a message or starting its assignment.'}</Text>
+  </Box>}
   {s.caller?.recovery&&<Box borderStyle="round" borderColor="yellow" flexDirection="column"><Text weight="bold">Reconnect this conversation</Text><Text>Its saved member binding belongs to an earlier runtime. Choose the original member and a verified session below to reconnect. Team work stays unavailable until that connection is confirmed.</Text></Box>}
   {!s.caller&&<Text dimColor>Refresh to load your teams. Nothing is created by refreshing.</Text>}
   {s.page==='new'&&!pending?<Box flexDirection="column"><Text>A team draft is saved.</Text>{deps.onNewTeam&&button('workspace-resume-setup','Continue setup',deps.onNewTeam,true)}</Box>:<Box flexDirection="column">

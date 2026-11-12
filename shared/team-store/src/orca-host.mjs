@@ -9,6 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {createConnection} from 'node:net';
 import {normalizeActor,exact} from './api-domain.mjs';
 import {refusal} from './errors.mjs';
+import {FENCED_WAKE_CAPABILITY} from './wake-journal.mjs';
 
 const execute=promisify(execFile);
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
@@ -56,11 +57,17 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
   if(!['session.tabs.list','terminal.show','terminal.agentStatus'].includes(method))deny('The host identity adapter permits read-only identity calls only.');
   return request(method,params);
  };
- async function submitWake({terminalHandle,text,requestId}){
-  if(!status.runtime?.capabilities?.includes('terminal.prompt-delivery.v1')||!/^[-a-f0-9]{36}$/.test(requestId)||typeof text!=='string'||text.length>12000)deny('Durable native prompt delivery is unavailable.');
+ const promptJournalId=status.runtime?.promptDeliveryJournalId;
+ const fenced=()=>status.runtime?.capabilities?.includes(FENCED_WAKE_CAPABILITY)&&typeof promptJournalId==='string'&&promptJournalId.length>0;
+ async function lookupWake({requestId,journalId,expectedBinding,bodyDigest}){
+  if(!fenced()||journalId!==promptJournalId)deny('Fenced native prompt receipt lookup is unavailable.');
+  return (await request('terminal.promptReceipt',{requestId,journalId,expectedBinding,bodyDigest})).promptReceipt;
+ }
+ async function submitWake({terminalHandle,text,requestId,expectedBinding,bodyDigest,journalId}){
+  if(!fenced()||journalId!==promptJournalId||!status.runtime?.capabilities?.includes('terminal.prompt-delivery.v1')||!/^[-a-f0-9]{36}$/.test(requestId)||typeof text!=='string'||text.length>12000||!expectedBinding?.incarnationId||expectedBinding.terminalHandle!==terminalHandle||!['claude','codex'].includes(expectedBinding.provider))deny('Fenced native prompt delivery is unavailable.');
   // Private adapter only: recognized agent prompt, never raw PTY input, Escape,
   // interrupt or a shell command. The saved request ID belongs to host replay.
-  return request('terminal.send',{terminal:terminalHandle,text,enter:true,agentPrompt:true,waitSubmitMs:1000,client:{id:'team-orchestrator',type:'desktop'}},requestId);
+  return request('terminal.send',{terminal:terminalHandle,text,enter:true,agentPrompt:true,expectedBinding,bodyDigest,journalId,waitSubmitMs:1000,client:{id:'team-orchestrator',type:'desktop'}},requestId);
  }
  async function verifyTerminal(input,provider,{allowMissingClaudeSession=false}={}) {
   exact(input,['projectRoot','conversationId','terminalHandle','contextId']);
@@ -78,5 +85,5 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
   const actor=normalizeActor({projectRoot:root,machineId:hostname(),provider,conversationId:input.conversationId,executionHostId:'local',contextId:input.contextId,terminalHandle:terminal.handle,incarnationId:terminal.incarnationId});
   return {actor,terminal,tab:matches[0],hasProviderSession:providerId!==undefined};
  }
- return Object.freeze({cli,rpc,submitWake,verifyTerminal,runtimeId:metadata.runtimeId,capabilities:Object.freeze([...(status.runtime?.capabilities??[])])});
+ return Object.freeze({cli,rpc,submitWake,lookupWake,promptJournalId,verifyTerminal,runtimeId:metadata.runtimeId,capabilities:Object.freeze([...(status.runtime?.capabilities??[])])});
 }

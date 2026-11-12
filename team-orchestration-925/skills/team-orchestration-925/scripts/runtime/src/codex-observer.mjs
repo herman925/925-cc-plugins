@@ -7,7 +7,7 @@ import {refusal} from './errors.mjs';
 import {pumpCodexLaunches} from './codex-launch.mjs';
 const stamp=actor=>JSON.stringify(['projectRoot','machineId','provider','conversationId','executionHostId','contextId','terminalHandle','incarnationId'].map(key=>actor[key]));
 export function createCodexObserver({native,writer=SHARED_WRITER,createApi=createTeamApi,postgres,timers={setTimeout,clearTimeout}}={}){
- let scope=null,closed=false,inFlight=null,timer=null,state='waiting-for-caller',lastError=null,lastFailure=null,launches=[],wakeReceipts=[];
+ let scope=null,closed=false,inFlight=null,timer=null,state='waiting-for-caller',lastError=null,lastFailure=null,launches=[],wakeReceipts=[],wakeCheckedAt=null;
  const schedule=(delay=30000)=>{
   if(closed||!scope||timer!==null)return;
   timer=timers.setTimeout(async()=>{timer=null;try{await observer.pump();}catch{/* Failure is visible through status; stale native proof suspends. */}finally{schedule();}},delay);
@@ -38,15 +38,17 @@ export function createCodexObserver({native,writer=SHARED_WRITER,createApi=creat
    await confirmed('deadlines',{...authority,type:'observeDeadlines'});
    const prepared=await confirmed('deliveries',{...authority,type:'prepareDeliveries'});
    await authenticate();
-   if(prepared.result.deliveries.length){
-    const receipts=await native.wake(prepared.result.deliveries,current.metadata);
-    if(!closed&&scope===current)wakeReceipts=(receipts??[]).slice(0,20);
+   if(prepared.result.deliveries.length)current.wakes=prepared.result.deliveries;
+   if(current.wakes.length){
+    const receipts=await native.wake(current.wakes,current.metadata,{api,teamId:info.member.team_id});
+    if(!closed&&scope===current){wakeReceipts=(receipts??[]).slice(0,20);wakeCheckedAt=Date.now();}
+    if((receipts??[]).every(row=>row.state==='settled-or-ineligible'))current.wakes=[];
    }
    if(!closed&&scope===current){state='active';lastError=null;lastFailure=null;}
   }finally{await api.close();}
  };
  const observer=Object.freeze({
-  activate(metadata,actor){if(!closed&&(!scope||scope.stamp!==stamp(actor))){scope={metadata:structuredClone(metadata),stamp:stamp(actor),pending:new Map()};state='scheduled';lastError=null;wakeReceipts=[];}schedule();},
+  activate(metadata,actor){if(!closed&&(!scope||scope.stamp!==stamp(actor))){scope={metadata:structuredClone(metadata),stamp:stamp(actor),pending:new Map(),wakes:[]};state='scheduled';lastError=null;wakeReceipts=[];wakeCheckedAt=null;}schedule();},
   requestPass(){if(timer!==null)timers.clearTimeout(timer);timer=null;schedule(1);},
   pump(){
    if(closed)return Promise.resolve();
@@ -59,7 +61,7 @@ export function createCodexObserver({native,writer=SHARED_WRITER,createApi=creat
    }).finally(()=>{inFlight=null;});}
    return inFlight;
   },
-  status(){return {state:closed?'stopped':state,intervalMs:30000,lastError,lastFailure,launches,wakeReceipts};},
+  status(){return {state:closed?'stopped':state,intervalMs:30000,lastError,lastFailure,launches,wakeReceipts,wakeCheckedAt,wakeObservationsStale:wakeCheckedAt!==null&&(Date.now()-wakeCheckedAt>90000||!scope||closed)};},
   async close(){closed=true;if(timer!==null)timers.clearTimeout(timer);timer=null;await inFlight?.catch(()=>{});},
  });
  return observer;

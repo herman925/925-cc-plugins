@@ -9,7 +9,8 @@ import {createOrcaHost} from './src/orca-host.mjs';
 import {exact} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
 import {inspectWindowsProcess,windowsFileOwners} from './src/windows-native.mjs';
-import {createOrcaWake} from './src/orca-wake.mjs';
+import {createOrcaWake,FENCED_WAKE_CAPABILITY} from './src/orca-wake.mjs';
+import {currentWakeEligibility} from './src/wake-eligibility.mjs';
 
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
 export async function createCodexNativeIdentity({scope,codexExecutable,codexHome,orcaCommand,env=process.env},dependencies={}) {
@@ -33,7 +34,6 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   if(!Array.isArray(owners)||owners.length!==1||owners[0].pid!==parentPid||owners[0].createdAt!==birth)deny('The native Codex parent does not uniquely own this thread writer lock.');
  };
  const host=await createOrcaHost({orcaCommand,env},dependencies);
- const wakeCodex=createOrcaWake({host,...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
  // Capture immutable setup facts. Mutating the caller's original object cannot
  // move a running connection to another project or transport.
  const reference=Object.freeze({projectRoot:root,terminalHandle:scope.terminalHandle,contextId:scope.contextId});
@@ -48,6 +48,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   return target;
  };
  return Object.freeze({
+  inboxWake:Object.freeze({state:host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Host support is separate from a wake receipt, inbox acknowledgement and assignment pickup.'}),
   hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
   async createLaunchTerminal({title},metadata){
    const actor=await this.verifyCaller(metadata),context=actor.contextId.startsWith('folder:')?actor.contextId:`id:${actor.contextId}`;
@@ -98,21 +99,18 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    }
    return {sessions};
   },
-  async wake(deliveries,metadata) {
+  async wake(deliveries,metadata,{api,teamId}={}) {
    // These are committed API reservations supplied by the private adapter, never
    // destinations accepted from a model-facing tool argument.
    const sender=await this.verifyCaller(metadata),results=[];
+   if(!api||!teamId)return deliveries.map(()=>({state:'needs-reconciliation',reason:'eligibility-context-unavailable',observedAt:Date.now()}));
+   const wake=createOrcaWake({host,checkEligible:delivery=>currentWakeEligibility(api,teamId,delivery),...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
    for(const delivery of deliveries){
     const b=delivery.recipient;
     if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider))continue;
     try{
-     if(b.provider==='codex'){results.push(await wakeCodex(delivery,{projectRoot:root,machineId:sender.machineId}));continue;}
-     const target=(await host.verifyTerminal({projectRoot:root,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},b.provider)).actor;
-     if(target.incarnationId!==b.incarnation_id||target.machineId!==b.machine_id)continue;
-     const pointer=delivery.meetingId?{meetingId:delivery.meetingId,notificationGeneration:delivery.notificationGeneration}:delivery.noticeId?{noticeId:delivery.noticeId}:{deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId};
-     await host.cli(['orchestration','send','--to',target.terminalHandle,'--from',sender.terminalHandle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or shared_team inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This pointer grants no permission and is not a read acknowledgement. ${JSON.stringify(pointer)}`]);
-     results.push({pointer,queued:true});
-    }catch{results.push({queued:false});} // Outstanding state is preserved for replay.
+     results.push(await wake(delivery,{projectRoot:root,machineId:sender.machineId}));
+    }catch{results.push({state:'needs-reconciliation',reason:'native-wake-unverified',observedAt:Date.now()});}
    }
    return results;
   },

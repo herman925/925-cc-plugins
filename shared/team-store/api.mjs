@@ -55,6 +55,7 @@ export async function createTeamApi(options) {
     return {db,value};
   };
   return Object.freeze({
+    inspectWake:async input=>{if(input?.command?.type!=='inspectWake')throw refusal('API_OPERATION_DENIED','Only private wake eligibility inspection is supported.');const {db,value}=await request(input,true);return db.execute(value);},
     workerRuntime:async input=>{
       exact(input,['operationId','type','step','receiptId']);
       if(!WORKER_RUNTIME_TYPES.includes(input.type)||typeof options.verifyWorkerRuntime!=='function')throw refusal('API_WORKER_PROOF_REQUIRED','A private verified worker runtime is required.');

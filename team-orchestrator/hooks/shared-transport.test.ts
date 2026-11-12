@@ -1,5 +1,5 @@
 import {expect,test} from 'claude-code/testing'
-import {pumpSharedDeliveries,queueSharedDeliveries} from './shared-transport'
+import {pumpSharedDeliveries,queueSharedDeliveries,sharedWakeContext,sharedWakeObservation} from './shared-transport'
 
 const proof={ok:true as const,root:'C:/fixture',sessionId:'head-conversation',handle:'term-head',contextId:'fixture'}
 const options={node:'node',orca:'orca'}
@@ -52,15 +52,28 @@ test('Codex wakes use the private native child with the original reservation, ne
  expect(processes.every(argv=>argv[0]==='node')).toBe(true)
  expect(commands.map(e=>e.command.type)).toEqual(['inspectCaller','observeDeadlines','prepareDeliveries'])
 })
-test('wake sends a durable pointer and never acknowledges a message or assumes pickup',async()=>{
+test('legacy transport targets alone never invoke an unfenced fallback',async()=>{
  const target={deliveryId:'delivery-1',messageId:'message-1',threadId:'thread-1',replay:true,conversationId:'worker-conversation'}
  const f=fixture({ok:true,result:{result:{deliveries:[]}},transportTargets:[target]})
  await pumpSharedDeliveries(f.$,proof,options)
- expect(f.sent.length).toBe(1);expect(f.sent[0].to.sessionId).toBe('worker-conversation')
- expect(f.sent[0].text).toContain('not acknowledgement');expect(f.sent[0].text).toContain('"deliveryId":"delivery-1"')
- expect(f.sent[0].text).toContain('shared_inbox_read');expect(f.sent[0].text).toContain('shared_inbox_seen')
+ expect(f.sent.length).toBe(0)
  expect(f.commands.some(c=>/read|ack|verifyAssignment/i.test(c.type))).toBe(false)
  expect(f.commands[2].expectedBindingGeneration).toBe(2)
+})
+test('Claude and Codex recipients share the native child and the head sees blocked/stale observations',async()=>{
+ for(const provider of ['claude','codex']){
+  const local={...proof,sessionId:`sender-${provider}`},calls:any[]=[],toasts:any[]=[]
+  const $={plugin:{root:'C:/plugin'},ui:{toast:async text=>toasts.push(text)},process:{run:async(argv:any,init:any)=>{
+   const envelope=JSON.parse(init.stdin);calls.push(argv)
+   if(argv[1].endsWith('/mod-wake.mjs'))return {exitCode:0,stdout:JSON.stringify({ok:true,result:{results:[{state:'host-update-required',recipientMemberId:'worker',observedAt:Date.now()}]}})}
+   const type=envelope.request.command.type,result=type==='inspectCaller'?{member:{member_id:'head',team_id:'t',generation:1},binding:{generation:1},configVersion:5}:type==='prepareDeliveries'?{deliveries:[{recipient:{provider}}]}:{}
+   return {exitCode:0,stdout:JSON.stringify({ok:true,result:{result}})}
+  }},session:{send:async()=>{throw Error('No unfenced session fallback')}}}
+  await pumpSharedDeliveries($,local,options)
+  expect(calls.some(argv=>argv[1].endsWith('/mod-wake.mjs'))).toBe(true)
+  expect(sharedWakeContext(local)).toContain('host-update-required');expect(sharedWakeObservation(local)?.stale).toBe(false)
+  expect(sharedWakeContext({...local,sessionId:'different'})).toBeUndefined();expect(toasts.length).toBe(1)
+ }
 })
 test('unknown reservation outcome sends nothing; a failed wake leaves the pump usable',async()=>{
  const unknown=fixture({ok:false,error:{code:'STORE_COMMIT_UNKNOWN'}})

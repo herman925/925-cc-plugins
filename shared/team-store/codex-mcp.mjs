@@ -132,7 +132,7 @@ export async function createCodexAdapter(options={},dependencies={}) {
      // Capability is not proof of delivery. A client can advertise elicitation and
      // still answer the form itself; only a confirmed round trip is reported.
      const workerTools=workerRuntime?await workerRuntime.observe(api,'status'):null;
-     return {host:'orca',provider:'codex',actor,info,...(workerTools?{workerTools}:{}),observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,elicitationProbe:reviewProbe(),guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:native.launchWorkers===true,launchApproval:'specific-native-reviewed-plan',workspaceUpgrade:'native-review-with-backup',standalone:false,hermes:false}};
+     return {host:'orca',provider:'codex',actor,info,...(workerTools?{workerTools}:{}),inboxWake:native.inboxWake??{state:'unverified'},observation:observation?.status()??{state:'disabled'},nativeReviewAvailable:connection?.canElicit===true,elicitationProbe:reviewProbe(),guardTrust:'not-attested',actions:{createTeam:'native-review',editTeam:'native-review',connectSession:'existing-verified',automaticCodexLaunch:native.launchWorkers===true,launchApproval:'specific-native-reviewed-plan',workspaceUpgrade:'native-review-with-backup',standalone:false,hermes:false}};
     }
     if(name==='shared_team'){
      exact(args,['operationId','command','reconcile']);

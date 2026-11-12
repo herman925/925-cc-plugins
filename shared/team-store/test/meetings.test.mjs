@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createTeamApi} from '../api.mjs';
 import {runtimeFixture,rawWrite} from './support/runtime-fixture.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
+import {currentWakeEligibility} from '../src/wake-eligibility.mjs';
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:8,launch:'demand',batch:3,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
 const code=c=>e=>e.code===`API_MEETING_${c}`;
 for(const engine of ['sqlite','postgres'])describe(`${engine} durable meetings`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
@@ -77,7 +78,11 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} durable meetings`,
   assert.equal((await f.rows('SELECT * FROM assignments')).length,0);assert.equal((await f.rows("SELECT official_text FROM role_documents WHERE member_id='worker'"))[0].official_text,'worker role');
  });
  test('notification preview and wake reservation never acknowledge another recipient',async t=>{
-  const f=await setup(t);await f.create();await f.join();
+  const f=await setup(t);await f.create();
+  const first=(await f.exec({...f.base,type:'prepareDeliveries'})).result.deliveries.find(d=>d.recipient.member_id==='worker');
+  assert.equal((await currentWakeEligibility(f.api,'team',first)).eligible,true);
+  await f.join();
+  assert.equal((await currentWakeEligibility(f.api,'team',first)).reason,'meeting-notification-read-or-superseded');
   await f.exec({...f.base,type:'prepareDeliveries'});
   assert.equal((await f.rows('SELECT read_at_ms FROM meeting_notifications')).every(n=>n.read_at_ms===null),true);
   f.native.current=f.actor('worker');const team=(await f.exec({type:'inspectTeam',teamId:'team'})).result;

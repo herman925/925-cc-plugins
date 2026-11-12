@@ -1,5 +1,6 @@
 import {normalizeTeamEdits,applyTeamEdits,configurationSnapshot} from './team-management.mjs';
 import {memberGuardPolicy} from './member-policy.mjs';
+import {inspectWakeEligibility} from './wake-eligibility.mjs';
 import {meetingFields,normalizeMeeting,meetingAccess,inspectMeeting,applyMeeting} from './meetings.mjs';
 // Private transaction implementation. Only the trusted API adapter supplies actor
 // facts; no model-facing request accepts an actor, policy, path or SQL.
@@ -32,7 +33,7 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 export {API_COMMAND_FIELDS};
 
 export function normalizeApiCommand(input, { privileged = false } = {}) {
-  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['importClassicTeam','approveController','editTeam',...launchTypes,...WORKER_RUNTIME_TYPES].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
+  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['inspectWake','importClassicTeam','approveController','editTeam',...launchTypes,...WORKER_RUNTIME_TYPES].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
   const names = API_COMMAND_FIELDS[input.type];
   exact(input, ['type', ...names]);
   const out = { type: input.type };
@@ -165,6 +166,7 @@ export async function assertApiCaller(db, command, actor) {
 // Receipt recovery does not repeat the effect, but still discloses its result.
 // A conversation may have been rebound to another member since that effect.
 export async function assertApiReceipt(db,command,actor,receipt) {
+ if(command.type==='inspectWake'){await assertApiCaller(db,command,actor);return;}
  if(WORKER_RUNTIME_TYPES.includes(command.type)){await assertApiCaller(db,command,actor);return;}
  const type=command.type,value=receipt.result;
  if(Object.hasOwn(meetingFields,type)){const {member}=await memberActor(db,actor,command,false);await meetingAccess(db,command,member.member_id);return;}
@@ -231,6 +233,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
   if(WORKER_RUNTIME_TYPES.includes(command.type))return applyWorkerRuntime(db,command,actor,normalizeRuntimeProof(runtimeProof),now);
   await checkWriter(db, writer, { advance: true });
   const type = command.type;
+  if(type==='inspectWake'){const {member}=await memberActor(db,actor,command,false);return inspectWakeEligibility(db,command,member,now);}
   if (type === 'approveController') {
     const id = controllerId(actor);
     const [old] = await db.query('SELECT * FROM controller_approvals WHERE controller_id=:id', { id });

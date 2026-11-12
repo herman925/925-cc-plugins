@@ -4,6 +4,8 @@ Development candidate on `feat/team-orchestrator-completion` / draft PR #204. Th
 
 **Follow-up:** the [bidirectionality/freshness audit](wake-bidirectionality-audit-20261112.md) found incomplete reverse delivery, a new request ID for the same delivery after rebind, post-read stale reservations and missing progress recovery. The green suites below cover narrower cases. Do not interpret this report as complete two-way delivery or duplicate prevention across binding changes.
 
+The subsequent [repair report](wake-fencing-repair-20261112.md) supersedes the client-side status and digest below. Automatic sends now require a proposed Orca host fence; the installed host does not implement that contract, so the candidate blocks automatic wake-up and exposes the dependency.
+
 ## Incident and accepted design
 
 Read-only native session search and the head's actual tool-result transcript established that the saved Research workers already had `cli: codex` and `binding.provider: codex` before the Claude head called them Claude. `model: default` did not identify a provider. The head later corrected itself. This was a reasoning/context error, not evidence of a saved binding being converted to Claude.

@@ -9,7 +9,7 @@ import {SHARED_WRITER} from './src/runtime-release.mjs';
 import {exact} from './src/api-domain.mjs';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {currentWakeEligibility} from './src/wake-eligibility.mjs';
 
 export async function wakeModDeliveries(input,dependencies={}){
  exact(input,['proof','request','orcaCommand']);
@@ -20,15 +20,15 @@ export async function wakeModDeliveries(input,dependencies={}){
  try{
   const receipt=await api.reconcile(input.request);
   if(receipt?.kind!=='api'||receipt.operationId!==input.request.operationId||!Array.isArray(receipt.result?.deliveries))return {state:'unconfirmed',results:[]};
-  const snapshot=(await api.execute({operationId:`wake-inspect-${randomUUID()}`,command:{type:'inspectTeam',teamId:input.request.command.teamId}})).result;
   const host=await (dependencies.createHost??createOrcaHost)({orcaCommand:input.orcaCommand});
-  const wake=(dependencies.createWake??createOrcaWake)({host});
+  const checkEligible=delivery=>currentWakeEligibility(api,input.request.command.teamId,delivery);
+  const wake=(dependencies.createWake??createOrcaWake)({host,checkEligible});
   const results=[];
   for(const delivery of receipt.result.deliveries){
    const b=delivery.recipient;
-   if(b?.provider!=='codex')continue;
-   const current=snapshot.bindings.find(row=>row.member_id===b.member_id),member=snapshot.members.find(row=>row.member_id===b.member_id);
-   if(member?.membership_state!=='active'||member.cli!=='codex'||!current||Object.keys(b).some(key=>current[key]!==b[key]))continue;
+   if(!['claude','codex'].includes(b?.provider))continue;
+   const eligible=await checkEligible(delivery);
+   if(!eligible.eligible){results.push({state:'settled-or-ineligible',pointer:delivery.deliveryId??delivery.noticeId??delivery.meetingId,recipientMemberId:b.member_id,reason:eligible.reason,observedAt:Date.now()});continue;}
    results.push(await wake(delivery,{projectRoot:actor.projectRoot,machineId:actor.machineId}));
   }
   return {state:'checked',results};

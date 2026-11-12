@@ -22,7 +22,7 @@ import { ASSUMPTIONS_DIR, askDelete, collectOpen, confirmLine, wrongLine } from 
 import type { OpenAssumption } from './assumptions'
 import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedStoreProtection, sharedStoreOptionsView, refreshSharedStore, sharedAccessState, sharedGuardMembership, sharedReadOnlyCommand } from './shared-store'
 import type { SharedControls } from './shared-store'
-import {pumpSharedDeliveries} from './shared-transport'
+import {pumpSharedDeliveries,sharedWakeContext} from './shared-transport'
 import {sharedInboxContext,sharedInboxSeen,readSharedInbox} from './shared-inbox'
 import {sharedTeamIdentityContext} from './shared-identity'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
@@ -3538,10 +3538,11 @@ export const register: Register = (on, options) => {
     // prompt of the person's replaces the grants, so one without the words takes them back.
     const g = grantsFrom(e.origin, e.text)
     if (g) turn = g
-    let teamIdentity:string|undefined,inbox:string|undefined
+    let teamIdentity:string|undefined,inbox:string|undefined,wakeStatus:string|undefined
     if(await sharedEnabled($)){
       const proof=await preflight($),options={node:sharedConfig.node,orca:await orcaBin($)}
       teamIdentity=await sharedTeamIdentityContext($,proof,options)
+      wakeStatus=teamIdentity?sharedWakeContext(proof):undefined
       inbox=await sharedInboxContext($,proof,options).catch(()=>undefined)
     }
     // a one-time note for this session (re-attached to its member: the role-file pointer; or on hold) rides along
@@ -3550,7 +3551,7 @@ export const register: Register = (on, options) => {
     const sid = String(await $.session.id().catch(() => ''))
     const once = pendingNote && pendingNote.id === sid ? pendingNote.text : undefined
     if (once) pendingNote = undefined
-    const withOnce = (x: typeof e) => (once||teamIdentity||inbox ? { ...x, context: [...(x.context ?? []), ...(once?[once]:[]), ...(teamIdentity?[teamIdentity]:[]), ...(inbox?[inbox]:[])] } : x)
+    const withOnce = (x: typeof e) => (once||teamIdentity||inbox||wakeStatus ? { ...x, context: [...(x.context ?? []), ...(once?[once]:[]), ...(teamIdentity?[teamIdentity]:[]), ...(wakeStatus?[wakeStatus]:[]), ...(inbox?[inbox]:[])] } : x)
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
     // A peer report/acknowledgement never asks the head to scan or rearms this member's cleanup generation.
