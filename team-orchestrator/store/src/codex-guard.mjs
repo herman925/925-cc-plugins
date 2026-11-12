@@ -12,7 +12,7 @@ export function codexGuard(authority,{tool,input}) {
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
  if(sourceReadAllowed(authority,{tool,input}))return {};
  if((!authority.workerSetup?.covered||authority.workerSetup.state==='ready')&&sourceEditAllowed(authority,{tool,input}))return {};
- if(/team-orchestrator\/(?:controller-actions|launch-settings)|machine\.sqlite|925-to\/(?:installations|launch-profiles)|mod-bridge\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
+ if(/team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts)|machine\.sqlite|925-to\/(?:installations|launch-profiles)|mod-(?:bridge|wake)\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
  const shell=['Bash','exec_command','shell_command','PowerShell'].includes(tool);
  const command=String(input?.command??input?.cmd??'').trim();
  // Deliberately narrow: do not try to prove arbitrary shell/program text safe.

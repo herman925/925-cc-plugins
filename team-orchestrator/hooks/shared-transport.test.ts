@@ -36,6 +36,22 @@ test('queued bindings without fresh private native verification are never transp
  await pumpSharedDeliveries(f.$,proof,options)
  expect(f.commands.map(c=>c.type)).toEqual(['inspectCaller','observeDeadlines','prepareDeliveries']);expect(f.sent.length).toBe(0)
 })
+test('Codex wakes use the private native child with the original reservation, never shell input or orchestration mail',async()=>{
+ const commands:any[]=[],processes:any[]=[],requestIds:string[]=[]
+ const delivery={deliveryId:'d',messageId:'m',threadId:'thread',recipient:{provider:'codex'}}
+ const $={plugin:{root:'C:/plugin'},process:{run:async(argv:any,init:any)=>{
+  processes.push(argv);const e=JSON.parse(init.stdin)
+  if(argv[1].endsWith('/mod-wake.mjs')){requestIds.push(e.request.operationId);expect(e.proof.handle).toBeUndefined();expect(e.proof.terminalHandle).toBe(proof.handle);return {exitCode:0,stdout:'{"ok":true}'}}
+  commands.push(e.request)
+  const type=e.request.command.type
+  const result=type==='inspectCaller'?{member:{member_id:'head',team_id:'team',generation:1},binding:{generation:1},configVersion:7}:type==='prepareDeliveries'?{deliveries:[delivery]}:{}
+  return {exitCode:0,stdout:JSON.stringify({ok:true,result:{result},transportTargets:type==='prepareDeliveries'?[{provider:'codex',terminalHandle:'worker'}]:[]})}
+ }},session:{send:async()=>{throw Error('Codex must not use the Claude session API')}}}
+ await pumpSharedDeliveries($,proof,options)
+ expect(requestIds).toEqual([commands[2].operationId]);expect(processes.length).toBe(4)
+ expect(processes.every(argv=>argv[0]==='node')).toBe(true)
+ expect(commands.map(e=>e.command.type)).toEqual(['inspectCaller','observeDeadlines','prepareDeliveries'])
+})
 test('wake sends a durable pointer and never acknowledges a message or assumes pickup',async()=>{
  const target={deliveryId:'delivery-1',messageId:'message-1',threadId:'thread-1',replay:true,conversationId:'worker-conversation'}
  const f=fixture({ok:true,result:{result:{deliveries:[]}},transportTargets:[target]})

@@ -5,6 +5,8 @@ description: Create, edit and connect Team Orchestrator teams, review Codex work
 
 # 925 Team Orchestrator
 
+Ground mixed-team reports in current `inspectTeam` / `inspectCaller` results. Read configured CLI and saved binding provider separately from the model; `default` is not a provider. Use `guardPolicy` / `guardPolicies` to distinguish standing switches from the manager-write rule. `allow_write: 0` alone does not establish a leaf-worker write denial. Task expiry is separate; name an actual guard verdict before reporting a permission blocker. A fresh assignment changes no permissions. A notification or accepted wake input is not task pickup; only the worker's own typed inbox/assignment receipts establish that. Automatic wake-up is the private host adapter's job, never an invitation to type into another terminal, answer its approvals or bypass its guard.
+
 Use native management tools over the shared project store. This workflow does not require an active Claude session. Current native identity supports Windows Codex terminals hosted by Orca; Hermes and independent-host operation are not implemented.
 
 Direct plugin entry points are `:create`, `:edit`, `:connect`, `:status`, `:meeting`, `:launch` and `:setup` under `team-orchestration-925`. When an action skill loads this shared workflow, that branch is already selected; skip the general action menu and resolve these references/helpers from this skill's directory.

@@ -9,6 +9,7 @@ import {createOrcaHost} from './src/orca-host.mjs';
 import {exact} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
 import {inspectWindowsProcess,windowsFileOwners} from './src/windows-native.mjs';
+import {createOrcaWake} from './src/orca-wake.mjs';
 
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
 export async function createCodexNativeIdentity({scope,codexExecutable,codexHome,orcaCommand,env=process.env},dependencies={}) {
@@ -32,6 +33,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   if(!Array.isArray(owners)||owners.length!==1||owners[0].pid!==parentPid||owners[0].createdAt!==birth)deny('The native Codex parent does not uniquely own this thread writer lock.');
  };
  const host=await createOrcaHost({orcaCommand,env},dependencies);
+ const wakeCodex=createOrcaWake({host,...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
  // Capture immutable setup facts. Mutating the caller's original object cannot
  // move a running connection to another project or transport.
  const reference=Object.freeze({projectRoot:root,terminalHandle:scope.terminalHandle,contextId:scope.contextId});
@@ -104,6 +106,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
     const b=delivery.recipient;
     if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider))continue;
     try{
+     if(b.provider==='codex'){results.push(await wakeCodex(delivery,{projectRoot:root,machineId:sender.machineId}));continue;}
      const target=(await host.verifyTerminal({projectRoot:root,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},b.provider)).actor;
      if(target.incarnationId!==b.incarnation_id||target.machineId!==b.machine_id)continue;
      const pointer=delivery.meetingId?{meetingId:delivery.meetingId,notificationGeneration:delivery.notificationGeneration}:delivery.noticeId?{noticeId:delivery.noticeId}:{deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId};

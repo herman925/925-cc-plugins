@@ -24,6 +24,7 @@ import { startSharedStore, callSharedStore, sharedCall, sharedStoreView, sharedS
 import type { SharedControls } from './shared-store'
 import {pumpSharedDeliveries} from './shared-transport'
 import {sharedInboxContext,sharedInboxSeen,readSharedInbox} from './shared-inbox'
+import {sharedTeamIdentityContext} from './shared-identity'
 import {projectWorkspaceEnabled,withProjectWorkspace,parseProjectWorkspaceModes} from './project-workspace'
 import {teamEntryState,observeTeamPresence,startTeamSetup,teamSetupView,closeSetupMenus,applyTeamInterview,readTeamInterview} from './team-setup'
 import {TEAM_TEMPLATES as PRESETS} from './team-templates'
@@ -3537,14 +3538,19 @@ export const register: Register = (on, options) => {
     // prompt of the person's replaces the grants, so one without the words takes them back.
     const g = grantsFrom(e.origin, e.text)
     if (g) turn = g
-    const inbox=await sharedEnabled($)?await sharedInboxContext($,await preflight($),{node:sharedConfig.node,orca:await orcaBin($)}).catch(()=>undefined):undefined
+    let teamIdentity:string|undefined,inbox:string|undefined
+    if(await sharedEnabled($)){
+      const proof=await preflight($),options={node:sharedConfig.node,orca:await orcaBin($)}
+      teamIdentity=await sharedTeamIdentityContext($,proof,options)
+      inbox=await sharedInboxContext($,proof,options).catch(()=>undefined)
+    }
     // a one-time note for this session (re-attached to its member: the role-file pointer; or on hold) rides along
     // with its next prompt
     await identity($)
     const sid = String(await $.session.id().catch(() => ''))
     const once = pendingNote && pendingNote.id === sid ? pendingNote.text : undefined
     if (once) pendingNote = undefined
-    const withOnce = (x: typeof e) => (once||inbox ? { ...x, context: [...(x.context ?? []), ...(once?[once]:[]), ...(inbox?[inbox]:[])] } : x)
+    const withOnce = (x: typeof e) => (once||teamIdentity||inbox ? { ...x, context: [...(x.context ?? []), ...(once?[once]:[]), ...(teamIdentity?[teamIdentity]:[]), ...(inbox?[inbox]:[])] } : x)
     // the person's own Enter is stamped origin.kind 'composer'; a plugin's prompt counts only when it submits as the person (asUser)
     const o: any = e.origin
     // A peer report/acknowledgement never asks the head to scan or rearms this member's cleanup generation.

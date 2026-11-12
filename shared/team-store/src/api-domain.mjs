@@ -1,4 +1,5 @@
 import {normalizeTeamEdits,applyTeamEdits,configurationSnapshot} from './team-management.mjs';
+import {memberGuardPolicy} from './member-policy.mjs';
 import {meetingFields,normalizeMeeting,meetingAccess,inspectMeeting,applyMeeting} from './meetings.mjs';
 // Private transaction implementation. Only the trusted API adapter supplies actor
 // facts; no model-facing request accepts an actor, policy, path or SQL.
@@ -263,7 +264,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
     const team = await reference(db,'teams','team_id',member.team_id);
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
-    return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
+    return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,guardPolicy:memberGuardPolicy(member,reports.length),teams:teams.length?teams:[team]};
   }
   if (['importClassicTeam','revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {

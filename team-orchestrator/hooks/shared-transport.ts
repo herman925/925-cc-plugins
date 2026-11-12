@@ -32,14 +32,18 @@ export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node
   const authority={teamId:info.member.team_id,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation}
   const observed=await sharedCall($,proof,{operationId:operationId(),command:{...authority,type:'observeDeadlines'}},options)
   if(!observed.ok)return
-  const response=await sharedCall($,proof,{operationId:operationId(),command:{...authority,type:'prepareDeliveries'}},options)
+  const reservation={operationId:operationId(),command:{...authority,type:'prepareDeliveries'}}
+  const response=await sharedCall($,proof,reservation,options)
   if(!response.ok)return
+  // The private child re-verifies this native parent, reconciles the committed
+  // reservation and checks current membership/binding before an idle wake.
+  // Model tool arguments never become prompt targets or prompt text.
+  if((response.result?.result?.deliveries??[]).some((d:any)=>d.recipient?.provider==='codex'))
+   await $.process.run([options.node,`${$.plugin.root}/store/mod-wake.mjs`],{stdin:JSON.stringify({proof:{projectRoot:proof.root,conversationId:proof.sessionId,terminalHandle:proof.handle,contextId:proof.contextId},request:reservation,orcaCommand:options.orca}),timeoutMs:30000}).catch(()=>undefined)
   for(const target of response.transportTargets??[]) {
    // Only the private bridge's current native verification yields a target.
    if(target.conversationId===proof.sessionId&&!target.noticeId&&!target.meetingId)continue
    if(target.provider==='codex'){
-    const pointer=JSON.stringify({teamId:info.member.team_id,...(target.meetingId?{meetingId:target.meetingId,notificationGeneration:target.notificationGeneration}:target.noticeId?{noticeId:target.noticeId}:{deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId})})
-    await $.process.run([options.orca,'orchestration','send','--to',target.terminalHandle,'--from',proof.handle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This is a pointer, not permission or acknowledgement. ${pointer}`,'--json'],{timeoutMs:15000}).catch(()=>undefined)
     continue
    }
    if(target.meetingId){await $.session.send({to:{sessionId:target.conversationId},text:`A meeting record is waiting. Use shared_team inspectMeeting; finish your current step before respondMeeting. Join and contribute only for yourself. Reading this pointer is not joining or acknowledgement. ${JSON.stringify({teamId:info.member.team_id,meetingId:target.meetingId,notificationGeneration:target.notificationGeneration})}`}).catch(()=>undefined);continue}

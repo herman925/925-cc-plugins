@@ -1,6 +1,8 @@
 # 925 Team Orchestrator
 
-This development branch is **0.1.12**, paired with Mod **0.5.62 / schema 10**. Launch review includes fixed worker-tool access and readiness; both packages share 59 runtime files. Classic import currently has native library primitives, with no exposed migration action or skill. This candidate is not published or installed; the stable 0.1.11 flows below remain the main-branch release. See the [development checkpoint](../docs/validation/completion-checkpoint-20261108.md).
+This development branch is **0.1.12**, paired with Mod **0.5.62 / schema 10**. Launch review includes fixed worker-tool access and readiness; both packages share 62 runtime files. Classic import currently has native library primitives, with no exposed migration action or skill. This candidate is not published or installed; the stable 0.1.11 flows below remain the main-branch release. See the [development checkpoint](../docs/validation/completion-checkpoint-20261108.md).
+
+The candidate adds automatic inbox-check prompts for idle connected Codex workers through Orca's guarded prompt API. Durable native request IDs prevent duplicate submissions; input acceptance and turn start remain separate from inbox acknowledgement and task pickup. Current team/caller inspection also explains the manager-write rule, so a disabled standing write switch is not mistaken for a leaf-worker denial. [Evidence and live acceptance limits](../docs/validation/mixed-provider-identity-wake-20261112.md).
 
 `team-orchestration-925` **0.1.11** is a **Codex plugin containing seven action skills, a menu skill and their shared runtime**. It provides native workflows for creating/editing a team, connecting existing sessions, reviewing worker launch plans, checking status and participating in durable meetings. It uses the same project-owned store and typed API as Team Orchestrator Mod **0.5.61 / schema 9**. An active Claude session is not required.
 

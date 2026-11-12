@@ -26,7 +26,7 @@ test('Codex guard uses standing settings, covers patch/shell/subagents and never
  assert.deepEqual(codexGuard(authority,{tool:'Bash',input:{command:'git status --short'}}),{});
  for(const command of ['git diff --output=modified.txt','rg --pre=malicious program','git status (Set-Content x y)'])assert.equal(codexGuard(authority,{tool:'Bash',input:{command}}).hookSpecificOutput.permissionDecision,'deny');
  assert.deepEqual(codexGuard({member:{...member,allow_write:1,allow_agent:1},hasReports:true},{tool:'apply_patch',input:{command:'*** Add File: x'}}),{});
- for(const text of ['.team-orchestrator/team.sqlite','C:\\x\\team-orchestrator\\controller-actions\\ticket.json','mod-bridge.mjs','machine.sqlite'])assert.equal(codexGuard({member:{...member,allow_write:1},hasReports:false},{tool:'apply_patch',input:{command:text}}).hookSpecificOutput.permissionDecision,'deny');
+ for(const text of ['.team-orchestrator/team.sqlite','C:\\x\\team-orchestrator\\controller-actions\\ticket.json','mod-bridge.mjs','mod-wake.mjs','machine.sqlite','.team-orchestrator/wake-receipts/receipt.json'])assert.equal(codexGuard({member:{...member,allow_write:1},hasReports:false},{tool:'apply_patch',input:{command:text}}).hookSpecificOutput.permissionDecision,'deny');
  assert.deepEqual(codexGuard({member:null},{tool:'apply_patch',input:{}}),{});
  assert.equal(codexGuard({member:null},{tool:'exec_command',input:{cmd:'Get-Content C:/private/925-to/launch-profiles/reserved.json'}}).hookSpecificOutput.permissionDecision,'deny');
 });
