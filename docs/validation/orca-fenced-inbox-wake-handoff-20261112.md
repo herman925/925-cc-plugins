@@ -100,4 +100,16 @@ Client fixtures and regressions: `node --test shared/team-store/test/orca-wake.t
 
 Both sender adapters use one recipient-independent wake path; no older notification/session-send fallback remains for automatic wake. Current shared delivery/notice/meeting eligibility and binding are checked before sending. Binding-generation-only changes retain the original request. A different native target needs authoritative retirement of its predecessor; attempts are bounded. A recorded start without inbox progress becomes actionable rather than causing blind resubmission. Both leads see timestamped observations; stale observations are labelled. No wake grants task/write/controller authority or acknowledges another member's inbox.
 
-No host implementation or release is claimed by this handoff. Keep automatic sends blocked until the owning Orca host satisfies this contract, then reconnect the clients and perform disposable bidirectional live acceptance.
+No host implementation or release is claimed by this handoff. Keep the original terminal route blocked until the owning Orca host satisfies this contract, then reconnect the clients and perform disposable bidirectional live acceptance. The separately approved managed fallback below does not remove this primary-route requirement.
+
+## Managed-orchestration fallback supplement
+
+[Coordination fallback: managed orchestration without replacing the primary routes](https://github.com/herman925/925-cc-plugins/issues/205) retains this original plan and adds managed execution as a fallback. The current client route arbiter persists one backend selection per wake pointer before any effect; an unknown or accepted primary never triggers another backend. The shared store keeps task/read/acceptance authority.
+
+The installed managed `send` handler is not a transparent substitute for terminal input. Its settled-Dispatch resolution can steer to a newer active follow-up even for message types that do not themselves start work. For continuing message types it can create follow-up work, reopen a saved execution or start fresh. A Dispatch address plus a client-side precheck is therefore insufficient proof of preserved execution. Changing the message type alone is insufficient too.
+
+Before enrolling that adapter, demonstrate an admission contract that pins the exact reviewed native execution and forbids automatic follow-up, redirect, close/reopen or fresh start. A retired/settled/changed target must refuse before effects. For coordinator Run delivery, pin the expected consumer generation and native owner rather than assuming the Run address proves the current provider conversation. Enforce those conditions after asynchronous hooks/queueing and at native delivery. These are requirements, not new fields or capability names claimed to exist in the installed API.
+
+Preserve native request/receipt identity and distinguish native mail acceptance from a started model turn, shared inbox read and admitted task pickup. Native request lookup's absent result can mean pruning and is not proof of no effect. Test finish/reassignment/follow-up races, role/owner changes, pending human prompts and host restart in both directions. Never use native worker_done as shared outcome acceptance.
+
+An adapter without that proof remains unenrolled and the client reports fallback-setup-required. An already reviewed owned-provider receiver can satisfy its separate connection contract without pretending the generic Orca send route has been verified. No installed application file is patched by this supplement.

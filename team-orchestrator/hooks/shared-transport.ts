@@ -10,7 +10,7 @@ export function sharedWakeObservation(proof:SharedProof){
 }
 export function sharedWakeContext(proof:SharedProof){
  const observed=sharedWakeObservation(proof)
- return observed?'Machine-local single project dispatcher observations. Check timestamps and stale before reporting current delivery. The dispatcher schedules independently authenticated receivers; it holds no controller approval. host-update-required sends no input; needs-reconciliation preserves the original request. A turn start is not inbox progress or task pickup. Inspect actual inbox/assignment receipts; never repair this by inventing assignments, changing permissions or answering another session’s approval.\n'+JSON.stringify(observed):undefined
+ return observed?'Machine-local single project dispatcher observations. Check timestamps and stale before reporting current delivery. The dispatcher schedules independently authenticated receivers; it holds no controller approval. host-update-required sends no input; fallback-setup-required means no verified managed route is enrolled, not permission to create one. needs-reconciliation preserves the original request and selected route. A turn start is not inbox progress or task pickup. Inspect actual inbox/assignment receipts; never repair this by inventing assignments, changing permissions or answering another session’s approval.\n'+JSON.stringify(observed):undefined
 }
 export function queueSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}){
  if(!proof.ok||queued)return
@@ -26,7 +26,7 @@ export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node
   try{value=JSON.parse(String(result?.stdout));if(result?.exitCode!==0||value.ok!==true||!Array.isArray(value.result?.results))throw Error()}catch{value={result:{results:[{state:'needs-reconciliation',reason:'dispatcher-receiver-unverified',observedAt:Date.now()}],lastError:'API_RECEIVER_UNVERIFIED'}}}
   const previous=wakeObservation,observed=value.result
   wakeObservation={scope:scopeKey(proof),checkedAt:observed.checkedAt??Date.now(),results:observed.results.slice(0,20),dispatcher:observed.dispatcher,lastError:observed.lastError}
-  const blocked=wakeObservation.results.find(r=>['host-update-required','needs-reconciliation','needs-attention'].includes(r.state))
+  const blocked=wakeObservation.results.find(r=>['host-update-required','fallback-setup-required','needs-reconciliation','needs-attention'].includes(r.state))
   if(blocked&&(previous?.scope!==scopeKey(proof)||JSON.stringify(previous?.results.map(r=>r.state))!==JSON.stringify(wakeObservation.results.map(r=>r.state))))try{await $.ui.toast(`Inbox wake-up: ${blocked.state}. Inspect Team workspace; no permission or assignment was changed.`)}catch{}
  }finally{pumping=false}
 }

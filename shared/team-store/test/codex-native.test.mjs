@@ -62,15 +62,23 @@ test('Codex native identity requires the exact OS parent, fixed project and expl
   const result=await identity.wake([{noticeId:'claude-notice',recipient:claudeRecipient}],{threadId},context);
   assert.equal(result[0].state,'turn-started');assert.equal(nativeWake.length,2);assert.equal(nativeWake[1].params.expectedBinding.provider,'claude');assert.equal(sends.length,0);
  });
- await t.test('legacy prompt capability never enables automatic inbox wake-up or a fallback send',async()=>{
+ await t.test('legacy prompt capability without managed enrollment never sends or launches',async()=>{
   const execute=dependencies.execute;
-  const legacy=await createCodexNativeIdentity({...options,scope:{projectRoot:root,contextId:'context',terminalHandle:'terminal'}},{...dependencies,execute:async(command,args,init)=>{
+  const legacy=await createCodexNativeIdentity({...options,scope:{projectRoot:root,contextId:'context',terminalHandle:'terminal'}},{...dependencies,wakeJournalRoot:join(root,'legacy-receipts'),execute:async(command,args,init)=>{
    const response=await execute(command,args,init);if(args[0]!=='status')return response;
    const value=JSON.parse(response.stdout);value.result.runtime.capabilities=['terminal.prompt-delivery.v1'];delete value.result.runtime.promptDeliveryJournalId;return {stdout:JSON.stringify(value)};
   }});
   assert.equal(legacy.inboxWake.state,'host-update-required');
+  assert.equal(legacy.inboxWake.managedFallback.state,'not-enrolled');
   const result=await legacy.wake([{noticeId:'legacy',recipient}],{threadId},wakeContext);
-  assert.equal(result[0].state,'host-update-required');assert.equal(nativeWake.length,2);assert.equal(sends.length,0);
+  assert.equal(result[0].state,'fallback-setup-required');assert.equal(nativeWake.length,2);assert.equal(sends.length,0);
+ });
+ await t.test('only a private verified managed backend can service an unsupported primary',async()=>{
+  const execute=dependencies.execute;let managed=0;
+  const enrolled=await createCodexNativeIdentity({...options,scope:{projectRoot:root,contextId:'context',terminalHandle:'terminal'}},{...dependencies,wakeJournalRoot:join(root,'enrolled-receipts'),execute:async(command,args,init)=>{
+   const response=await execute(command,args,init);if(args[0]!=='status')return response;const value=JSON.parse(response.stdout);value.result.runtime.capabilities=[];delete value.result.runtime.promptDeliveryJournalId;return {stdout:JSON.stringify(value)};
+  },createManagedWakeBackend:async context=>{assert.equal(context.actor.conversationId,threadId);assert.equal(context.teamId,'team');assert.equal(context.api,wakeContext.api);return {id:'orca-managed',availability:async()=>({state:'available'}),wake:async()=>{managed++;return {state:'input-accepted',requestId:'managed-fixture'};}};}});
+  assert.equal(enrolled.inboxWake.managedFallback.state,'target-check-required');const result=await enrolled.wake([{noticeId:'managed-notice',recipient}],{threadId},wakeContext);assert.equal(result[0].selectedRoute,'orca-managed');assert.equal(result[0].usingFallback,true);assert.equal(managed,1);assert.equal(nativeWake.length,2);assert.equal(sends.length,0);
  });
  const target=await identity.createLaunchTerminal({title:'Reviewed worker'},{threadId});assert.equal(created,true);assert.equal(target.terminalHandle,'created');assert.equal(target.conversationId,undefined);
  await assert.rejects(identity.createLaunchTerminal({title:'No reused terminal'},{threadId}),refused);

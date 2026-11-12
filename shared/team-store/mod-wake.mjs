@@ -3,7 +3,7 @@
 // never reserve again, acknowledge, change permissions or restart a session.
 import {createModNative} from './mod-native.mjs';
 import {createOrcaHost} from './src/orca-host.mjs';
-import {createOrcaWake} from './src/orca-wake.mjs';
+import {createHostAdaptiveWake} from './src/host-adaptive-wake.mjs';
 import {createTeamApi} from './api.mjs';
 import {SHARED_WRITER} from './src/runtime-release.mjs';
 import {exact} from './src/api-domain.mjs';
@@ -22,7 +22,8 @@ export async function wakeModDeliveries(input,dependencies={}){
   if(receipt?.kind!=='api'||receipt.operationId!==input.request.operationId||!Array.isArray(receipt.result?.deliveries))return {state:'unconfirmed',results:[]};
   const host=await (dependencies.createHost??createOrcaHost)({orcaCommand:input.orcaCommand});
   const checkEligible=delivery=>currentWakeEligibility(api,input.request.command.teamId,delivery);
-  const wake=(dependencies.createWake??createOrcaWake)({host,checkEligible});
+  const managedBackend=await dependencies.createManagedWakeBackend?.({host,actor,api,teamId:input.request.command.teamId});
+  const wake=(dependencies.createWake??createHostAdaptiveWake)({host,managedBackend,checkEligible});
   const results=[];
   for(const delivery of receipt.result.deliveries){
    const b=delivery.recipient;

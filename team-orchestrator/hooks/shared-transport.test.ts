@@ -26,3 +26,6 @@ test('blocked observations are scoped and do not invoke a session-send fallback'
 test('an unknown child result remains visible and permits the next connection',async()=>{
  const local={...proof,sessionId:'unknown'},f=fixture();f.$.process.run=async()=>({exitCode:1,stdout:'bad'});await pumpSharedDeliveries(f.$,local,options);expect(sharedWakeObservation(local)?.lastError).toBe('API_RECEIVER_UNVERIFIED');expect(sharedWakeContext(local)).toContain('needs-reconciliation');await pumpSharedDeliveries(f.$,local,options)
 })
+test('missing managed enrollment is visible and never presented as a worker launch',async()=>{
+ const local={...proof,sessionId:'fallback-setup'},f=fixture([{state:'fallback-setup-required',reason:'no-reviewed-managed-backend'}]);await pumpSharedDeliveries(f.$,local,options);expect(sharedWakeObservation(local)?.results[0].state).toBe('fallback-setup-required');expect(sharedWakeContext(local)).toContain('not permission to create one');expect(f.toasts.length).toBe(1)
+})

@@ -6,6 +6,8 @@ Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the
 
 The development candidate now shares [one local project dispatcher](docs/validation/single-project-dispatcher-20261112.md) between Claude and Codex receivers. It replaces per-client coordination polling; independent provider transports are included as library foundations. It is not installed or a completed standalone launch workflow, and the existing Orca terminal wake route still requires its target fence.
 
+The [approved managed fallback](docs/validation/managed-fallback-20261112.md) retains both primary plans. Route selection now prevents cross-route retries after uncertain sends; a missing verified managed connection reports setup required. The generic Orca send command is not silently substituted for a reviewed execution.
+
 ## Team Orchestrator
 
 Choose the client you work in. The Claude Code shared workspace and Codex client use the same project-owned store and management API; each has its own interface and installation package.

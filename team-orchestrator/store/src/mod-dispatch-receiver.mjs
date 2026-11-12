@@ -6,7 +6,7 @@ import {resolve} from 'node:path';
 import {createModNative} from '../mod-native.mjs';
 import {createTeamApi} from '../api.mjs';
 import {createOrcaHost} from './orca-host.mjs';
-import {createOrcaWake} from './orca-wake.mjs';
+import {createHostAdaptiveWake} from './host-adaptive-wake.mjs';
 import {currentWakeEligibility} from './wake-eligibility.mjs';
 import {connectProjectReceiver} from './dispatcher-service.mjs';
 import {SHARED_WRITER} from './runtime-release.mjs';
@@ -49,7 +49,8 @@ export async function createModDispatchReceiver(input,dependencies={}){
    if(prepared.result.deliveries.length)wakes=prepared.result.deliveries;
    if(wakes.length){
     const host=await (dependencies.createHost??createOrcaHost)({orcaCommand:input.orcaCommand});
-    const wake=(dependencies.createWake??createOrcaWake)({host,checkEligible:async delivery=>{await authenticate();return currentWakeEligibility(api,teamId,delivery);}});
+    const managedBackend=await dependencies.createManagedWakeBackend?.({host,actor,api,teamId});
+    const wake=(dependencies.createWake??createHostAdaptiveWake)({host,managedBackend,checkEligible:async delivery=>{await authenticate();return currentWakeEligibility(api,teamId,delivery);}});
     results=[];for(const delivery of wakes){await authenticate();results.push(await wake(delivery,{projectRoot:actor.projectRoot,machineId:actor.machineId}));}
     checkedAt=Date.now();if(results.every(r=>r.state==='settled-or-ineligible'))wakes=[];
    }

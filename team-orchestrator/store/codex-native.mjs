@@ -9,7 +9,8 @@ import {createOrcaHost} from './src/orca-host.mjs';
 import {exact} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
 import {inspectWindowsProcess,windowsFileOwners} from './src/windows-native.mjs';
-import {createOrcaWake,FENCED_WAKE_CAPABILITY} from './src/orca-wake.mjs';
+import {FENCED_WAKE_CAPABILITY} from './src/orca-wake.mjs';
+import {createHostAdaptiveWake} from './src/host-adaptive-wake.mjs';
 import {currentWakeEligibility} from './src/wake-eligibility.mjs';
 
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
@@ -48,7 +49,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   return target;
  };
  return Object.freeze({
-  inboxWake:Object.freeze({state:host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Host support is separate from a wake receipt, inbox acknowledgement and assignment pickup.'}),
+  inboxWake:Object.freeze({state:host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',primaryRoute:'orca-terminal',managedFallback:{state:dependencies.createManagedWakeBackend?'target-check-required':'not-enrolled',launchesWorkers:false},providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Startup state describes the primary terminal route. Managed fallback needs current verified enrollment. Route selection, native acceptance, inbox acknowledgement and assignment pickup are separate.'}),
   hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
   async createLaunchTerminal({title},metadata){
    const actor=await this.verifyCaller(metadata),context=actor.contextId.startsWith('folder:')?actor.contextId:`id:${actor.contextId}`;
@@ -104,7 +105,8 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    // destinations accepted from a model-facing tool argument.
    const sender=await this.verifyCaller(metadata),results=[];
    if(!api||!teamId)return deliveries.map(()=>({state:'needs-reconciliation',reason:'eligibility-context-unavailable',observedAt:Date.now()}));
-   const wake=createOrcaWake({host,checkEligible:delivery=>currentWakeEligibility(api,teamId,delivery),...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
+   const managedBackend=await dependencies.createManagedWakeBackend?.({host,actor:sender,api,teamId,metadata});
+   const wake=createHostAdaptiveWake({host,managedBackend,checkEligible:delivery=>currentWakeEligibility(api,teamId,delivery),...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
    for(const delivery of deliveries){
     const b=delivery.recipient;
     if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider))continue;
