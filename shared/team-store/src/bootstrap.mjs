@@ -38,7 +38,7 @@ export async function inspectSchema(db, definition = SHARED_SCHEMA, expectedIden
   if (definition.format === FORMAT) {
     const guards = db.engine === 'sqlite' ? objects : await db.query(`SELECT t.tgname AS name FROM pg_catalog.pg_trigger t
       JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-      WHERE c.relname IN ('messages','task_acceptances','assignment_returns','decision_gate_supersessions','decision_gates','tasks','member_launches','deadline_notices','launch_plans','launch_plan_members','launch_targets','worker_tool_consents','worker_readiness') AND n.nspname=current_schema() AND NOT t.tgisinternal`);
+      WHERE c.relname IN ('messages','task_acceptances','assignment_returns','decision_gate_supersessions','decision_gates','tasks','member_launches','deadline_notices','launch_plans','launch_plan_members','launch_targets','worker_tool_consents','worker_readiness','managed_head_options','managed_head_tool_consents') AND n.nspname=current_schema() AND NOT t.tgisinternal`);
     const required = db.engine === 'sqlite' ? ['messages_immutable_update', 'messages_immutable_delete', 'messages_immutable_replace']
       : ['messages_immutable_update', 'messages_immutable_truncate'];
     if(definition.version>=6){
@@ -48,6 +48,7 @@ export async function inspectSchema(db, definition = SHARED_SCHEMA, expectedIden
     if(definition.version>=7)for(const table of ['member_launches','deadline_notices'])required.push(`${table}_guard_update`,`${table}_guard_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${table}_guard_replace`]:[]));
     if(definition.version>=9)for(const table of ['launch_plans','launch_plan_members','launch_targets'])required.push(`${table}_immutable_update`,`${table}_immutable_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${table}_immutable_replace`]:[]));
     if(definition.version>=10)required.push('worker_consent_update','worker_readiness_update',...(db.engine==='sqlite'?['worker_consent_delete','worker_consent_replace','worker_readiness_delete','worker_readiness_replace']:['worker_consent_truncate','worker_readiness_delete','worker_readiness_truncate']));
+    if(definition.version>=11)for(const table of ['managed_head_options','managed_head_tool_consents'])required.push(`${table}_scope`,`${table}_immutable_update`,`${table}_immutable_${db.engine==='sqlite'?'delete':'truncate'}`,...(db.engine==='sqlite'?[`${table}_immutable_replace`]:[]));
     const absent = required.filter(name => !guards.some(row => row.name === name));
     if (absent.length) throw refusal('STORE_SCHEMA_INCOMPLETE', `Immutability guards are missing: ${absent.join(', ')}. No write was authorized.`, { missing: absent });
   }

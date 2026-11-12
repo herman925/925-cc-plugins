@@ -183,9 +183,10 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
       return <Box key={m.member_id} flexDirection="column">
        <Text weight="bold">{m.name}{me?.member_id===m.member_id?' · You':''} · {m.role}</Text>
        <Text dimColor>{boss?`Reports to ${boss.name}`:'Team head'} · {binding?'Session linked':'Not connected'}</Text>
+       {snapshot.managedLead?.memberId===m.member_id&&<Text color="cyan">Dispatcher-owned lead · launch and native review through the Codex team workflow</Text>}
        {setup?.covered&&<Box borderStyle="round" borderColor={ready?'green':'yellow'} paddingX={1}><Text color={ready?'green':'yellow'}>{setupLabel}</Text></Box>}
        <Box flexWrap="wrap" columnGap={1}>
-        {!!controller&&m.cli!=='codex'&&!binding&&!pending&&button(`workspace-launch-${m.member_id}`,(snapshot.launches??[]).some((l:any)=>l.member_id===m.member_id)?'Check launch':'Launch session',()=>action($,async()=>{
+        {!!controller&&!snapshot.managedLead&&m.cli!=='codex'&&!binding&&!pending&&button(`workspace-launch-${m.member_id}`,(snapshot.launches??[]).some((l:any)=>l.member_id===m.member_id)?'Check launch':'Launch session',()=>action($,async()=>{
          const current=await read($,state),member=current.snapshot.members.find((x:any)=>x.member_id===m.member_id)
          const response=await sharedCall($,await proofNow(deps),{operationId:`launch-reserve-${uid()}`,command:{type:'reserveLaunch',teamId:current.teamId,memberId:member.member_id,launchId:uid(),expectedConfigVersion:current.snapshot.team.config_version,expectedMemberGeneration:member.generation,expectedControllerGeneration:controller}},{...deps,mode:'launchMember'})
          if(!response.ok)throw Error(failure(response))
@@ -194,7 +195,7 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
          queueSharedDeliveries($,deps.proof,deps)
         }),true)}
         {(snapshot.launches??[]).filter((l:any)=>l.member_id===m.member_id&&!binding).map((l:any)=><Text key={`launch-status-${m.member_id}`} dimColor>{l.status==='queued'?'Queued · waiting for capacity':'Starting · awaiting verified session'}</Text>)}
-        {!!controller&&!pending&&button(`workspace-bind-${m.member_id}`,binding?'Change session':'Connect session',()=>action($,async()=>{
+        {!!controller&&snapshot.managedLead?.memberId!==m.member_id&&!pending&&button(`workspace-bind-${m.member_id}`,binding?'Change session':'Connect session',()=>action($,async()=>{
          await set($,{memberChoice:m.member_id,bindingMember:m.member_id,sessions:[],sessionChoice:'0',page:'bind'})
          const response=await sharedCall($,await proofNow(deps),{},{...deps,mode:'listSessions'})
          if(!response.ok)throw Error(failure(response))

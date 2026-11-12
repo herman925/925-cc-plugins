@@ -2,12 +2,13 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 import {WORKER_RUNTIME_TYPES} from './worker-policy.mjs';
 const stringField={type:'string'}
 const versionField={type:'integer',minimum:1}
-export const commandRequirements=types=>({anyOf:types.map(type=>({properties:{type:{enum:[type]}},required:['type',...API_COMMAND_FIELDS[type].filter(field=>field!=='note')]}))})
+export const commandRequirements=types=>({anyOf:types.map(type=>({properties:{type:{enum:[type]}},required:['type',...API_COMMAND_FIELDS[type].filter(field=>!['note','managedLead'].includes(field))]}))})
 export const commandSchema={type:'object',additionalProperties:false,properties:{
  type:{type:'string',enum:Object.keys(API_COMMAND_FIELDS).filter(t=>!['inspectWake','importClassicTeam','approveController','editTeam','reserveLaunch','claimLaunch','attachLaunch','approveLaunchPlan','recordLaunchTarget','inspectLaunchQueue',...WORKER_RUNTIME_TYPES].includes(t))},
  ...Object.fromEntries(['teamId','name','functionText','memberId','runId','taskId','assignmentId','newAssignmentId','deliveryId','recipientMemberId','instructions','expectedResult','summary','evidence','reason','controllerId','gateId','newGateId','question','choice','note','threadId','answer','noticeId','meetingId','title','startPolicy','response','checkpoint','contributionId','body','disposition','resolution','outputId','ownerMemberId','outputKind'].map(k=>[k,stringField])),
  ...Object.fromEntries(['expectedConfigVersion','expectedMemberGeneration','expectedControllerGeneration','expectedTargetGeneration','expectedTargetBindingGeneration','expectedAttemptGeneration','expectedDeliveryGeneration','expectedGateGeneration','expectedThreadGeneration','expectedMeetingGeneration','notificationGeneration'].map(k=>[k,versionField])),
  participantIds:{type:'array',minItems:1,maxItems:30,uniqueItems:true,items:stringField},
+ managedLead:{type:'boolean'},
  topics:{type:'array',minItems:1,maxItems:30,items:{type:'object',additionalProperties:false,properties:{title:stringField,requiredMemberIds:{type:'array',uniqueItems:true,items:stringField}},required:['title','requiredMemberIds']}},
  lineLimit:{type:'integer',minimum:1,maximum:100},roundLimit:{type:'integer',minimum:1,maximum:5},
  assignmentId:{type:['string','null']},

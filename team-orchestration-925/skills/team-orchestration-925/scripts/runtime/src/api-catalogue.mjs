@@ -20,7 +20,7 @@ export const API_COMMAND_FIELDS = {
   resolveGate: ['teamId','gateId','choice','note','expectedGateGeneration','expectedConfigVersion','expectedMemberGeneration','expectedBindingGeneration'],
   editTeam:['teamId','expectedControllerGeneration','expectedConfigVersion','changes'],
   approveController: [], revokeController: ['controllerId', 'expectedControllerGeneration'],
-  createFreshTeam: ['teamId', 'name', 'functionText', 'settings', 'members', 'expectedControllerGeneration'],
+  createFreshTeam: ['teamId', 'name', 'functionText', 'settings', 'members', 'expectedControllerGeneration','managedLead'],
   bindMember: ['teamId', 'memberId', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedControllerGeneration'],
   inspectTeam: ['teamId'],
   inspectCaller: [],inspectController:[],inspectConfiguration:['teamId'],

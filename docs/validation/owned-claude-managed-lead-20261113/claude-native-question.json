@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-owned-manager-native-YTNF9X",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "fixtureApprovalCallbacks": true,
+  "liveTeamsChanged": false,
+  "provider": "claude",
+  "modelRequests": 12,
+  "observed": [
+    {
+      "call": 1,
+      "tool": "shared_team_status"
+    },
+    {
+      "call": 2,
+      "tool": "shared_team"
+    },
+    {
+      "call": 3,
+      "tool": "shared_inbox_read"
+    },
+    {
+      "call": 4,
+      "tool": "shared_inbox_seen",
+      "readReceiptId": "bootstrap-read-cdf32201-2702-438b-836b-94a7e3b8b4a6"
+    },
+    {
+      "call": 6,
+      "tool": "shared_team"
+    },
+    {
+      "call": 7,
+      "tool": "shared_inbox_read"
+    },
+    {
+      "call": 8,
+      "tool": "shared_inbox_seen",
+      "readReceiptId": "inbox-read-5e912c55-6ab1-4d41-ba72-9c3a41222bdc"
+    }
+  ],
+  "binding": {
+    "provider": "claude",
+    "conversationId": "b590986f-52e5-41fd-9419-44d594afa58a",
+    "incarnationId": "claude-process:37476:134389811003613886",
+    "generation": 1
+  },
+  "readiness": "ready",
+  "bootstrap": {
+    "nativeId": "2fa06c29-a50c-41de-95ac-62549790bb74",
+    "acceptedAt": 1794507504045
+  },
+  "wake": {
+    "accepted": true,
+    "requestId": "1cd10765-f925-4b7d-ad1a-163658793f06",
+    "nativeId": "1cd10765-f925-4b7d-ad1a-163658793f06"
+  },
+  "repeatedWake": {
+    "accepted": true,
+    "requestId": "1cd10765-f925-4b7d-ad1a-163658793f06",
+    "nativeId": "1cd10765-f925-4b7d-ad1a-163658793f06"
+  },
+  "inboxAcknowledged": true,
+  "effectivePolicy": {
+    "permissionMode": "default",
+    "guardHooks": "registered-fail-closed"
+  },
+  "pendingQuestion": {
+    "requestId": "4bb9df97-a4af-48be-b887-ef0b73850f06",
+    "method": "claude/permission/request",
+    "question": "Which fixture option should be used?",
+    "nativeFormPrepared": true,
+    "answered": false,
+    "duplicateWakeSuppressed": true,
+    "inboxStillUnread": true
+  },
+  "limitation": "Fixture-only approvals, synthetic head and model; no real human review, task acceptance or external-conversation wake acceptance. Pending fixture questions are cancelled only by explicit disposable-owner cleanup."
+}

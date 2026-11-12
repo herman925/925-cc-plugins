@@ -8,6 +8,8 @@ import * as schema5 from './schema5-contract.mjs';
 import * as schema7 from './schema7-contract.mjs';
 import * as schema8 from './schema8-contract.mjs';
 import * as schema9 from './schema9-contract.mjs';
+import * as schema10 from './schema10-contract.mjs';
+import {MANAGED_HEAD_DDL,managedHeadGuardsFor} from './managed-head-contract.mjs';
 import {SCHEMA_VERSION} from '../contract.mjs';
 import {WORKER_READINESS_DDL,workerReadinessGuardsFor} from './worker-readiness-contract.mjs';
 import {LAUNCH_DDL,launchPlanGuardsFor} from './launch-contract.mjs';
@@ -49,11 +51,11 @@ async function lock(db,legacy) {
 export async function upgradeTeamStore(options,dependencies={}) {
  const projectRoot=await realpath(text(options.projectRoot,'projectRoot')),operationId=text(options.operationId,'operationId');
  const machineId=text(options.machineId,'machineId'),writer=normalizeWriter(options.writer,false);
- const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:9,toVersion:SCHEMA_VERSION};
- let db,legacy=schema9;
+ const scope={projectRoot,engine:options.postgres?'postgres':'sqlite',fromVersion:10,toVersion:SCHEMA_VERSION};
+ let db,legacy=schema10;
  const backend=dependencies.openBackend??openBackend;
  try {
-  for(const candidate of [schema9,schema8,schema7,schema6,schema5]) {
+  for(const candidate of [schema10,schema9,schema8,schema7,schema6,schema5]) {
    legacy=candidate;
    try{({db}=await backend({...options,projectRoot,create:false},definitionFor(legacy)));authorize(options.authorize,options.caller,'upgradeStore',{...scope,fromVersion:legacy.SCHEMA_VERSION},{operationId},writer);break;}
    catch(error){
@@ -64,7 +66,7 @@ export async function upgradeTeamStore(options,dependencies={}) {
      const [prior]=await db.query('SELECT * FROM schema_migrations WHERE operation_id=:id',{id:operationId});
      return prior?{status:'upgraded',fromVersion:Number(prior.from_version),toVersion:Number(prior.to_version),backupPath:prior.backup_path}:{status:'already_current',toVersion:SCHEMA_VERSION};
     }
-    if(![5,6,7,8,9].includes(error.details.version))throw error;
+    if(![5,6,7,8,9,10].includes(error.details.version))throw error;
    }
   }
   if(!db)throw refusal('STORE_VERSION_UNSUPPORTED','No supported legacy store was opened.');
@@ -136,7 +138,8 @@ export async function upgradeTeamStore(options,dependencies={}) {
     await db.exec(runtimeGuardsFor(db.engine));
    }
    if(legacy.SCHEMA_VERSION<9){await db.exec(LAUNCH_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(launchPlanGuardsFor(db.engine));}
-   await db.exec(WORKER_READINESS_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(workerReadinessGuardsFor(db.engine));
+   if(legacy.SCHEMA_VERSION<10){await db.exec(WORKER_READINESS_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(workerReadinessGuardsFor(db.engine));}
+   await db.exec(MANAGED_HEAD_DDL.replaceAll('{{identity_collation}}',db.engine==='sqlite'?'BINARY':'"C"'));await db.exec(managedHeadGuardsFor(db.engine));
    const finished=await db.now();
    if(finished<now||finished>=expiry)throw refusal('STORE_LEASE_EXPIRED','Upgrade exceeded its database lease; the transaction was rolled back.');
    await db.query('INSERT INTO schema_migrations VALUES (:id,:from_version,:to_version,:machine,:path,:now)',{id:operationId,from_version:legacy.SCHEMA_VERSION,to_version:SCHEMA_VERSION,machine:machineId,path:backupPath,now:finished});

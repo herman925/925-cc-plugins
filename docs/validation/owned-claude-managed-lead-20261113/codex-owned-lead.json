@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-owned-manager-native-3kPNyx",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "fixtureApprovalCallbacks": true,
+  "liveTeamsChanged": false,
+  "provider": "codex",
+  "mode": "optional-managed-lead",
+  "modelRequests": 5,
+  "binding": {
+    "provider": "codex",
+    "conversationId": "01a1d0e3-6631-7981-ae6c-774ece2a0f70",
+    "generation": 1
+  },
+  "readiness": "ready",
+  "bootstrap": {
+    "turnId": "01a1d0e3-7353-7ab2-8326-c22837daae65",
+    "acceptedAt": 1794505929583
+  },
+  "effectivePolicy": {
+    "approvalPolicy": {
+      "granular": {
+        "sandbox_approval": false,
+        "rules": false,
+        "skill_approval": false,
+        "request_permissions": false,
+        "mcp_elicitations": true
+      }
+    },
+    "approvalsReviewer": "user",
+    "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+    }
+  },
+  "pendingReview": {
+    "method": "mcpServer/elicitation/request",
+    "requestId": 0,
+    "approvalOperation": "approveController",
+    "nativeFormPrepared": true,
+    "viewerAuthorized": true,
+    "answered": false
+  },
+  "controllerApprovalInherited": false,
+  "limitation": "Synthetic creation/launch callbacks and model. The lead’s actual management proposal remains unanswered; no real human form acceptance, task acceptance or mixed two-way team run is established."
+}

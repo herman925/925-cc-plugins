@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {refusal} from './errors.mjs';
 import {text,nextInteger} from './validation.mjs';
 import {WORKER_TOOL_POLICY,WORKER_TOOL_BUNDLE_JSON} from './worker-policy.mjs';
+import {headConsent,managedHeadOption,HEAD_TOOL_POLICY,HEAD_TOOL_BUNDLE_JSON} from './managed-head.mjs';
 const fail=(code,message)=>{throw refusal(`API_${code}`,message);};
 const proofFields=['launchId','planId','policyId','runtimeEpoch','nativeExecutionKey'];
 export function normalizeRuntimeProof(input){
@@ -16,12 +17,14 @@ export async function workerConsent(db,launchId,planId){
 async function currentConsent(db,member,launch,planId){
  const consent=await workerConsent(db,launch.launch_id,planId),[role]=await db.query('SELECT * FROM role_documents WHERE member_id=:id',{id:member.member_id});
  if(!consent||consent.policy_id!==WORKER_TOOL_POLICY||consent.tools_json!==WORKER_TOOL_BUNDLE_JSON||Number(consent.member_generation)!==Number(member.generation)||Number(consent.official_generation)!==Number(role?.official_generation)||Number(consent.notes_generation)!==Number(role?.notes_generation))return null;
+ if(member.boss_member_id===null){const option=await managedHeadOption(db,member.member_id),head=await headConsent(db,launch.launch_id,consent.plan_id);if(!option||option.team_id!==member.team_id||head?.policy_id!==HEAD_TOOL_POLICY||head?.tools_json!==HEAD_TOOL_BUNDLE_JSON)return null;}
  return consent;
 }
 export async function workerReadiness(db,memberId,now){
  const [member]=await db.query('SELECT * FROM members WHERE member_id=:id',{id:memberId});
- if(!member||member.cli!=='codex')return {state:'external',covered:false};
+ if(!member||!['claude','codex'].includes(member.cli))return {state:'external',covered:false};
  const [launch]=await db.query('SELECT * FROM member_launches WHERE member_id=:id',{id:memberId});
+ if(member.cli==='claude'&&(!launch||!(await db.query('SELECT 1 FROM launch_plan_members WHERE launch_id=:id',{id:launch.launch_id})).length))return {state:'external',covered:false};
  // Existing explicitly connected sessions keep their existing workflow; this
  // consent contract governs workers created by the native launch workflow.
  if(!launch)return {state:'external',covered:false,reason:'Connected session; native-launch readiness is not attested.'};
@@ -42,17 +45,17 @@ export async function requireWorkerReady(db,memberId,now){
 }
 export async function workerReadinessSnapshot(db,teamId){
  const states=[];const now=await db.now();
- for(const {member_id} of await db.query("SELECT member_id FROM members WHERE team_id=:id AND cli='codex' AND membership_state='active' ORDER BY member_id",{id:teamId})){
+ for(const {member_id} of await db.query("SELECT member_id FROM members WHERE team_id=:id AND cli IN ('claude','codex') AND membership_state='active' ORDER BY member_id",{id:teamId})){
   const state=await workerReadiness(db,member_id,now);if(state.covered)states.push({memberId:member_id,...state});
  }
  return states;
 }
 async function scope(db,actor,proof){
- if(actor.provider!=='codex'||proof.policyId!==WORKER_TOOL_POLICY)fail('WORKER_PROOF_REQUIRED','This is not a verified native Codex worker policy.');
+ if(!['claude','codex'].includes(actor.provider)||proof.policyId!==WORKER_TOOL_POLICY)fail('WORKER_PROOF_REQUIRED','This is not a verified native worker policy.');
  const [binding]=await db.query('SELECT * FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
  if(!binding||binding.context_id!==actor.contextId||binding.terminal_handle!==actor.terminalHandle||binding.incarnation_id!==actor.incarnationId||binding.execution_host_id!==actor.executionHostId)fail('STALE_BINDING','The worker runtime does not match its native member binding.');
  const [member]=await db.query('SELECT * FROM members WHERE member_id=:id',{id:binding.member_id}),[launch]=await db.query('SELECT * FROM member_launches WHERE launch_id=:id',{id:proof.launchId});
- if(!member||member.membership_state!=='active'||member.home_original_path!==actor.projectRoot||member.machine_id!==actor.machineId||!launch||launch.member_id!==member.member_id||launch.status!=='bound'||launch.conversation_id!==actor.conversationId)fail('WORKER_PROOF_REQUIRED','The runtime is not this member’s bound native launch.');
+ if(!member||member.cli!==actor.provider||member.membership_state!=='active'||member.home_original_path!==actor.projectRoot||member.machine_id!==actor.machineId||!launch||launch.member_id!==member.member_id||launch.status!=='bound'||launch.conversation_id!==actor.conversationId)fail('WORKER_PROOF_REQUIRED','The runtime is not this member’s bound native launch.');
  const consent=await currentConsent(db,member,launch,proof.planId);if(!consent)fail('WORKER_ACCESS_REQUIRED','The native worker profile does not match its reviewed tool-access plan.');
  return {binding,member,launch,consent};
 }

@@ -22,7 +22,7 @@ for(const engine of ['sqlite','postgres'])test(`${engine}: resumed schema-9 sess
  for(const tool of ['apply_patch','spawn_agent','shared_team_launch'])assert.equal((await adapter.call('team_guard',{tool,input:{}},{})).hookSpecificOutput.permissionDecision,'deny');
  const status=await adapter.call('shared_team_status',{},{});assert.equal(status.info.upgradeRequired,true);assert.equal(status.info.storeVersion,9);
  let reviews=0;
- const connection=accept=>({canElicit:true,elicit:async form=>{reviews++;assert.match(form.message,/schema 9 to 10/);return accept?{action:'accept',content:{confirm:true}}:{action:'decline'};}});
+ const connection=accept=>({canElicit:true,elicit:async form=>{reviews++;assert.ok(form.message.includes(`schema 9 to ${SCHEMA_VERSION}`));return accept?{action:'accept',content:{confirm:true}}:{action:'decline'};}});
  await assert.rejects(adapter.call('shared_team_upgrade',request,{},connection(false)),{code:'API_APPROVAL_UNVERIFIED'});assert.equal(reviews,1);
  const unchanged=await f.raw();try{assert.equal(Number((await unchanged.query('SELECT schema_version FROM store_metadata'))[0].schema_version),9);assert.equal((await unchanged.query('SELECT * FROM schema_migrations')).length,0);}finally{await unchanged.close();}
  const receipt=await adapter.call('shared_team_upgrade',request,{},connection(true));assert.equal(reviews,2);assert.equal(receipt.status,'upgraded');assert.equal(receipt.toVersion,SCHEMA_VERSION);

@@ -1,0 +1,70 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-owned-manager-native-4bd7Gx",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "fixtureApprovalCallbacks": true,
+  "liveTeamsChanged": false,
+  "mode": "mixed-owned-team",
+  "headProvider": "claude",
+  "workerProvider": "codex",
+  "modelRequests": {
+    "codex": 11,
+    "claude": 13
+  },
+  "bindings": [
+    {
+      "member_id": "head",
+      "provider": "claude",
+      "conversation_id": "19db1b98-9f7c-484b-88cc-6c6d5731789d",
+      "generation": 1
+    },
+    {
+      "member_id": "worker",
+      "provider": "codex",
+      "conversation_id": "01a1d0f2-dcf9-77b0-a039-6271358191c3",
+      "generation": 1
+    }
+  ],
+  "readiness": [
+    {
+      "member_id": "head",
+      "state": "ready"
+    },
+    {
+      "member_id": "worker",
+      "state": "ready"
+    }
+  ],
+  "outcome": {
+    "assignment_id": "mixed-attempt",
+    "generation": 3,
+    "outcome": "succeeded",
+    "summary": "12",
+    "evidence": "5 + 7 = 12",
+    "reported_at_ms": 1794507067480
+  },
+  "acceptance": {
+    "task_id": "mixed-task",
+    "assignment_id": "mixed-attempt",
+    "accepted_by_member_id": "head",
+    "decision": "accepted",
+    "reason": "Native worker reported 12 with evidence 5 + 7 = 12; verified by this head.",
+    "decided_at_ms": 1794507100214
+  },
+  "deliveries": [
+    {
+      "sender_member_id": "head",
+      "recipient_member_id": "worker",
+      "status": "acknowledged"
+    },
+    {
+      "sender_member_id": "worker",
+      "recipient_member_id": "head",
+      "status": "acknowledged"
+    }
+  ],
+  "automaticTwoWayInbox": true,
+  "controllerApprovalInherited": false,
+  "limitation": "Actual native providers, guards, one dispatcher and shared lifecycle; deterministic loopback models and synthetic creation/launch consent. No real human consent or model reasoning acceptance is claimed."
+}

@@ -56,6 +56,15 @@ function fixture(on:any,who='head'){
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
 
+test('a managed lead never offers the legacy Mod launch or an existing-session adoption button',options,async($:any,on:any)=>{
+ const f=fixture(on,'controller');f.model.managedLead={memberId:'head'};f.model.members.forEach((member:any)=>{member.cli='claude'});f.model.bindings=[]
+ const band=await open($)
+ expect(JSON.stringify(await band.drawn())).toContain('Dispatcher-owned lead')
+ expect(await band.find({key:'workspace-launch-head'})).toBeUndefined()
+ expect(await band.find({key:'workspace-bind-head'})).toBeUndefined()
+ expect(f.calls.some(call=>call.mode==='launchMember'||call.request?.command?.type==='bindMember')).toBe(false)
+})
+
 test('native worker tool readiness is visible and blocks assignment until ready, including reviewed setup pending',options,async($:any,on:any)=>{
  const f=fixture(on);f.model.workerReadiness=[{memberId:'worker',covered:true,state:'checking',missing:['api','inbox','seen']}]
  const band=await open($)

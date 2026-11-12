@@ -11,6 +11,7 @@ export function codexGuard(authority,{tool,input}) {
  const source=typeof input==='string'?input:JSON.stringify(input??{});
  const normalized=source.replaceAll('\\\\','/').replaceAll('\\','/').toLowerCase();
  if(sourceReadAllowed(authority,{tool,input}))return {};
+ if(/team-orchestrator\/providers(?:\/|[\s"']|$)/.test(normalized))return deny('The optional provider driver is private native code. Use its reviewed setup workflow.');
  if((!authority.workerSetup?.covered||authority.workerSetup.state==='ready')&&sourceEditAllowed(authority,{tool,input}))return {};
  if(/team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts|dispatchers)|machine\.sqlite|925-to\/(?:installations|launch-profiles)|mod-(?:bridge|wake)\.[cm]?js|\.codex\/(?:config\.toml|hooks\.json)|createTeamApi|upgradeTeamStore/i.test(normalized))return deny('Private team authority and adapter state cannot be accessed by model tools. Use shared_team.');
  const shell=['Bash','exec_command','shell_command','PowerShell'].includes(tool);
@@ -40,6 +41,7 @@ export function codexGuard(authority,{tool,input}) {
  }
  if(!m)return {};
  if(authority.workerSetup?.covered&&authority.workerSetup.state!=='ready'){
+  if(tool==='ToolSearch')return {}; // Native deferred-tool discovery has no team/file effect.
   const bare=typeof tool==='string'?tool.replace(/^mcp__[a-z0-9_]+__/,''):tool;
   if(readOnly||['Read','Grep','Glob'].includes(bare)||['shared_team_status','shared_inbox_read','shared_inbox_seen'].includes(bare))return {};
   if(bare==='shared_team'&&(['inspectCaller','inspectController','inspectTeam'].includes(input?.command?.type)||(input?.command?.type==='askQuestion'&&input.command.assignmentId===null)))return {};

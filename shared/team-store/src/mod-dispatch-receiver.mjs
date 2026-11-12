@@ -37,7 +37,7 @@ export async function createModDispatchReceiver(input,dependencies={}){
     const data=(await api.execute({operationId:`dispatcher-launches-${randomUUID()}`,command:{type:'inspectTeam',teamId:team.team_id}})).result;
     for(const launch of data.launches??[]){
      const member=data.members.find(m=>m.member_id===launch.member_id);
-     if(launch.status!=='queued'||!member||member.cli==='codex')continue;
+     if(launch.status!=='queued'||!member||member.cli==='codex'||launch.conversation_id===null)continue;
      await authenticate();
      await (dependencies.launchMember??launchMember)({api,native,actor,pluginRoot:input.pluginRoot,configuration:{orca:input.orcaCommand},request:{operationId:`dispatcher-launch-${randomUUID()}`,command:{type:'reserveLaunch',teamId:team.team_id,memberId:member.member_id,launchId:launch.launch_id,expectedConfigVersion:data.team.config_version,expectedMemberGeneration:member.generation,expectedControllerGeneration:info.controllerGeneration}}});
     }

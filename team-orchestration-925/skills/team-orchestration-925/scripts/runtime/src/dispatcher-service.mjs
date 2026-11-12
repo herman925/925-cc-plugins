@@ -1,15 +1,20 @@
 import {createServer,createConnection} from 'node:net';
 import {spawn} from 'node:child_process';
 import {randomBytes,createHash,timingSafeEqual} from 'node:crypto';
-import {mkdir,readFile,open,rename,chmod,lstat,realpath,unlink} from 'node:fs/promises';
+import {mkdir,readFile,readdir,open,rename,chmod,lstat,realpath,unlink} from 'node:fs/promises';
 import {homedir,hostname} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createProjectDispatcher} from './project-dispatcher.mjs';
-import {createOwnedCodexManager} from './owned-codex-manager.mjs';
+import {createOwnedProviderManager} from './owned-provider-manager.mjs';
 
 const protocol=1,maxBytes=262144;
-const implementationHash=createHash('sha256');for(const name of ['dispatcher-service','project-dispatcher','owned-codex-manager','provider-rpc','owned-provider-wake','codex-independent-native','codex-inspector'])implementationHash.update(await readFile(new URL(`./${name}.mjs`,import.meta.url)));
+// Every shipped executable module participates. A matching transport file alone
+// cannot make an old owner compatible with changed schema, API or guard rules.
+const implementationHash=createHash('sha256');
+for(const [prefix,base] of [['root',new URL('../',import.meta.url)],['src',new URL('./',import.meta.url)]])for(const name of (await readdir(base)).filter(name=>/\.(?:mjs|ps1)$/.test(name)).sort()){
+ implementationHash.update(prefix+'/'+name+'\0');implementationHash.update((await readFile(new URL(name,base),'utf8')).replace(/\r\n/g,'\n'));
+}
 const implementation=implementationHash.digest('hex');
 const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}};
 const read=async path=>{try{return JSON.parse(await readFile(path,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
@@ -31,7 +36,7 @@ function lines(socket,receive){
 }
 const send=(socket,row)=>{if(socket.destroyed||!socket.writable)throw Error('Receiver disconnected.');socket.write(JSON.stringify(row)+'\n');};
 const sameToken=(a,b)=>typeof a==='string'&&a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
-export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=90000,tickMs=250,createOwnedManager=createOwnedCodexManager}={}){
+export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=90000,tickMs=250,createOwnedManager=createOwnedProviderManager}={}){
  const statePath=join(location.directory,'active-pass.json'),accessPath=join(location.directory,'access.json');
  const recovered=await read(statePath);
  if(recovered&&(!Number.isSafeInteger(recovered.pid)||typeof recovered.passId!=='string'||typeof recovered.receiverId!=='string'||!Number.isFinite(recovered.startedAt)))throw Error('Dispatcher recovery receipt is invalid; preserve it for inspection.');
@@ -56,7 +61,7 @@ export async function serveProjectDispatcher(location,{intervalMs=30000,idleMs=9
     if(row.mode==='owned-request'){
      hello=true;clearTimeout(timeout);
      const operation=row.operation;
-     if(!operation||!['prepare','start','inspect','list','sendWake','pending','respond','reviewReceipt'].includes(operation.type))throw Error('Invalid owned provider operation.');
+     if(!operation||!['prepare','start','inspect','list','sendWake','pending','respond','reviewReceipt','reviewInfo'].includes(operation.type))throw Error('Invalid owned provider operation.');
      try{const result=await owned[operation.type](operation.input??{});send(socket,{type:'owned-result',result});}
      catch(error){send(socket,{type:'owned-error',error:{code:/^API_[A-Z_]+$/.test(error.code??'')?error.code:'API_OWNED_EXECUTION_UNKNOWN',message:'Owned provider operation did not complete. Preserve the original launch or request and inspect it; no automatic retry was made.'}});}
      socket.end();return;

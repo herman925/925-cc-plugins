@@ -1,0 +1,2 @@
+# Preserve evidence bytes so recorded SHA256 values survive checkout.
+*.json -text

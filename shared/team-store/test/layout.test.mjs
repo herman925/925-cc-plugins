@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { openTeamStore } from '../index.mjs';
 import { runtimeFixture } from './support/runtime-fixture.mjs';
 import { postgresTestUrl } from './support/engines.mjs';
+import {WRITER_PROTOCOL_VERSION} from '../contract.mjs';
 
 export const caller = { principalId: 'configuration-test-client' };
-export const mod = { client: 'team-orchestrator', version: '0.5.42', protocol: 1 };
-export const plugin = { client: 'team-orchestrator-orca', version: '0.1.24', protocol: 1 };
+export const mod = { client: 'team-orchestrator', version: '0.5.42', protocol: WRITER_PROTOCOL_VERSION };
+export const plugin = { client: 'team-orchestrator-orca', version: '0.1.24', protocol: WRITER_PROTOCOL_VERSION };
 export const settings = { autoClose: true, idleMinutes: 10, reopen: 'resume', maxOpen: 4, launch: 'demand', batch: 2,
   autoScratch: true, assumptions: false, scratchDir: 'scratch', pickupWindowMinutes: 3, answerWindowMinutes: 5, taskWindowMinutes: null, replayIntervalMs: 1000, exemptMemberIds: [] };
 export const member = (id, extra = {}) => ({ memberId: id, name: id, bossMemberId: null, role: 'worker', level: 1,
@@ -34,6 +35,11 @@ async function setup(t, engine) {
 }
 
 for (const engine of ['sqlite', 'postgres']) describe(`${engine} schema 3 configuration`, { skip: engine === 'postgres' && !postgresTestUrl() }, () => {
+  test('the Codex-only writer protocol cannot mutate a provider-neutral store',async t=>{
+    const f=await setup(t,engine),older=await f.open({...mod,protocol:1});
+    await assert.rejects(older.execute(request('older-provider-protocol',{type:'saveTeamSettings',teamId:'team',expectedConfigVersion:1,settings})),code('STORE_WRITER_PROTOCOL_OLD'));
+    assert.equal((await f.config()).team.config_version,1);
+  });
   test('older binary freshly rereads newest config generation still refused', async t => {
     const f = await setup(t, engine), newer = await f.open({ ...mod, version: '0.5.43' });
     await newer.execute(request('newer', { type: 'saveTeamSettings', teamId: 'team', expectedConfigVersion: 1, settings: { ...settings, pickupWindowMinutes: 5 } }));
@@ -54,7 +60,7 @@ for (const engine of ['sqlite', 'postgres']) describe(`${engine} schema 3 config
     await other.execute(request('plugin-again', { type: 'saveTeamSettings', teamId: 'team', expectedConfigVersion: 3, settings }));
     for (const version of ['1.0', '01.0.0', '1.0.0-beta', '1.0.0+meta']) await assert.rejects(f.open({ ...mod, version }), code('STORE_WRITER_VERSION_INVALID'));
     await assert.rejects(f.open({ ...mod, client: 'arbitrary' }), code('STORE_WRITER_FAMILY_UNKNOWN'));
-    await assert.rejects(f.open({ ...mod, protocol: 2 }), code('STORE_WRITER_PROTOCOL_UNSUPPORTED'));
+    await assert.rejects(f.open({ ...mod, protocol: WRITER_PROTOCOL_VERSION+1 }), code('STORE_WRITER_PROTOCOL_UNSUPPORTED'));
   });
 
   test('missing known writer fences and raised protocol floors refuse explicitly', async t => {
@@ -62,7 +68,7 @@ for (const engine of ['sqlite', 'postgres']) describe(`${engine} schema 3 config
     await f.raw("DELETE FROM writer_fences WHERE writer_client='team-orchestrator-orca'");
     const other = await f.open(plugin);
     await assert.rejects(other.execute(request('missing-fence', { type: 'saveTeamSettings', teamId: 'team', expectedConfigVersion: 1, settings })), code('STORE_WRITER_FENCE_MISSING'));
-    await f.raw('UPDATE project_identity SET minimum_writer_protocol=2');
+    await f.raw('UPDATE project_identity SET minimum_writer_protocol=:floor',{floor:WRITER_PROTOCOL_VERSION+1});
     await assert.rejects(f.store.execute(request('old-protocol', { type: 'saveTeamSettings', teamId: 'team', expectedConfigVersion: 1, settings })), code('STORE_WRITER_PROTOCOL_OLD'));
     await assert.rejects(f.config(), code('STORE_WRITER_PROTOCOL_OLD'));
     assert.equal((await f.raw("SELECT writer_version FROM writer_fences WHERE writer_client='team-orchestrator'"))[0].writer_version, mod.version);

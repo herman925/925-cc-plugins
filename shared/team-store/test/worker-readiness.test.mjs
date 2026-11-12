@@ -11,17 +11,17 @@ import {codexGuard} from '../src/codex-guard.mjs';
 import {createCodexAdapter} from '../codex-mcp.mjs';
 const code=expected=>e=>e.code===expected;
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:4,launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:[]};
-async function fixture(t,engine){
+async function readinessFixture(t,engine,provider='codex',{managedLead=false}={}){
  let api;t.after(()=>api?.close());
- const f=await runtimeFixture(t,engine),actor=id=>({projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:`term-${id}`,incarnationId:`inc-${id}`});
- const state={actor:actor('head'),target:Object.fromEntries(Object.entries(actor('worker')).filter(([k])=>!['provider','conversationId'].includes(k))),proof:{launchId:'launch',planId:'plan',policyId:WORKER_TOOL_POLICY,runtimeEpoch:'epoch-1',nativeExecutionKey:'native-execution'}};
+ const f=await runtimeFixture(t,engine),actor=id=>({projectRoot:f.root,machineId:'machine',provider:id==='worker'||managedLead&&id==='head'?provider:'codex',conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:`term-${id}`,incarnationId:`inc-${id}`});
+ const state={actor:actor(managedLead?'controller':'head'),target:Object.fromEntries(Object.entries(actor('worker')).filter(([k])=>!['provider','conversationId'].includes(k))),proof:{launchId:'launch',planId:'plan',policyId:WORKER_TOOL_POLICY,runtimeEpoch:'epoch-1',nativeExecutionKey:'native-execution'}};
  api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:SHARED_WRITER,authenticate:async()=>state.actor,confirmController:async()=>true,confirmManagement:async()=>true,confirmLaunchPlan:async()=>true,verifyTarget:async()=>state.actor,verifyLaunchTarget:async()=>state.target,verifyWorkerRuntime:async()=>state.proof});
  const call=command=>api.execute({operationId:randomUUID(),command}),launch=command=>api.launch({operationId:randomUUID(),command});
  await api.approveController({operationId:'approval'});
- await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Ready',functionText:'Readiness tests',settings,expectedControllerGeneration:1,members:['head','worker'].map(id=>({memberId:id,name:id,bossMemberId:id==='head'?null:'head',role:'Role',officialText:'Official brief before work.',cli:'codex'}))}});
+ await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Ready',functionText:'Readiness tests',settings,expectedControllerGeneration:1,...(managedLead?{managedLead:true}:{}),members:['head','worker'].map(id=>({memberId:id,name:id,bossMemberId:id==='head'?null:'head',role:'Role',officialText:'Official brief before work.',cli:id==='worker'||managedLead?provider:'codex'}))}});
  const config=(await call({type:'inspectConfiguration',teamId:'team'})).result;
  const authority={teamId:'team',expectedConfigVersion:Number(config.team.config_version),expectedControllerGeneration:1};
- await api.manageTeam({operationId:'head-binding',command:{...authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:'head'});
+ if(!managedLead)await api.manageTeam({operationId:'head-binding',command:{...authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:'head'});
  const plan={...authority,type:'approveLaunchPlan',planId:'plan',workerToolPolicy:WORKER_TOOL_POLICY,selections:[{memberId:'worker',launchId:'launch',expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}]};
  await launch(plan);await launch({...authority,type:'claimLaunch',launchId:'launch'});await launch({...authority,type:'recordLaunchTarget',launchId:'launch'});
  state.actor=actor('worker');await launch({type:'attachLaunch'});
@@ -32,7 +32,25 @@ async function fixture(t,engine){
  const ready=async()=>{await runtime('beginWorkerRuntime');await step('status');await step('api');const inbox=(await step('inbox')).result;await step('seen',inbox.readReceiptId);return inbox;};
  return {...f,api,state,actor,call,launch,authority,plan,runtime,step,admit,rows,ready};
 }
-for(const engine of ['sqlite','postgres'])describe(`${engine} native worker readiness`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
+for(const engine of ['sqlite','postgres'])for(const provider of ['claude','codex'])describe(`${engine} ${provider} native worker readiness`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
+ const fixture=t=>readinessFixture(t,engine,provider);
+ test('optional new-team lead has separately reviewed management tools, readiness and no inherited controller approval',async t=>{
+  const f=await readinessFixture(t,engine,provider,{managedLead:true});f.state.actor=f.actor('controller');const plan={...f.plan,planId:'head-plan',selections:[{...f.plan.selections[0],memberId:'head',launchId:'head-launch'}]};
+  const configuration=(await f.call({type:'inspectConfiguration',teamId:'team'})).result;assert.equal(configuration.managedLead.memberId,'head');assert.equal(configuration.managedLead.policy.controllerApproval,false);
+  await assert.rejects(f.api.manageTeam({operationId:'cannot-adopt-existing-head',command:{...f.authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:'fixture-existing'}),code('API_MANAGED_HEAD_REQUIRED'));
+  await assert.rejects(f.launch({...f.authority,type:'reserveLaunch',memberId:'head',launchId:'cannot-use-legacy',expectedMemberGeneration:1}),code('API_LAUNCH_SCOPE'));
+  assert.equal((await f.rows('SELECT * FROM member_bindings')).length,1);await f.launch(plan);const claim=await f.launch({...f.authority,type:'claimLaunch',launchId:'head-launch'});assert.equal(claim.result.workerAccess.headPolicyId,'team-head-v1');
+  const [consent]=await f.rows('SELECT * FROM managed_head_tool_consents');assert.ok(JSON.parse(consent.tools_json).includes('shared_team_manage'));assert.ok(!JSON.parse(consent.tools_json).includes('team_guard'));
+  f.state.target=Object.fromEntries(Object.entries(f.actor('head')).filter(([k])=>!['provider','conversationId'].includes(k)));await f.launch({...f.authority,type:'recordLaunchTarget',launchId:'head-launch'});f.state.actor=f.actor('head');await f.launch({type:'attachLaunch'});
+  const info=(await f.call({type:'inspectCaller'})).result;assert.equal(info.member.member_id,'head');assert.equal(info.controllerGeneration,null);assert.equal(Number(info.member.allow_write),0);assert.equal(Number(info.member.allow_agent),0);
+  f.state.proof={...f.state.proof,launchId:'head-launch',planId:'head-plan'};await f.ready();assert.equal((await f.rows("SELECT state FROM worker_readiness WHERE member_id='head'"))[0].state,'ready');
+  await assert.rejects(rawWrite(f,"UPDATE managed_head_tool_consents SET policy_id='team-worker-v1'"));await assert.rejects(rawWrite(f,'DELETE FROM managed_head_options'));assert.equal((await f.rows('SELECT * FROM controller_approvals')).length,1);assert.equal((await f.rows('SELECT * FROM tasks')).length,0);
+ });
+ test('ordinary existing heads cannot be converted by a launch plan or a team edit',async t=>{
+  const f=await fixture(t);f.state.actor=f.actor('head');await assert.rejects(f.launch({...f.plan,planId:'not-head-plan',selections:[{...f.plan.selections[0],memberId:'head',launchId:'not-head-launch'}]}),code('API_LAUNCH_SCOPE'));
+  await assert.rejects(f.api.manageTeam({operationId:'cannot-convert',command:{...f.authority,type:'editTeam',managedLead:true,changes:[{type:'updateTeam',name:'Same',functionText:'No adoption'}]}}),code('API_INPUT_INVALID'));
+  assert.equal((await f.rows('SELECT * FROM managed_head_options')).length,0);
+ });
  test('production adapter observes the four real tool entrypoints and disconnects only its runtime',async t=>{
   let adapter;t.after(()=>adapter?.close());const f=await fixture(t,engine);
   const [{project_id:projectId}]=await f.rows('SELECT project_id FROM project_identity');
@@ -44,6 +62,8 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} native worker read
   const inbox=await adapter.call('shared_inbox_read',{},metadata);assert.equal(inbox.bootstrap.kind,'worker_tool_readiness');
   const seen=await adapter.call('shared_inbox_seen',{readReceiptId:inbox.readReceiptId},metadata);assert.equal(seen.state,'ready');
   assert.deepEqual(await adapter.call('team_guard',{tool:'Write',input:{file_path:'public.txt',content:'normal member rules'}},metadata),{});
+  assert.deepEqual(adapter.tools.map(tool=>tool.name).sort(),['shared_team_status','shared_team','shared_inbox_read','shared_inbox_seen','team_guard'].sort());
+  await assert.rejects(adapter.call('shared_team_manage',{operationId:'unreviewed-management',command:{type:'approveController'}},metadata),code('API_WORKER_ACCESS_REQUIRED'));
   assert.equal((await f.rows('SELECT * FROM assignments')).length,0);
   await adapter.close();assert.equal((await f.rows('SELECT state FROM worker_readiness'))[0].state,'disconnected');
  });

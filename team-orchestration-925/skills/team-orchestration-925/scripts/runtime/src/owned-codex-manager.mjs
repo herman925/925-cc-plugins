@@ -10,6 +10,7 @@ import {inspectWindowsProcess} from './windows-native.mjs';
 import {verifyCodexThreadOwner} from './codex-independent-native.mjs';
 import {readReservedLaunchProfile} from './codex-launch-profile.mjs';
 import {WORKER_TEAM_TOOLS,requireWorkerToolPolicy} from './worker-policy.mjs';
+import {reviewedTeamTools,HEAD_BOOTSTRAP} from './managed-head.mjs';
 import {createOwnedCodexTransport} from './owned-provider-wake.mjs';
 import {wakePointer,wakePrompt} from './orca-wake.mjs';
 import {normalizeActor,exact} from './api-domain.mjs';
@@ -52,7 +53,7 @@ export function createOwnedCodexManager({directory,projectRoot,machineId},depend
    'mcp_servers.team_orchestrator.command':manifest.node,'mcp_servers.team_orchestrator.args':[manifest.adapter],
    'mcp_servers.team_orchestrator.env_vars':['CODEX_HOME',...(profile.postgres?[profile.postgres.connectionEnvironment]:[])],
    ...Object.fromEntries(Object.entries(environment).map(([key,value])=>['mcp_servers.team_orchestrator.env.'+key,value])),
-   ...Object.fromEntries(WORKER_TEAM_TOOLS.map(tool=>['mcp_servers.team_orchestrator.tools.'+tool+'.approval_mode','approve'])),
+   ...Object.fromEntries(reviewedTeamTools(profile.workerAccess).map(tool=>['mcp_servers.team_orchestrator.tools.'+tool+'.approval_mode','approve'])),
   };
   if(input.model!=='default')config.model=input.model;if(input.effort!=='default')config.model_reasoning_effort=input.effort;
   for(const [key,value] of Object.entries(config))args.push('-c',`${key}=${JSON.stringify(value)}`);args.push('app-server','--listen','stdio://');
@@ -72,7 +73,7 @@ export function createOwnedCodexManager({directory,projectRoot,machineId},depend
    if(started.cwd!==root||started.thread?.cwd!==root||typeof started.thread?.id!=='string')deny('Native worker startup returned another project.');
    const identity=normalizeActor({projectRoot:root,machineId,provider:'codex',conversationId:started.thread.id,executionHostId:'local',contextId:actor.contextId,terminalHandle:`codex-thread:${started.thread.id}`,incarnationId:`codex-process:${child.pid}:${processInfo.createdAt}`});
    const target=Object.freeze(Object.fromEntries(['projectRoot','machineId','executionHostId','contextId','terminalHandle','incarnationId'].map(key=>[key,identity[key]])));
-   const entry={launchId:input.launchId,path,child,rpc,target,identity,executable,home,birth:processInfo.createdAt,started:false,effectivePolicy:{approvalPolicy:started.approvalPolicy,approvalsReviewer:started.approvalsReviewer,sandbox:started.sandbox}};
+   const entry={launchId:input.launchId,path,child,rpc,target,identity,executable,home,birth:processInfo.createdAt,started:false,headPolicyId:profile.workerAccess.headPolicyId??null,effectivePolicy:{approvalPolicy:started.approvalPolicy,approvalsReviewer:started.approvalsReviewer,sandbox:started.sandbox}};
    entry.transport=createOwnedCodexTransport({identity:ownedReceiverIdentity(identity),rpc:rpc.call,alive:rpc.alive,hasPendingReview:()=>rpc.pendingRequests().length>0});
    await current(entry);await once(join(path,'prepared.json'),{target,identity,effectivePolicy:entry.effectivePolicy});executions.set(input.launchId,entry);return status(entry);
   }catch(error){
@@ -92,7 +93,7 @@ export function createOwnedCodexManager({directory,projectRoot,machineId},depend
    if(view.state!=='idle'||view.pendingReview)return {...status(entry),state:'waiting-for-idle'};
    if(!await once(join(entry.path,'bootstrap-claim.json'),{createdAt:now()}))deny('Bootstrap input already has a durable owner.');
    entry.started=true;
-   const result=await entry.rpc.call('turn/start',{threadId:entry.identity.conversationId,input:[{type:'text',text:bootstrap}]});
+   const result=await entry.rpc.call('turn/start',{threadId:entry.identity.conversationId,input:[{type:'text',text:entry.headPolicyId?HEAD_BOOTSTRAP:bootstrap}]});
    if(typeof result.turn?.id!=='string')deny('Native bootstrap receipt is unknown. Preserve the original execution.');
    entry.bootstrap={turnId:result.turn.id,acceptedAt:now()};await once(join(entry.path,'bootstrap-receipt.json'),entry.bootstrap);return status(entry);
   },
@@ -109,6 +110,15 @@ export function createOwnedCodexManager({directory,projectRoot,machineId},depend
    const receipt=await entry.transport.submit({identity:ownedReceiverIdentity(entry.identity),requestId,text:wakePrompt(fixed)});await once(path+'-receipt.json',receipt);return receipt;
   },
   async pending({launchId}){const entry=executions.get(launchId);await current(entry);return entry.rpc.pendingRequests();},
+  async reviewInfo({launchId,requestId}){
+   const entry=executions.get(launchId);await current(entry);const request=entry.rpc.pendingRequests().find(row=>row.id===requestId);if(!request)deny('The native request is no longer pending.');let details=null;
+   if(request.method==='item/fileChange/requestApproval'){
+    const page=await entry.rpc.call('thread/items/list',{threadId:entry.identity.conversationId,turnId:request.params.turnId,limit:50,sortDirection:'desc'});
+    details=page.data?.find(row=>row.turnId===request.params.turnId&&row.item?.id===request.params.itemId)??null;
+    if(!same(request,entry.rpc.pendingRequests().find(row=>row.id===requestId)))deny('The native file request changed during inspection.');
+   }
+   return {request,details};
+  },
   // Called only by the native human-review bridge after another caller and
   // exact-request check. This method is never exposed as a model-facing tool.
   async reviewReceipt({launchId,operationId}){const entry=executions.get(launchId);await current(entry);const path=join(entry.path,'review-'+hash(operationId)),saved=await read(path+'-receipt.json');return saved??{state:await read(path+'.json')?'needs-reconciliation':'unknown',operationId};},

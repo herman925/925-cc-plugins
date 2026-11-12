@@ -1,5 +1,11 @@
 # Setup and diagnosis
 
+## Optional Claude provider component (development candidate)
+
+For an independent or optional managed-team Claude member, run `node <this-skill>/scripts/setup-claude.mjs preview`. Review the pinned official SDK version, private machine directory and existing native Claude executable, then use `apply` only when this optional setup is requested. It installs no package scripts or optional native downloads, changes no team store or global CLI configuration, and starts no member. `diagnose` is read-only. A changed or redirected component is refused rather than overwritten. The project's matching runtime still needs its normal update/reconnect; status and launch never install this dependency automatically. Use the person's normal Claude authentication, not an orchestrator account or invented key.
+
+After activation, check actual `actions.launchProviders` and `actions.managedLead.launchProviders`. Ordinary Orca terminal plans and explicitly owned managed-team plans have different provider availability. The optional managed-lead choice is described in [managed leads](managed-lead.md).
+
 The skill contains its matching runtime under `scripts/runtime/`; it must not refer to the developer's checkout. Node 22.13+ and a native Windows Codex session are required. The candidate supports verified Orca scope and independent Codex. No account/API key is added by this package.
 
 Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The helper discovers the native CLI and verifies project/session scope; it uses Codex's own config writer/parser in disposable staging. Preview explains the project-local server and hook changes without applying them. It never prints existing configuration or secrets.

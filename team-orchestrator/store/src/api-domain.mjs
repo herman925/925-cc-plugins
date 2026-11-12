@@ -39,6 +39,7 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
+    if(k==='managedLead'){if(v!==undefined){if(typeof v!=='boolean')fail('INPUT_INVALID','managedLead must be a boolean for a new team.');out[k]=v;}continue;}
     if(input.type==='attachLaunch'&&v===undefined)continue;
     if (k === 'settings' || k === 'members' || k === 'options' || k==='targetHome' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
@@ -243,7 +244,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
   }
   if(type==='attachLaunch')return attachLaunch(db,actor,command);
   if(type==='inspectLaunchQueue'){await controller(db,actor,command.expectedControllerGeneration);return inspectLaunchQueue(db,command,actor,controllerId(actor));}
-  if(['approveLaunchPlan','recordLaunchTarget'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='approveLaunchPlan'?approveLaunchPlan(db,command,actor,controllerId(actor),now):recordLaunchTarget(db,command,actor,controllerId(actor),target,now);}
+  if(['approveLaunchPlan','recordLaunchTarget'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='approveLaunchPlan'?approveLaunchPlan(db,command,actor,controllerId(actor),now,writer):recordLaunchTarget(db,command,actor,controllerId(actor),target,now);}
   if(['reserveLaunch','claimLaunch'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='reserveLaunch'?reserveLaunch(db,command,actor,controllerId(actor),now):claimLaunch(db,command,actor,controllerId(actor));}
   if(type==='inspectMeeting'){const {member}=await memberActor(db,actor,command,false);return inspectMeeting(db,command,member.member_id);}
   if(type==='inspectQuestion'){const {member}=await memberActor(db,actor,command,false);return questionAccess(db,command.teamId,command.threadId,member.member_id);}
@@ -290,7 +291,8 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
         member: { ...m, level, model:importing?m.model||'default':'default', effort:importing?m.effort||'default':'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
       await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:importing?m.advisoryNotes:'' }, writer);
     }
-    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId),...(importing?{sourceFingerprint:command.sourceFingerprint,backupDigest:command.backupDigest,permissionPolicy:'start-disabled',workPolicy:'head-review-fresh-assignment'}:{}) };
+    if(command.managedLead===true){const head=command.members.find(m=>m.bossMemberId===null);await db.query('INSERT INTO managed_head_options VALUES (:team,:member,:controller,:now)',{team:command.teamId,member:head.memberId,controller:controllerId(actor),now});}
+    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId),...(command.managedLead===true?{managedLead:true}:{}),...(importing?{sourceFingerprint:command.sourceFingerprint,backupDigest:command.backupDigest,permissionPolicy:'start-disabled',workPolicy:'head-review-fresh-assignment'}:{}) };
   }
   if (type === 'inspectTeam') {
     // A controller may inspect; a member may inspect its own team only.
@@ -354,9 +356,10 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
     if (m.team_id !== command.teamId || m.membership_state !== 'active') fail('MEMBER_SCOPE','Only an active member of this team can be bound.');
     expected(command.expectedMemberGeneration,m.generation,'member generation');
     if((await db.query("SELECT 1 FROM member_launches WHERE member_id=:id AND status='claimed'",{id:m.member_id})).length)fail('LAUNCH_PENDING','A claimed or uncertain start holds this member. Inspect it before connecting another session.');
+    const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});
+    if((await db.query('SELECT 1 FROM managed_head_options WHERE member_id=:id',{id:m.member_id})).length&&(!old||old.provider!==target?.provider||old.conversation_id!==target?.conversationId||old.machine_id!==target?.machineId))fail('MANAGED_HEAD_REQUIRED','An optional managed lead cannot adopt an existing conversation. Launch it through its separate reviewed owned plan; only its same conversation may be explicitly reconnected.');
     if (!target || target.projectRoot !== actor.projectRoot || target.machineId !== actor.machineId || target.executionHostId !== actor.executionHostId || target.contextId !== m.worktree || target.projectRoot !== m.home_original_path || target.executionHostId !== m.home_execution_host_id) fail('TARGET_UNVERIFIED','Target native project, context, machine and home must agree.');
     if(m.cli!==target.provider)fail('PROVIDER_MISMATCH','The verified session provider differs from this member’s configured CLI. Binding does not silently convert a member to another CLI.');
-    const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});
     if ((old ? gen(old.generation,'binding generation') : 0) !== command.expectedBindingGeneration) fail('STALE_AUTHORITY','Binding generation changed.');
     const generation = nextInteger(command.expectedBindingGeneration,'binding generation');
     await db.query(`INSERT INTO member_bindings (member_id,machine_id,provider,conversation_id,execution_host_id,context_id,terminal_handle,incarnation_id,generation)

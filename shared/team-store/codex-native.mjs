@@ -3,7 +3,8 @@
 // Identity alone does not establish guard coverage or authorize team membership.
 import {realpath,lstat} from 'node:fs/promises';
 import {join,basename} from 'node:path';
-import {homedir} from 'node:os';
+import {homedir,hostname} from 'node:os';
+import {fileURLToPath} from 'node:url';
 import {createModNative} from './mod-native.mjs';
 import {createOrcaHost} from './src/orca-host.mjs';
 import {exact} from './src/api-domain.mjs';
@@ -48,7 +49,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   if((tabs.tabs??[]).some(tab=>(tab.agentStatus?.terminalHandle===target.terminalHandle||tab.terminalHandle===target.terminalHandle)&&tab.agentStatus?.agentType))deny('The created terminal already contains an agent; no startup input was sent.');
   return target;
  };
- return Object.freeze({
+ const native={
   inboxWake:Object.freeze({state:host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',primaryRoute:'orca-terminal',managedFallback:{state:dependencies.createManagedWakeBackend?'target-check-required':'not-enrolled',launchesWorkers:false},providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Startup state describes the primary terminal route. Managed fallback needs current verified enrollment. Route selection, native acceptance, inbox acknowledgement and assignment pickup are separate.'}),
   hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
   async createLaunchTerminal({title},metadata){
@@ -63,7 +64,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    const target=Object.freeze({projectRoot:actor.projectRoot,machineId:actor.machineId,executionHostId:'local',contextId:actor.contextId,terminalHandle:handle,incarnationId:terminal.incarnationId});
    createdTargets.add(target);return verifyCreated(target);
   },
-  async verifyLaunchTarget(target,metadata){await this.verifyCaller(metadata);return verifyCreated(target);},
+  async verifyLaunchTarget(target,metadata){await this.verifyCaller(metadata);return ownedTargets.has(target)?this.managedLaunchNative.verifyLaunchTarget(target,metadata):verifyCreated(target);},
   async startLaunchTerminal(target,command,metadata){
    await this.verifyCaller(metadata);await verifyCreated(target);
    if(startedTargets.has(target))deny('This native launch input was already attempted; an uncertain start must not be resent.');
@@ -116,5 +117,12 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    }
    return results;
   },
- });
+ };
+ const ownedTargets=new WeakSet(),request=async(type,input={},launch=false)=>{const send=dependencies.requestOwned??(await import('./src/dispatcher-service.mjs')).projectOwnedRequest;return send({projectRoot:root,machineId:hostname(),operation:{type,input},launch});};
+ const {createOwnedHeadNative}=await import('./src/owned-head-native.mjs'),{inspectClaudeProvider}=await import('./src/claude-provider.mjs');let claudeProvider;
+ try{claudeProvider=await (dependencies.inspectClaudeProvider??inspectClaudeProvider)();}catch{claudeProvider={state:'blocked'};}
+ const managed=createOwnedHeadNative({verifyCaller:metadata=>native.verifyCaller(metadata),request,codexRuntime:{codexExecutable:executable,codexHome:home,node:process.execPath,adapter:fileURLToPath(new URL('./codex-mcp.mjs',import.meta.url))},claudeProvider,wake:async()=>[]});
+ native.managedLaunchNative=Object.freeze({...managed,createLaunchTarget:async(input,metadata)=>{const target=await managed.createLaunchTarget(input,metadata);ownedTargets.add(target);return target;}});
+ native.ownedWorkerRequest=async(type,input,metadata)=>{await native.verifyCaller(metadata);return request(type,input,false);};
+ return Object.freeze(native);
 }

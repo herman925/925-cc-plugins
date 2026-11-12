@@ -1,4 +1,5 @@
-// Public package source is editable by an explicitly write-enabled member.
+// Public package source is editable under the member's standing write rule or an ordinary
+// verified nonmember. Neither case permits installed/runtime authority edits.
 // This does not authorize executing that source or editing installed runtimes.
 import {existsSync,realpathSync,statSync} from 'node:fs';
 import {dirname,isAbsolute,relative,resolve} from 'node:path';
@@ -32,8 +33,8 @@ export function sourceReadAllowed(authority,{tool,input}){
  }catch{return false;}
 }
 export function sourceEditAllowed(authority,{tool,input}){
- if(tool!=='apply_patch'||Number(authority.member?.allow_write)!==1)return false;
- const home=authority.member?.home_original_path,patch=typeof input==='string'?input:input?.command??input?.patch;
+ if(tool!=='apply_patch'||authority.staleBinding||authority.pendingLaunchId||authority.member&&authority.hasReports&&Number(authority.member.allow_write)!==1)return false;
+ const home=authority.member?.home_original_path??authority.projectRoot,patch=typeof input==='string'?input:input?.command??input?.patch;
  if(typeof home!=='string'||!isAbsolute(home)||typeof patch!=='string'||!patch.startsWith('*** Begin Patch\n')&&!patch.startsWith('*** Begin Patch\r\n')||!patch.trimEnd().endsWith('*** End Patch'))return false;
  const headers=[...patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): ([^\r\n]+)\r?$/gm)];if(!headers.length||headers.length>100)return false;
  try{

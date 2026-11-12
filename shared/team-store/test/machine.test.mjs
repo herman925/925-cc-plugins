@@ -9,10 +9,11 @@ import { createMachineRuntime } from '../src/machine-store.mjs';
 import { openSqliteBackend } from '../src/bootstrap.mjs';
 import { connectSqlite } from '../src/engines.mjs';
 import { seedLayout } from './support/seed-layout.mjs';
+import {WRITER_PROTOCOL_VERSION} from '../contract.mjs';
 
 const caller = { principalId: 'local-test-client' };
-const writer = { client: 'team-orchestrator', version: '0.5.42', protocol: 1 };
-const plugin = { client: 'team-orchestrator-orca', version: '0.1.24', protocol: 1 };
+const writer = { client: 'team-orchestrator', version: '0.5.42', protocol: WRITER_PROTOCOL_VERSION };
+const plugin = { client: 'team-orchestrator-orca', version: '0.1.24', protocol: WRITER_PROTOCOL_VERSION };
 const request = (operationId, ...mutations) => ({ operationId, caller, mutations });
 const bind = (extra = {}) => ({ type: 'bindMember', memberId: 'worker', sessionId: 'session', bindingGeneration: 1, expectedGeneration: 0, ...extra });
 const observe = (extra = {}) => ({ type: 'recordObservation', memberId: 'worker', sessionId: 'session', bindingGeneration: 1, expectedGeneration: 1, state: 'working', ...extra });
@@ -94,7 +95,7 @@ describe('sqlite separate machine observations', () => {
     await assert.rejects(f.open({ writer: { ...writer, client: 'new-family' } }), code('STORE_WRITER_FAMILY_UNKNOWN'));
     await f.raw("DELETE FROM writer_fences WHERE writer_client='team-orchestrator-orca'");
     await assert.rejects(other.execute(request('missing-fence', observe({ expectedGeneration: 2 }))), code('STORE_WRITER_FENCE_MISSING'));
-    await f.raw('UPDATE machine_identity SET minimum_writer_protocol=2');
+    await f.raw('UPDATE machine_identity SET minimum_writer_protocol=:floor',{floor:WRITER_PROTOCOL_VERSION+1});
     await assert.rejects(f.store.execute(request('old-floor', observe({ expectedGeneration: 2 }))), code('STORE_WRITER_PROTOCOL_OLD'));
   });
 
