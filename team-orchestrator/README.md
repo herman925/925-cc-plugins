@@ -1,5 +1,11 @@
 # team-orchestrator
 
+Version **0.5.62 / schema 11**, paired with Codex **0.1.12**, adds native worker readiness, provider identity, recovery and guard corrections. Follow the [client update guide](../docs/UPDATING-TEAM-ORCHESTRATOR.md). Classic import remains a foundation without a migration UI; the 0.5.61 notes below are historical. [Native owned-team evidence and live limits](../docs/validation/owned-claude-managed-lead-20261113.md).
+
+Mixed-team identities and guard explanations refresh on each prompt. Claude and Codex recipients share the automatic inbox path, with recorded request IDs and separate input/turn-start receipts. A saved binding is not proof that work started. `Allow writes` being off does not by itself block a leaf worker; task expiry and actual tool denials are separate facts.
+
+The [wake repairs](../docs/validation/wake-fencing-repair-20261112.md) surface progress/recovery states. **The original Orca terminal prompt route still needs its host fence.** Explicit new managed teams instead use reviewed dispatcher-owned connections through the Codex workflow, including an optional owned lead. The Mod displays those records and hides incompatible legacy controls; it does not yet provide the full owned creation/review interface. Manual inbox tools remain available. See the [Orca maintainer handoff](../docs/validation/orca-fenced-inbox-wake-handoff-20261112.md). Local/native fixtures do not establish real-human approval or live hook trust.
+
 This is the **Claude Code Mod**, distributed as a Claude Code plugin with a native panel. See [choose your Team Orchestrator client](../README.md#team-orchestrator) for the installation methods and workflows across Claude Code, the Codex plugin/skill set and the planned Hermes client. The shared Claude/Codex clients use one project-owned store/API; existing classic teams and the separate Orca plugin remain separate.
 
 **0.5.61** packages the shared recovery and ordinary-session fixes for Codex **0.1.11**. Retired ordinary members no longer inherit team tool restrictions from a historical binding, while reserved workers remain fenced. Pending native reviews survive long waits, stale active bindings reach reviewed recovery, and recovered observers clear their old error. Schema 9 and the Mod UI are unchanged. [Recovery evidence](../docs/validation/codex-review-delivery-fix-20261107.md).

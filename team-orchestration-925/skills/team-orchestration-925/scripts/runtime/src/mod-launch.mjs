@@ -40,6 +40,7 @@ export function launchCommand({launch,member},pluginRoot,platform=process.platfo
 export async function launchMember({api,native,actor,request,pluginRoot,configuration={},writeSettings=writeLaunchSettings}) {
  if(request.command?.type!=='reserveLaunch')throw refusal('API_OPERATION_DENIED','Launch requires a fixed member reservation.');
  const reserved=await api.launch(request),launch=reserved.result.launch;
+ if(launch.conversation_id===null)throw refusal('API_LAUNCH_UNSUPPORTED','This reviewed launch belongs to the owned-provider runner. A legacy Mod terminal cannot claim or replace it.');
  // Fresh operation identity is intentional: replaying a successful claim
  // receipt would repeat its external effect. Only a new CAS winner may start.
  const claim=await api.launch({operationId:`launch-claim-${randomUUID()}`,command:{type:'claimLaunch',teamId:request.command.teamId,launchId:launch.launch_id,expectedConfigVersion:request.command.expectedConfigVersion,expectedControllerGeneration:request.command.expectedControllerGeneration}});

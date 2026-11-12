@@ -9,7 +9,7 @@ function fixture(on:any,who='head'){
  const model:any={team:{team_id:'team',name:'Demo',function_text:'Build',config_version:5},settings:{autoClose:false,idleMinutes:15,reopen:'fresh',maxOpen:8,launch:'demand',batch:2,autoScratch:false,assumptions:true,scratchDir:'.scratch-kept',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:1000,exemptMemberIds:['worker']},members:[head,worker],bindings:[binding('head'),binding('worker')],roles:[{member_id:'head',official_text:'Delegate and review.'},{member_id:'worker',official_text:'READ THIS ROLE BEFORE THE FIXTURE'}],work:[]}
  const configSets:any[]=[];let refuseConfig=false
  on('config.set',async(_$:any,e:any)=>{configSets.push(e);return refuseConfig?{deny:'settings read-only'}:{value:e.value}})
- const calls:any[]=[],receipts=new Map<string,any>(),control={unknown:false,unknownBefore:false,discoveryFailure:false,reloadFailure:false,created:false}
+ const calls:any[]=[],receipts=new Map<string,any>(),control={unknown:false,unknownBefore:false,discoveryFailure:false,reloadFailure:false,created:false,stale:false}
  const item=()=>({assignment:{assignment_id:'assignment',member_id:'worker',assigned_by_member_id:'head',pickup_observed_at_ms:null},task:{task_id:'task',status:'open'},brief:{instructions:'Count the fixture words.',expected_result:'13 words with evidence'},attempt:{generation:1,outcome:null,summary:null,evidence:null},acceptance:null})
  const files=world(on,[],[],e=>{
   if(!String(e.argv[1]).endsWith('mod-bridge.mjs'))return undefined
@@ -18,11 +18,13 @@ function fixture(on:any,who='head'){
   if(envelope.mode==='launchMember')return ok({launch:{status:'queued'},queued:true})
   if(envelope.mode==='inboxPoll')return ok({message:null})
   if(envelope.mode==='inboxAttached')return ok({confirmed:true})
-  if(envelope.mode==='listSessions')return control.discoveryFailure?JSON.stringify({ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:'No proof'}}):ok({sessions:[{label:'Verified worker',reference:{projectRoot:'C:/proj',conversationId:ID2,terminalHandle:'term_w',contextId:'r1::C:/proj'}}]})
+  if(envelope.mode==='listSessions')return control.discoveryFailure?JSON.stringify({ok:false,error:{code:'API_NATIVE_UNVERIFIED',message:'No proof'}}):ok({sessions:[{label:control.stale?'This verified conversation':'Verified worker',reference:{projectRoot:'C:/proj',conversationId:control.stale?ID1:ID2,terminalHandle:control.stale?'term_self':'term_w',contextId:'r1::C:/proj'}}]})
   const {command,operationId}=envelope.request
   if(['reconcile','reconcileManagement'].includes(envelope.mode))return ok(receipts.get(operationId)??{status:'unknown',operationId})
   let result:any={}
   if(command.type==='inspectCaller'&&control.created&&control.reloadFailure)return JSON.stringify({ok:false,error:{code:'API_BRIDGE_UNKNOWN',message:'Read failed after commit'}})
+  if(command.type==='inspectCaller'&&control.stale)return JSON.stringify({ok:false,error:{code:'API_STALE_BINDING',message:'The current runtime needs a reviewed reconnect.'}})
+  if(command.type==='inspectController')result={controllerGeneration:who==='worker'?null:1,teams:who==='worker'?[]:[model.team]}
   if(command.type==='inspectCaller')result={controllerGeneration:who==='worker'?null:1,member:who==='controller'?null:model.members.find((m:any)=>m.member_id===who),binding:who==='controller'?null:binding(who),teams:[model.team]}
   if(command.type==='inspectTeam')result=model
   if(command.type==='editTeam'){
@@ -40,7 +42,7 @@ function fixture(on:any,who='head'){
    model.members=command.members.map((m:any,i:number)=>({member_id:m.memberId,team_id:command.teamId,name:m.name,role:m.role,boss_member_id:m.bossMemberId,level:i+1,membership_state:'active',generation:1}));model.bindings=[];model.work=[]
    result={teamId:command.teamId,configVersion:5}
   }
-  if(command.type==='bindMember'){model.bindings=model.bindings.filter((b:any)=>b.member_id!==command.memberId);model.bindings.push({...binding(command.memberId),generation:command.expectedBindingGeneration+1});result={memberId:command.memberId,bindingGeneration:command.expectedBindingGeneration+1}}
+  if(command.type==='bindMember'){control.stale=false;model.bindings=model.bindings.filter((b:any)=>b.member_id!==command.memberId);model.bindings.push({...binding(command.memberId),generation:command.expectedBindingGeneration+1});result={memberId:command.memberId,bindingGeneration:command.expectedBindingGeneration+1}}
   if(command.type==='admitAssignment'){const w=item();w.assignment.assignment_id=command.assignmentId;w.brief={instructions:command.instructions,expected_result:command.expectedResult};model.work.push(w);result={assignmentId:command.assignmentId,attemptGeneration:1}}
   if(command.type==='retryAssignment'){const previous=model.work.find((w:any)=>w.assignment.assignment_id===command.assignmentId),w:any=item();w.assignment={...w.assignment,assignment_id:command.newAssignmentId,member_id:command.memberId,previous_assignment_id:command.assignmentId};w.brief=previous.brief;model.work.push(w);result={assignmentId:command.newAssignmentId,attemptGeneration:1}}
   if(command.type==='verifyAssignment'){model.work[0].assignment.pickup_observed_at_ms=10;model.work[0].attempt.generation=2;result={attemptGeneration:2,brief:model.work[0].brief,role:model.roles[1]}}
@@ -53,6 +55,54 @@ function fixture(on:any,who='head'){
  return {model,calls,control,files,item,configSets,refuseConfig:()=>{refuseConfig=true}}
 }
 async function open($:any){const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'});await band.press({key:'workspace-refresh'});return band}
+
+test('a managed lead never offers the legacy Mod launch or an existing-session adoption button',options,async($:any,on:any)=>{
+ const f=fixture(on,'controller');f.model.managedLead={memberId:'head'};f.model.members.forEach((member:any)=>{member.cli='claude'});f.model.bindings=[]
+ const band=await open($)
+ expect(JSON.stringify(await band.drawn())).toContain('Dispatcher-owned lead')
+ expect(await band.find({key:'workspace-launch-head'})).toBeUndefined()
+ expect(await band.find({key:'workspace-bind-head'})).toBeUndefined()
+ expect(f.calls.some(call=>call.mode==='launchMember'||call.request?.command?.type==='bindMember')).toBe(false)
+})
+
+test('native worker tool readiness is visible and blocks assignment until ready, including reviewed setup pending',options,async($:any,on:any)=>{
+ const f=fixture(on);f.model.workerReadiness=[{memberId:'worker',covered:true,state:'checking',missing:['api','inbox','seen']}]
+ const band=await open($)
+ expect(JSON.stringify(await band.drawn())).toContain('Checking tools')
+ expect(await band.find({key:'workspace-assign-worker'})).toBeUndefined()
+ expect(f.calls.some(c=>c.request?.command?.type==='admitAssignment')).toBe(false)
+ f.model.workerReadiness[0]={memberId:'worker',covered:true,state:'ready'}
+ await band.press({key:'workspace-refresh'})
+ expect(await band.find({key:'workspace-assign-worker'})).toBeDefined()
+ f.model.workerReadiness[0].setupPending=true
+ await band.press({key:'workspace-refresh'})
+ expect(JSON.stringify(await band.drawn())).toContain('Setup queued')
+ expect(await band.find({key:'workspace-assign-worker'})).toBeUndefined()
+})
+
+test('D3: Mod controller recovery uses native session selection and one exact self-rebind without member authority',options,async($:any,on:any)=>{
+ const f=fixture(on);f.control.stale=true
+ const band=await open($)
+ expect(JSON.stringify(await band.drawn())).toContain('Reconnect this conversation')
+ expect(await band.find({key:'workspace-assign-worker'})).toBeUndefined()
+ expect(f.calls.some(c=>['bindMember','createFreshTeam','editTeam','admitAssignment'].includes(c.request?.command?.type))).toBe(false)
+ await band.press({key:'workspace-bind-head'})
+ expect(f.calls.some(c=>c.request?.command?.type==='bindMember')).toBe(false)
+ await band.press({key:'workspace-session-0'})
+ const calls=f.calls.filter(c=>c.request?.command?.type==='bindMember');expect(calls.length).toBe(1)
+ expect(calls[0].request.target.conversationId).toBe(ID1)
+ expect(calls[0].request.command.expectedBindingGeneration).toBe(1)
+ expect(calls[0].request.command.expectedControllerGeneration).toBe(1)
+ expect(JSON.stringify(await band.drawn())).not.toContain('Reconnect this conversation')
+})
+
+test('D3: an unapproved stale Mod caller gets no controller authority or automatic approval',options,async($:any,on:any)=>{
+ const f=fixture(on,'worker');f.control.stale=true
+ const band=await mountBand($,80);await band.press({key:'main'});await band.press({key:'tab-shared'})
+ expect(await band.find({key:'shared-approve-controller'})).toBeDefined()
+ expect(await band.find({key:'workspace-bind-head'})).toBeUndefined()
+ expect(f.calls.some(c=>c.mode==='approveController'||c.request?.command?.type==='bindMember')).toBe(false)
+})
 test('decision gates use native choices, preserve displayed authority and hide blocked work actions',options,async($:any,on:any)=>{
  const f=fixture(on),item:any=f.item();item.task.status='blocked';item.gates=[{gate_id:'g1',question:'Choose a route',status:'open',generation:3,options_json:'["Route A","Route B"]',superseded_by_gate_id:null}];f.model.work.push(item)
  const band=await open($);await band.press({key:'workspace-tasks-tab'});await band.press({key:'workspace-task-assignment'});
@@ -369,12 +419,12 @@ test('inbox question form sends a typed question without acknowledging or changi
 });
 
 
-test('meeting invitations require a reviewed draft and an explicit start rule in the native panel',options,async($:any,on:any)=>{
+test('meeting invitations default to joined members and still require native review',options,async($:any,on:any)=>{
  const f=fixture(on),band=await open($)
  await band.press({key:'workspace-meetings-tab'});await band.press({key:'meeting-new'})
  await band.input({key:'meeting-title',text:'Weekly review',kind:'change'})
  await band.press({key:'meeting-invite-worker'})
- await band.select({key:'meeting-policy',value:'joined'})
+ expect((await band.find({key:'meeting-policy'})).props.value).toBe('joined')
  await band.input({key:'meeting-topic',text:'Review evidence',kind:'change'});await band.press({key:'meeting-topic-add'})
  expect(f.calls.some(c=>c.request?.command?.type==='createMeeting')).toBe(false)
  await band.press({key:'meeting-review-invitations'})
@@ -383,6 +433,16 @@ test('meeting invitations require a reviewed draft and an explicit start rule in
  const command=f.calls.find(c=>c.request?.command?.type==='createMeeting').request.command
  expect(command.startPolicy).toBe('joined');expect(command.participantIds).toEqual(['head','worker']);expect(command.topics[0].requiredMemberIds).toEqual(['head','worker'])
  expect(command.lineLimit).toBe(25);expect(command.roundLimit).toBe(2)
+})
+
+test('meeting start default can be overridden to wait for every invitee before review',options,async($:any,on:any)=>{
+ const f=fixture(on),band=await open($)
+ await band.press({key:'workspace-meetings-tab'});await band.press({key:'meeting-new'})
+ await band.input({key:'meeting-title',text:'Full attendance',kind:'change'})
+ await band.select({key:'meeting-policy',value:'all'})
+ await band.input({key:'meeting-topic',text:'Decision',kind:'change'});await band.press({key:'meeting-topic-add'})
+ await band.press({key:'meeting-review-invitations'});await band.press({key:'meeting-send-invitations'})
+ expect(f.calls.find(c=>c.request?.command?.type==='createMeeting').request.command.startPolicy).toBe('all')
 })
 
 test('meeting workspace uses native Agenda Discussion Outputs tabs and browsing never joins another member',options,async($:any,on:any)=>{

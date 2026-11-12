@@ -1,0 +1,22 @@
+[
+  {
+    "file": "common.tap",
+    "bytes": 408178,
+    "sha256": "378d16d635d14a87db3e98b633007f46eab6b967c36dda8315383e97725e5248"
+  },
+  {
+    "file": "mod.log",
+    "bytes": 50606,
+    "sha256": "b369859dd37db3e01097456b0e9436a6b1359cd5f93cde561c124c275ae28f89"
+  },
+  {
+    "file": "guard-before.tap",
+    "bytes": 6617,
+    "sha256": "203daa33f4a0ca5a400bc6c2e7f5f19ca1fd1a403a946f0d42fecdd2aedcc137"
+  },
+  {
+    "file": "guard-after.tap",
+    "bytes": 3881,
+    "sha256": "b980ebcd402ad9e135b39c7377819854cb89d497e02527351805c2d5c5f5bc9b"
+  }
+]

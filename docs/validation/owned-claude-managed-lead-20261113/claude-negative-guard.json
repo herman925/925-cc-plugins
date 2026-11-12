@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-claude-driver-4b2AWC",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "mode": "negative-guard",
+  "modelCalls": 3,
+  "toolCalls": 0,
+  "guardCalls": 2,
+  "state": {
+    "sessionId": "6b834268-e473-49c0-b00e-faf5956af847",
+    "projectRoot": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-claude-driver-4b2AWC\\project",
+    "idle": true,
+    "pendingReview": false,
+    "nativeVerified": true,
+    "error": null,
+    "results": 1,
+    "permissionMode": "default",
+    "nativeVersion": "2.1.322"
+  },
+  "process": {
+    "pid": 55456,
+    "birth": "134389818584664131",
+    "executable": "C:\\Users\\Herman\\.local\\bin\\claude.exe"
+  },
+  "limitation": "Actual native SDK tools and fail-closed hooks, but no shared team or human approval."
+}

@@ -2,6 +2,7 @@ import { Worker } from 'node:worker_threads';
 import { integer, text, databaseInteger } from './validation.mjs';
 import { refusal } from './errors.mjs';
 import { SQL } from '../contract.mjs';
+import {postgresConnectionOptions} from './postgres-reference.mjs';
 
 function named(sql, params = {}) {
   const names = [...new Set([...sql.matchAll(/(?<!:):([a-z_]+)/g)].map(match => match[1]))];
@@ -63,7 +64,8 @@ export async function connectSqlite({ path, readOnly = false, busyTimeoutMs = 10
   return db;
 }
 
-export async function connectPostgres({ connectionString, loadDriver = () => import('pg'), connectionTimeoutMs = 5000 }) {
+export async function connectPostgres(options) {
+  const {connectionString,loadDriver=()=>import('pg'),connectionTimeoutMs=5000}=postgresConnectionOptions(options);
   text(connectionString, 'PostgreSQL connectionString');
   let url;
   try { url = new URL(connectionString); } catch { throw refusal('STORE_INPUT_INVALID', 'PostgreSQL connectionString must be an explicit postgres URL.'); }

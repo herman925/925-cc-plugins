@@ -22,8 +22,9 @@ async function fixture(t,engine,observerOptions={}){
  for(const id of ['head','worker'])await api.manageTeam({operationId:`bind-${id}`,command:{type:'bindMember',teamId:'team',memberId:id,expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:0,expectedControllerGeneration:1},target:{projectRoot:f.root,conversationId:id,terminalHandle:`term-${id}`,contextId:'context'}});
  const authority={teamId:'team',expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:1};
  await api.execute({operationId:'admit',command:{...authority,type:'admitAssignment',runId:'run',taskId:'task',assignmentId:'assignment',memberId:'worker',instructions:'Return 2 + 3.',expectedResult:'5',expectedTargetGeneration:1,expectedTargetBindingGeneration:1}});
- const native={verifyCaller:async supplied=>{assert.deepEqual(supplied,metadata);return {...current.actor};},wake:async deliveries=>{wake.push(...deliveries);return deliveries.map(()=>({queued:true}));}};
- const observer=createCodexObserver({native,writer:SHARED_WRITER,createApi:async options=>apiDecorator(await createTeamApi({...options,...f.options})),...rest});
+ const observedReservations=new WeakSet();
+ const native={verifyCaller:async supplied=>{assert.deepEqual(supplied,metadata);return {...current.actor};},wake:async deliveries=>{for(const delivery of deliveries)if(!observedReservations.has(delivery)){observedReservations.add(delivery);wake.push(delivery);}return deliveries.map(()=>({queued:true}));}};
+ const observer=createCodexObserver({native,writer:SHARED_WRITER,timers:clock(),createApi:async options=>apiDecorator(await createTeamApi({...options,...f.options})),...rest});
  cleanups.unshift(()=>observer.close());
  const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
  return {...f,api,actor,current,metadata,wake,native,observer,rows};
@@ -51,6 +52,16 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`
   assert.ok(operationId);assert.equal(f.wake.length,1);
   const [delivery]=await f.rows('SELECT status,replay_count FROM deliveries');
   assert.equal(Number(delivery.replay_count),1);assert.equal(delivery.status,'outstanding');
+ });
+ test('lead status reports blocked wake delivery separately from an active observer and marks old observations stale',async t=>{
+  const f=await fixture(t,engine);
+  f.native.wake=async(deliveries,metadata,context)=>{
+   assert.equal(context.teamId,'team');assert.equal(typeof context.api.inspectWake,'function');
+   return deliveries.map(()=>({state:'host-update-required',observedAt:Date.now()}));
+  };
+  f.observer.activate(f.metadata,f.current.actor);await f.observer.pump();
+  const status=f.observer.status();assert.equal(status.state,'active');assert.equal(status.wakeReceipts[0].state,'host-update-required');assert.equal(status.wakeObservationsStale,false);
+  await f.observer.close();assert.equal(f.observer.status().wakeObservationsStale,true);
  });
  test('a lost reservation remains recoverable after a valid team configuration edit',async t=>{
   let lost=false;
@@ -125,7 +136,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`
 });
 test('observation never creates a missing SQLite store',async t=>{
  const f=await runtimeFixture(t,'sqlite'),actor={projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:'native',executionHostId:'local',contextId:'context',terminalHandle:'terminal',incarnationId:'incarnation'},metadata={threadId:'native'};
- const observer=createCodexObserver({native:{verifyCaller:async()=>actor,wake:async()=>assert.fail('No notification without a store')}});t.after(()=>observer.close());
+ const observer=createCodexObserver({timers:clock(),native:{verifyCaller:async()=>actor,wake:async()=>assert.fail('No notification without a store')}});t.after(()=>observer.close());
  observer.activate(metadata,actor);await assert.rejects(observer.pump(),{code:'STORE_NOT_FOUND'});
  assert.equal(observer.status().state,'waiting-for-store');await assert.rejects(access(f.path),{code:'ENOENT'});
 });

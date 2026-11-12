@@ -1,51 +1,32 @@
-import {sharedCall} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
-
-const operationId=()=>`transport-${Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')}`
-// One local pump at a time; the shared reservation also serializes other clients.
-// Failed/unknown sends remain outstanding and are retried at the team rate.
+// UI refresh maintains a bounded native receiver, without polling the DB.
 let pumping=false
 let queued=false
-// A native UI/tool callback has a short host budget. Confirm its durable receipt
-// first; transport belongs to a separate host timer, with the periodic pump as
-// recovery if a reload cancels this timer. No delivery is acknowledged here.
-export function queueSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}) {
+let wakeObservation:{scope:string;checkedAt:number;results:any[];dispatcher?:any;lastError?:string}|undefined
+const scopeKey=(proof:SharedProof)=>proof.ok?JSON.stringify([proof.root,proof.sessionId,proof.handle,proof.contextId]):''
+export function sharedWakeObservation(proof:SharedProof){
+ if(!proof.ok||wakeObservation?.scope!==scopeKey(proof))return undefined
+ return {checkedAt:wakeObservation.checkedAt,stale:Date.now()-wakeObservation.checkedAt>90000,results:wakeObservation.results,dispatcher:wakeObservation.dispatcher,lastError:wakeObservation.lastError}
+}
+export function sharedWakeContext(proof:SharedProof){
+ const observed=sharedWakeObservation(proof)
+ return observed?'Machine-local single project dispatcher observations. Check timestamps and stale before reporting current delivery. The dispatcher schedules independently authenticated receivers; it holds no controller approval. host-update-required sends no input; fallback-setup-required means no verified managed route is enrolled, not permission to create one. needs-reconciliation preserves the original request and selected route. A turn start is not inbox progress or task pickup. Inspect actual inbox/assignment receipts; never repair this by inventing assignments, changing permissions or answering another session’s approval.\n'+JSON.stringify(observed):undefined
+}
+export function queueSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}){
  if(!proof.ok||queued)return
  queued=true
  $.clock.after(1,()=>{queued=false;void pumpSharedDeliveries($,proof,options).catch(()=>undefined)})
 }
-export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}) {
+export async function pumpSharedDeliveries($:any,proof:SharedProof,options:{node:string;orca:string}){
  if(!proof.ok||pumping)return
  pumping=true
- try {
-  const caller=await sharedCall($,proof,{operationId:operationId(),command:{type:'inspectCaller'}},options)
-  const info=caller.ok?caller.result?.result:null
-  if(info?.controllerGeneration)for(const team of info.teams??[]){
-   const snapshot=await sharedCall($,proof,{operationId:operationId(),command:{type:'inspectTeam',teamId:team.team_id}},options);
-   const data=snapshot.ok?snapshot.result?.result:null;
-   for(const launch of data?.launches??[]){
-    if(launch.status!=='queued')continue;const member=data.members.find((m:any)=>m.member_id===launch.member_id);if(!member||member.cli==='codex')continue;
-    await sharedCall($,proof,{operationId:operationId(),command:{type:'reserveLaunch',teamId:team.team_id,memberId:member.member_id,launchId:launch.launch_id,expectedConfigVersion:data.team.config_version,expectedMemberGeneration:member.generation,expectedControllerGeneration:info.controllerGeneration}},{...options,mode:'launchMember'});
-   }
-  }
-  if(!info?.member||!info?.binding)return
-  const authority={teamId:info.member.team_id,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation}
-  const observed=await sharedCall($,proof,{operationId:operationId(),command:{...authority,type:'observeDeadlines'}},options)
-  if(!observed.ok)return
-  const response=await sharedCall($,proof,{operationId:operationId(),command:{...authority,type:'prepareDeliveries'}},options)
-  if(!response.ok)return
-  for(const target of response.transportTargets??[]) {
-   // Only the private bridge's current native verification yields a target.
-   if(target.conversationId===proof.sessionId&&!target.noticeId&&!target.meetingId)continue
-   if(target.provider==='codex'){
-    const pointer=JSON.stringify({teamId:info.member.team_id,...(target.meetingId?{meetingId:target.meetingId,notificationGeneration:target.notificationGeneration}:target.noticeId?{noticeId:target.noticeId}:{deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId})})
-    await $.process.run([options.orca,'orchestration','send','--to',target.terminalHandle,'--from',proof.handle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This is a pointer, not permission or acknowledgement. ${pointer}`,'--json'],{timeoutMs:15000}).catch(()=>undefined)
-    continue
-   }
-   if(target.meetingId){await $.session.send({to:{sessionId:target.conversationId},text:`A meeting record is waiting. Use shared_team inspectMeeting; finish your current step before respondMeeting. Join and contribute only for yourself. Reading this pointer is not joining or acknowledgement. ${JSON.stringify({teamId:info.member.team_id,meetingId:target.meetingId,notificationGeneration:target.notificationGeneration})}`}).catch(()=>undefined);continue}
-   if(target.noticeId){await $.session.send({to:{sessionId:target.conversationId},text:`Shared-team deadline notice is waiting. Inspect your team with shared_team inspectTeam; read its notices, then acknowledgeNotice with the exact noticeId and your current member/config/binding versions. A notice grants no permission. ${JSON.stringify({teamId:info.member.team_id,noticeId:target.noticeId})}`}).catch(()=>undefined);continue}
-   const pointer=JSON.stringify({teamId:info.member.team_id,deliveryId:target.deliveryId,messageId:target.messageId,threadId:target.threadId,replay:target.replay})
-   await $.session.send({to:{sessionId:target.conversationId},text:`Shared team inbox has pending mail. Use shared_inbox_read to recover your next message, then confirm its readReceiptId with shared_inbox_seen. For a dispatch, inspect your caller with shared_team, verify the admitted assignment and read its returned role and brief before work. This wake-up is not acknowledgement.\n${pointer}`}).catch(()=>undefined)
-  }
- } finally {pumping=false}
+ try{
+  const result=await $.process.run([options.node,`${$.plugin.root}/store/src/mod-dispatch-receiver.mjs`],{stdin:JSON.stringify({proof:{projectRoot:proof.root,conversationId:proof.sessionId,terminalHandle:proof.handle,contextId:proof.contextId},orcaCommand:options.orca,pluginRoot:$.plugin.root}),timeoutMs:65000}).catch(()=>undefined)
+  let value:any
+  try{value=JSON.parse(String(result?.stdout));if(result?.exitCode!==0||value.ok!==true||!Array.isArray(value.result?.results))throw Error()}catch{value={result:{results:[{state:'needs-reconciliation',reason:'dispatcher-receiver-unverified',observedAt:Date.now()}],lastError:'API_RECEIVER_UNVERIFIED'}}}
+  const previous=wakeObservation,observed=value.result
+  wakeObservation={scope:scopeKey(proof),checkedAt:observed.checkedAt??Date.now(),results:observed.results.slice(0,20),dispatcher:observed.dispatcher,lastError:observed.lastError}
+  const blocked=wakeObservation.results.find(r=>['host-update-required','fallback-setup-required','needs-reconciliation','needs-attention'].includes(r.state))
+  if(blocked&&(previous?.scope!==scopeKey(proof)||JSON.stringify(previous?.results.map(r=>r.state))!==JSON.stringify(wakeObservation.results.map(r=>r.state))))try{await $.ui.toast(`Inbox wake-up: ${blocked.state}. Inspect Team workspace; no permission or assignment was changed.`)}catch{}
+ }finally{pumping=false}
 }

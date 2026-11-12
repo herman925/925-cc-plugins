@@ -14,22 +14,35 @@ import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {writeReservedLaunchProfile,readReservedLaunchProfile} from '../src/codex-launch-profile.mjs';
 const settings={autoClose:false,idleMinutes:10,reopen:'resume',maxOpen:2,launch:'demand',batch:1,autoScratch:false,assumptions:false,scratchDir:'.scratch',pickupWindowMinutes:2,answerWindowMinutes:3,taskWindowMinutes:null,replayIntervalMs:60000,exemptMemberIds:[]};
-async function fixture(t,engine){
+async function fixture(t,engine,{managedLead=false}={}){
  const closers=[];t.after(async()=>{for(const close of closers)await close();});const f=await runtimeFixture(t,engine);
+ if(f.options.postgres){const name='TEAM_LAUNCH_TEST_'+randomUUID().replaceAll('-','');process.env[name]=f.options.postgres.connectionString;t.after(()=>{delete process.env[name];});f.options.postgres={...f.options.postgres,connectionEnvironment:name};delete f.options.postgres.connectionString;}
  const actor=(id,terminal=`term-${id}`)=>({projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:id,executionHostId:'local',contextId:'context',terminalHandle:terminal,incarnationId:`inc-${terminal}`});
  const state={actor:actor('head'),approved:true,target:null};
  const make=async overrides=>{const api=await createTeamApi({...f.options,projectRoot:f.root,machineId:'machine',writer:SHARED_WRITER,authenticate:async()=>state.actor,confirmController:async()=>true,confirmManagement:async()=>true,confirmLaunchPlan:async()=>state.approved,verifyTarget:async()=>state.actor,verifyLaunchTarget:async()=>state.target,...overrides});closers.push(()=>api.close());return api;};
  const launchProfileRoot=await mkdtemp(join(tmpdir(),'team-launch-private-'));t.after(()=>rm(launchProfileRoot,{recursive:true,force:true}));
  const api=await make();await api.approveController({operationId:'approve'});
- await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Launch',functionText:'Launch acceptance',settings,expectedControllerGeneration:1,members:['head','a','b'].map(id=>({memberId:id,name:id,bossMemberId:id==='head'?null:'head',role:id==='head'?'Coordinate':'Verify',officialText:'Read role before admitted work.',cli:'codex'}))}});
+ await api.manageTeam({operationId:'create',command:{type:'createFreshTeam',teamId:'team',name:'Launch',functionText:'Launch acceptance',settings,expectedControllerGeneration:1,...(managedLead?{managedLead:true}:{}),members:['head','a','b'].map(id=>({memberId:id,name:id,bossMemberId:id==='head'?null:'head',role:id==='head'?'Coordinate':'Verify',officialText:'Read role before admitted work.',cli:'codex'}))}});
  const info=(await api.execute({operationId:'configuration',command:{type:'inspectConfiguration',teamId:'team'}})).result,version=Number(info.team.config_version);
  const authority={teamId:'team',expectedConfigVersion:version,expectedControllerGeneration:1};
- await api.manageTeam({operationId:'bind-head',command:{...authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:{projectRoot:f.root,conversationId:'head',terminalHandle:'term-head',contextId:'context'}});
- const request={operationId:'plan-review',command:{...authority,type:'approveLaunchPlan',planId:'plan',selections:['a','b'].map(id=>({memberId:id,launchId:`launch-${id}`,expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}))}};
+ if(!managedLead)await api.manageTeam({operationId:'bind-head',command:{...authority,type:'bindMember',memberId:'head',expectedMemberGeneration:1,expectedBindingGeneration:0},target:{projectRoot:f.root,conversationId:'head',terminalHandle:'term-head',contextId:'context'}});
+ const request={operationId:'plan-review',command:{...authority,type:'approveLaunchPlan',planId:'plan',workerToolPolicy:'team-worker-v1',selections:['a','b'].map(id=>({memberId:id,launchId:`launch-${id}`,expectedMemberGeneration:1,expectedOfficialGeneration:1,expectedNotesGeneration:1}))}};
  const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
  return {...f,api,make,state,actor,authority,request,rows,launchProfileRoot};
 }
 for(const engine of ['sqlite','postgres'])describe(`${engine} reviewed Codex launch`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
+ test('new managed-team plans use the explicit owned route while the ordinary host terminal route is untouched',async t=>{
+  const f=await fixture(t,engine,{managedLead:true});f.request.command.selections=[{...f.request.command.selections[0],memberId:'head',launchId:'owned-head'}];await f.api.launch(f.request);let prepared=0,started=0;
+  const owned={launchProfileRoot:f.launchProfileRoot,createLaunchTarget:async({launchProfile})=>{const profile=await readReservedLaunchProfile(launchProfile,f.root);assert.equal(profile.workerAccess.headPolicyId,'team-head-v1');prepared++;f.state.target={projectRoot:f.root,machineId:'machine',executionHostId:'local',contextId:'context',terminalHandle:'owned-head',incarnationId:'owned-head-process'};return f.state.target;},startLaunchTarget:async target=>{assert.equal((await f.rows('SELECT terminal_handle FROM launch_targets'))[0].terminal_handle,target.terminalHandle);started++;}};
+  const native={managedLaunchNative:owned,createLaunchTerminal:()=>assert.fail('No ordinary terminal may be created for an optional managed team.'),startLaunchTerminal:()=>assert.fail('No host startup command may be sent.')},info=(await f.api.execute({operationId:'managed-controller',command:{type:'inspectCaller'}})).result;
+  await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});assert.equal(prepared,1);assert.equal(started,1);
+ });
+ test('the independent owner path commits its target before bootstrap without a terminal command',async t=>{
+  const f=await fixture(t,engine);await f.api.launch(f.request);let prepared=0,started=0;
+  const native={launchProfileRoot:f.launchProfileRoot,createLaunchTarget:async({member,launchId,launchProfile,workerToolPolicy})=>{assert.equal(member.member_id,'a');assert.equal(launchId,'launch-a');assert.equal(workerToolPolicy,'team-worker-v1');await access(launchProfile);prepared++;const child=f.actor('actual-native-worker','codex-thread:actual-native-worker');f.state.target=Object.fromEntries(Object.entries(child).filter(([key])=>!['provider','conversationId'].includes(key)));return f.state.target;},startLaunchTarget:async target=>{assert.equal((await f.rows("SELECT * FROM launch_targets WHERE launch_id='launch-a'"))[0].terminal_handle,target.terminalHandle);started++;},createLaunchTerminal:()=>assert.fail('Independent workers do not create host terminals.'),startLaunchTerminal:()=>assert.fail('Independent workers do not submit shell commands.')};
+  const info=(await f.api.execute({operationId:'managed-head',command:{type:'inspectCaller'}})).result;
+  await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});await pumpCodexLaunches({api:f.api,native,actor:f.state.actor,info,postgres:f.options.postgres});assert.equal(prepared,1);assert.equal(started,1);
+ });
  test('a private reserved profile pins the same engine and project through a copied runtime',async t=>{
   const f=await fixture(t,engine),projectId=(await f.api.execute({operationId:'profile-caller',command:{type:'inspectCaller'}})).result.projectId;
   const path=await writeReservedLaunchProfile({root:f.launchProfileRoot,actor:f.state.actor,projectId,launchId:'launch-a',memberId:'a',postgres:f.options.postgres});
@@ -112,9 +125,9 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} reviewed Codex lau
   const f=await fixture(t,engine);let reviews=0,lost=true,accept=false;
   const native={launchWorkers:true,verifyCaller:async()=>f.state.actor};
   const adapter=await createCodexAdapter({observation:false,...f.options},{createIdentity:async()=>native,createApi:async options=>{const api=await createTeamApi({...options,...f.options});return {...api,launch:async request=>{const answer=await api.launch(request);if(lost){lost=false;throw Object.assign(Error('Lost committed reply'),{code:'STORE_COMMIT_UNKNOWN'});}return answer;}};}});
-  const connection={canElicit:true,elicit:async review=>{reviews++;assert.match(review.message,/listed Codex workers/);assert.match(review.message,/Read role before admitted work/);return {action:accept?'accept':'decline',content:{confirm:true}};}};
+  const connection={canElicit:true,elicit:async review=>{reviews++;assert.match(review.message,/listed workers/);assert.match(review.message,/Read role before admitted work/);return {action:accept?'accept':'decline',content:{confirm:true}};}};
   await assert.rejects(adapter.call('shared_team_launch',{...f.request,confirm:true},{threadId:'head'},connection),{code:'API_INPUT_INVALID'});
-  await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),{code:'API_APPROVAL_REQUIRED'});assert.equal((await f.rows('SELECT * FROM launch_plans')).length,0);
+  await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),error=>error.code==='API_APPROVAL_UNVERIFIED'&&error.message==='Approval not obtained; delivery unverified. No changes made.');assert.equal((await f.rows('SELECT * FROM launch_plans')).length,0);
   accept=true;await assert.rejects(adapter.call('shared_team_launch',f.request,{threadId:'head'},connection),{code:'STORE_COMMIT_UNKNOWN'});
   const result=await adapter.call('shared_team_launch',{...f.request,reconcile:true},{threadId:'head'},connection);assert.equal(result.result.planId,'plan');assert.equal(reviews,2);assert.equal((await f.rows('SELECT * FROM launch_plans')).length,1);await adapter.close();
  });

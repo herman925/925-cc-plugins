@@ -1,0 +1,34 @@
+[
+  {
+    "sha256": "5BC33470578FE0F2B6A474EA964145273E0E450BC96E0B5C6A7C63EBFB0C3156",
+    "skipped": 0,
+    "path": "C:\\Users\\Herman\\AppData\\Local\\Temp/team-completion-pg-9LURLC/suite.tap",
+    "name": "full-common",
+    "failed": 0,
+    "passed": 704
+  },
+  {
+    "sha256": "F5876F166C977CEB76C058564D2BA039462712B5043D3FF773C4013DE41DBE2D",
+    "skipped": 0,
+    "path": "C:\\Users\\Herman\\AppData\\Local\\Temp/team-completion-pg-GU6VLL/suite.tap",
+    "name": "focused-both-engines",
+    "failed": 0,
+    "passed": 122
+  },
+  {
+    "sha256": "6E75F990D2D6B9235A4CD5251434AC478ADB46AADC5CAB9FBDC7139A012ED091",
+    "skipped": 0,
+    "path": "C:\\Users\\Herman\\AppData\\Local\\Temp/team-managed-head-mod-sdk-final.log",
+    "name": "mod-sdk",
+    "failed": 0,
+    "passed": 474
+  },
+  {
+    "sha256": "11500FE3421A6E0230386B83B05FDC23E557794770383DB5D1B3334EFBA546F9",
+    "skipped": 0,
+    "path": "C:\\Users\\Herman\\AppData\\Local\\Temp/team-owned-runtime-native-ui-final.log",
+    "name": "final-owner-source-environment-native-ui",
+    "failed": 0,
+    "passed": 22
+  }
+]

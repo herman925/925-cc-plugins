@@ -1,4 +1,6 @@
 import {normalizeTeamEdits,applyTeamEdits,configurationSnapshot} from './team-management.mjs';
+import {memberGuardPolicy} from './member-policy.mjs';
+import {inspectWakeEligibility} from './wake-eligibility.mjs';
 import {meetingFields,normalizeMeeting,meetingAccess,inspectMeeting,applyMeeting} from './meetings.mjs';
 // Private transaction implementation. Only the trusted API adapter supplies actor
 // facts; no model-facing request accepts an actor, policy, path or SQL.
@@ -11,6 +13,8 @@ import {openAssignmentThread,enqueueMessage,settleAssignmentThread,assignmentThr
 import {askQuestion,answerQuestion,questionAccess,expireQuestions} from './questions.mjs';
 import {reserveLaunch,claimLaunch,attachLaunch,approveLaunchPlan,recordLaunchTarget,inspectLaunchQueue} from './launches.mjs';
 import {applyGateCommand,currentTaskHead,taskGates,effectiveGateSql} from './gates.mjs';
+import {WORKER_RUNTIME_TYPES,requireWorkerToolPolicy} from './worker-policy.mjs';
+import {applyWorkerRuntime,normalizeRuntimeProof,requireWorkerReady,workerReadiness} from './worker-readiness.mjs';
 
 const fail = (code, message) => { throw refusal(`API_${code}`, message); };
 export function exact(input, fields) {
@@ -29,22 +33,24 @@ import {API_COMMAND_FIELDS} from './api-catalogue.mjs';
 export {API_COMMAND_FIELDS};
 
 export function normalizeApiCommand(input, { privileged = false } = {}) {
-  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['approveController','editTeam',...launchTypes].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
+  if (!Object.hasOwn(API_COMMAND_FIELDS, input?.type) || (['inspectWake','importClassicTeam','approveController','editTeam',...launchTypes,...WORKER_RUNTIME_TYPES].includes(input.type) && !privileged)) fail('OPERATION_DENIED', 'This is not a model-facing API operation.');
   const names = API_COMMAND_FIELDS[input.type];
   exact(input, ['type', ...names]);
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
+    if(k==='managedLead'){if(v!==undefined){if(typeof v!=='boolean')fail('INPUT_INVALID','managedLead must be a boolean for a new team.');out[k]=v;}continue;}
     if(input.type==='attachLaunch'&&v===undefined)continue;
-    if (k === 'settings' || k === 'members' || k === 'options' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
+    if (k === 'settings' || k === 'members' || k === 'options' || k==='targetHome' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
     out[k] = k==='assignmentId'&&input.type==='askQuestion'&&v===null?null:/(?:Generation|Version)$/.test(k) ? integer(v, k, { min: k === 'expectedBindingGeneration' && input.type === 'bindMember' ? 0 : 1 })
-      : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note' });
+      : text(k==='note'&&v===undefined?'':v, k, { allowEmpty: k === 'functionText'||k==='note'||k==='receiptId' });
   }
   if(input.type==='editTeam')out.changes=normalizeTeamEdits(input.changes);
   if(input.type==='attachLaunch'&&['projectId','launchId','memberId'].some(k=>out[k]!==undefined)&&['projectId','launchId','memberId'].some(k=>out[k]===undefined))fail('INPUT_INVALID','Reserved attachment requires the complete fixed launch scope.');
   if(input.type==='approveLaunchPlan'){
+   requireWorkerToolPolicy(input.workerToolPolicy);
    if(!Array.isArray(input.selections)||!input.selections.length||input.selections.length>30)fail('INPUT_INVALID','Select 1–30 workers.');
-   out.selections=input.selections.map(s=>{exact(s,['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration']);return Object.fromEntries(Object.entries(s).map(([k,v])=>[k,k.endsWith('Generation')?integer(v,k,{min:1}):text(v,k)]));});
+   out.selections=input.selections.map(s=>{exact(s,['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration','expectedBindingGeneration']);return Object.fromEntries(Object.entries(s).map(([k,v])=>[k,k.endsWith('Generation')?integer(v,k,{min:k==='expectedBindingGeneration'?0:1}):text(v,k)]));});
    if(new Set(out.selections.map(s=>s.memberId)).size!==out.selections.length||new Set(out.selections.map(s=>s.launchId)).size!==out.selections.length)fail('INPUT_INVALID','Each worker and launch must be distinct.');
    for(const s of out.selections)for(const key of ['memberId','launchId','expectedMemberGeneration','expectedOfficialGeneration','expectedNotesGeneration'])if(s[key]===undefined)fail('INPUT_INVALID','Worker selections require all identity/generation fields.');
   }
@@ -54,15 +60,19 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
     out.options=input.options.map(v=>text(v,'option'));
     if(new Set(out.options).size!==out.options.length)fail('INPUT_INVALID','Offered options must be distinct.');
   }
-  if (input.type === 'createFreshTeam') {
+  if (['createFreshTeam','importClassicTeam'].includes(input.type)) {
+    const importing=input.type==='importClassicTeam';
+    if(importing&&!['sourceFingerprint','backupDigest'].every(k=>/^[a-f0-9]{64}$/.test(out[k])))fail('INPUT_INVALID','A classic import requires verified source and complete-backup digests.');
+    if(importing){const fields=['projectRoot','machineId','contextId','executionHostId'];exact(input.targetHome,fields);out.targetHome=Object.fromEntries(fields.map(k=>[k,text(input.targetHome[k],'reviewed import home '+k)]));}
     out.settings = normalizeConfigurationMutation({ type: 'createTeam', teamId: out.teamId, name: out.name, functionText: out.functionText, settings: input.settings }).settings;
     if (out.settings.exemptMemberIds.length) fail('INPUT_INVALID', 'Fresh-team exemptions must start empty.');
     if (!Array.isArray(input.members) || !input.members.length || input.members.length > 30) fail('INPUT_INVALID', 'Supply 1–30 fresh members ordered boss-first.');
     const seen = new Map();
     out.members = input.members.map(m => {
-      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText', 'cli']);
-      if(m.cli!==undefined&&!['claude','codex'].includes(m.cli))fail('INPUT_INVALID','Fresh mixed members currently support only claude or codex.');
+      exact(m, ['memberId', 'name', 'bossMemberId', 'role', 'officialText', 'cli',...(importing?['advisoryNotes','model','effort']:[])]);
+      if((importing||m.cli!==undefined)&&!['claude','codex'].includes(m.cli))fail('INPUT_INVALID','Fresh mixed members currently support only claude or codex; imports must preserve an explicit CLI.');
       const value = { memberId: text(m.memberId, 'memberId'), name: text(m.name, 'name'), bossMemberId: m.bossMemberId === null ? null : text(m.bossMemberId, 'bossMemberId'), role: text(m.role, 'role'), officialText: text(m.officialText, 'officialText'),...(m.cli!==undefined?{cli:m.cli}:{}) };
+      if(importing)Object.assign(value,{advisoryNotes:text(m.advisoryNotes,'advisoryNotes',{allowEmpty:true}),model:text(m.model,'model',{allowEmpty:true}),effort:text(m.effort,'effort',{allowEmpty:true})});
       if (seen.has(value.memberId) || (value.bossMemberId !== null && !seen.has(value.bossMemberId))) fail('INPUT_INVALID', 'Fresh members must be unique and ordered boss-first.');
       seen.set(value.memberId, value); return value;
     });
@@ -133,15 +143,20 @@ export async function readGuardAuthority(db,actor,version){
  if(retired)return {member:null,hasReports:false,...retired};
  const {member}=await memberActor(db,actor,{teamId:row.team_id},false);
  const reports=await db.query("SELECT 1 FROM members WHERE boss_member_id=:id AND membership_state='active' LIMIT 1",{id:member.member_id});
- return {member,hasReports:reports.length>0};
+ return {member,hasReports:reports.length>0,...(version>=10?{workerSetup:await workerReadiness(db,member.member_id,await db.now())}:{})};
 }
 
 export async function assertApiCaller(db, command, actor) {
+  if(WORKER_RUNTIME_TYPES.includes(command.type)){
+    const [binding]=await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
+    if(!binding)fail('BINDING_REQUIRED','The native runtime must finish its verified member binding first.');
+    const member=await reference(db,'members','member_id',binding.member_id);await memberActor(db,actor,{teamId:member.team_id},false);return;
+  }
   if (['approveController','attachLaunch'].includes(command.type)) return;
   if(launchTypes.includes(command.type)){await controller(db,actor);return;}
   if (['inspectCaller','inspectController'].includes(command.type)) return;
   if(command.type==='inspectConfiguration'){await controller(db,actor);return;}
-  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
+  if (['importClassicTeam','revokeController','createFreshTeam','editTeam','bindMember'].includes(command.type)) { await controller(db,actor); return; }
   if (command.type === 'inspectTeam') {
     const [row] = await db.query('SELECT revoked FROM controller_approvals WHERE controller_id=:id',{id:controllerId(actor)});
     if (row && Number(row.revoked) === 0) return;
@@ -152,6 +167,8 @@ export async function assertApiCaller(db, command, actor) {
 // Receipt recovery does not repeat the effect, but still discloses its result.
 // A conversation may have been rebound to another member since that effect.
 export async function assertApiReceipt(db,command,actor,receipt) {
+ if(command.type==='inspectWake'){await assertApiCaller(db,command,actor);return;}
+ if(WORKER_RUNTIME_TYPES.includes(command.type)){await assertApiCaller(db,command,actor);return;}
  const type=command.type,value=receipt.result;
  if(Object.hasOwn(meetingFields,type)){const {member}=await memberActor(db,actor,command,false);await meetingAccess(db,command,member.member_id);return;}
  if(launchTypes.includes(type)){if(type!=='attachLaunch')await controller(db,actor);return;}
@@ -159,7 +176,7 @@ export async function assertApiReceipt(db,command,actor,receipt) {
  if(type==='inspectConfiguration'){await controller(db,actor);return;}
  if(type==='inspectController'){if(value.controllerGeneration!==null)await controller(db,actor);return;}
  if(type==='approveController'){await controller(db,actor);return;}
- if(['createFreshTeam','editTeam','bindMember','revokeController'].includes(type))return;
+ if(['importClassicTeam','createFreshTeam','editTeam','bindMember','revokeController'].includes(type))return;
  if(type==='inspectCaller') {
   if(value.controllerGeneration!==null)await controller(db,actor);
   if(value.member) {
@@ -213,9 +230,11 @@ export async function assertApiReceipt(db,command,actor,receipt) {
 // Runs only after the store has locked and validated its lease. The host has
 // already been contacted outside this transaction; all mutable authority is read
 // again here. No arbitrary client callback executes under the lock.
-export async function applyApiCommand(db, command, actor, writer, now, target) {
+export async function applyApiCommand(db, command, actor, writer, now, target, runtimeProof) {
+  if(WORKER_RUNTIME_TYPES.includes(command.type))return applyWorkerRuntime(db,command,actor,normalizeRuntimeProof(runtimeProof),now);
   await checkWriter(db, writer, { advance: true });
   const type = command.type;
+  if(type==='inspectWake'){const {member}=await memberActor(db,actor,command,false);return inspectWakeEligibility(db,command,member,now);}
   if (type === 'approveController') {
     const id = controllerId(actor);
     const [old] = await db.query('SELECT * FROM controller_approvals WHERE controller_id=:id', { id });
@@ -225,7 +244,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
   }
   if(type==='attachLaunch')return attachLaunch(db,actor,command);
   if(type==='inspectLaunchQueue'){await controller(db,actor,command.expectedControllerGeneration);return inspectLaunchQueue(db,command,actor,controllerId(actor));}
-  if(['approveLaunchPlan','recordLaunchTarget'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='approveLaunchPlan'?approveLaunchPlan(db,command,actor,controllerId(actor),now):recordLaunchTarget(db,command,actor,controllerId(actor),target,now);}
+  if(['approveLaunchPlan','recordLaunchTarget'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='approveLaunchPlan'?approveLaunchPlan(db,command,actor,controllerId(actor),now,writer):recordLaunchTarget(db,command,actor,controllerId(actor),target,now);}
   if(['reserveLaunch','claimLaunch'].includes(type)){await controller(db,actor,command.expectedControllerGeneration);await teamVersion(db,command);return type==='reserveLaunch'?reserveLaunch(db,command,actor,controllerId(actor),now):claimLaunch(db,command,actor,controllerId(actor));}
   if(type==='inspectMeeting'){const {member}=await memberActor(db,actor,command,false);return inspectMeeting(db,command,member.member_id);}
   if(type==='inspectQuestion'){const {member}=await memberActor(db,actor,command,false);return questionAccess(db,command.teamId,command.threadId,member.member_id);}
@@ -249,9 +268,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const {member} = await memberActor(db,actor,{teamId:row.team_id},false);
     const team = await reference(db,'teams','team_id',member.team_id);
     const reports = await db.query("SELECT member_id FROM members WHERE boss_member_id=:id AND membership_state='active'",{id:member.member_id});
-    return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,teams:teams.length?teams:[team]};
+    return {projectId:identity.project_id,controllerGeneration:approval&&Number(approval.revoked)===0?gen(approval.generation,'controller generation'):null,member,binding,configVersion:gen(team.config_version,'config version'),hasReports:reports.length>0,guardPolicy:memberGuardPolicy(member,reports.length),teams:teams.length?teams:[team]};
   }
-  if (['revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
+  if (['importClassicTeam','revokeController','createFreshTeam','editTeam','bindMember'].includes(type)) await controller(db, actor, command.expectedControllerGeneration);
   if (type === 'revokeController') {
     // Self-revocation only in this slice; approving another never revokes it.
     if (command.controllerId !== controllerId(actor)) fail('OPERATION_DENIED', 'Only self-revocation is supported by this slice.');
@@ -259,7 +278,9 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     await db.query('UPDATE controller_approvals SET revoked=1,generation=:next WHERE controller_id=:id AND generation=:expected', { next, id: command.controllerId, expected: command.expectedControllerGeneration });
     return { controllerId: command.controllerId, controllerGeneration: next, revoked: true };
   }
-  if (type === 'createFreshTeam') {
+  if (['createFreshTeam','importClassicTeam'].includes(type)) {
+    const importing=type==='importClassicTeam';
+    if(importing&&Object.entries(command.targetHome).some(([k,v])=>actor[k]!==v))fail('IMPORT_HOME_UNVERIFIED','The reviewed target home does not match the verified native importing home. No original home was transferred.');
     await applyConfigurationMutation(db, { type:'createTeam', teamId:command.teamId, name:command.name, functionText:command.functionText, settings:command.settings }, writer);
     let configVersion = 1;
     const levels = new Map();
@@ -267,10 +288,11 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
       const level = m.bossMemberId === null ? 1 : levels.get(m.bossMemberId) + 1;
       levels.set(m.memberId,level);
       await applyConfigurationMutation(db, { type:'putMember', teamId:command.teamId, expectedConfigVersion:configVersion++, expectedGeneration:0,
-        member: { ...m, level, model:'default', effort:'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
-      await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:'' }, writer);
+        member: { ...m, level, model:importing?m.model||'default':'default', effort:importing?m.effort||'default':'default', worktree:actor.contextId, registeredHome:{contextKind:'unknown',executionHostId:actor.executionHostId,originalPath:actor.projectRoot}, machineId:actor.machineId, location:'local', membershipState:'active', address:null, shortName:null, cli:m.cli??actor.provider, allowAgent:false, allowWrite:false } }, writer);
+      await applyConfigurationMutation(db, { type:'createRoleDocument', teamId:command.teamId, expectedConfigVersion:configVersion++, memberId:m.memberId, officialText:m.officialText, advisoryNotes:importing?m.advisoryNotes:'' }, writer);
     }
-    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId) };
+    if(command.managedLead===true){const head=command.members.find(m=>m.bossMemberId===null);await db.query('INSERT INTO managed_head_options VALUES (:team,:member,:controller,:now)',{team:command.teamId,member:head.memberId,controller:controllerId(actor),now});}
+    return { teamId:command.teamId, configVersion, memberIds:command.members.map(m=>m.memberId),...(command.managedLead===true?{managedLead:true}:{}),...(importing?{sourceFingerprint:command.sourceFingerprint,backupDigest:command.backupDigest,permissionPolicy:'start-disabled',workPolicy:'head-review-fresh-assignment'}:{}) };
   }
   if (type === 'inspectTeam') {
     // A controller may inspect; a member may inspect its own team only.
@@ -334,9 +356,10 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     if (m.team_id !== command.teamId || m.membership_state !== 'active') fail('MEMBER_SCOPE','Only an active member of this team can be bound.');
     expected(command.expectedMemberGeneration,m.generation,'member generation');
     if((await db.query("SELECT 1 FROM member_launches WHERE member_id=:id AND status='claimed'",{id:m.member_id})).length)fail('LAUNCH_PENDING','A claimed or uncertain start holds this member. Inspect it before connecting another session.');
+    const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});
+    if((await db.query('SELECT 1 FROM managed_head_options WHERE member_id=:id',{id:m.member_id})).length&&(!old||old.provider!==target?.provider||old.conversation_id!==target?.conversationId||old.machine_id!==target?.machineId))fail('MANAGED_HEAD_REQUIRED','An optional managed lead cannot adopt an existing conversation. Launch it through its separate reviewed owned plan; only its same conversation may be explicitly reconnected.');
     if (!target || target.projectRoot !== actor.projectRoot || target.machineId !== actor.machineId || target.executionHostId !== actor.executionHostId || target.contextId !== m.worktree || target.projectRoot !== m.home_original_path || target.executionHostId !== m.home_execution_host_id) fail('TARGET_UNVERIFIED','Target native project, context, machine and home must agree.');
     if(m.cli!==target.provider)fail('PROVIDER_MISMATCH','The verified session provider differs from this member’s configured CLI. Binding does not silently convert a member to another CLI.');
-    const [old] = await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:m.member_id});
     if ((old ? gen(old.generation,'binding generation') : 0) !== command.expectedBindingGeneration) fail('STALE_AUTHORITY','Binding generation changed.');
     const generation = nextInteger(command.expectedBindingGeneration,'binding generation');
     await db.query(`INSERT INTO member_bindings (member_id,machine_id,provider,conversation_id,execution_host_id,context_id,terminal_handle,incarnation_id,generation)
@@ -361,6 +384,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const [binding] = await db.query('SELECT generation FROM member_bindings WHERE member_id=:id',{id:report.member_id});
     if (!binding) fail('BINDING_REQUIRED','Bind the target before admitting work.');
     expected(command.expectedTargetBindingGeneration,binding.generation,'target binding generation');
+    await requireWorkerReady(db,report.member_id,now);
     const [run] = await db.query('SELECT * FROM runs WHERE run_id=:id',{id:command.runId});
     if (run && run.team_id !== command.teamId) fail('MEMBER_SCOPE','The Run belongs to another team.');
     if (!run) await db.query('INSERT INTO runs (run_id,consumer_generation,team_id) VALUES (:id,1,:team)',{id:command.runId,team:command.teamId});
@@ -402,6 +426,7 @@ export async function applyApiCommand(db, command, actor, writer, now, target) {
     const [binding]=await db.query('SELECT generation FROM member_bindings WHERE member_id=:id',{id:command.memberId});
     if(!binding)fail('BINDING_REQUIRED','Bind the retry recipient before admitting work.');
     expected(command.expectedTargetBindingGeneration,binding.generation,'target binding generation');
+    await requireWorkerReady(db,recipient.member_id,now);
     const settings=await reference(db,'team_settings','team_id',command.teamId);
     const pickupDeadlineMs=integer(now+gen(settings.pickup_window_minutes,'pickup window')*60000,'pickup deadline');
     await db.query(`INSERT INTO assignments (assignment_id,task_id,member_id,admitted_at_ms,assigned_by_member_id,pickup_deadline_ms,task_window_minutes,previous_assignment_id)

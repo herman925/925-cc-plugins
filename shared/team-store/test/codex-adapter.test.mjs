@@ -26,8 +26,10 @@ test('Codex guard uses standing settings, covers patch/shell/subagents and never
  assert.deepEqual(codexGuard(authority,{tool:'Bash',input:{command:'git status --short'}}),{});
  for(const command of ['git diff --output=modified.txt','rg --pre=malicious program','git status (Set-Content x y)'])assert.equal(codexGuard(authority,{tool:'Bash',input:{command}}).hookSpecificOutput.permissionDecision,'deny');
  assert.deepEqual(codexGuard({member:{...member,allow_write:1,allow_agent:1},hasReports:true},{tool:'apply_patch',input:{command:'*** Add File: x'}}),{});
- for(const text of ['.team-orchestrator/team.sqlite','C:\\x\\team-orchestrator\\controller-actions\\ticket.json','mod-bridge.mjs','machine.sqlite'])assert.equal(codexGuard({member:{...member,allow_write:1},hasReports:false},{tool:'apply_patch',input:{command:text}}).hookSpecificOutput.permissionDecision,'deny');
+ for(const text of ['.team-orchestrator/team.sqlite','C:\\x\\team-orchestrator\\controller-actions\\ticket.json','mod-bridge.mjs','mod-wake.mjs','machine.sqlite','.team-orchestrator/wake-receipts/receipt.json'])assert.equal(codexGuard({member:{...member,allow_write:1},hasReports:false},{tool:'apply_patch',input:{command:text}}).hookSpecificOutput.permissionDecision,'deny');
  assert.deepEqual(codexGuard({member:null},{tool:'apply_patch',input:{}}),{});
+ for(const cmd of ['Get-Content C:/private/.team-orchestrator/dispatchers/project/access.json','node store/src/mod-dispatch-receiver.mjs','node store/src/dispatcher-service.mjs'])assert.equal(codexGuard({member:null},{tool:'exec_command',input:{cmd}}).hookSpecificOutput.permissionDecision,'deny');
+ for(const cmd of ['git add -- shared/team-store/src/dispatcher-service.mjs','rg dispatcher-service shared/team-store/src'])assert.deepEqual(codexGuard({member:null},{tool:'exec_command',input:{cmd}}),{});
  assert.equal(codexGuard({member:null},{tool:'exec_command',input:{cmd:'Get-Content C:/private/925-to/launch-profiles/reserved.json'}}).hookSpecificOutput.permissionDecision,'deny');
 });
 test('native metadata is reverified on every call and tool arguments cannot choose an actor, approval or target',async()=>{
@@ -99,5 +101,5 @@ test('MCP wire initializes, lists tools, preserves top-level native metadata, de
  const output=new PassThrough();let body='';output.setEncoding('utf8');output.on('data',s=>body+=s);
  const bytes=Buffer.from(frames.map(JSON.stringify).join('\n')+'\n');
  await serveCodexMcp({call:async(name,args,meta)=>{if(name==='team_guard')throw Error('unverified');assert.equal(args.operationId,'你好');assert.equal(meta.threadId,'native');return {ok:true};}},{input:Readable.from([...bytes].map(b=>Buffer.from([b]))),output});
- const rows=body.trim().split('\n').map(JSON.parse);assert.equal(rows.length,6);assert.equal(rows[0].error.code,-32002);assert.deepEqual(rows[1].result.serverInfo,{name:'team-orchestration-925',version:SHARED_WRITER.version});assert.equal(rows[2].result.tools.length,10);assert.equal(JSON.parse(rows[4].result.content[0].text).hookSpecificOutput.permissionDecision,'deny');assert.equal(rows[5].error.code,-32602);
+ const rows=body.trim().split('\n').map(JSON.parse);assert.equal(rows.length,6);assert.equal(rows[0].error.code,-32002);assert.deepEqual(rows[1].result.serverInfo,{name:'team-orchestration-925',version:SHARED_WRITER.version});assert.equal(rows[2].result.tools.length,codexTools.length);assert.ok(rows[2].result.tools.some(tool=>tool.name==='shared_team_worker_review'));assert.equal(JSON.parse(rows[4].result.content[0].text).hookSpecificOutput.permissionDecision,'deny');assert.equal(rows[5].error.code,-32602);
 });

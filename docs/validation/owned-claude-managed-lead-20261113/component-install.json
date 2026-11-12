@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "node": "v22.13.0",
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-claude-install-native-blFnCV\\provider",
+  "teamStoreChanged": false,
+  "globalConfigurationChanged": false,
+  "launchesWorkers": false,
+  "version": "0.3.322",
+  "digest": "eb20ecb24b85e2a0aba0385af1f0368a317b25eadcdd305d82a8d9683d5922b2",
+  "sdkModule": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-claude-install-native-blFnCV\\provider\\0.3.322\\node_modules\\@anthropic-ai\\claude-agent-sdk\\sdk.mjs",
+  "executable": "C:\\Users\\Herman\\.local\\bin\\claude.exe",
+  "preview": {
+    "state": "preview",
+    "version": "0.3.322",
+    "nativeVersion": "2.1.322 (Claude Code)",
+    "directory": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-claude-install-native-blFnCV\\provider\\0.3.322",
+    "changes": [
+      "Install optional @anthropic-ai/claude-agent-sdk@0.3.322 and its dependencies in the private provider directory; package scripts and optional native downloads are disabled.",
+      "Use the verified existing native Claude executable; preserve native project hooks, settings and permission modes."
+    ],
+    "teamStoreChanged": false,
+    "globalConfigurationChanged": false,
+    "launchesWorkers": false
+  },
+  "normalPinnedInstall": true
+}

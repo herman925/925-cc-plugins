@@ -191,13 +191,14 @@ const ok = (r: any) => r.deny === undefined
 const write = ($: any, path: string, agentId?: string) => $.tool.call({ tool: 'Write', file_path: path, content: '[]', ...(agentId ? { agentId } : {}) } as any)
 const shell = ($: any, tool: string, command: string, agentId?: string) => $.tool.call({ tool, command, ...(agentId ? { agentId } : {}) } as any)
 
-test('a scope refusal identifies the team-file guard and the command it checked', async ($, on) => {
-  world(on, [{ handle: 'term_c', title: 'Operator', worktreePath: 'C:/other' }], [], undefined, { worktreePath: 'C:/other' })
+test('a member scope refusal identifies the guard probe failure without blaming the command', async ($, on) => {
+  const files=world(on, [{ handle: 'term_c', title: 'Operator', worktreePath: 'C:/other' }], [], undefined, { worktreePath: 'C:/other' })
+  files.set(ROSTER,JSON.stringify(ids(HUALONG)))
   engine(on, [], ID1)
-  const command = 'cd .claude/team-orchestrator && ls'
+  const command = 'cd .claude/team-orchestrator && echo changed > roster.json'
   const result: any = await shell($, 'Bash', command)
-  expect(result.deny).toContain('team-file guard')
-  expect(result.deny).toContain(command)
+  expect(result.deny).toContain('guard could not verify itself')
+  expect(result.deny).not.toContain(command)
   expect(result.deny).toContain('session project root conflicts with its native home')
 })
 

@@ -1,5 +1,5 @@
 import {atom,read,update} from 'claude-code'
-const initial={error:'',scope:'',selected:'',detail:null as any,tab:'agenda',creating:false,review:false,title:'',policy:'',lineLimit:'25',roundLimit:'2',invitees:[] as string[],topic:'',topics:[] as any[],body:'',resolution:'',checkpoint:'',outputKind:'minutes',owner:'',outputBody:'',reviewNote:''}
+const initial={error:'',scope:'',selected:'',detail:null as any,tab:'agenda',creating:false,review:false,title:'',policy:'joined',lineLimit:'25',roundLimit:'2',invitees:[] as string[],topic:'',topics:[] as any[],body:'',resolution:'',checkpoint:'',outputKind:'minutes',owner:'',outputBody:'',reviewNote:''}
 const state=atom({plugin:'team-orchestrator',key:'sharedMeetings'} as const,initial)
 const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('')
 const clean=(v:string)=>String(v).replace(/[\r\n\t]+/g,' ').replace(/[\u0000-\u001f\u007f-\u009f]/g,'')

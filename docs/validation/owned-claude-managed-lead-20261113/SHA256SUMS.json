@@ -1,0 +1,42 @@
+[
+  {
+    "file": "claude-head-codex-worker.json",
+    "sha256": "A943F77443745B6DF1A78FE2396F325A00A9F2C2EB77F297DB7C7A5D3D4EB61A"
+  },
+  {
+    "file": "claude-native-question.json",
+    "sha256": "C86798FDE6416FC9EE1BFF0A510525780546182EF2984B0260E92682FD00EC2F"
+  },
+  {
+    "file": "claude-negative-guard.json",
+    "sha256": "52DFA003ECB817BB5DB7FAF63807245A1437A6BA7C2B9A1B054B7C836FA9D5B4"
+  },
+  {
+    "file": "claude-owned-lead.json",
+    "sha256": "8C7BF03D19CD7FF304DB19C5195A718DAC1FABAB25E9A543249879F9B69D1226"
+  },
+  {
+    "file": "claude-positive-sdk.json",
+    "sha256": "6C8BE17C206F543F6F34EEEB06347FD8F619D4FB2EFB5D7CB776AA48B8606840"
+  },
+  {
+    "file": "codex-head-claude-worker.json",
+    "sha256": "AFA86DB8FFA403A3A8AD973FB236A599F09D17C9E09B5B1BFA8D13DE14AF20AF"
+  },
+  {
+    "file": "codex-owned-lead.json",
+    "sha256": "183B31F64BBC9A7DB9BA2E0CDEF61DFB9CFC360E0CCFA10238AD2DCCCB1B687D"
+  },
+  {
+    "file": "component-install.json",
+    "sha256": "67516C3A7A6C45B7428E4100DF12CC76D6A219352135158F75F59CBEE5E68A40"
+  },
+  {
+    "file": "retained-checks.json",
+    "sha256": "2188E0B75EB812FCF6FA1A378E364CB6CDBA440941060D5503B8137142087822"
+  },
+  {
+    "file": "setup-preview.json",
+    "sha256": "AB834B3AE3D3EDA99B20497F4F476576E031E46051B0E8309D0EF3647E257025"
+  }
+]

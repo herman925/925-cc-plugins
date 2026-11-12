@@ -9,6 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {createConnection} from 'node:net';
 import {normalizeActor,exact} from './api-domain.mjs';
 import {refusal} from './errors.mjs';
+import {FENCED_WAKE_CAPABILITY} from './wake-journal.mjs';
 
 const execute=promisify(execFile);
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
@@ -27,8 +28,7 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
  const transport=(metadata.transports??[metadata.transport]).find(t=>['unix','named-pipe'].includes(t?.kind));
  if(!transport || (transport.kind==='unix'?!isAbsolute(transport.endpoint):!transport.endpoint?.startsWith('\\\\.\\pipe\\')))deny('No verified local Orca transport.');
  const unchanged=text=>{const current=JSON.parse(text);return current.pid===metadata.pid&&current.runtimeId===metadata.runtimeId&&current.authToken===metadata.authToken;};
- const rpc=async(method,params)=>{
-  if(!['session.tabs.list','terminal.show'].includes(method))deny('The host identity adapter permits read-only identity calls only.');
+ const request=async(method,params,requestId)=>{
   if(!unchanged(await readMetadata()))deny('Orca runtime changed during verification.');
   return new Promise((resolve,reject)=>{
    const id=randomUUID(),socket=(dependencies.connect??createConnection)(transport.endpoint);let buffer='',done=false,validating=false;
@@ -36,7 +36,7 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
    const timer=setTimeout(()=>end(refusal('API_NATIVE_UNVERIFIED','Native identity verification timed out.')),15000);
    socket.setEncoding('utf8');socket.on('error',()=>end(refusal('API_NATIVE_UNVERIFIED','Native identity connection failed.')));
    socket.on('close',()=>{if(!done&&!validating)end(refusal('API_NATIVE_UNVERIFIED','Native identity connection closed.'));});
-   socket.on('connect',()=>socket.write(JSON.stringify({id,authToken:metadata.authToken,method,params})+'\n'));
+   socket.on('connect',()=>socket.write(JSON.stringify({id,authToken:metadata.authToken,method,params,...(requestId?{orchestrationRequestId:requestId}:{})})+'\n'));
    socket.on('data',chunk=>{
     buffer+=chunk;if(Buffer.byteLength(buffer)>2*1024*1024)return end(refusal('API_NATIVE_UNVERIFIED','Native identity response is oversized.'));
     for(let cut;(cut=buffer.indexOf('\n'))>=0;){
@@ -53,6 +53,22 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
    });
   });
  };
+ const rpc=async(method,params)=>{
+  if(!['session.tabs.list','terminal.show','terminal.agentStatus'].includes(method))deny('The host identity adapter permits read-only identity calls only.');
+  return request(method,params);
+ };
+ const promptJournalId=status.runtime?.promptDeliveryJournalId;
+ const fenced=()=>status.runtime?.capabilities?.includes(FENCED_WAKE_CAPABILITY)&&typeof promptJournalId==='string'&&promptJournalId.length>0;
+ async function lookupWake({requestId,journalId,expectedBinding,bodyDigest}){
+  if(!fenced()||journalId!==promptJournalId)deny('Fenced native prompt receipt lookup is unavailable.');
+  return (await request('terminal.promptReceipt',{requestId,journalId,expectedBinding,bodyDigest})).promptReceipt;
+ }
+ async function submitWake({terminalHandle,text,requestId,expectedBinding,bodyDigest,journalId}){
+  if(!fenced()||journalId!==promptJournalId||!status.runtime?.capabilities?.includes('terminal.prompt-delivery.v1')||!/^[-a-f0-9]{36}$/.test(requestId)||typeof text!=='string'||text.length>12000||!expectedBinding?.incarnationId||expectedBinding.terminalHandle!==terminalHandle||!['claude','codex'].includes(expectedBinding.provider))deny('Fenced native prompt delivery is unavailable.');
+  // Private adapter only: recognized agent prompt, never raw PTY input, Escape,
+  // interrupt or a shell command. The saved request ID belongs to host replay.
+  return request('terminal.send',{terminal:terminalHandle,text,enter:true,agentPrompt:true,expectedBinding,bodyDigest,journalId,waitSubmitMs:1000,client:{id:'team-orchestrator',type:'desktop'}},requestId);
+ }
  async function verifyTerminal(input,provider,{allowMissingClaudeSession=false}={}) {
   exact(input,['projectRoot','conversationId','terminalHandle','contextId']);
   for(const key of ['projectRoot','conversationId','terminalHandle','contextId'])if(!Object.hasOwn(input,key)||typeof input[key]!=='string'||!input[key])deny('Native references require four nonempty own string fields.');
@@ -69,5 +85,5 @@ export async function createOrcaHost({orcaCommand=process.env.ORCA_CLI_COMMAND||
   const actor=normalizeActor({projectRoot:root,machineId:hostname(),provider,conversationId:input.conversationId,executionHostId:'local',contextId:input.contextId,terminalHandle:terminal.handle,incarnationId:terminal.incarnationId});
   return {actor,terminal,tab:matches[0],hasProviderSession:providerId!==undefined};
  }
- return Object.freeze({cli,rpc,verifyTerminal,runtimeId:metadata.runtimeId,capabilities:Object.freeze([...(status.runtime?.capabilities??[])])});
+ return Object.freeze({cli,rpc,submitWake,lookupWake,promptJournalId,verifyTerminal,runtimeId:metadata.runtimeId,capabilities:Object.freeze([...(status.runtime?.capabilities??[])])});
 }

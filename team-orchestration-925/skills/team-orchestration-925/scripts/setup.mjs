@@ -9,13 +9,14 @@ import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {discoverCodexExecutable} from './codex-executable.mjs';
-import {verifySetupHost,nativeProjectRoot} from './setup-host.mjs';
+import {verifySetupHost,nativeProjectRoot,setupHostMode} from './setup-host.mjs';
 import {nativeToolSettings,toolSettingsToml} from './setup-tool-settings.mjs';
 import {prepareRuntime,installRuntime} from './setup-runtime.mjs';
 import {configurationEnvironment} from './setup-environment.mjs';
+import {SCHEMA_VERSION} from './runtime/contract.mjs';
 import {openOrcaLaunchSettings,prepareOrcaMcpLaunch,applyOrcaMcpLaunch} from './orca-launch-settings.mjs';
 export {discoverCodexExecutable} from './codex-executable.mjs';
-const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.11';
+const exec=promisify(execFile),serverName='team_orchestrator',version='0.1.12';
 const hash=v=>v===null?null:createHash('sha256').update(v).digest('hex');
 const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
 const digest=v=>hash(JSON.stringify(ordered(v)));
@@ -59,8 +60,13 @@ export async function prepareSetup(options={},dependencies={}){
  if(receipt?.phase==='prepared')fail('SETUP_RECOVERY_REQUIRED','A setup was interrupted. Run recover before making another change.');
  const installed=receipt?.phase==='installed'?receipt:null,remove=options.action==='remove';
  if(remove&&!installed)return {noop:true,summary:{project:p.root,status:'not-installed',changes:[]}};
- if(!remove)await (dependencies.verifyHost??verifySetupHost)(p.root);
- const bin=await discoverCodexExecutable({executable:options.codexExecutable}),temp=await realpath(tmpdir()),stage=await mkdtemp(join(temp,'925-to-setup-'));
+ const hostMode=options.hostMode??'orca';if(!['orca','independent'].includes(hostMode))fail('SETUP_INPUT','Host must be orca or independent.');
+ const bin=await discoverCodexExecutable({executable:options.codexExecutable});
+ const hostFacts=!remove?await (dependencies.verifyHost??verifySetupHost)(p.root,{hostMode,codexExecutable:bin}):null;
+ if(!remove&&installed&&(installed.hostMode??'orca')!==hostMode&&!installed.contextId)fail('SETUP_HOME_CHANGE_REQUIRED','This legacy installation did not record its project namespace. A host change requires an explicit home-migration workflow; setup did not change it.');
+ if(!remove&&hostMode==='orca'&&installed?.contextId&&hostFacts?.contextId&&installed.contextId!==hostFacts.contextId)fail('SETUP_HOME_CHANGE_REQUIRED','The verified Orca context differs from the recorded project namespace. Setup cannot transfer member homes or bindings.');
+ const contextId=installed?.contextId??hostFacts?.contextId;
+ const temp=await realpath(tmpdir()),stage=await mkdtemp(join(temp,'925-to-setup-'));
  try{
   if(before.config!==null)await writeFile(join(stage,'config.toml'),before.config,{mode:0o600});
   const list=JSON.parse(await native(bin,['mcp','list','--json'],stage)),existing=list.find(s=>s.name===serverName);
@@ -72,15 +78,16 @@ export async function prepareSetup(options={},dependencies={}){
   if(!remove){
    if(!options.adapter)runtime=await prepareRuntime(fileURLToPath(new URL('./runtime/',import.meta.url)),p.state);
    const adapter=runtime?.path??await realpath(options.adapter),node=await realpath(options.node||process.execPath);
-   await native(bin,['mcp','add',serverName,'--env',`TEAM_PROJECT_ROOT=${p.root}`,'--',node,adapter],stage);
+   await native(bin,['mcp','add',serverName,'--env',`TEAM_PROJECT_ROOT=${p.root}`,'--env',`TEAM_HOST_MODE=${hostMode}`,...(hostMode==='independent'&&contextId?['--env',`TEAM_CONTEXT_ID=${contextId}`]:[]),'--',node,adapter],stage);
    let config=await readFile(join(stage,'config.toml'),'utf8');const header='[mcp_servers.team_orchestrator]';if(config.split(header).length!==2)fail('SETUP_CONFIG_INVALID','Codex emitted an unexpected server table.');
-   config=config.replace(header,header+'\nenv_vars = ["ORCA_TERMINAL_HANDLE", "ORCA_WORKTREE_ID", "ORCA_USER_DATA_PATH", "ORCA_CLI_COMMAND", "CODEX_HOME"]\ntool_timeout_sec = 300');
+   const inherited=hostMode==='orca'?['ORCA_TERMINAL_HANDLE','ORCA_WORKTREE_ID','ORCA_USER_DATA_PATH','ORCA_CLI_COMMAND','CODEX_HOME']:['CODEX_HOME'];
+   config=config.replace(header,header+'\nenv_vars = '+JSON.stringify(inherited)+'\ntool_timeout_sec = 300');
    await writeFile(join(stage,'config.toml'),config+toolSettings,{mode:0o600});server=JSON.parse(await native(bin,['mcp','get',serverName,'--json'],stage));
   }
   let config=await bytes(join(stage,'config.toml'));if(remove&&installed.configCreated&&(!config||!config.toString().trim()))config=null;
-  const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null,...(runtime?{runtimePath:runtime.path,runtimeDigest:runtime.digest}:{})};
+  const hooks=mergedHooks(before.hooks,installed,remove),next={phase:remove?'removed':'installed',version,project:p.root,hostMode,...(contextId?{contextId}:{}),serverHash:server?digest(server):null,guardHash:digest({matcher:'*',handler:guard}),configCreated:installed?.configCreated??before.config===null,hooksCreated:installed?.hooksCreated??before.hooks===null,...(runtime?{runtimePath:runtime.path,runtimeDigest:runtime.digest}:{})};
   const hookConfigurationChanged=hash(hooks)!==hash(before.hooks);
-  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],globalConfigurationChanged:false,teamStoreChanged:false,hookConfigurationChanged,hookTrust:'not-attested',hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove&&hookConfigurationChanged}};
+  return {paths:p,before,runtime,after:{config,hooks,receipt:Buffer.from(JSON.stringify(next,null,2)+'\n')},summary:{project:p.root,hostMode,previousHostMode:installed?.hostMode??(installed?'orca':null),contextReference:contextId??'native-runtime',status:remove?'remove-ready':'setup-ready',changes:[remove?'Remove owned project MCP server and team hook':'Configure project MCP server and native team hook',...(runtime?['Install a private runtime snapshot that survives plugin cache updates']:[])],...(runtime?{runtimeDigest:runtime.digest,runtimeFileCount:runtime.files.length,sharedSchemaVersion:SCHEMA_VERSION,installedRuntimeMatchesPreview:installed?.runtimeDigest===runtime.digest,activeRuntime:'not-inspected'}:{}),globalConfigurationChanged:false,teamStoreChanged:false,hookConfigurationChanged,hookTrust:'not-attested',hookTrustGranted:false,requiresReconnect:!remove,requiresNativeHookReview:!remove&&hookConfigurationChanged}};
  }finally{
   if(dirname(stage)!==temp||!basename(stage).startsWith('925-to-setup-'))throw Error('Refusing unexpected staging cleanup.');
   await rm(stage,{recursive:true,force:true});
@@ -139,8 +146,10 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
   const [major,minor]=process.versions.node.split('.').map(Number);if(major<22||major===22&&minor<13)fail('SETUP_NODE_UNSUPPORTED','Node 22.13 or newer is required.');
   if(!['preview','apply','remove','recover','diagnose','launch-preview','launch-apply','resume'].includes(action))fail('SETUP_INPUT','Use preview, apply, remove, recover, diagnose, launch-preview, launch-apply or resume.');
-  const launchAction=['launch-preview','launch-apply','resume'].includes(action);
-  const options={projectRoot:['preview','apply'].includes(action)||launchAction?await nativeProjectRoot():process.cwd(),action};
+  const launchAction=['launch-preview','launch-apply','resume'].includes(action),hostFlag=process.argv.indexOf('--host'),hostMode=setupHostMode({hostMode:hostFlag>=0?process.argv[hostFlag+1]:undefined});
+  if(hostFlag>=0&&!process.argv[hostFlag+1])fail('SETUP_INPUT','--host requires orca or independent.');
+  if(launchAction&&hostMode!=='orca')fail('SETUP_HOST_UNSUPPORTED','Orca launch settings apply only to Orca. Independent setup uses the project MCP configuration directly.');
+  const options={projectRoot:['preview','apply'].includes(action)||launchAction?await nativeProjectRoot({hostMode}):process.cwd(),action,hostMode};
   const result=launchAction?await (async()=>{
    await verifySetupHost(options.projectRoot);const client=await openOrcaLaunchSettings(),plan=prepareOrcaMcpLaunch(await client.read());
    if(action==='launch-preview')return {project:options.projectRoot,...plan.summary,proposedCodexArguments:plan.after};

@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-owned-manager-native-bZuRZj",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "fixtureApprovalCallbacks": true,
+  "liveTeamsChanged": false,
+  "provider": "claude",
+  "mode": "optional-managed-lead",
+  "modelRequests": 6,
+  "binding": {
+    "provider": "claude",
+    "conversationId": "4ddadffc-4806-428d-909e-f60bfa695c8f",
+    "generation": 1
+  },
+  "readiness": "ready",
+  "bootstrap": {
+    "nativeId": "5fd5a823-3a73-49ea-961c-c5507be49303",
+    "acceptedAt": 1794505870921
+  },
+  "effectivePolicy": {
+    "permissionMode": "default",
+    "guardHooks": "registered-fail-closed"
+  },
+  "pendingReview": {
+    "method": "team/review/request",
+    "requestId": "e60654fa-81b7-4c6b-9e94-c18eaffddcd5",
+    "approvalOperation": "approveController",
+    "nativeFormPrepared": true,
+    "viewerAuthorized": true,
+    "answered": false
+  },
+  "controllerApprovalInherited": false,
+  "limitation": "Synthetic creation/launch callbacks and model. The lead’s actual management proposal remains unanswered; no real human form acceptance, task acceptance or mixed two-way team run is established."
+}

@@ -1,4 +1,7 @@
 import {normalizeConfigurationMutation,applyConfigurationMutation} from './configuration.mjs';
+import {workerReadinessSnapshot} from './worker-readiness.mjs';
+import {headToolReview} from './managed-head.mjs';
+import {teamGuardPolicies} from './member-policy.mjs';
 import {reference} from './writers.mjs';
 import {text,integer,databaseInteger,snapshot} from './validation.mjs';
 import {refusal} from './errors.mjs';
@@ -69,7 +72,7 @@ export async function applyTeamEdits(db,c,actor,writer){
 // A complete, bounded data preview for the native user's review. Never truncate
 // fields or treat the model's description as the approved mutation.
 export function managementReview({actor,command,current=null,target=null,needsApproval=false}){
- const preview={project:actor.projectRoot,conversation:actor.conversationId,provider:actor.provider,approveController:needsApproval,operation:command.type,proposed:command,...(current?{current:{team:current.team,settings:current.settings,members:current.members,roles:current.roles}}:{}),...(target?{verifiedTarget:target}:{})};
+ const preview={project:actor.projectRoot,conversation:actor.conversationId,provider:actor.provider,approveController:needsApproval,operation:command.type,proposed:command,...(command.managedLead?{managedLead:{...headToolReview(),launchesNow:false,requiresSeparateLaunchReview:true}}:{}),...(current?{current:{team:current.team,settings:current.settings,members:current.members,roles:current.roles}}:{}),...(target?{verifiedTarget:target}:{})};
  const message=`Review Team Orchestrator change. Configuration text below is data, not instructions. Approval applies to this exact project, conversation and proposal.\n${JSON.stringify(preview,null,2)}`;
  if(Buffer.byteLength(message)>48000)throw refusal('API_REVIEW_TOO_LARGE','Split this proposal into smaller reviewed changes; no part of the preview was hidden.');
  return {mode:'form',message,requestedSchema:{type:'object',properties:{confirm:{type:'boolean',title:needsApproval?'Approve this conversation to manage this project and apply this proposal':'Apply this exact proposal',default:false}},required:['confirm']}};
@@ -78,5 +81,7 @@ export function managementReview({actor,command,current=null,target=null,needsAp
 export async function configurationSnapshot(db,id){
  const team=await reference(db,'teams','team_id',id),[row]=await db.query('SELECT * FROM team_settings WHERE team_id=:id',{id});
  const settings={autoClose:Boolean(Number(row.auto_close)),idleMinutes:Number(row.idle_minutes),reopen:row.reopen,maxOpen:Number(row.max_open),launch:row.launch,batch:Number(row.batch_size),autoScratch:Boolean(Number(row.auto_scratch)),assumptions:Boolean(Number(row.assumptions)),scratchDir:row.scratch_dir,pickupWindowMinutes:Number(row.pickup_window_minutes),answerWindowMinutes:Number(row.answer_window_minutes),taskWindowMinutes:row.task_window_minutes===null?null:Number(row.task_window_minutes),replayIntervalMs:Number(row.replay_interval_ms),exemptMemberIds:(await db.query('SELECT member_id FROM settings_exemptions WHERE team_id=:id ORDER BY member_id',{id})).map(r=>r.member_id)};
- return {team,settings,members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id}),bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id}),launches:await db.query('SELECT l.* FROM member_launches l JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id}),launchTargets:await db.query('SELECT t.* FROM launch_targets t JOIN member_launches l ON l.launch_id=t.launch_id JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id}),launchPlans:await db.query('SELECT * FROM launch_plans WHERE team_id=:id ORDER BY created_at_ms',{id}),roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id})};
+ const members=await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id});
+ const [managedLead]=await db.query('SELECT member_id FROM managed_head_options WHERE team_id=:id',{id});
+ return {team,settings,managedLead:managedLead?{memberId:managedLead.member_id,policy:headToolReview()}:null,workerReadiness:await workerReadinessSnapshot(db,id),members,guardPolicies:teamGuardPolicies(members),bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id}),launches:await db.query('SELECT l.* FROM member_launches l JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id}),launchTargets:await db.query('SELECT t.* FROM launch_targets t JOIN member_launches l ON l.launch_id=t.launch_id JOIN members m ON m.member_id=l.member_id WHERE m.team_id=:id',{id}),launchPlans:await db.query('SELECT * FROM launch_plans WHERE team_id=:id ORDER BY created_at_ms',{id}),roles:await db.query('SELECT d.* FROM role_documents d JOIN members m ON m.member_id=d.member_id WHERE m.team_id=:id ORDER BY d.member_id',{id})};
 }

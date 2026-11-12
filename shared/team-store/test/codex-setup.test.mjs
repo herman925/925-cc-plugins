@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {prepareSetup as nativePrepareSetup,applySetup,recoverSetup,diagnoseSetup} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup.mjs';
 import {configurationEnvironment} from '../../../team-orchestration-925/skills/team-orchestration-925/scripts/setup-environment.mjs';
+import {SCHEMA_VERSION} from '../contract.mjs';
 test('temporary native configuration tools do not inherit the acting Orca conversation identity',()=>{
  const original={PATH:'tools',ORCA_TERMINAL_HANDLE:'acting-terminal',ORCA_AGENT_HOOK_TOKEN:'fixture-token',CODEX_THREAD_ID:'acting-thread',CODEX_SESSION_ID:'acting-session',TEAM_PROJECT_ROOT:'acting-project',CODEX_HOME:'acting-home'};
  const isolated=configurationEnvironment('temporary-home',original);
@@ -21,12 +22,27 @@ describe('Codex project setup with native config writer',{skip:!native},()=>{
   const options={projectRoot,stateRoot:join(root,'private-state'),codexExecutable:native};
   return {root,projectRoot,options,config:join(projectRoot,'.codex','config.toml'),hooks:join(projectRoot,'.codex','hooks.json'),receipt:join(projectRoot,'.codex','925-to-installation.json')};
  }
+ test('independent setup records explicit host and stable context without inheriting an Orca terminal',async t=>{
+  const f=await fixture(t),contextId='project:fixture-context';
+  const plan=await nativePrepareSetup({...f.options,hostMode:'independent'},{verifyHost:async()=>({hostMode:'independent',contextId})});
+  assert.equal(plan.summary.hostMode,'independent');assert.equal(plan.summary.contextReference,contextId);await applySetup(plan);
+  const config=await readFile(f.config,'utf8'),receipt=JSON.parse(await readFile(f.receipt,'utf8'));
+  assert.equal(receipt.hostMode,'independent');assert.equal(receipt.contextId,contextId);assert.match(config,/TEAM_HOST_MODE = "independent"/);assert.match(config,/TEAM_CONTEXT_ID = "project:fixture-context"/);assert.ok(!config.includes('ORCA_TERMINAL_HANDLE'));assert.ok(!config.includes('ORCA_WORKTREE_ID'));
+  const update=await nativePrepareSetup({...f.options,hostMode:'independent'},{verifyHost:async()=>({contextId:'project:new-default'})});assert.equal(update.summary.contextReference,contextId,'An update cannot silently move the shared home namespace.');
+  await assert.rejects(nativePrepareSetup({...f.options,hostMode:'orca'},{verifyHost:async()=>({contextId:'different-orca-home'})}),{code:'SETUP_HOME_CHANGE_REQUIRED'});assert.equal(await readFile(f.config,'utf8'),config);
+ });
+ test('changing a legacy host cannot invent an unrecorded shared-home namespace',async t=>{
+  const f=await fixture(t);await applySetup(await prepareSetup(f.options));const receipt=JSON.parse(await readFile(f.receipt,'utf8'));delete receipt.hostMode;delete receipt.contextId;await writeFile(f.receipt,JSON.stringify(receipt));const before=await readFile(f.config);
+  await assert.rejects(nativePrepareSetup({...f.options,hostMode:'independent'},{verifyHost:async()=>({contextId:'new-independent-home'})}),{code:'SETUP_HOME_CHANGE_REQUIRED'});assert.deepEqual(await readFile(f.config),before);
+ });
  test('only a changed hook requires new native review; diagnostics never attest trust',async t=>{
   const f=await fixture(t),initial=await prepareSetup(f.options);
   assert.equal(initial.summary.hookConfigurationChanged,true);assert.equal(initial.summary.requiresNativeHookReview,true);
+  assert.equal(initial.summary.runtimeDigest,initial.runtime.digest);assert.equal(initial.summary.runtimeFileCount,initial.runtime.files.length);assert.equal(initial.summary.sharedSchemaVersion,SCHEMA_VERSION);assert.equal(initial.summary.installedRuntimeMatchesPreview,false);assert.equal(initial.summary.activeRuntime,'not-inspected');
   await applySetup(initial);
   const update=await prepareSetup(f.options);
   assert.equal(update.summary.hookConfigurationChanged,false);assert.equal(update.summary.requiresNativeHookReview,false);
+  assert.equal(update.summary.installedRuntimeMatchesPreview,true);assert.equal(update.summary.activeRuntime,'not-inspected');
   assert.equal(update.summary.hookTrust,'not-attested');assert.equal(update.summary.hookTrustGranted,false);assert.equal(update.summary.requiresReconnect,true);
   assert.equal((await diagnoseSetup(f.options)).hookTrust,'not-attested');
  });

@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "root": "C:\\Users\\Herman\\AppData\\Local\\Temp\\team-owned-manager-native-06Ql9y",
+  "realModel": false,
+  "humanReviewsAnswered": 0,
+  "fixtureApprovalCallbacks": true,
+  "liveTeamsChanged": false,
+  "modelRequests": 9,
+  "observed": [
+    {
+      "call": 1,
+      "tool": "shared_team_status"
+    },
+    {
+      "call": 2,
+      "tool": "shared_team"
+    },
+    {
+      "call": 3,
+      "tool": "shared_inbox_read"
+    },
+    {
+      "call": 4,
+      "tool": "shared_inbox_seen",
+      "readReceiptId": "bootstrap-read-41e69da4-d1b0-4686-b86c-b52a4cd9fcfd"
+    },
+    {
+      "call": 6,
+      "tool": "shared_team"
+    },
+    {
+      "call": 7,
+      "tool": "shared_inbox_read"
+    },
+    {
+      "call": 8,
+      "tool": "shared_inbox_seen",
+      "readReceiptId": "inbox-read-87347f80-8b63-428e-9b66-79249a475998"
+    }
+  ],
+  "binding": {
+    "conversationId": "01a1ce98-bfab-75a2-a617-d5cdbf42bd62",
+    "incarnationId": "codex-process:18700:134389410792017015",
+    "generation": 1
+  },
+  "readiness": "ready",
+  "bootstrap": {
+    "turnId": "01a1ce98-c7f6-7271-af7c-85689f09ccae",
+    "acceptedAt": 1794467481606
+  },
+  "wake": {
+    "accepted": true,
+    "requestId": "7df2c164-8968-4519-8bc5-74ab1b96b645",
+    "nativeId": "01a1ce99-683a-7fd1-a1dc-417fa70574bc"
+  },
+  "repeatedWake": {
+    "accepted": true,
+    "requestId": "7df2c164-8968-4519-8bc5-74ab1b96b645",
+    "nativeId": "01a1ce99-683a-7fd1-a1dc-417fa70574bc"
+  },
+  "effectivePolicy": {
+    "approvalPolicy": {
+      "granular": {
+        "sandbox_approval": false,
+        "rules": false,
+        "skill_approval": false,
+        "request_permissions": false,
+        "mcp_elicitations": true
+      }
+    },
+    "approvalsReviewer": "user",
+    "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+    }
+  },
+  "limitation": "Fixture-only approvals, synthetic head and model; no real human review, task acceptance, Claude transport or external-conversation wake acceptance."
+}

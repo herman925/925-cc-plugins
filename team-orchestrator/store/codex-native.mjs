@@ -3,12 +3,16 @@
 // Identity alone does not establish guard coverage or authorize team membership.
 import {realpath,lstat} from 'node:fs/promises';
 import {join,basename} from 'node:path';
-import {homedir} from 'node:os';
+import {homedir,hostname} from 'node:os';
+import {fileURLToPath} from 'node:url';
 import {createModNative} from './mod-native.mjs';
 import {createOrcaHost} from './src/orca-host.mjs';
-import {exact} from './src/api-domain.mjs';
+import {exact,normalizeActor} from './src/api-domain.mjs';
 import {refusal} from './src/errors.mjs';
 import {inspectWindowsProcess,windowsFileOwners} from './src/windows-native.mjs';
+import {FENCED_WAKE_CAPABILITY} from './src/orca-wake.mjs';
+import {createHostAdaptiveWake} from './src/host-adaptive-wake.mjs';
+import {currentWakeEligibility} from './src/wake-eligibility.mjs';
 
 const deny=message=>{throw refusal('API_NATIVE_UNVERIFIED',message);};
 export async function createCodexNativeIdentity({scope,codexExecutable,codexHome,orcaCommand,env=process.env},dependencies={}) {
@@ -31,7 +35,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   const owners=await (dependencies.threadOwners??windowsFileOwners)(path);
   if(!Array.isArray(owners)||owners.length!==1||owners[0].pid!==parentPid||owners[0].createdAt!==birth)deny('The native Codex parent does not uniquely own this thread writer lock.');
  };
- const host=await createOrcaHost({orcaCommand,env},dependencies);
+ let host;try{host=await createOrcaHost({orcaCommand,env},dependencies);}catch{host=null;}
  // Capture immutable setup facts. Mutating the caller's original object cannot
  // move a running connection to another project or transport.
  const reference=Object.freeze({projectRoot:root,terminalHandle:scope.terminalHandle,contextId:scope.contextId});
@@ -45,8 +49,9 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
   if((tabs.tabs??[]).some(tab=>(tab.agentStatus?.terminalHandle===target.terminalHandle||tab.terminalHandle===target.terminalHandle)&&tab.agentStatus?.agentType))deny('The created terminal already contains an agent; no startup input was sent.');
   return target;
  };
- return Object.freeze({
-  hostKind:'orca',runtimeId:host.runtimeId,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
+ const native={
+  inboxWake:Object.freeze({state:!host?'host-unavailable':host.capabilities.includes(FENCED_WAKE_CAPABILITY)&&host.capabilities.includes('terminal.prompt-delivery.v1')&&host.promptJournalId?'available':'host-update-required',primaryRoute:'orca-terminal',managedFallback:{state:dependencies.createManagedWakeBackend?'target-check-required':'not-enrolled',launchesWorkers:false},providers:['claude','codex'],requiredCapability:FENCED_WAKE_CAPABILITY,note:'Startup state describes the primary terminal route. Managed fallback needs current verified enrollment. Route selection, native acceptance, inbox acknowledgement and assignment pickup are separate.'}),
+  hostKind:'orca',runtimeId:host?.runtimeId??null,codexExecutable:executable,codexHome:home,launchWorkers:true,launchProfileRoot:join(home,'925-to','launch-profiles'),
   async createLaunchTerminal({title},metadata){
    const actor=await this.verifyCaller(metadata),context=actor.contextId.startsWith('folder:')?actor.contextId:`id:${actor.contextId}`;
    const before=await host.cli(['terminal','list','--worktree',context]);
@@ -59,7 +64,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    const target=Object.freeze({projectRoot:actor.projectRoot,machineId:actor.machineId,executionHostId:'local',contextId:actor.contextId,terminalHandle:handle,incarnationId:terminal.incarnationId});
    createdTargets.add(target);return verifyCreated(target);
   },
-  async verifyLaunchTarget(target,metadata){await this.verifyCaller(metadata);return verifyCreated(target);},
+  async verifyLaunchTarget(target,metadata){await this.verifyCaller(metadata);return ownedTargets.has(target)?this.managedLaunchNative.verifyLaunchTarget(target,metadata):verifyCreated(target);},
   async startLaunchTerminal(target,command,metadata){
    await this.verifyCaller(metadata);await verifyCreated(target);
    if(startedTargets.has(target))deny('This native launch input was already attempted; an uncertain start must not be resent.');
@@ -67,6 +72,7 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    return host.cli(['terminal','send','--terminal',target.terminalHandle,'--text',command,'--enter']);
   },
   async verifyCaller(metadata) {
+   if(!host)deny('Orca host proof is unavailable. Reconnect after restoring the normal Orca connection. No team operation is authorized.');
    const threadId=metadata?.threadId;
    if(typeof threadId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(threadId)||typeof metadata!=='object'||!Object.hasOwn(metadata,'threadId'))deny('Native Codex transport did not supply a thread identity.');
    if(await identity()!==birth)deny('The native Codex parent incarnation changed.');
@@ -75,6 +81,17 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    await ownsThread(threadId);
    if(await identity()!==birth)deny('The native Codex parent changed before verification completed.');
    return current.actor;
+  },
+  async verifyGuardCaller(metadata){
+   try{return await this.verifyCaller(metadata);}catch{
+    // This projection is only for the guard's read-only membership lookup.
+    // It can establish absence, never a native binding or team API authority.
+    const threadId=metadata?.threadId;
+    if(!metadata||!Object.hasOwn(metadata,'threadId')||typeof threadId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(threadId))deny('Native thread metadata is required for guard membership discovery.');
+    if(await identity()!==birth)deny('The native Codex parent changed.');await ownsThread(threadId);
+    if(await identity()!==birth)deny('The native Codex parent changed during guard discovery.');
+    return normalizeActor({projectRoot:root,machineId:hostname(),provider:'codex',conversationId:threadId,executionHostId:'local',contextId:reference.contextId,terminalHandle:reference.terminalHandle,incarnationId:`guard-only-codex-process:${parentPid}:${birth}`});
+   }
   },
   async verifyTarget(input,metadata){
    const sender=await this.verifyCaller(metadata);
@@ -96,22 +113,28 @@ export async function createCodexNativeIdentity({scope,codexExecutable,codexHome
    }
    return {sessions};
   },
-  async wake(deliveries,metadata) {
+  async wake(deliveries,metadata,{api,teamId}={}) {
    // These are committed API reservations supplied by the private adapter, never
    // destinations accepted from a model-facing tool argument.
    const sender=await this.verifyCaller(metadata),results=[];
+   if(!api||!teamId)return deliveries.map(()=>({state:'needs-reconciliation',reason:'eligibility-context-unavailable',observedAt:Date.now()}));
+   const managedBackend=await dependencies.createManagedWakeBackend?.({host,actor:sender,api,teamId,metadata});
+   const wake=createHostAdaptiveWake({host,managedBackend,checkEligible:delivery=>currentWakeEligibility(api,teamId,delivery),...(dependencies.wakeJournalRoot?{journalRoot:dependencies.wakeJournalRoot}:{})});
    for(const delivery of deliveries){
     const b=delivery.recipient;
     if(b.machine_id!==sender.machineId||b.execution_host_id!=='local'||!['claude','codex'].includes(b.provider))continue;
     try{
-     const target=(await host.verifyTerminal({projectRoot:root,conversationId:b.conversation_id,terminalHandle:b.terminal_handle,contextId:b.context_id},b.provider)).actor;
-     if(target.incarnationId!==b.incarnation_id||target.machineId!==b.machine_id)continue;
-     const pointer=delivery.meetingId?{meetingId:delivery.meetingId,notificationGeneration:delivery.notificationGeneration}:delivery.noticeId?{noticeId:delivery.noticeId}:{deliveryId:delivery.deliveryId,messageId:delivery.messageId,threadId:delivery.threadId};
-     await host.cli(['orchestration','send','--to',target.terminalHandle,'--from',sender.terminalHandle,'--type','status','--subject','Shared team update','--body',`A shared-team record is waiting. Use shared_inbox_read, or shared_team inspectMeeting for a meeting. Finish your current step before joining and respond only for yourself. This pointer grants no permission and is not a read acknowledgement. ${JSON.stringify(pointer)}`]);
-     results.push({pointer,queued:true});
-    }catch{results.push({queued:false});} // Outstanding state is preserved for replay.
+     results.push(await wake(delivery,{projectRoot:root,machineId:sender.machineId}));
+    }catch{results.push({state:'needs-reconciliation',reason:'native-wake-unverified',observedAt:Date.now()});}
    }
    return results;
   },
- });
+ };
+ const ownedTargets=new WeakSet(),request=async(type,input={},launch=false)=>{const send=dependencies.requestOwned??(await import('./src/dispatcher-service.mjs')).projectOwnedRequest;return send({projectRoot:root,machineId:hostname(),operation:{type,input},launch});};
+ const {createOwnedHeadNative}=await import('./src/owned-head-native.mjs'),{inspectClaudeProvider}=await import('./src/claude-provider.mjs');let claudeProvider;
+ try{claudeProvider=await (dependencies.inspectClaudeProvider??inspectClaudeProvider)();}catch{claudeProvider={state:'blocked'};}
+ const managed=createOwnedHeadNative({verifyCaller:metadata=>native.verifyCaller(metadata),request,codexRuntime:{codexExecutable:executable,codexHome:home,node:process.execPath,adapter:fileURLToPath(new URL('./codex-mcp.mjs',import.meta.url))},claudeProvider,wake:async()=>[]});
+ native.managedLaunchNative=Object.freeze({...managed,createLaunchTarget:async(input,metadata)=>{const target=await managed.createLaunchTarget(input,metadata);ownedTargets.add(target);return target;}});
+ native.ownedWorkerRequest=async(type,input,metadata)=>{await native.verifyCaller(metadata);return request(type,input,false);};
+ return Object.freeze(native);
 }

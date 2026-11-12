@@ -1,6 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {launchMember,launchCommand,launchSettings} from '../src/mod-launch.mjs';
+test('a reviewed owned-provider reservation cannot be claimed by the legacy terminal launcher',async()=>{
+ let claims=0,effects=0;const api={launch:async request=>{if(request.command.type!=='reserveLaunch')claims++;return {result:{launch:{launch_id:'owned',conversation_id:null},member:{cli:'claude'}}};}};
+ await assert.rejects(launchMember({api,native:{createTerminal:()=>effects++},actor:{contextId:'context'},request:{operationId:'attempt',command:{type:'reserveLaunch'}}}),{code:'API_LAUNCH_UNSUPPORTED'});assert.equal(claims,0);assert.equal(effects,0);
+});
 test('an unknown native create result is never repeated, including after a fresh request',async()=>{
  let claimed=false,creates=0;
  const launch={launch_id:'l',conversation_id:'00000000-0000-4000-8000-000000000001'},member={name:"Worker ' $(touch x)",model:'default',effort:'default'};

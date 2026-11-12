@@ -1,8 +1,18 @@
 # Setup and diagnosis
 
-The skill contains its matching runtime under `scripts/runtime/`; it must not refer to the developer's checkout. Node 22.13+ and a native Windows Codex session in Orca are required. No account/API key is added by this package.
+## Optional Claude provider component
+
+For an independent or optional managed-team Claude member, run `node <this-skill>/scripts/setup-claude.mjs preview`. Review the pinned official SDK version, private machine directory and existing native Claude executable, then use `apply` only when this optional setup is requested. It installs no package scripts or optional native downloads, changes no team store or global CLI configuration, and starts no member. `diagnose` is read-only. A changed or redirected component is refused rather than overwritten. The project's matching runtime still needs its normal update/reconnect; status and launch never install this dependency automatically. Use the person's normal Claude authentication, not an orchestrator account or invented key.
+
+After activation, check actual `actions.launchProviders` and `actions.managedLead.launchProviders`. Ordinary Orca terminal plans and explicitly owned managed-team plans have different provider availability. The optional managed-lead choice is described in [managed leads](managed-lead.md).
+
+The skill contains its matching runtime under `scripts/runtime/`; it must not refer to the developer's checkout. Node 22.13+ and a native Windows Codex session are required. The candidate supports verified Orca scope and independent Codex. No account/API key is added by this package.
 
 Run `node <this-skill>/scripts/setup.mjs preview` from the user's project. The helper discovers the native CLI and verifies project/session scope; it uses Codex's own config writer/parser in disposable staging. Preview explains the project-local server and hook changes without applying them. It never prints existing configuration or secrets.
+
+Host detection selects Orca when either Orca scope variable is present; incomplete or refused Orca proof never silently falls back. With no Orca scope it verifies independent native thread ownership and reads that thread's project without loading/resuming it. `--host orca` or `--host independent` makes the intended route explicit. Preview reports hostMode and contextReference; a normal owned update preserves its saved namespace. This changes transport, not approval, member homes or an existing binding. Do not switch hosts to evade a verification failure.
+
+Preview names the exact runtime digest, file count and shared schema version. `installedRuntimeMatchesPreview` compares only the saved installation receipt; `activeRuntime: not-inspected` explicitly does not attest the running process. A runtime update does not perform a schema upgrade. Verify the loaded digest after activation instead of repeating an installation or demanding another hook review when its configuration is unchanged.
 
 The config-writer executable is resolved from PATH, including the native package behind a Codex npm shim; it is checked with `--version`. No ancestor/process query or shell-shim execution is required. For a non-PATH installation, the person may explicitly configure `TEAM_CODEX_EXECUTABLE` as an absolute native `codex.exe` path. This does not prove caller identity; the native MCP adapter separately retains its exact parent/thread-lock/Orca verification.
 
@@ -20,4 +30,4 @@ Version 0.1.8 configures a private immutable copy of the packaged runtime under 
 
 `diagnose` reads the current installation and supported prerequisites. `remove` removes only the owned MCP/hook entries and preserves unrelated user changes; it does not delete teams, transcripts, other skills, global config or the current conversation. A partial setup uses the recorded recovery journal; changed/unowned files require manual review rather than an unsafe overwrite.
 
-If the current host is not verifiably Orca, or native process/thread ownership fails, explain the unsupported condition. An installed Orca executable alone is insufficient. Do not invent terminal IDs, switch to the Orca plugin store or choose a standalone adapter that has not been implemented.
+If native process/thread/project ownership fails, explain that exact condition. An installed Orca executable alone is insufficient. Do not invent terminal IDs, switch to the Orca plugin store, fake an independent actor or edit private ownership state. Independent discovery lists the caller and current dispatcher-owned workers only; it cannot adopt an arbitrary external conversation or make an external head automatically receive model turns.

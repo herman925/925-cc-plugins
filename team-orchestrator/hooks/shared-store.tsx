@@ -1,25 +1,47 @@
 import {commandSchema} from '../store/src/api-schema.mjs'
+import {SCHEMA_VERSION} from '../store/contract.mjs'
 import { atom, read, update } from 'claude-code'
 import { notReadOnly } from './guard'
-import {sharedCall} from './shared-bridge'
+import {sharedCall,inspectSharedCaller} from './shared-bridge'
 import type {SharedProof} from './shared-bridge'
 import {queueSharedDeliveries} from './shared-transport'
 import {sharedWorkspaceView,refreshSharedWorkspace,readSharedWorkspace} from './shared-workspace'
 export {sharedCall} from './shared-bridge'
 export type {SharedProof} from './shared-bridge'
+export {sharedGuardMembership} from './shared-membership.mjs'
 
 // This extends the Mod's existing best-effort literal path/shell checks. It is
 // not an OS sandbox against arbitrary code running as the same account.
+export const sharedReadOnlyCommand=(command:string)=>notReadOnly(command,{navigation:true})===''
+// Only a plain cat with a single-quoted heredoc delimiter carries literal data.
+// Keep its header (including the destination) and all commands after the end.
+// Executable/unquoted heredocs, pipelines and incomplete bodies stay untouched.
+function sharedShellReferences(command:string):string {
+ const lines=command.split('\n')
+ const target=String.raw`(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"'<>;&|]+)`
+ const header=new RegExp(String.raw`^\s*cat\s+(?:>\s*${target}\s*)?<<\s*'([A-Za-z_][A-Za-z0-9_]*)'\s*(?:>\s*${target})?\s*$`)
+ for(let i=0;i<lines.length;i++){
+  const match=header.exec(lines[i]??'')
+  if(!match)continue
+  const end=lines.findIndex((line,j)=>j>i&&line.replace(/\r$/,'')===match[1])
+  if(end<0)continue
+  for(let j=i+1;j<end;j++)lines[j]=''
+  i=end
+ }
+ return lines.join('\n')
+}
 export function sharedStoreProtection(tool:string,path:string,command:string):string|undefined {
  const p=path.replace(/\\/g,'/').toLowerCase()
  const c=command.replace(/\\/g,'/').toLowerCase()
- const privateData=/(?:^|\/)team-orchestrator\/(?:controller-actions|launch-settings)(?:\/|$)/.test(p)
- if(privateData || /team-orchestrator\/(?:controller-actions|launch-settings)/.test(c))return 'Controller approval tickets are private to the panel; model tools cannot read or write them.'
+ const privateData=/(?:^|\/)\.?team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts|dispatchers)(?:\/|$)/.test(p)
+ if(privateData || /team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts|dispatchers)/.test(c))return 'Controller tickets, dispatcher connections and native wake receipts are private to the adapter; use shared_team.'
  if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
-  if(/mod-bridge\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
-  if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(c) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
+  if(sharedReadOnlyCommand(command))return undefined
+  if(/^\s*node(?:\.exe)?\s+.*(?:dispatcher-service|mod-dispatch-receiver)\.mjs(?:["'\s]|$)/i.test(command)||/mod-(?:bridge|wake)\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
+  const references=sharedShellReferences(command).replace(/\\/g,'/').toLowerCase()
+  if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(references) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
  }
  return undefined
 }
@@ -67,12 +89,12 @@ export async function refreshSharedStore($:any,dependencies:SharedAccess) {
  try {
   const proof=await dependencies.revalidate();await setSharedStoreProof($,proof)
   if(!proof.ok){await sharedFeedback($,'Connection could not be verified. Open Details for the reason.','yellow');return}
-  const result=await sharedCall($,proof,{operationId:`inspect-${id()}`,command:{type:'inspectCaller'}},dependencies)
+  const result=await inspectSharedCaller($,proof,dependencies)
   await update($,status,()=>JSON.stringify(result))
   if(result.ok || result.error?.code==='STORE_NOT_FOUND') {
    const generation=result.ok?result.result?.result?.controllerGeneration:null
    await update($,uiState,old=>({...old,checked:true,approved:Number.isSafeInteger(generation)&&generation>0?generation:null,member:!!result.result?.result?.member}))
-  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8].includes(result.error.details?.version)&&result.error.details?.supported===9) {
+  } else if(result.error?.code==='STORE_VERSION_UNSUPPORTED'&&[5,6,7,8,9].includes(result.error.details?.version)&&result.error.details?.supported===SCHEMA_VERSION) {
    await update($,uiState,old=>({...old,upgrade:true,upgradeFrom:result.error.details.version}));await sharedFeedback($,'Update this workspace to continue. A backup will be kept before its data changes.','yellow')
   } else await sharedFeedback($,'Access could not be checked. Open Details, then check again.','yellow')
  } catch {await sharedFeedback($,'Connection check did not finish. Check again when ready.','yellow')}
@@ -88,7 +110,7 @@ export async function upgradeSharedWorkspace($:any,dependencies:SharedAccess) {
   if(!current.ok||JSON.stringify(proofOf(current))!==JSON.stringify(proofOf(proof)))throw Error('This conversation changed. Check access before updating.')
   const token=id(),config=String((await $.env.get('CLAUDE_CONFIG_DIR').catch(()=>''))??'')||`${String((await $.env.get('USERPROFILE').catch(()=>''))??'')||String((await $.env.get('HOME').catch(()=>''))??'')}/.claude`
   if(!config||config==='/.claude')throw Error('Local configuration folder could not be verified.')
-  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:9,...proofOf(current)}))
+  await $.fs.write(`${config}/team-orchestrator/controller-actions/${token}.json`,JSON.stringify({action:'upgradeStore',id:token,createdAt:Date.now(),fromVersion:state.upgradeFrom,toVersion:SCHEMA_VERSION,...proofOf(current)}))
   const result=await sharedCall($,current,{operationId:`upgrade-${token}`},{...dependencies,mode:'upgradeStore',uiApprovalId:token})
   await update($,status,()=>JSON.stringify(result));updated=result.ok===true
   if(updated){await update($,uiState,old=>({...old,upgrade:false,checked:false,approved:null,member:false}));await sharedFeedback($,'Workspace updated. Existing approvals and history are kept.','green')}
