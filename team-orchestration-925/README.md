@@ -1,6 +1,8 @@
 # 925 Team Orchestrator
 
-This development branch is **0.1.12**, paired with Mod **0.5.62 / schema 10**. Launch review includes fixed worker-tool access and readiness; both packages share 64 runtime files. Classic import currently has native library primitives, with no exposed migration action or skill. This candidate is not published or installed; the stable 0.1.11 flows below remain the main-branch release. See the [development checkpoint](../docs/validation/wayfinder-completion-note-20261112.md).
+This development branch is **0.1.12**, paired with Mod **0.5.62 / schema 10**. Launch review includes fixed worker-tool access and readiness; both packages share 68 runtime files. Classic import currently has native library primitives, with no exposed migration action or skill. This candidate is not published or installed; the stable 0.1.11 flows below remain the main-branch release. See the [development checkpoint](../docs/validation/wayfinder-completion-note-20261112.md).
+
+The candidate uses [one project dispatcher](../docs/validation/single-project-dispatcher-20261112.md) for Claude/Codex coordination. The Codex MCP connection is its receiver, with fresh caller verification for each scheduled pass. Direct owned Codex/Claude transports are library foundations; reviewed standalone launch/binding and real Claude acceptance remain open. The native action status continues to report standalone as unsupported.
 
 The candidate uses one automatic inbox wake-up path for Claude and Codex recipients. It retains native request identity across a same-process rebind and separates input acceptance, turn start, inbox progress and task pickup. Current team/caller inspection also explains the manager-write rule, so a disabled standing write switch is not mistaken for a leaf-worker denial.
 

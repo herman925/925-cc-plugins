@@ -33,13 +33,13 @@ function sharedShellReferences(command:string):string {
 export function sharedStoreProtection(tool:string,path:string,command:string):string|undefined {
  const p=path.replace(/\\/g,'/').toLowerCase()
  const c=command.replace(/\\/g,'/').toLowerCase()
- const privateData=/(?:^|\/)\.?team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts)(?:\/|$)/.test(p)
- if(privateData || /team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts)/.test(c))return 'Controller approval tickets and native wake receipts are private to the adapter; use shared_team.'
+ const privateData=/(?:^|\/)\.?team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts|dispatchers)(?:\/|$)/.test(p)
+ if(privateData || /team-orchestrator\/(?:controller-actions|launch-settings|wake-receipts|dispatchers)/.test(c))return 'Controller tickets, dispatcher connections and native wake receipts are private to the adapter; use shared_team.'
  if(/(?:^|\/)team-orchestrator\/[^/]+\/machine\.sqlite(?:-wal|-shm|-journal)?(?:$|[\s'";])/.test(p)||/team-orchestrator\/[^/]+\/machine\.sqlite/.test(c))return 'Machine observations and inbox recovery receipts are private to the adapter; use shared_team.'
  if(['Write','Edit','NotebookEdit'].includes(tool) && /(?:^|\/)\.team-orchestrator(?:\/|$)/.test(p))return 'Shared team state is changed only through the typed shared_team API.'
  if(['Bash','PowerShell'].includes(tool)){
   if(sharedReadOnlyCommand(command))return undefined
-  if(/mod-(?:bridge|wake)\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
+  if(/^\s*node(?:\.exe)?\s+.*(?:dispatcher-service|mod-dispatch-receiver)\.mjs(?:["'\s]|$)/i.test(command)||/mod-(?:bridge|wake)\.[cm]?js|createTeamApi|upgradeTeamStore|controller-actions|925-to[\\/]+launch-profiles/i.test(command))return 'The shared-store bridge is private to the Mod; use the typed shared_team tool.'
   const references=sharedShellReferences(command).replace(/\\/g,'/').toLowerCase()
   if(/\.team-orchestrator(?:[\/\s'";]|$)/.test(references) && notReadOnly(command)!=='')return 'Shared team state is changed only through the typed shared_team API.'
  }

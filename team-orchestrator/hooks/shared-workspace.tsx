@@ -157,6 +157,8 @@ export async function sharedWorkspaceView($:any,ui:any,deps:Dependencies){
   </Box>}
   {s.notice&&<Text color={s.error?'yellow':'green'}>{s.notice}</Text>}
   {wake&&<Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
+   <Text weight="bold">Project dispatcher · {wake.lastError||wake.dispatcher?.project?.state==='needs-attention'?'Needs attention':wake.dispatcher?.connected?'Connected':'Waiting for receiver'}</Text>
+   <Text dimColor>One local scheduler · recipients keep their own read receipts</Text>
    <Text weight="bold">Inbox wake-up · {wake.stale?'Needs refresh':wake.results.some(r=>r.state==='host-update-required')?'Waiting for Orca update':wake.results.every(r=>r.state==='settled-or-ineligible')?'No pending wake':wake.results.some(r=>['needs-attention','needs-reconciliation'].includes(r.state))?'Needs attention':'Checking inbox progress'}</Text>
    <Text dimColor>{wake.stale?'The last observation is old. Refresh before drawing conclusions.':wake.results.some(r=>r.state==='host-update-required')?'Automatic sends are blocked until Orca supports verified target delivery. Messages stay in the inbox.':'A wake-up is separate from reading a message or starting its assignment.'}</Text>
   </Box>}

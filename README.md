@@ -4,6 +4,8 @@
 
 Herman's Claude Code mods, Codex workflows and Orca plugin. Claude Code uses the `herman-mods` marketplace; Codex uses `herman925-codex` or the repository skill installer.
 
+The development candidate now shares [one local project dispatcher](docs/validation/single-project-dispatcher-20261112.md) between Claude and Codex receivers. It replaces per-client coordination polling; independent provider transports are included as library foundations. It is not installed or a completed standalone launch workflow, and the existing Orca terminal wake route still requires its target fence.
+
 ## Team Orchestrator
 
 Choose the client you work in. The Claude Code shared workspace and Codex client use the same project-owned store and management API; each has its own interface and installation package.

@@ -24,7 +24,7 @@ async function fixture(t,engine,observerOptions={}){
  await api.execute({operationId:'admit',command:{...authority,type:'admitAssignment',runId:'run',taskId:'task',assignmentId:'assignment',memberId:'worker',instructions:'Return 2 + 3.',expectedResult:'5',expectedTargetGeneration:1,expectedTargetBindingGeneration:1}});
  const observedReservations=new WeakSet();
  const native={verifyCaller:async supplied=>{assert.deepEqual(supplied,metadata);return {...current.actor};},wake:async deliveries=>{for(const delivery of deliveries)if(!observedReservations.has(delivery)){observedReservations.add(delivery);wake.push(delivery);}return deliveries.map(()=>({queued:true}));}};
- const observer=createCodexObserver({native,writer:SHARED_WRITER,createApi:async options=>apiDecorator(await createTeamApi({...options,...f.options})),...rest});
+ const observer=createCodexObserver({native,writer:SHARED_WRITER,timers:clock(),createApi:async options=>apiDecorator(await createTeamApi({...options,...f.options})),...rest});
  cleanups.unshift(()=>observer.close());
  const rows=async sql=>{const db=await f.raw();try{return await db.query(sql);}finally{await db.close();}};
  return {...f,api,actor,current,metadata,wake,native,observer,rows};
@@ -136,7 +136,7 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`
 });
 test('observation never creates a missing SQLite store',async t=>{
  const f=await runtimeFixture(t,'sqlite'),actor={projectRoot:f.root,machineId:'machine',provider:'codex',conversationId:'native',executionHostId:'local',contextId:'context',terminalHandle:'terminal',incarnationId:'incarnation'},metadata={threadId:'native'};
- const observer=createCodexObserver({native:{verifyCaller:async()=>actor,wake:async()=>assert.fail('No notification without a store')}});t.after(()=>observer.close());
+ const observer=createCodexObserver({timers:clock(),native:{verifyCaller:async()=>actor,wake:async()=>assert.fail('No notification without a store')}});t.after(()=>observer.close());
  observer.activate(metadata,actor);await assert.rejects(observer.pump(),{code:'STORE_NOT_FOUND'});
  assert.equal(observer.status().state,'waiting-for-store');await assert.rejects(access(f.path),{code:'ENOENT'});
 });

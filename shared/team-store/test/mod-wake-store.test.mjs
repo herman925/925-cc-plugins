@@ -7,6 +7,7 @@ import {rawWrite} from './support/runtime-fixture.mjs';
 import {currentWakeEligibility} from '../src/wake-eligibility.mjs';
 import {postgresTestUrl} from './support/engines.mjs';
 import {SHARED_WRITER} from '../src/runtime-release.mjs';
+import {createModDispatchReceiver} from '../src/mod-dispatch-receiver.mjs';
 
 for(const engine of ['sqlite','postgres'])for(const recipientProvider of ['claude','codex'])test(`${engine}: Mod to ${recipientProvider} wake reconciles a real reservation without acknowledging or starting task work`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
  const apis=[];t.after(async()=>{for(const api of apis)await api.close();});
@@ -33,6 +34,12 @@ for(const engine of ['sqlite','postgres'])for(const recipientProvider of ['claud
  const dependencies={createNative:async()=>({verifyCaller:async input=>{assert.deepEqual(input,proof);return actor('head');}}),createApi:options=>createTeamApi({...options,...f.options}),createHost:async()=>({}),createWake:()=>async delivery=>{woken.push(delivery);return {state:'input-accepted',requestId:'fixture'};}};
  const result=await wakeModDeliveries({proof,request,orcaCommand:'fixture-never-executed'},dependencies);
  assert.equal(result.results[0]?.state,'input-accepted');assert.equal(woken.length,1);assert.deepEqual(woken,reservation.result.deliveries);
+ await rawWrite(f,'UPDATE deliveries SET last_replayed_at_ms=last_replayed_at_ms-60001');
+ let pass;const scheduled=[];
+ const receiver=await createModDispatchReceiver({proof,orcaCommand:'fixture',pluginRoot:f.root},{...dependencies,connectReceiver:options=>{pass=options.onPass;return {request(){},status:()=>({state:'connected'}),async close(){}};},createWake:options=>async delivery=>{assert.equal((await options.checkEligible(delivery)).eligible,true);scheduled.push(delivery);return {state:'input-accepted'};}});
+ t.after(()=>receiver.close());
+ const completed=await pass({assertCurrent(){}});assert.equal(completed.teamId,'team');assert.equal(completed.head,true);assert.ok(scheduled.length>=1);assert.equal(receiver.status().lastError,null);
+ let checks=0;await pass({assertCurrent(){if(++checks===1)throw Error('Disconnected dispatcher.');}});assert.equal(receiver.status().lastError,'API_RECEIVER_UNVERIFIED');assert.equal(scheduled.length,1,'a disconnected pass cannot submit a wake');
  const db=await f.raw();try{
   assert.equal((await db.query('SELECT status FROM deliveries'))[0].status,'outstanding');
   assert.equal((await db.query('SELECT pickup_observed_at_ms FROM assignments'))[0].pickup_observed_at_ms,null);
