@@ -7,12 +7,13 @@ import { authorize } from './authority.mjs';
 import { normalizeWriter, checkWriter, reference } from './writers.mjs';
 import { isConfigurationType, normalizeConfigurationMutation, applyConfigurationMutation, byteOrder } from './configuration.mjs';
 import { openBackend, inspectSchema } from './bootstrap.mjs';
-import { text, integer, databaseInteger, nextInteger, snapshot } from './validation.mjs';
+import { text, integer, databaseInteger, nextInteger, snapshot, operationJson } from './validation.mjs';
 import { StoreError, refusal, isRetryable, isConstraint } from './errors.mjs';
 import { normalizeApiCommand, normalizeActor, normalizeLaunchTarget, applyApiCommand, assertApiCaller, assertApiReceipt, apiResult } from './api-domain.mjs';
 import {WORKER_RUNTIME_TYPES} from './worker-policy.mjs';
 import {normalizeRuntimeProof} from './worker-readiness.mjs';
 import {postgresConnectionOptions} from './postgres-reference.mjs';
+import {isApiRead} from './api-catalogue.mjs';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -34,6 +35,7 @@ const definitions = {
 
 function normalized(request) {
   if (!request || typeof request !== 'object') throw refusal('STORE_INPUT_INVALID', 'A team store request is required.');
+  operationJson({operationId:request.operationId,command:request.command,mutations:request.mutations,target:request.target},'Operation input');
   const operationId = text(request.operationId, 'operationId');
   const principalId = text(request.caller?.principalId, 'caller.principalId');
   const kind = request.kind ?? 'mutate';
@@ -151,13 +153,33 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
   };
   const save = async (request, value, now) => {
     const result = { operationId: request.operationId, kind: request.kind, result: value };
+    const serialized=operationJson(result,'Durable operation result');
     await db.query(`INSERT INTO operations (operation_id, request_fingerprint, result, committed_at_ms)
       VALUES (:operation_id, :fingerprint, :result, :now_ms)`, {
-      operation_id: request.operationId, fingerprint: request.fingerprint, result: JSON.stringify(result), now_ms: now,
+      operation_id: request.operationId, fingerprint: request.fingerprint, result: serialized, now_ms: now,
     });
     return snapshot(result);
   };
   const held = lease => refusal('STORE_LEASE_HELD', `Team store is held by ${JSON.stringify(lease.machineId)} until ${lease.expiresAtMs}; this writer was refused.`, { holderMachineId: lease.machineId, expiresAtMs: lease.expiresAtMs });
+  const inspect=async request=>{
+    // Query ids correlate transport calls; they never persist a historical
+    // response or promise a durable effect. Reconcile resamples current state.
+    let begun=false;
+    try{
+      await db.beginRead();begun=true;
+      await inspectSchema(db);
+      const actor=normalizeActor(request.caller.actor);
+      await assertApiCaller(db,request.identity.command,actor);
+      const result=apiResult(await applyApiCommand(db,request.identity.command,actor,writer,await db.now(),null));
+      await db.commit();begun=false;
+      return snapshot({operationId:request.operationId,kind:'api',readOnly:true,result});
+    }catch(error){
+      if(begun)try{await db.rollback();}catch{await abandon();}
+      throw error;
+    }finally{
+      if(!dirty)try{await db.endRead();}catch(error){await abandon();throw error;}
+    }
+  };
   const control = async (mode, duration) => {
     // Called only inside a transaction. SQLite's BEGIN IMMEDIATE and PG's FOR
     // UPDATE acquire the control lock before the database clock is sampled.
@@ -287,6 +309,7 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
     await reconnect();
     authorize(options.authorize, request.caller, request.kind, scope, request.identity, writer);
     await inspectSchema(db);
+    if(request.kind==='api'&&isApiRead(request.identity.command.type))return inspect(request);
     const recorded = request.kind === 'api' ? null : await prior(request);
     if (recorded) return recorded;
     const configurationWrite = request.kind === 'api' || (request.kind === 'mutate' && request.identity.mutations.some(m => isConfigurationType(m.type)));
@@ -371,6 +394,7 @@ export async function createRuntimeStore(options = {}, dependencies = {}) {
         authorize(options.authorize, normalizedRequest.caller, normalizedRequest.kind, scope, normalizedRequest.identity, writer);
         await inspectSchema(db);
         if (normalizedRequest.kind === 'api') {
+          if(isApiRead(normalizedRequest.identity.command.type))return inspect(normalizedRequest);
           return transaction(normalizedRequest.operationId,'reconcile',async()=>{
             await db.lockLeaseControl();
             await assertApiCaller(db,normalizedRequest.identity.command,normalizeActor(normalizedRequest.caller.actor));

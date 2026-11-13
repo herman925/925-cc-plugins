@@ -40,8 +40,9 @@ export function createCodexObserver({native,writer=SHARED_WRITER,createApi=creat
    if(native.launchWorkers)launches=await pumpCodexLaunches({api,native,actor,metadata:current.metadata,info,postgres});
    if(!info.member||!info.binding){state='waiting-for-member';lastError=null;lastFailure=null;return;}
    const authority={teamId:info.member.team_id,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation};
-   await confirmed('deadlines',{...authority,type:'observeDeadlines'});
-   const prepared=await confirmed('deliveries',{...authority,type:'prepareDeliveries'});
+   const activity=(await api.execute({operationId:`observer-activity-${randomUUID()}`,command:{type:'inspectDispatch',teamId:authority.teamId}})).result;
+   if(activity.deadlinesDue||current.pending.has('deadlines'))await confirmed('deadlines',{...authority,type:'observeDeadlines'});
+   const prepared=activity.deliveriesDue||activity.deadlinesDue||current.pending.has('deliveries')?await confirmed('deliveries',{...authority,type:'prepareDeliveries'}):{result:{deliveries:[]}};
    await authenticate();
    if(prepared.result.deliveries.length)current.wakes=prepared.result.deliveries;
    if(current.wakes.length){

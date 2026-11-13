@@ -6,6 +6,17 @@ import { seedLayout } from './support/seed-layout.mjs';
 import { runtimeFixture, rawWrite } from './support/runtime-fixture.mjs';
 import { postgresTestUrl } from './support/engines.mjs';
 
+for(const engine of ['sqlite','postgres'])test(`${engine} read snapshots reject writes and restore the write path afterward`,{skip:engine==='postgres'&&!postgresTestUrl()},async t=>{
+ const f=await runtimeFixture(t,engine),{db}=await openBackend({...f.options,create:true});
+ try{
+  await db.beginRead();
+  assert.equal((await db.query('SELECT singleton FROM store_metadata'))[0].singleton,1);
+  await assert.rejects(db.exec('UPDATE store_lease SET generation=generation+1 WHERE singleton=1'));
+  await db.rollback();await db.endRead();
+  await db.begin();await db.exec('UPDATE store_lease SET generation=generation+1 WHERE singleton=1');await db.commit();
+ }finally{await db.close();}
+});
+
 test('SQLite busy is retryable, a unique conflict is not, and retry after rollback can proceed', async t => {
   const f = await runtimeFixture(t, 'sqlite');
   const { db, connect } = await openBackend({ ...f.options, create: true });

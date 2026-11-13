@@ -48,6 +48,8 @@ export async function connectSqlite({ path, readOnly = false, busyTimeoutMs = 10
     query: (sql, params) => call('query', sql, named(sql, params).params),
     exec: sql => call('exec', sql),
     begin: () => call('exec', 'BEGIN IMMEDIATE'),
+    beginRead: () => call('exec', 'PRAGMA query_only = ON; BEGIN'),
+    endRead: () => call('exec', 'PRAGMA query_only = OFF'),
     commit: () => call('exec', 'COMMIT'),
     rollback: () => call('exec', 'ROLLBACK'),
     objects: () => call('query', "SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name"),
@@ -104,6 +106,8 @@ export async function connectPostgres(options) {
     query,
     exec: async sql => { if (failure) throw failure; await client.query(sql); },
     begin: () => client.query('BEGIN READ WRITE'),
+    beginRead: () => client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'),
+    endRead: async () => {},
     commit: () => client.query('COMMIT'),
     rollback: () => client.query('ROLLBACK'),
     // Lease acquisition must also sample time after a potentially blocking lock.

@@ -60,8 +60,9 @@ export async function answerQuestion(db,command,member,now) {
  await notice(db,thread,question,'question_answered',now,command.answer);
  return {threadId:thread.thread_id,status:'answered',generation:command.expectedThreadGeneration+1};
 }
-export async function expireQuestions(db,teamId,now,observerId) {
+export async function expireQuestions(db,teamId,now,observerId,preview=false) {
  const threads=await db.query("SELECT * FROM threads WHERE team_id=:team AND thread_kind='question' AND status='open' AND answer_deadline_ms<=:now ORDER BY answer_deadline_ms,thread_id",{team:teamId,now});
+ if(preview)return {due:threads.length>0};
  const expired=[];
  for(const thread of threads){
   const changed=await db.query("UPDATE threads SET status='fenced',generation=generation+1 WHERE thread_id=:id AND status='open' AND generation=:expected RETURNING thread_id",{id:thread.thread_id,expected:thread.generation});

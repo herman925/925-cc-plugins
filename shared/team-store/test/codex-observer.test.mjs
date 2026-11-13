@@ -34,6 +34,16 @@ function clock(){
  return {setTimeout(callback,delay){const id=++serial;pending.set(id,{callback,at:now+delay});return id;},clearTimeout(id){pending.delete(id);},async advance(delay){const end=now+delay;for(;;){const next=[...pending].filter(([,item])=>item.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;pending.delete(next[0]);await next[1].callback();}now=end;}};
 }
 for(const engine of ['sqlite','postgres'])describe(`${engine} Codex observation`,{skip:engine==='postgres'&&!postgresTestUrl()},()=>{
+ test('an idle team produces no durable polling receipts after its recipient reads the mail',async t=>{
+  const f=await fixture(t,engine);f.current.actor=f.actor('worker');
+  const [delivery]=await f.rows('SELECT * FROM deliveries');
+  await f.api.execute({operationId:'settled-for-idle',command:{type:'readInbox',teamId:'team',deliveryId:delivery.delivery_id,expectedDeliveryGeneration:Number(delivery.generation),expectedConfigVersion:5,expectedMemberGeneration:1,expectedBindingGeneration:1}});
+  f.current.actor=f.actor('head');f.observer.activate(f.metadata,f.current.actor);
+  const before=(await f.rows('SELECT count(*) AS n FROM operations'))[0].n;
+  for(let i=0;i<20;i++)await f.observer.pump();
+  assert.equal((await f.rows('SELECT count(*) AS n FROM operations'))[0].n,before);
+  assert.equal(f.observer.status().state,'active');
+ });
  test('an unbound native conversation waits without expiring another member work',async t=>{
   const f=await fixture(t,engine);await rawWrite(f,'UPDATE assignments SET pickup_deadline_ms=admitted_at_ms+1');
   f.current.actor=f.actor('unbound');f.observer.activate(f.metadata,f.current.actor);await f.observer.pump();

@@ -128,7 +128,9 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} durable meetings`,
   const request={operationId:'private-team',command:{type:'inspectTeam',teamId:'team'}};
   const receipt=await f.api.execute(request);assert.equal(receipt.result.meetings.length,1);
   await rawWrite(f,"DELETE FROM member_bindings WHERE member_id='worker'");
-  await assert.rejects(f.api.reconcile(request),e=>e.code==='API_BINDING_REQUIRED');
+  const current=await f.api.reconcile(request);
+  assert.equal(current.readOnly,true);assert.deepEqual(current.result.meetings,[]);assert.deepEqual(current.result.work,[]);
+  await assert.rejects(f.inspect(),e=>e.code==='API_BINDING_REQUIRED');
  });
 
 });
