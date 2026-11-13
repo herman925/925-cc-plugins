@@ -32,7 +32,7 @@ export async function readOwnInbox(db,{teamId,memberId,deliveryId,expectedDelive
  return {message:{...message,delivery_status:'acknowledged',delivery_generation:generation},deliveryId,deliveryGeneration:generation,acknowledged:true};
 }
 
-export async function prepareDeliveries(db,{teamId,member,now}) {
+export async function prepareDeliveries(db,{teamId,member,now,preview=false}) {
  const [settings]=await db.query('SELECT replay_interval_ms FROM team_settings WHERE team_id=:team',{team:teamId});
  const interval=databaseInteger(settings.replay_interval_ms,'replay interval');
  const recipients=await db.query(`SELECT member_id FROM members WHERE team_id=:team AND membership_state='active' ORDER BY member_id`,{team:teamId});
@@ -43,6 +43,7 @@ export async function prepareDeliveries(db,{teamId,member,now}) {
   if(message.last_replayed_at_ms!==null && now-databaseInteger(message.last_replayed_at_ms,'last replay')<interval)continue;
   const [binding]=await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:recipient.member_id});
   if(!binding)continue; // Undeliverable mail remains queued; nobody is evicted.
+  if(preview)return {due:true};
   const count=nextInteger(databaseInteger(message.replay_count,'replay count'),'replay count');
   const generation=nextInteger(databaseInteger(message.delivery_generation,'delivery generation'),'delivery generation');
   const changed=await db.query(`UPDATE deliveries SET replay_count=:count,last_replayed_at_ms=:now,generation=:next
@@ -55,6 +56,7 @@ export async function prepareDeliveries(db,{teamId,member,now}) {
  for(const n of notices){
   const [binding]=await db.query('SELECT * FROM member_bindings WHERE member_id=:id',{id:n.recipient_member_id});
   if(!binding)continue;
+  if(preview)return {due:true};
   await db.query('UPDATE deadline_notices SET last_notified_at_ms=:now WHERE notice_id=:id',{id:n.notice_id,now});
   claims.push({noticeId:n.notice_id,recipient:binding});
  }
@@ -65,10 +67,11 @@ export async function prepareDeliveries(db,{teamId,member,now}) {
  for(const n of meetings){
   const [binding]=await db.query("SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE b.member_id=:id AND m.membership_state='active'",{id:n.recipient_member_id});
   if(!binding)continue;
+  if(preview)return {due:true};
   await db.query('UPDATE meeting_notifications SET last_notified_at_ms=:now WHERE meeting_id=:id AND generation=:generation AND recipient_member_id=:recipient',{id:n.meeting_id,generation:n.generation,recipient:n.recipient_member_id,now});
   claims.push({meetingId:n.meeting_id,notificationGeneration:Number(n.generation),recipient:binding});
  }
- return {deliveries:claims};
+ return preview?{due:false}:{deliveries:claims};
 }
 
 export async function openAssignmentThread(db,{assignmentId,taskId,runId,teamId,headId,memberId,eventId=assignmentId}) {
@@ -106,7 +109,7 @@ export async function settleAssignmentThread(db,assignmentId,decision,reason) {
   AND message_id IN (SELECT m.message_id FROM messages m JOIN threads t ON t.thread_id=m.thread_id WHERE t.assignment_id=:id)`,{id:assignmentId});
 }
 
-export async function expirePickups(db,teamId,now) {
+export async function expirePickups(db,teamId,now,preview=false) {
  const expired=await db.query(`SELECT a.*,t.run_id FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN assignment_attempts x ON x.assignment_id=a.assignment_id
   JOIN runs r ON r.run_id=t.run_id WHERE r.team_id=:team AND t.status IN ('open','blocked') AND x.outcome IS NULL
   AND NOT EXISTS (SELECT 1 FROM assignment_returns z WHERE z.assignment_id=a.assignment_id)
@@ -114,6 +117,7 @@ export async function expirePickups(db,teamId,now) {
   AND ((a.pickup_observed_at_ms IS NULL AND a.pickup_expired_at_ms IS NULL AND a.pickup_deadline_ms<=:now)
    OR (a.pickup_observed_at_ms IS NOT NULL AND a.task_deadline_ms IS NOT NULL AND a.task_deadline_ms<=:now))
   ORDER BY a.admitted_at_ms,a.assignment_id`,{team:teamId,now});
+ if(preview)return {due:expired.length>0};
  const returned=[];
  for(const a of expired) {
   const taskExpired=a.pickup_observed_at_ms!==null;

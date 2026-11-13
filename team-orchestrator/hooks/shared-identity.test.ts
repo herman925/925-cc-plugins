@@ -33,6 +33,7 @@ test('a Claude head receives current Codex worker identities on each prompt, inc
  expect(updated).toContain('Renamed Research Worker');expect(updated).toContain('bindingGeneration')
  expect(updated).not.toContain('Research Worker 1')
  expect(calls.filter(c=>c.request?.command?.type==='inspectTeam')).toHaveLength(2)
+ expect(calls.filter(c=>c.request?.command?.type==='inspectTeam').every(c=>c.request.command.projection==='identity')).toBe(true)
  expect(calls.every(c=>c.mode==='inboxPoll'||['inspectCaller','inspectTeam'].includes(c.request?.command?.type))).toBe(true)
 })
 

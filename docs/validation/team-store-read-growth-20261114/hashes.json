@@ -1,0 +1,37 @@
+[
+  {
+    "file": "common-final.tap",
+    "bytes": 424391,
+    "sha256": "b1fa6c82c5b7c8fd014c5daa3925f9c611c72403c922395dd57ea46706c9d898"
+  },
+  {
+    "file": "mod-final.log",
+    "bytes": 50694,
+    "sha256": "240b27774e4d63ed029ab16126e48e7a9010b404c8aa321ccf4ff6e924925ad9"
+  },
+  {
+    "file": "mod-clean-main.log",
+    "bytes": 50690,
+    "sha256": "01d3cecbdbd0d7e70aee3626b0bbea5077ec6d841f2069d7060950d1d76deb18"
+  },
+  {
+    "file": "crypto-isolated-main.log",
+    "bytes": 1424,
+    "sha256": "976af63aad51dccec709e73797e28c40782cdf95f85a811fbd14fdc2d1e7d431"
+  },
+  {
+    "file": "growth-before.tap",
+    "bytes": 3347,
+    "sha256": "325857839c08119d79b2214bc983f7962beab293b46a37bb88d0ee5ebead910c"
+  },
+  {
+    "file": "idle-before.tap",
+    "bytes": 9480,
+    "sha256": "7939d14523aefbde63e38b8f1743949812ff8128e0808f1b985b8533090202ce"
+  },
+  {
+    "file": "copy-size-experiment.json",
+    "bytes": 262,
+    "sha256": "cbb80d903275f7d7e16f82b3abf93087d4504c782c42c7c6e8e26d7850535530"
+  }
+]

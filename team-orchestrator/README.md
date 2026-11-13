@@ -1,6 +1,6 @@
 # team-orchestrator
 
-Version **0.5.62 / schema 11**, paired with Codex **0.1.12**, adds native worker readiness, provider identity, recovery and guard corrections. Follow the [client update guide](../docs/UPDATING-TEAM-ORCHESTRATOR.md). Classic import remains a foundation without a migration UI; the 0.5.61 notes below are historical. [Native owned-team evidence and live limits](../docs/validation/owned-claude-managed-lead-20261113.md).
+Version **0.5.63 / schema 11**, paired with Codex **0.1.13**, adds native worker readiness, provider identity, recovery and guard corrections. Follow the [client update guide](../docs/UPDATING-TEAM-ORCHESTRATOR.md). Classic import remains a foundation without a migration UI; the 0.5.61 notes below are historical. [Native owned-team evidence and live limits](../docs/validation/owned-claude-managed-lead-20261113.md).
 
 Mixed-team identities and guard explanations refresh on each prompt. Claude and Codex recipients share the automatic inbox path, with recorded request IDs and separate input/turn-start receipts. A saved binding is not proof that work started. `Allow writes` being off does not by itself block a leaf worker; task expiry and actual tool denials are separate facts.
 

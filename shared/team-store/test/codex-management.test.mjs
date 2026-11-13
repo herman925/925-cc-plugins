@@ -34,7 +34,10 @@ for(const engine of ['sqlite','postgres'])describe(`${engine} Codex-native manag
   assert.equal(status.info.controllerGeneration,1);
   const edited=await current.call('shared_team_manage',{operationId:'codex-after-mod',command:{type:'editTeam',teamId:'team',expectedConfigVersion:6,expectedControllerGeneration:1,changes:[{type:'updateTeam',name:'Edited by Codex',functionText:'Shared configuration'}]}},f.metadata,f.connection);
   assert.equal(edited.result.configVersion,7);
-  await assert.rejects(f.adapter.call('shared_team_status',{},f.metadata,f.connection),e=>e.code==='STORE_WRITER_TOO_OLD');
+  // Current-state queries do not write or advance the fence. Older effect
+  // writers remain fenced even though an authenticated query can still run.
+  assert.equal((await f.adapter.call('shared_team_status',{},f.metadata,f.connection)).info.controllerGeneration,1);
+  await assert.rejects(f.adapter.call('shared_team_manage',{operationId:'old-writer-effect',command:{type:'editTeam',teamId:'team',expectedConfigVersion:7,expectedControllerGeneration:1,changes:[{type:'updateTeam',name:'Old writer must not edit',functionText:''}]}},f.metadata,f.connection),e=>e.code==='STORE_WRITER_TOO_OLD');
   assert.equal((await f.rows("SELECT writer_version FROM writer_fences WHERE writer_client='team-orchestrator'"))[0].writer_version,modRelease);
   assert.equal((await f.rows('SELECT name FROM teams'))[0].name,'Edited by Codex');
  });

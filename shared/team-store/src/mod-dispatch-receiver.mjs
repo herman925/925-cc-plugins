@@ -34,7 +34,7 @@ export async function createModDispatchReceiver(input,dependencies={}){
    const info=(await api.execute({operationId:`dispatcher-caller-${randomUUID()}`,command:{type:'inspectCaller'}})).result;
    teamId=info.member?.team_id??null;head=Boolean(info.member&&info.member.boss_member_id==null);
    if(info.controllerGeneration)for(const team of info.teams??[]){
-    const data=(await api.execute({operationId:`dispatcher-launches-${randomUUID()}`,command:{type:'inspectTeam',teamId:team.team_id}})).result;
+    const data=(await api.execute({operationId:`dispatcher-launches-${randomUUID()}`,command:{type:'inspectConfiguration',teamId:team.team_id}})).result;
     for(const launch of data.launches??[]){
      const member=data.members.find(m=>m.member_id===launch.member_id);
      if(launch.status!=='queued'||!member||member.cli==='codex'||launch.conversation_id===null)continue;
@@ -44,8 +44,9 @@ export async function createModDispatchReceiver(input,dependencies={}){
    }
    if(!info.member||!info.binding){lastError=null;return {suspended:true};}
    const authority={teamId,expectedConfigVersion:info.configVersion,expectedMemberGeneration:info.member.generation,expectedBindingGeneration:info.binding.generation};
-   await confirmed(api,'deadlines',{...authority,type:'observeDeadlines'});
-   const prepared=await confirmed(api,'deliveries',{...authority,type:'prepareDeliveries'});
+   const activity=(await api.execute({operationId:`dispatcher-activity-${randomUUID()}`,command:{type:'inspectDispatch',teamId}})).result;
+   if(activity.deadlinesDue||pending.has('deadlines'))await confirmed(api,'deadlines',{...authority,type:'observeDeadlines'});
+   const prepared=activity.deliveriesDue||activity.deadlinesDue||pending.has('deliveries')?await confirmed(api,'deliveries',{...authority,type:'prepareDeliveries'}):{result:{deliveries:[]}};
    if(prepared.result.deliveries.length)wakes=prepared.result.deliveries;
    if(wakes.length){
     const host=await (dependencies.createHost??createOrcaHost)({orcaCommand:input.orcaCommand});

@@ -36,7 +36,7 @@ export async function sharedTeamIdentityContext($:any,proof:SharedProof,options:
   const teams=Array.isArray(caller.teams)?caller.teams:[]
   const teamId=caller.member?.team_id??(teams.length===1?teams[0]?.team_id:null)
   if(!teamId)return unavailable+'\n'+JSON.stringify({self:'controller-only',teamCount:teams.length,reason:'Inspect the intended team explicitly; no member role or default team was selected.'})
-  const result=await sharedCall($,proof,{operationId:operationId(),command:{type:'inspectTeam',teamId}},options)
+  const result=await sharedCall($,proof,{operationId:operationId(),command:{type:'inspectTeam',teamId,projection:'identity'}},options)
   const snapshot=result.ok?result.result?.result:null
   if(snapshot?.team?.team_id!==teamId)return unavailable
   return sharedIdentityText(snapshot,caller)

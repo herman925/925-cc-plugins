@@ -29,6 +29,68 @@ for(const engine of ['sqlite','postgres']) describe(`${engine} authenticated API
   const ready=async()=>{await approve();await call(fresh);await bind('head');await bind('worker');await bind('other');native.current=actor('head');await call(admit);};
   return {...f,api,native,actor,call,approve,fresh,bind,base,admit,verify,report,accept,rows,ready};
  }
+ test('repeated full team inspections do not persist snapshots, acquire leases or grow storage',async t=>{
+  const f=await setup(t);await f.ready();
+  await f.call({...f.admit,taskId:'large-task',assignmentId:'large-assignment',instructions:'Evidence context. '.repeat(4096)});
+  const raw=await f.raw();
+  try{
+   const before=(await raw.query('SELECT count(*) AS n FROM operations'))[0].n;
+   const lease=await raw.query('SELECT * FROM store_lease');
+   const pages=engine==='sqlite'?(await raw.query('PRAGMA page_count'))[0].page_count:null;
+   const version=engine==='sqlite'?(await raw.query('PRAGMA data_version'))[0].data_version:null;
+   for(let i=0;i<100;i++){
+    const snapshot=await f.call({type:'inspectTeam',teamId:'team'});
+    assert.equal(snapshot.result.work.length,2);
+    await f.call({type:'inspectCaller'});
+   }
+   assert.equal((await raw.query('SELECT count(*) AS n FROM operations'))[0].n,before);
+   assert.deepEqual(await raw.query('SELECT * FROM store_lease'),lease);
+   if(engine==='sqlite'){
+    assert.equal((await raw.query('PRAGMA page_count'))[0].page_count,pages);
+    assert.equal((await raw.query('PRAGMA data_version'))[0].data_version,version);
+   }
+  }finally{await raw.close();}
+ });
+ test('an inspection request id resamples current authorized state rather than replaying an old snapshot',async t=>{
+  const f=await setup(t);await f.ready();
+  const request={operationId:'ephemeral-head-read',command:{type:'inspectAssignment',teamId:'team',assignmentId:'assignment'}};
+  assert.equal((await f.api.execute(request)).result.attempt.evidence,null);
+  f.native.current=f.actor('worker');await f.call(f.verify);await f.call(f.report);f.native.current=f.actor('head');
+  const current=await f.api.reconcile(request);
+  assert.equal(current.readOnly,true);assert.equal(current.result.attempt.evidence,'2 + 3 = 5');
+  assert.equal((await f.rows("SELECT count(*) AS n FROM operations WHERE operation_id='ephemeral-head-read'"))[0].n,engine==='postgres'?'0':0);
+ });
+ test('oversized command payloads are refused before a task or receipt can be created',async t=>{
+  const f=await setup(t);await f.ready();
+  await assert.rejects(f.call({...f.admit,taskId:'oversized-task',assignmentId:'oversized-assignment',instructions:'x'.repeat(1024*1024)}),code('STORE_PAYLOAD_TOO_LARGE'));
+  assert.equal((await f.rows("SELECT * FROM tasks WHERE task_id='oversized-task'")).length,0);
+  assert.equal((await f.rows("SELECT * FROM assignments WHERE assignment_id='oversized-assignment'")).length,0);
+ });
+ test('an oversized durable result rolls back pickup instead of committing an unrecoverable effect',async t=>{
+  const f=await setup(t);await f.approve();
+  await f.call({...f.fresh,members:f.fresh.members.map(m=>m.memberId==='worker'?{...m,officialText:'r'.repeat(600000)}:m)});
+  await f.bind('head');await f.bind('worker');f.native.current=f.actor('head');
+  await f.call({...f.admit,instructions:'i'.repeat(600000)});f.native.current=f.actor('worker');
+  await assert.rejects(f.api.execute({operationId:'oversized-pickup-result',command:f.verify}),code('STORE_PAYLOAD_TOO_LARGE'));
+  assert.equal((await f.rows("SELECT pickup_observed_at_ms FROM assignments WHERE assignment_id='assignment'"))[0].pickup_observed_at_ms,null);
+  assert.equal(Number((await f.rows("SELECT generation FROM assignment_attempts WHERE assignment_id='assignment'"))[0].generation),1);
+  assert.equal((await f.rows("SELECT * FROM operations WHERE operation_id='oversized-pickup-result'")).length,0);
+ });
+ test('empty inbox polling fetches notifications without a team history snapshot',async t=>{
+  const f=await setup(t);await f.ready();
+  const [pending]=(await f.call({type:'inspectInbox',teamId:'team',recipientMemberId:'worker'})).result.messages;
+  f.native.current=f.actor('worker');await f.call({...f.base,type:'readInbox',deliveryId:pending.delivery_id,expectedDeliveryGeneration:pending.delivery_generation});
+  const calls=[],proxy={...f.api,execute:async request=>{calls.push(request.command.type);return f.api.execute(request);}};
+  const journal=await createInboxJournal({api:proxy,actor:f.native.current,machineConfigRoot:join(f.root,'notification-machine'),writer:{client:'team-orchestrator',version:'0.5.42'}});
+  try{const polled=await journal.poll();assert.equal(polled.message,null);assert.ok(calls.includes('inspectNotifications'));assert.ok(!calls.includes('inspectTeam'));}finally{await journal.close();}
+ });
+ test('automatic identity projection excludes task briefs, evidence and role documents',async t=>{
+  const f=await setup(t);await f.ready();await f.call({...f.admit,taskId:'large-task',assignmentId:'large-assignment',instructions:'Private detailed instructions. '.repeat(4096)});
+  const snapshot=(await f.call({type:'inspectTeam',teamId:'team',projection:'identity'})).result;
+  assert.equal(snapshot.work.length,2);assert.equal(snapshot.members.length,3);
+  assert.ok(!Object.hasOwn(snapshot,'roles'));assert.ok(snapshot.work.every(w=>!Object.hasOwn(w,'brief')&&!Object.hasOwn(w,'attempt')));
+  assert.ok(Buffer.byteLength(JSON.stringify(snapshot))<12000);
+ });
  test('Mod controller inspection remains available while member authority is stale until exact verified rebind',async t=>{
   const f=await setup(t);await f.approve();await f.call(f.fresh);await f.bind('head');await f.bind('worker');
   f.native.current=f.actor('head');await f.approve();

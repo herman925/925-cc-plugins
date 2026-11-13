@@ -12,6 +12,7 @@ import { checkWriter, reference } from './writers.mjs';
 import {openAssignmentThread,enqueueMessage,settleAssignmentThread,assignmentThreadId,inspectInbox,readOwnInbox,prepareDeliveries,expirePickups} from './mailbox.mjs';
 import {askQuestion,answerQuestion,questionAccess,expireQuestions} from './questions.mjs';
 import {reserveLaunch,claimLaunch,attachLaunch,approveLaunchPlan,recordLaunchTarget,inspectLaunchQueue} from './launches.mjs';
+import {isApiRead} from './api-catalogue.mjs';
 import {applyGateCommand,currentTaskHead,taskGates,effectiveGateSql} from './gates.mjs';
 import {WORKER_RUNTIME_TYPES,requireWorkerToolPolicy} from './worker-policy.mjs';
 import {applyWorkerRuntime,normalizeRuntimeProof,requireWorkerReady,workerReadiness} from './worker-readiness.mjs';
@@ -39,6 +40,7 @@ export function normalizeApiCommand(input, { privileged = false } = {}) {
   const out = { type: input.type };
   for (const k of names) {
     const v = input[k];
+    if(k==='projection'){if(v!==undefined){if(!['full','identity'].includes(v))fail('INPUT_INVALID','Choose the full or identity team projection.');out[k]=v;}continue;}
     if(k==='managedLead'){if(v!==undefined){if(typeof v!=='boolean')fail('INPUT_INVALID','managedLead must be a boolean for a new team.');out[k]=v;}continue;}
     if(input.type==='attachLaunch'&&v===undefined)continue;
     if (k === 'settings' || k === 'members' || k === 'options' || k==='targetHome' || k==='changes' || k==='participantIds' || k==='topics' || k==='lineLimit' || k==='roundLimit' || k==='selections') continue;
@@ -227,13 +229,28 @@ export async function assertApiReceipt(db,command,actor,receipt) {
  }
 }
 
-// Runs only after the store has locked and validated its lease. The host has
+// Effects run after the store has locked and validated its lease. Inspections
+// instead run inside an enforced read-only snapshot, without advancing fences.
+// The host has
 // already been contacted outside this transaction; all mutable authority is read
 // again here. No arbitrary client callback executes under the lock.
 export async function applyApiCommand(db, command, actor, writer, now, target, runtimeProof) {
   if(WORKER_RUNTIME_TYPES.includes(command.type))return applyWorkerRuntime(db,command,actor,normalizeRuntimeProof(runtimeProof),now);
-  await checkWriter(db, writer, { advance: true });
+  if(!isApiRead(command.type))await checkWriter(db, writer, { advance: true });
   const type = command.type;
+  if(type==='inspectDispatch'){
+    const {member}=await memberActor(db,actor,command,false);
+    const questions=await expireQuestions(db,command.teamId,now,member.member_id,true);
+    const assignments=await expirePickups(db,command.teamId,now,true);
+    const deliveries=await prepareDeliveries(db,{teamId:command.teamId,member,now,preview:true});
+    return {deadlinesDue:questions.due||assignments.due,deliveriesDue:deliveries.due};
+  }
+  if(type==='inspectNotifications'){
+    const {member}=await memberActor(db,actor,command,false);
+    const [notice]=await db.query('SELECT * FROM deadline_notices WHERE team_id=:team AND recipient_member_id=:member AND read_at_ms IS NULL ORDER BY created_at_ms,notice_id LIMIT 1',{team:command.teamId,member:member.member_id});
+    const [meetingNotification]=await db.query('SELECT n.* FROM meeting_notifications n JOIN meetings m ON m.meeting_id=n.meeting_id WHERE m.team_id=:team AND n.recipient_member_id=:member AND n.read_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM meeting_notifications newer WHERE newer.meeting_id=n.meeting_id AND newer.recipient_member_id=n.recipient_member_id AND newer.generation>n.generation) ORDER BY n.created_at_ms,n.meeting_id LIMIT 1',{team:command.teamId,member:member.member_id});
+    return {notice:notice??null,meetingNotification:meetingNotification??null};
+  }
   if(type==='inspectWake'){const {member}=await memberActor(db,actor,command,false);return inspectWakeEligibility(db,command,member,now);}
   if (type === 'approveController') {
     const id = controllerId(actor);
@@ -303,24 +320,35 @@ export async function applyApiCommand(db, command, actor, writer, now, target, r
     // Match inspectAssignment's current member/head boundary, including native
     // incarnation checks. The UI projection is bounded, newest first.
     const [bound] = await db.query('SELECT member_id FROM member_bindings WHERE machine_id=:machine AND provider=:provider AND conversation_id=:conversation',{machine:actor.machineId,provider:actor.provider,conversation:actor.conversationId});
+    const identityOnly=command.projection==='identity';
     const work=[],questions=[],notices=[],meetings=[],meetingNotifications=[];
     if (bound) {
       const m=await reference(db,'members','member_id',bound.member_id);
       if(m.team_id===command.teamId) {
         const {member}=await memberActor(db,actor,command,false);
+        if(!identityOnly){
         meetingNotifications.push(...await db.query('SELECT n.* FROM meeting_notifications n JOIN meetings m ON m.meeting_id=n.meeting_id WHERE m.team_id=:team AND n.recipient_member_id=:member AND n.read_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM meeting_notifications newer WHERE newer.meeting_id=n.meeting_id AND newer.recipient_member_id=n.recipient_member_id AND newer.generation>n.generation) ORDER BY n.created_at_ms,n.meeting_id LIMIT 50',{team:command.teamId,member:member.member_id}));
         meetings.push(...await db.query('SELECT m.* FROM meetings m JOIN meeting_participants p ON p.meeting_id=m.meeting_id WHERE m.team_id=:team AND p.member_id=:member ORDER BY m.created_at_ms DESC LIMIT 50',{team:command.teamId,member:member.member_id}));
+        }
         const visible=await db.query(`SELECT a.* FROM assignments a JOIN tasks t ON t.task_id=a.task_id JOIN runs r ON r.run_id=t.run_id JOIN members m ON m.member_id=a.member_id
-          WHERE r.team_id=:team AND (a.member_id=:member OR (a.assigned_by_member_id=:member AND m.boss_member_id=:member)) ORDER BY a.admitted_at_ms DESC,a.assignment_id LIMIT 100`,{team:command.teamId,member:member.member_id});
+          WHERE r.team_id=:team AND (a.member_id=:member OR (a.assigned_by_member_id=:member AND m.boss_member_id=:member)) ORDER BY a.admitted_at_ms DESC,a.assignment_id LIMIT ${identityOnly?10:100}`,{team:command.teamId,member:member.member_id});
+        if(!identityOnly){
         notices.push(...await db.query('SELECT * FROM deadline_notices WHERE team_id=:team AND recipient_member_id=:member AND read_at_ms IS NULL ORDER BY created_at_ms,notice_id LIMIT 100',{team:command.teamId,member:member.member_id}));
         questions.push(...await db.query("SELECT t.*,m.body AS question,m.recipient_member_id,m.sender_member_id FROM threads t JOIN messages m ON m.thread_id=t.thread_id AND m.kind='question' WHERE t.team_id=:team AND t.thread_kind='question' AND (t.endpoint_a_member_id=:member OR t.endpoint_b_member_id=:member) ORDER BY m.created_at_ms DESC LIMIT 100",{team:command.teamId,member:member.member_id}));
+        }
         for(const assignment of visible) {
+          if(identityOnly){
+            const [returned]=await db.query('SELECT reason FROM assignment_returns WHERE assignment_id=:id',{id:assignment.assignment_id});
+            work.push({assignment,task:await reference(db,'tasks','task_id',assignment.task_id),returned:returned??null});
+            continue;
+          }
           const [acceptance]=await db.query('SELECT * FROM task_acceptances WHERE task_id=:id AND assignment_id=:assignment',{id:assignment.task_id,assignment:assignment.assignment_id});
           const [returned]=await db.query('SELECT * FROM assignment_returns WHERE assignment_id=:id',{id:assignment.assignment_id});
           work.push({assignment,task:await reference(db,'tasks','task_id',assignment.task_id),brief:await reference(db,'task_briefs','task_id',assignment.task_id),attempt:await reference(db,'assignment_attempts','assignment_id',assignment.assignment_id),acceptance:acceptance??null,returned:returned??null,gates:await taskGates(db,assignment.task_id)});
         }
       }
     }
+    if(identityOnly)return {team,members:await db.query('SELECT * FROM members WHERE team_id=:id ORDER BY level,member_id',{id:command.teamId}),bindings:await db.query('SELECT b.* FROM member_bindings b JOIN members m ON m.member_id=b.member_id WHERE m.team_id=:id ORDER BY b.member_id',{id:command.teamId}),work};
     return {...await configurationSnapshot(db,command.teamId),questions,notices,meetings,meetingNotifications,work};
   }
   if (type === 'inspectAssignment') {

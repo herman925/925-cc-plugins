@@ -1,5 +1,11 @@
 import {meetingFields} from './meeting-schema.mjs';
+// Explicit allowlist: a new command defaults to the durable mutation path.
+// These commands may run only inside a database-enforced read-only snapshot.
+export const API_READ_COMMANDS=Object.freeze(['inspectWake','inspectCaller','inspectController','inspectConfiguration','inspectTeam','inspectAssignment','inspectInbox','inspectDelivery','inspectQuestion','inspectLaunchQueue','inspectMeeting','inspectNotifications','inspectDispatch']);
+export const isApiRead=type=>API_READ_COMMANDS.includes(type);
 export const API_COMMAND_FIELDS = {
+  inspectNotifications:['teamId'],
+  inspectDispatch:['teamId'],
   inspectWake:['teamId','recipientMemberId','kind','pointerId','pointerGeneration'],
   beginWorkerRuntime:[],observeWorkerRuntime:['step','receiptId'],closeWorkerRuntime:[],
   importClassicTeam:['teamId','name','functionText','settings','members','targetHome','sourceFingerprint','backupDigest','expectedControllerGeneration'],
@@ -22,7 +28,7 @@ export const API_COMMAND_FIELDS = {
   approveController: [], revokeController: ['controllerId', 'expectedControllerGeneration'],
   createFreshTeam: ['teamId', 'name', 'functionText', 'settings', 'members', 'expectedControllerGeneration','managedLead'],
   bindMember: ['teamId', 'memberId', 'expectedConfigVersion', 'expectedMemberGeneration', 'expectedBindingGeneration', 'expectedControllerGeneration'],
-  inspectTeam: ['teamId'],
+  inspectTeam: ['teamId','projection'],
   inspectCaller: [],inspectController:[],inspectConfiguration:['teamId'],
   inspectAssignment: ['teamId','assignmentId'],
   inspectInbox: ['teamId','recipientMemberId'],

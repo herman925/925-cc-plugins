@@ -1,6 +1,6 @@
 # Update Team Orchestrator
 
-Current packages: **Claude Mod 0.5.62**, **Codex plugin 0.1.12**, shared **schema 11 / writer protocol 2**. The separate Orca plugin remains **0.1.25**. Hermes shared-runtime integration remains pending. Installing a package does not activate an old pinned Codex runtime or migrate a team store.
+Current packages: **Claude Mod 0.5.63**, **Codex plugin 0.1.13**, shared **schema 11 / writer protocol 2**. The separate Orca plugin remains **0.1.25**. Hermes shared-runtime integration remains pending. Installing a package does not activate an old pinned Codex runtime or migrate a team store.
 
 ## Claude Code / Claude Mod
 
@@ -11,7 +11,7 @@ claude plugin marketplace update herman-mods
 claude plugin update team-orchestrator@herman-mods
 ```
 
-Restart/resume Claude Code normally after the update. Confirm **Team Orchestrator 0.5.62** in its panel or `claude plugin list`. Use the existing right panel's Shared workspace controls. Old classic teams are preserved; updating does not migrate them or grant a conversation permission to manage a team.
+Restart/resume Claude Code normally after the update. Confirm **Team Orchestrator 0.5.63** in its panel or `claude plugin list`. Use the existing right panel's Shared workspace controls. Old classic teams are preserved; updating does not migrate them or grant a conversation permission to manage a team.
 
 ## Codex plugin, in Orca or independently
 
@@ -22,7 +22,7 @@ codex plugin marketplace upgrade herman925-codex
 codex plugin add team-orchestration-925@herman925-codex
 ```
 
-Restart/resume Codex normally so it discovers **0.1.12** and the updated skills. In **each project** where you installed the Team Orchestrator connection, invoke:
+Restart/resume Codex normally so it discovers **0.1.13** and the updated skills. In **each project** where you installed the Team Orchestrator connection, invoke:
 
 ```text
 $team-orchestration-925:setup
@@ -45,6 +45,10 @@ npx skills@1.7.4 add https://github.com/herman925/925-cc-plugins/tree/main/team-
 ```
 
 Restart Codex and use `$team-orchestration-925 setup` and `$team-orchestration-925 status`. That installation does not supply all seven namespaced action skills. Do not remove the existing project connection just to update a skill.
+
+## Storage-growth fix
+
+Versions 0.5.63 / 0.1.13 stop persisting pure-inspection responses, avoid empty background mutations and use compact automatic identity/notification queries. Update and reconnect **every active client**: an older running process can keep its old behavior. Existing bloated files do not shrink on installation; no receipts are automatically purged. See the [storage design](TEAM-STORE-STORAGE-DESIGN.md) for the separate reviewed backup/repair boundary. The schema remains 11, so an already-schema-11 project needs no new schema migration for this fix.
 
 ## Existing shared store
 

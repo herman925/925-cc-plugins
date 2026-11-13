@@ -1,0 +1,22 @@
+
+hooks\crypto.test.ts:
+(pass) x25519 matches RFC 7748 6.1 [14.56ms]
+(pass) argon2id matches RFC 9106 5.3 [21.13ms]
+(pass) scrypt matches RFC 7914 12 [63.94ms]
+(pass) base64url round-trips every length and refuses anything not strict [3.43ms]
+(pass) seal/open round-trips text and 4 KB of bytes, and each seal is different [22.12ms]
+(pass) a sealed message that was altered, cut, or sealed to another key is refused, never garbage [8.22ms]
+(pass) bundle round-trips at the default cost, and unlock finishes in under 6 s [5209.25ms]
+(pass) the header carries m, t, p and a fresh salt, readable without the passphrase [738.94ms]
+(pass) a wrong passphrase fails cleanly [67.84ms]
+(pass) a tampered bundle is refused: damaged in copying, altered on purpose, or asking for too much work [115.92ms]
+(pass) a bundle of an unknown version, or not a bundle at all, says so [18.31ms]
+(pass) a bundle pasted with line breaks and spaces unlocks, and the passphrase is Unicode-normalised [33.75ms]
+(pass) the async pair round-trips, and gives byte-identical bundles to the sync pair for the same salt [1075.61ms]
+(pass) without setTimeout the async pair falls back to the sync path, with the same output [58.16ms]
+(pass) the async pair fails with the same faults as the sync pair [77.85ms]
+(pass) passphrase strength scores and explains, and only warns [1.02ms]
+
+ 16 pass
+ 0 fail
+Ran 16 tests across 1 file. [7.91s]
